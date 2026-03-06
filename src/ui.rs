@@ -278,11 +278,40 @@ fn draw_packets_tab(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
     if app.packets.is_empty() {
-        let splash = Paragraph::new(vec![
-            Line::raw(""),
-            Line::from(vec![Span::styled("  waiting for packets…", Style::default().fg(C_FG3))]),
-        ]).style(Style::default().bg(C_BG));
-        f.render_widget(splash, area);
+        let msg = if !app.capturing && app.selected_iface != "simulated" {
+            vec![
+                Line::raw(""),
+                Line::from(vec![Span::styled(
+                    format!("  ✖  Real capture on '{}' is not available.", app.selected_iface),
+                    Style::default().fg(C_RED).add_modifier(Modifier::BOLD),
+                )]),
+                Line::raw(""),
+                Line::from(vec![Span::styled(
+                    "  Rebuild with libpcap support:",
+                    Style::default().fg(C_FG2),
+                )]),
+                Line::from(vec![Span::styled(
+                    "    cargo build --release --features real-capture",
+                    Style::default().fg(C_YELLOW),
+                )]),
+                Line::from(vec![Span::styled(
+                    "    sudo ./target/release/packrat",
+                    Style::default().fg(C_FG3),
+                )]),
+                Line::raw(""),
+                Line::from(vec![
+                    Span::styled("  Press ", Style::default().fg(C_FG2)),
+                    Span::styled("q", Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),
+                    Span::styled(" to go back and choose a different interface.", Style::default().fg(C_FG2)),
+                ]),
+            ]
+        } else {
+            vec![
+                Line::raw(""),
+                Line::from(vec![Span::styled("  waiting for packets…", Style::default().fg(C_FG3))]),
+            ]
+        };
+        f.render_widget(Paragraph::new(msg).style(Style::default().bg(C_BG)), area);
         return;
     }
 

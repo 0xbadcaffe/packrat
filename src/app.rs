@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use crate::packet::{Packet, generate_packet};
 use crate::dynamic::DynEntry;
 
@@ -68,6 +69,9 @@ pub struct App {
     pub iface_list: Vec<String>,
     pub iface_sel: usize,
     pub selected_iface: String,
+    // Real capture sink (populated by capture thread)
+    pub capture_sink: Arc<Mutex<Vec<Packet>>>,
+    pub capture_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl App {
@@ -95,6 +99,8 @@ impl App {
             iface_list,
             iface_sel: 0,
             selected_iface: "simulated".to_string(),
+            capture_sink: Arc::new(Mutex::new(Vec::new())),
+            capture_thread: None,
         }
     }
 
@@ -111,45 +117,70 @@ impl App {
     pub fn confirm_iface(&mut self) {
         self.selected_iface = self.iface_list[self.iface_sel].clone();
         self.picking_iface = false;
-        self.capturing = true;
+
+        if self.selected_iface == "simulated" {
+            self.capturing = true;
+        } else {
+            #[cfg(feature = "real-capture")]
+            {
+                let sink = Arc::clone(&self.capture_sink);
+                let handle = crate::capture::live::start_capture(
+                    &self.selected_iface, None, sink,
+                );
+                self.capture_thread = Some(handle);
+                self.capturing = true;
+            }
+            #[cfg(not(feature = "real-capture"))]
+            {
+                self.capturing = false;
+            }
+        }
+    }
+
+    fn ingest_packet(&mut self, pkt: Packet) {
+        self.packet_counter += 1;
+        self.total_bytes += pkt.length as u64;
+        self.rate_this_sec += 1;
+        if self.matches_filter(&pkt) {
+            self.filtered.push(self.packets.len());
+            if self.selected.is_none() { self.selected = Some(0); }
+        }
+        self.packets.push(pkt);
+        if self.packets.len() > 2000 {
+            self.packets.remove(0);
+            self.rebuild_filtered();
+        }
     }
 
     pub fn tick(&mut self) {
         self.rate_tick += 1;
 
         if self.capturing {
-            // Generate 1-4 packets per tick (10 ticks/s)
-            let burst = (rand::random::<u8>() % 4) + 1;
-            for _ in 0..burst {
-                let pkt = generate_packet(self.packet_counter);
-                self.packet_counter += 1;
-                self.total_bytes += pkt.length as u64;
-                self.rate_this_sec += 1;
-
-                if self.matches_filter(&pkt) {
-                    self.filtered.push(self.packets.len());
-                    // Auto-select first packet
-                    if self.selected.is_none() {
-                        self.selected = Some(0);
-                    }
+            if self.selected_iface == "simulated" {
+                // Simulated: generate random packets each tick
+                let burst = (rand::random::<u8>() % 4) + 1;
+                for _ in 0..burst {
+                    let pkt = generate_packet(self.packet_counter);
+                    self.ingest_packet(pkt);
                 }
-                self.packets.push(pkt);
-
-                // Cap at 2000 packets for memory
-                if self.packets.len() > 2000 {
-                    self.packets.remove(0);
-                    self.rebuild_filtered();
+                // Simulated dynamic trace entries
+                if rand::random::<u8>() % 3 == 0 {
+                    let entry = crate::dynamic::generate_entry(self.rate_tick);
+                    self.dyn_log.push(entry);
+                    if self.dyn_log.len() > 500 { self.dyn_log.remove(0); }
+                    self.dyn_scroll = self.dyn_log.len().saturating_sub(1);
                 }
-            }
-
-            // Generate dynamic trace entries
-            if rand::random::<u8>() % 3 == 0 {
-                let entry = crate::dynamic::generate_entry(self.rate_tick);
-                self.dyn_log.push(entry);
-                if self.dyn_log.len() > 500 {
-                    self.dyn_log.remove(0);
+            } else {
+                // Real interface: drain packets delivered by the capture thread.
+                // Collect into a local vec first so the lock is released before
+                // we call ingest_packet (which needs &mut self).
+                let pkts: Vec<Packet> = self.capture_sink
+                    .try_lock()
+                    .map(|mut g| g.drain(..).collect())
+                    .unwrap_or_default();
+                for pkt in pkts {
+                    self.ingest_packet(pkt);
                 }
-                self.dyn_scroll = self.dyn_log.len().saturating_sub(1);
             }
         }
 
