@@ -1,6 +1,19 @@
 use crate::packet::{Packet, generate_packet};
 use crate::dynamic::DynEntry;
 
+fn list_interfaces() -> Vec<String> {
+    let mut ifaces = vec!["simulated".to_string()];
+    if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
+        let mut sys: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        sys.sort();
+        ifaces.extend(sys);
+    }
+    ifaces
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
     Packets,
@@ -50,10 +63,16 @@ pub struct App {
     pub analysis_section: usize, // which nav item in analysis tab
     pub strings_filter: String,
     pub hex_scroll: u16,
+    // Interface selection
+    pub picking_iface: bool,
+    pub iface_list: Vec<String>,
+    pub iface_sel: usize,
+    pub selected_iface: String,
 }
 
 impl App {
     pub fn new() -> Self {
+        let iface_list = list_interfaces();
         Self {
             active_tab: Tab::Packets,
             packets: Vec::new(),
@@ -72,7 +91,27 @@ impl App {
             analysis_section: 0,
             strings_filter: String::new(),
             hex_scroll: 0,
+            picking_iface: true,
+            iface_list,
+            iface_sel: 0,
+            selected_iface: "simulated".to_string(),
         }
+    }
+
+    pub fn iface_down(&mut self) {
+        if self.iface_sel + 1 < self.iface_list.len() {
+            self.iface_sel += 1;
+        }
+    }
+
+    pub fn iface_up(&mut self) {
+        self.iface_sel = self.iface_sel.saturating_sub(1);
+    }
+
+    pub fn confirm_iface(&mut self) {
+        self.selected_iface = self.iface_list[self.iface_sel].clone();
+        self.picking_iface = false;
+        self.capturing = true;
     }
 
     pub fn tick(&mut self) {
