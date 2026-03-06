@@ -5,14 +5,13 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, Borders, BorderType, Cell, List, ListItem, Paragraph, Row,
-        Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Tabs, Wrap,
+        Table, Tabs, Wrap,
     },
 };
 
 use crate::app::{App, Tab};
-use crate::packet::{FieldColor, TreeSection};
+use crate::packet::FieldColor;
 use crate::dynamic::EntryKind;
-use crate::strings::StringKind;
 
 // ─── Color palette matching binsider ───
 const C_CYAN:    Color = Color::Rgb(95, 215, 215);
@@ -162,13 +161,11 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
         let rat = vec![
             Line::raw(""),
             Line::raw(""),
-            Line::from(vec![Span::styled("        .--~~,__",           Style::default().fg(C_YELLOW))]),
-            Line::from(vec![Span::styled("   :-....,-------,",         Style::default().fg(C_YELLOW))]),
-            Line::from(vec![Span::styled("        `-,,,  ,_      ;",   Style::default().fg(C_YELLOW))]),
-            Line::from(vec![Span::styled("          _,-' ,'\\     ;",  Style::default().fg(C_YELLOW))]),
-            Line::from(vec![Span::styled("         (  ) .|  `-.-'",    Style::default().fg(C_YELLOW))]),
-            Line::from(vec![Span::styled("          `'   \\    /(",     Style::default().fg(C_YELLOW))]),
-            Line::from(vec![Span::styled("                `~~~~~'",     Style::default().fg(C_YELLOW))]),
+            Line::from(vec![Span::styled("  _ __    __ _    ___   _     _ __    __ _    _   ", Style::default().fg(C_YELLOW))]),
+            Line::from(vec![Span::styled(" | '_ \\  / _` | / __| | | __| '__|  / _` |  | |  ", Style::default().fg(C_YELLOW))]),
+            Line::from(vec![Span::styled(" | |_) || (_| || (__   | |/ /| |    | (_| |  | |_ ", Style::default().fg(C_YELLOW))]),
+            Line::from(vec![Span::styled(" | .__/  \\__,_| \\___|  |   < |_|     \\__,_|  \\__| ", Style::default().fg(C_YELLOW))]),
+            Line::from(vec![Span::styled(" |_|                   |_|\\_\\                     ", Style::default().fg(C_YELLOW))]),
             Line::raw(""),
             Line::from(vec![
                 Span::styled("          packrat ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
@@ -454,7 +451,7 @@ fn build_analysis_content<'a>(app: &App, section: usize) -> Vec<Line<'a>> {
             lines.push(Line::raw("  " .to_string() + &"─".repeat(60)));
 
             for (proto, count) in &sorted {
-                let pct = (*count as f64 / total as f64) * 100.0;
+                let pct = (**count as f64 / total as f64) * 100.0;
                 let bar_w = (pct / 100.0 * 30.0) as usize;
                 let bar = "█".repeat(bar_w);
                 lines.push(Line::from(vec![
@@ -472,7 +469,7 @@ fn build_analysis_content<'a>(app: &App, section: usize) -> Vec<Line<'a>> {
             }
             let mut sorted: Vec<_> = counts.iter().collect();
             sorted.sort_by(|a,b| b.1.cmp(a.1));
-            let max = sorted.first().map(|(_,c)| *c).unwrap_or(1);
+            let max = sorted.first().map(|(_,c)| *c).unwrap_or(&1);
 
             lines.push(Line::raw(""));
             lines.push(Line::from(vec![
@@ -481,7 +478,7 @@ fn build_analysis_content<'a>(app: &App, section: usize) -> Vec<Line<'a>> {
             ]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(60)));
             for (ip, count) in sorted.iter().take(15) {
-                let bar_w = (*count as f64 / max as f64 * 25.0) as usize;
+                let bar_w = (**count as f64 / *max as f64 * 25.0) as usize;
                 lines.push(Line::from(vec![
                     Span::styled(format!("  {:<18}", ip), Style::default().fg(C_CYAN)),
                     Span::styled(format!("{:<8}", count), Style::default().fg(C_FG2)),
@@ -685,7 +682,7 @@ fn draw_viz_proto(f: &mut Frame, app: &App, area: Rect) {
 
     let mut lines: Vec<Line> = vec![Line::raw("")];
     for (proto, count) in sorted.iter().take(9) {
-        let pct = (*count as f64 / total as f64) * 100.0;
+        let pct = (**count as f64 / total as f64) * 100.0;
         let bar_w = (pct / 100.0 * 20.0) as usize;
         lines.push(Line::from(vec![
             Span::styled("█".repeat(bar_w), Style::default().fg(proto_color(proto))),
@@ -743,11 +740,11 @@ fn draw_viz_top_ips(f: &mut Frame, app: &App, area: Rect) {
     for p in &app.packets { *counts.entry(p.src.clone()).or_default() += 1; }
     let mut sorted: Vec<_> = counts.iter().collect();
     sorted.sort_by(|a,b| b.1.cmp(a.1));
-    let max = sorted.first().map(|(_,c)| *c).unwrap_or(1);
+    let max = sorted.first().map(|(_,c)| *c).unwrap_or(&1);
 
     let mut lines: Vec<Line> = vec![Line::raw("")];
     for (ip, count) in sorted.iter().take(10) {
-        let bar_w = (*count as f64 / max as f64 * 18.0) as usize;
+        let bar_w = (**count as f64 / *max as f64 * 18.0) as usize;
         lines.push(Line::from(vec![
             Span::styled(format!(" {:<16}", ip), Style::default().fg(C_CYAN)),
             Span::styled("█".repeat(bar_w), Style::default().fg(C_GREEN)),
@@ -787,7 +784,7 @@ fn draw_viz_geo(f: &mut Frame, app: &App, area: Rect) {
 
     let mut lines: Vec<Line> = vec![Line::raw("")];
     for (ip, count) in sorted.iter().take(10) {
-        if let Some((_,flag,loc)) = GEO.iter().find(|(gip,_,_)| gip == ip) {
+        if let Some((_,flag,loc)) = GEO.iter().find(|(gip,_,_)| gip == *ip) {
             lines.push(Line::from(vec![
                 Span::styled(format!(" {}", flag), Style::default()),
                 Span::styled(format!(" {:<16}", ip), Style::default().fg(C_CYAN)),
