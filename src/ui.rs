@@ -85,8 +85,8 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" 🐀 packrat ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
         Span::styled("─ packet analyzer  ", Style::default().fg(C_FG3)),
         Span::styled(cap_str, Style::default().fg(cap_color)),
-        Span::styled(format!("  interface: eth0 (simulated)  {} pkts",
-            app.packets.len()), Style::default().fg(C_FG3)),
+        Span::styled(format!("  interface: {}  {} pkts",
+            app.selected_iface, app.packets.len()), Style::default().fg(C_FG3)),
     ]);
     let p = Paragraph::new(line).style(Style::default().bg(C_BG2));
     f.render_widget(p, area);
@@ -129,6 +129,10 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_workspace(f: &mut Frame, app: &mut App, area: Rect) {
+    if app.picking_iface {
+        draw_iface_picker(f, app, area);
+        return;
+    }
     match app.active_tab {
         Tab::Packets   => draw_packets_tab(f, app, area),
         Tab::Analysis  => draw_analysis_tab(f, app, area),
@@ -136,6 +140,122 @@ fn draw_workspace(f: &mut Frame, app: &mut App, area: Rect) {
         Tab::Dynamic   => draw_dynamic_tab(f, app, area),
         Tab::Visualize => draw_visualize_tab(f, app, area),
     }
+}
+
+fn draw_iface_picker(f: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(10), // banner
+            Constraint::Length(2),  // header
+            Constraint::Min(0),     // list
+            Constraint::Length(1),  // hint
+        ])
+        .split(area);
+
+    // Banner
+    let banner = vec![
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("        ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+            Span::styled("        ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled("        ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+            Span::styled(" __    ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("        ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+            Span::styled("        ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled("  __   ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("______  ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+            Span::styled("_____   ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled("  ____  ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+            Span::styled("|  | __", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("_______ ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+            Span::styled("_____   ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled("_/  |_ ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("\\____ \\ ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+            Span::styled("\\__  \\  ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled("_/ ___\\ ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+            Span::styled("|  |/ /", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("\\_  __ \\", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+            Span::styled("\\__  \\  ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled("\\   __\\", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("|  |_> >", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+            Span::styled(" / __ \\_", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled("\\  \\___ ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+            Span::styled("|    < ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(" |  | \\/", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+            Span::styled(" / __ \\_", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled(" |  |  ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("|   __/ ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+            Span::styled("(____  /", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled(" \\___  >", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+            Span::styled("|__|_ \\", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(" |__|   ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+            Span::styled("(____  /", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled(" |__|  ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::styled("|__|    ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+            Span::styled("     \\/ ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled("     \\/ ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+            Span::styled("     \\/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("        ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+            Span::styled("     \\/ ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::styled("       ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::raw(""),
+        Line::from(vec![Span::styled("  packet analyzer  v0.1.0", Style::default().fg(C_FG3))]),
+    ];
+    f.render_widget(Paragraph::new(banner).style(Style::default().bg(C_BG)), chunks[0]);
+
+    // Section header
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled("  Select network interface", Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),
+        Span::styled("  ─────────────────────────────────", Style::default().fg(C_BORDER)),
+    ])).style(Style::default().bg(C_BG));
+    f.render_widget(header, chunks[1]);
+
+    // Interface list
+    let items: Vec<ListItem> = app.iface_list.iter().enumerate().map(|(i, name)| {
+        let is_sel = i == app.iface_sel;
+        let label = if name == "simulated" {
+            format!("  {}  (built-in, no root required)", name)
+        } else {
+            format!("  {}", name)
+        };
+        if is_sel {
+            ListItem::new(label)
+                .style(Style::default().fg(Color::Black).bg(C_CYAN).add_modifier(Modifier::BOLD))
+        } else {
+            ListItem::new(label)
+                .style(Style::default().fg(C_FG2).bg(C_BG))
+        }
+    }).collect();
+
+    let list = List::new(items)
+        .block(Block::default()
+            .borders(Borders::LEFT)
+            .border_style(Style::default().fg(C_BORDER)))
+        .style(Style::default().bg(C_BG));
+    f.render_widget(list, chunks[2]);
+
+    // Hint bar
+    let hint = Line::from(vec![
+        Span::styled("  j/k", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+        Span::styled(" move   ", Style::default().fg(C_FG3)),
+        Span::styled("Space/Enter", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)),
+        Span::styled(" start capture   ", Style::default().fg(C_FG3)),
+        Span::styled("q", Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),
+        Span::styled(" quit", Style::default().fg(C_FG3)),
+    ]);
+    f.render_widget(Paragraph::new(hint).style(Style::default().bg(C_BG2)), chunks[3]);
 }
 
 // ─── TAB 1: PACKETS ───────────────────────────────────────────
@@ -157,110 +277,11 @@ fn draw_packets_tab(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
-    if app.picking_iface || app.packets.is_empty() {
-        let rat = vec![
+    if app.packets.is_empty() {
+        let splash = Paragraph::new(vec![
             Line::raw(""),
-            Line::raw(""),
-            Line::from(vec![
-                Span::styled("        ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-                Span::styled("        ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled("        ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled(" __    ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled("        ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
-                Span::styled("        ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled("  __   ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(vec![
-                Span::styled("______  ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-                Span::styled("_____   ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled("  ____  ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled("|  | __", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled("_______ ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
-                Span::styled("_____   ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled("_/  |_ ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(vec![
-                Span::styled("\\____ \\ ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-                Span::styled("\\__  \\  ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled("_/ ___\\ ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled("|  |/ /", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled("\\_  __ \\", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
-                Span::styled("\\__  \\  ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled("\\   __\\", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(vec![
-                Span::styled("|  |_> >", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-                Span::styled(" / __ \\_", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled("\\  \\___ ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled("|    < ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled(" |  | \\/", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
-                Span::styled(" / __ \\_", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled(" |  |  ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(vec![
-                Span::styled("|   __/ ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-                Span::styled("(____  /", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled(" \\___  >", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled("|__|_ \\", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled(" |__|   ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
-                Span::styled("(____  /", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled(" |__|  ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::from(vec![
-                Span::styled("|__|    ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-                Span::styled("     \\/ ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled("     \\/ ", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled("     \\/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled("        ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
-                Span::styled("     \\/ ", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::styled("       ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
-            ]),
-            Line::raw(""),
-            Line::from(vec![Span::styled("     packet analyzer  v0.1.0", Style::default().fg(C_FG3))]),
-            Line::raw(""),
-        ];
-        // Build iface picker lines separately so we can append them
-        let mut lines = rat;
-        if app.picking_iface {
-            lines.push(Line::from(vec![
-                Span::styled("  Select network interface", Style::default().fg(C_FG2)),
-            ]));
-            lines.push(Line::raw("  ") );
-            for (i, iface) in app.iface_list.iter().enumerate() {
-                let is_sel = i == app.iface_sel;
-                let marker = if is_sel { " ▶ " } else { "   " };
-                let (bg, fg) = if is_sel {
-                    (C_SEL_BG, Color::White)
-                } else {
-                    (C_BG, C_FG2)
-                };
-                let tag = if iface == "simulated" { "  (built-in)" } else { "" };
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{}{}{}", marker, iface, tag),
-                        Style::default().fg(fg).bg(bg).add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() })),
-                ]));
-            }
-            lines.push(Line::raw(""));
-            lines.push(Line::from(vec![
-                Span::styled("  j/k", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-                Span::styled(" navigate   ", Style::default().fg(C_FG2)),
-                Span::styled("Space/Enter", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)),
-                Span::styled(" start capture   ", Style::default().fg(C_FG2)),
-                Span::styled("q", Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),
-                Span::styled(" quit", Style::default().fg(C_FG2)),
-            ]));
-        } else {
-            lines.push(Line::from(vec![Span::styled("     Press ", Style::default().fg(C_FG2)), Span::styled("Space", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)), Span::styled(" to start capture", Style::default().fg(C_FG2))]));
-            lines.push(Line::from(vec![Span::styled("     Press ", Style::default().fg(C_FG2)), Span::styled("q",     Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),   Span::styled(" to quit", Style::default().fg(C_FG2))]));
-        }
-        let rat = lines;
-        let splash = Paragraph::new(rat)
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Plain)
-                .border_style(Style::default().fg(C_BORDER))
-                .title(Span::styled(" 🐀 packrat ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))))
-            .style(Style::default().bg(C_BG));
+            Line::from(vec![Span::styled("  waiting for packets…", Style::default().fg(C_FG3))]),
+        ]).style(Style::default().bg(C_BG));
         f.render_widget(splash, area);
         return;
     }
