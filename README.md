@@ -3,16 +3,12 @@
 > A Wireshark-style network packet analyzer TUI, built with **Rust + Ratatui** in the style of **binsider**.
 
 ```
-        .--~~,__
-   :-....,-------,
-        `-,,,  ,_      ;
-          _,-' ,'\     ;
-         (  ) .|  `-.-'
-          `'   \    /(
-                `~~~~~'
-
-          packrat v0.1.0
-     packet analyzer — binsider style
+                     __                   __
+___________    ____ |  | ______________ _/  |_
+\____ \__  \ _/ ___\|  |/ /\_  __ \__  \\   __\
+|  |_> > __ \\  \___|    <  |  | \// __ \|  |
+|   __(____  /\___  >__|_ \ |__|  (____  /__|
+|__|       \/     \/     \/            \/
 ```
 
 ## Features
