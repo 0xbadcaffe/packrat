@@ -44,48 +44,60 @@ fn main() -> Result<()> {
 
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    // Quit
-                    KeyCode::Char('q') => break,
-                    KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => break,
+                // Always allow quit
+                if key.code == KeyCode::Char('q')
+                    || (key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL)
+                {
+                    break;
+                }
 
-                    // Tab switching
-                    KeyCode::Char('1') => app.active_tab = Tab::Packets,
-                    KeyCode::Char('2') => app.active_tab = Tab::Analysis,
-                    KeyCode::Char('3') => app.active_tab = Tab::Strings,
-                    KeyCode::Char('4') => app.active_tab = Tab::Dynamic,
-                    KeyCode::Char('5') => app.active_tab = Tab::Visualize,
-                    KeyCode::Tab => app.next_tab(),
-
-                    // Navigation
-                    KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-                    KeyCode::Up   | KeyCode::Char('k') => app.move_up(),
-                    KeyCode::Char('g') => app.move_top(),
-                    KeyCode::Char('G') => app.move_bottom(),
-                    KeyCode::PageDown  => app.page_down(),
-                    KeyCode::PageUp    => app.page_up(),
-
-                    // Capture control
-                    KeyCode::Char(' ') => app.toggle_capture(),
-                    KeyCode::Char('C') => app.clear_packets(),
-
-                    // Filter
-                    KeyCode::Char('/') => app.toggle_filter_mode(),
-                    KeyCode::Esc => app.filter_mode = false,
-                    KeyCode::Enter if app.filter_mode => {
-                        app.filter_mode = false;
-                        app.apply_filter();
+                if app.picking_iface {
+                    match key.code {
+                        KeyCode::Down | KeyCode::Char('j') => app.iface_down(),
+                        KeyCode::Up   | KeyCode::Char('k') => app.iface_up(),
+                        KeyCode::Char(' ') | KeyCode::Enter => app.confirm_iface(),
+                        _ => {}
                     }
-                    KeyCode::Backspace if app.filter_mode => {
-                        app.filter_input.pop();
-                        app.apply_filter();
-                    }
-                    KeyCode::Char(c) if app.filter_mode => {
-                        app.filter_input.push(c);
-                        app.apply_filter();
-                    }
+                } else {
+                    match key.code {
+                        // Tab switching
+                        KeyCode::Char('1') => app.active_tab = Tab::Packets,
+                        KeyCode::Char('2') => app.active_tab = Tab::Analysis,
+                        KeyCode::Char('3') => app.active_tab = Tab::Strings,
+                        KeyCode::Char('4') => app.active_tab = Tab::Dynamic,
+                        KeyCode::Char('5') => app.active_tab = Tab::Visualize,
+                        KeyCode::Tab => app.next_tab(),
 
-                    _ => {}
+                        // Navigation
+                        KeyCode::Down | KeyCode::Char('j') => app.move_down(),
+                        KeyCode::Up   | KeyCode::Char('k') => app.move_up(),
+                        KeyCode::Char('g') => app.move_top(),
+                        KeyCode::Char('G') => app.move_bottom(),
+                        KeyCode::PageDown  => app.page_down(),
+                        KeyCode::PageUp    => app.page_up(),
+
+                        // Capture control
+                        KeyCode::Char(' ') => app.toggle_capture(),
+                        KeyCode::Char('C') => app.clear_packets(),
+
+                        // Filter
+                        KeyCode::Char('/') => app.toggle_filter_mode(),
+                        KeyCode::Esc => app.filter_mode = false,
+                        KeyCode::Enter if app.filter_mode => {
+                            app.filter_mode = false;
+                            app.apply_filter();
+                        }
+                        KeyCode::Backspace if app.filter_mode => {
+                            app.filter_input.pop();
+                            app.apply_filter();
+                        }
+                        KeyCode::Char(c) if app.filter_mode => {
+                            app.filter_input.push(c);
+                            app.apply_filter();
+                        }
+
+                        _ => {}
+                    }
                 }
             }
         }
