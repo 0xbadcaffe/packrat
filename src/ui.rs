@@ -157,7 +157,7 @@ fn draw_packets_tab(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
-    if app.packets.is_empty() {
+    if app.picking_iface || app.packets.is_empty() {
         let rat = vec![
             Line::raw(""),
             Line::raw(""),
@@ -218,11 +218,42 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
             Line::raw(""),
             Line::from(vec![Span::styled("     packet analyzer  v0.1.0", Style::default().fg(C_FG3))]),
             Line::raw(""),
-            Line::from(vec![Span::styled("     Press ", Style::default().fg(C_FG2)), Span::styled("Space", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)), Span::styled(" to start capture", Style::default().fg(C_FG2))]),
-            Line::from(vec![Span::styled("     Press ", Style::default().fg(C_FG2)), Span::styled("/",     Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),  Span::styled(" to set a display filter", Style::default().fg(C_FG2))]),
-            Line::from(vec![Span::styled("     Press ", Style::default().fg(C_FG2)), Span::styled("1–5",   Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),Span::styled(" to switch tabs", Style::default().fg(C_FG2))]),
-            Line::from(vec![Span::styled("     Press ", Style::default().fg(C_FG2)), Span::styled("q",     Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),   Span::styled(" to quit", Style::default().fg(C_FG2))]),
         ];
+        // Build iface picker lines separately so we can append them
+        let mut lines = rat;
+        if app.picking_iface {
+            lines.push(Line::from(vec![
+                Span::styled("  Select network interface", Style::default().fg(C_FG2)),
+            ]));
+            lines.push(Line::raw("  ") );
+            for (i, iface) in app.iface_list.iter().enumerate() {
+                let is_sel = i == app.iface_sel;
+                let marker = if is_sel { " ▶ " } else { "   " };
+                let (bg, fg) = if is_sel {
+                    (C_SEL_BG, Color::White)
+                } else {
+                    (C_BG, C_FG2)
+                };
+                let tag = if iface == "simulated" { "  (built-in)" } else { "" };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{}{}{}", marker, iface, tag),
+                        Style::default().fg(fg).bg(bg).add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() })),
+                ]));
+            }
+            lines.push(Line::raw(""));
+            lines.push(Line::from(vec![
+                Span::styled("  j/k", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+                Span::styled(" navigate   ", Style::default().fg(C_FG2)),
+                Span::styled("Space/Enter", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)),
+                Span::styled(" start capture   ", Style::default().fg(C_FG2)),
+                Span::styled("q", Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),
+                Span::styled(" quit", Style::default().fg(C_FG2)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![Span::styled("     Press ", Style::default().fg(C_FG2)), Span::styled("Space", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)), Span::styled(" to start capture", Style::default().fg(C_FG2))]));
+            lines.push(Line::from(vec![Span::styled("     Press ", Style::default().fg(C_FG2)), Span::styled("q",     Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),   Span::styled(" to quit", Style::default().fg(C_FG2))]));
+        }
+        let rat = lines;
         let splash = Paragraph::new(rat)
             .block(Block::default()
                 .borders(Borders::ALL)
