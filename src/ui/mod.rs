@@ -81,7 +81,7 @@ fn draw_filterbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(" Display filter: ", Style::default().fg(C_FG2)),
         Span::styled(filter_display, Style::default().fg(filter_color)),
         Span::styled(
-            "  [Space] cap  [C] clear  [/] filter  [i] iface  [W] record  [h] help  [q] quit",
+            "  [Space] cap  [C] clear  [/] filter  [i] iface  [w] record  [h] help  [q] quit",
             Style::default().fg(C_FG3),
         ),
     ]);
@@ -129,10 +129,16 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     } else {
         Span::styled("○ IDLE ", Style::default().fg(C_FG3))
     };
+    let rec_indicator = if app.recording {
+        Span::styled("◉ REC ", Style::default().fg(C_RED).add_modifier(Modifier::BOLD))
+    } else {
+        Span::raw("")
+    };
 
     let line = Line::from(vec![
         Span::styled(" ", Style::default()),
         cap_indicator,
+        rec_indicator,
         Span::styled("│ ", Style::default().fg(C_FG3)),
         Span::styled(format!("pkts:{} ", app.filtered.len()), Style::default().fg(C_FG2)),
         Span::styled(format!("total:{} ", app.packets.len()), Style::default().fg(C_FG2)),
@@ -140,7 +146,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(format!("rate:{}/s ", app.current_rate()), Style::default().fg(C_GREEN)),
         Span::styled("│ ", Style::default().fg(C_FG3)),
         Span::styled(
-            "j/k:nav  g/G:top/bot  Space:cap  /:filter  i:iface  W:record  h:help  1-6:tabs  q:quit",
+            "j/k:nav  g/G:top/bot  Space:cap  /:filter  i:iface  w:record  h:help  1-6:tabs  q:quit",
             Style::default().fg(C_FG3),
         ),
     ]);

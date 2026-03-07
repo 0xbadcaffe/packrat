@@ -191,11 +191,21 @@ impl App {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default().as_secs();
-            let path = format!("packrat_{}.pcap", ts);
-            if let Ok(writer) = PcapWriter::new(std::path::Path::new(&path)) {
-                self.pcap_path = path;
-                self.pcap_writer = Some(writer);
-                self.recording = true;
+            let filename = format!("packrat_{}.pcap", ts);
+            // Try CWD first, then home directory as fallback.
+            let candidates = [
+                filename.clone(),
+                dirs_next::home_dir()
+                    .map(|h| h.join(&filename).to_string_lossy().into_owned())
+                    .unwrap_or_else(|| format!("/tmp/{}", filename)),
+            ];
+            for path in &candidates {
+                if let Ok(writer) = PcapWriter::new(std::path::Path::new(path)) {
+                    self.pcap_path = path.clone();
+                    self.pcap_writer = Some(writer);
+                    self.recording = true;
+                    break;
+                }
             }
         }
     }

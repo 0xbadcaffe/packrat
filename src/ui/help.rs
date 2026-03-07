@@ -28,7 +28,7 @@ pub fn draw(f: &mut Frame) {
             ("Space",  "Toggle capture on/off"),
             ("C",      "Clear all packets"),
             ("i",      "Switch interface"),
-            ("W",      "Toggle PCAP recording"),
+            ("w",      "Toggle PCAP recording"),
         ]),
         ("Filter", &[
             ("/",     "Start filter input"),
@@ -61,13 +61,14 @@ pub fn draw(f: &mut Frame) {
         .block(Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(C_CYAN))
+            .border_style(Style::default().fg(C_CYAN).bg(C_BG2))
+            .style(Style::default().bg(C_BG2))
             .title(Span::styled(
                 " Keyboard Shortcuts — press h or Esc to close ",
-                Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD),
+                Style::default().fg(C_CYAN).bg(C_BG2).add_modifier(Modifier::BOLD),
             ))
             .title_alignment(Alignment::Center))
-        .style(Style::default().bg(C_BG));
+        .style(Style::default().bg(C_BG2));
 
     f.render_widget(popup, area);
 }
