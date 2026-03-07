@@ -11,6 +11,14 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return true;
     }
 
+    // Help overlay dismisses with Esc or h
+    if app.show_help {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q')) {
+            app.show_help = false;
+        }
+        return false;
+    }
+
     if app.picking_iface {
         handle_iface_picker(app, key);
     } else {
@@ -84,6 +92,9 @@ fn handle_main(app: &mut App, key: KeyEvent) {
 
         // Filter
         KeyCode::Char('/') => app.filter.active = true,
+
+        // Help popup
+        KeyCode::Char('h') => app.show_help = true,
 
         _ => {}
     }

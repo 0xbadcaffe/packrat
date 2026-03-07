@@ -7,14 +7,16 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::dynamic::EntryKind;
+use crate::sim::dynamic::EntryKind;
 use crate::ui::helpers::truncate;
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let inner_h = area.height.saturating_sub(2) as usize;
     let total = app.dyn_log.len();
-    let offset = if total > inner_h { total - inner_h } else { 0 };
+    // dyn_scroll = distance above the tail (0 = tail, k increases, j decreases).
+    let tail_offset = total.saturating_sub(inner_h);
+    let offset = tail_offset.saturating_sub(app.dyn_scroll);
 
     let items: Vec<ListItem> = app.dyn_log.iter().skip(offset).map(|e| {
         let (kind_str, kind_color) = match e.kind {

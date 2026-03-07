@@ -1,7 +1,7 @@
 /// Build a protocol dissector tree for a packet (for the UI detail pane).
 use rand::Rng;
 use crate::net::packet::{FieldColor, Packet, TreeField, TreeSection, make_field};
-use crate::net::generator::rand_mac;
+use crate::sim::generator::rand_mac;
 
 const DNS_NAMES: &[&str] = &[
     "google.com", "github.com", "api.stripe.com",

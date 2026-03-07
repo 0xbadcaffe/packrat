@@ -11,12 +11,11 @@ use tokio::time;
 
 mod app;
 mod capture;
-mod dynamic;
 mod event;
 mod export;
 mod filter;
 mod net;
-mod strings;
+mod sim;
 mod tabs;
 mod topology;
 mod ui;
@@ -55,19 +54,26 @@ async fn run_loop(
     event_reader: &mut crossterm::event::EventStream,
 ) -> Result<()> {
     loop {
+        // Drain every packet already queued — non-blocking so tick never starves.
+        while let Ok(pkt) = packet_rx.try_recv() {
+            app.ingest_packet(pkt);
+        }
+
         terminal.draw(|f| ui::draw(f, app))?;
 
         tokio::select! {
             _ = tick_interval.tick() => {
                 app.tick();
             }
-            Some(pkt) = packet_rx.recv() => {
-                app.ingest_packet(pkt);
-            }
             Some(Ok(evt)) = event_reader.next() => {
                 if event::handle(app, evt) {
                     break;
                 }
+            }
+            // Also wake up when the first new packet arrives so the
+            // next iteration can drain it without waiting a full tick.
+            pkt = packet_rx.recv() => {
+                if let Some(p) = pkt { app.ingest_packet(p); }
             }
         }
     }

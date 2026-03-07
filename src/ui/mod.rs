@@ -11,6 +11,7 @@ use crate::tabs::Tab;
 use crate::ui::theme::*;
 
 mod helpers;
+mod help;
 mod iface_picker;
 mod tabs;
 pub mod theme;
@@ -36,6 +37,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_tabs(f, app, chunks[2]);
     draw_workspace(f, app, chunks[3]);
     draw_statusbar(f, app, chunks[4]);
+
+    if app.show_help {
+        help::draw(f);
+    }
 }
 
 fn draw_titlebar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
@@ -76,7 +81,7 @@ fn draw_filterbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(" Display filter: ", Style::default().fg(C_FG2)),
         Span::styled(filter_display, Style::default().fg(filter_color)),
         Span::styled(
-            "  [Space] cap  [C] clear  [/] filter  [i] switch iface  [W] record  [q] quit",
+            "  [Space] cap  [C] clear  [/] filter  [i] iface  [W] record  [h] help  [q] quit",
             Style::default().fg(C_FG3),
         ),
     ]);
@@ -135,7 +140,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(format!("rate:{}/s ", app.current_rate()), Style::default().fg(C_GREEN)),
         Span::styled("│ ", Style::default().fg(C_FG3)),
         Span::styled(
-            "j/k:nav  g/G:top/bot  Space:cap  /:filter  i:iface  W:record  1-6:tabs  q:quit",
+            "j/k:nav  g/G:top/bot  Space:cap  /:filter  i:iface  W:record  h:help  1-6:tabs  q:quit",
             Style::default().fg(C_FG3),
         ),
     ]);
