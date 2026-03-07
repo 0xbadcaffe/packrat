@@ -10,7 +10,7 @@ use crate::app::App;
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
-    let all = crate::strings::all_strings();
+    let all = crate::sim::strings::all_strings();
     let filt: Vec<_> = if app.strings_filter.is_empty() {
         all.iter().collect()
     } else {

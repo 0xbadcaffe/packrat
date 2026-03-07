@@ -2,9 +2,9 @@ use std::collections::VecDeque;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 
-use crate::capture::simulated::SimulatedCapture;
 use crate::capture::CaptureSource;
-use crate::dynamic::DynEntry;
+use crate::sim::capture::SimulatedCapture;
+use crate::sim::dynamic::DynEntry;
 use crate::export::PcapWriter;
 use crate::filter::PacketFilter;
 use crate::net::packet::Packet;
@@ -53,6 +53,7 @@ pub struct App {
     pub recording: bool,
     pub pcap_path: String,
     pcap_writer: Option<PcapWriter>,
+    pub show_help: bool,
 }
 
 impl App {
@@ -85,6 +86,7 @@ impl App {
             recording: false,
             pcap_path: String::new(),
             pcap_writer: None,
+            show_help: false,
         }
     }
 
@@ -153,10 +155,11 @@ impl App {
 
         if self.capturing && self.selected_iface == "simulated" {
             if rand::random::<u8>() % 3 == 0 {
-                let entry = crate::dynamic::generate_entry(self.rate_tick);
+                let entry = crate::sim::dynamic::generate_entry(self.rate_tick);
                 self.dyn_log.push(entry);
                 if self.dyn_log.len() > 500 { self.dyn_log.remove(0); }
-                self.dyn_scroll = self.dyn_log.len().saturating_sub(1);
+                // dyn_scroll is offset-from-end (0 = follow tail).
+                // When user hasn't scrolled up, keep it at 0 so the tail stays visible.
             }
         }
 
@@ -223,7 +226,8 @@ impl App {
                 } else if !self.filtered.is_empty() { self.selected = Some(0); }
             }
             Tab::Analysis => { if self.analysis_section < 5 { self.analysis_section += 1; } }
-            Tab::Dynamic  => { if self.dyn_scroll + 1 < self.dyn_log.len() { self.dyn_scroll += 1; } }
+            // j = toward tail (decrease offset-from-end)
+            Tab::Dynamic  => { self.dyn_scroll = self.dyn_scroll.saturating_sub(1); }
             _ => {}
         }
     }
@@ -232,7 +236,11 @@ impl App {
         match self.active_tab {
             Tab::Packets  => { if let Some(sel) = self.selected { if sel > 0 { self.selected = Some(sel - 1); } } }
             Tab::Analysis => { if self.analysis_section > 0 { self.analysis_section -= 1; } }
-            Tab::Dynamic  => { self.dyn_scroll = self.dyn_scroll.saturating_sub(1); }
+            // k = away from tail (increase offset-from-end), clamped to log length
+            Tab::Dynamic  => {
+                let max = self.dyn_log.len().saturating_sub(1);
+                if self.dyn_scroll < max { self.dyn_scroll += 1; }
+            }
             _ => {}
         }
     }
@@ -244,8 +252,14 @@ impl App {
     }
 
     pub fn move_bottom(&mut self) {
-        if matches!(self.active_tab, Tab::Packets) && !self.filtered.is_empty() {
-            self.selected = Some(self.filtered.len() - 1);
+        match self.active_tab {
+            Tab::Packets if !self.filtered.is_empty() => {
+                self.selected = Some(self.filtered.len() - 1);
+            }
+            Tab::Dynamic => {
+                self.dyn_scroll = 0; // 0 = tail (offset-from-end model)
+            }
+            _ => {}
         }
     }
 
