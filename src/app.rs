@@ -153,13 +153,11 @@ impl App {
     pub fn tick(&mut self) {
         self.rate_tick += 1;
 
-        if self.capturing && self.selected_iface == "simulated" {
+        if self.capturing {
             if rand::random::<u8>() % 3 == 0 {
                 let entry = crate::sim::dynamic::generate_entry(self.rate_tick);
                 self.dyn_log.push(entry);
                 if self.dyn_log.len() > 500 { self.dyn_log.remove(0); }
-                // dyn_scroll is offset-from-end (0 = follow tail).
-                // When user hasn't scrolled up, keep it at 0 so the tail stays visible.
             }
         }
 
