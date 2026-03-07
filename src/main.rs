@@ -1,116 +1,81 @@
-use std::{
-    io,
-    time::{Duration, Instant},
-};
+use std::{io, time::Duration};
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
+use futures::StreamExt;
+use ratatui::{backend::CrosstermBackend, Terminal};
+use tokio::time;
 
 mod app;
-mod packet;
-mod ui;
-mod strings;
-mod dynamic;
 mod capture;
+mod event;
+mod export;
+mod filter;
+mod net;
+mod sim;
+mod tabs;
+mod topology;
+mod ui;
 
-use app::{App, Tab};
+use app::App;
+use net::packet::Packet;
 
-fn main() -> Result<()> {
-    // Setup terminal
+#[tokio::main]
+async fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
-    let tick_rate = Duration::from_millis(100);
-    let mut last_tick = Instant::now();
+    let (packet_tx, mut packet_rx) = tokio::sync::mpsc::channel::<Packet>(10_000);
+    let mut app = App::new(packet_tx);
 
-    loop {
-        terminal.draw(|f| ui::draw(f, &mut app))?;
+    let mut tick_interval = time::interval(Duration::from_millis(100));
+    let mut event_reader = crossterm::event::EventStream::new();
 
-        let timeout = tick_rate
-            .checked_sub(last_tick.elapsed())
-            .unwrap_or_default();
+    let result = run_loop(&mut terminal, &mut app, &mut tick_interval, &mut packet_rx, &mut event_reader).await;
 
-        if crossterm::event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                // Always allow quit
-                if key.code == KeyCode::Char('q')
-                    || (key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL)
-                {
-                    break;
-                }
-
-                if app.picking_iface {
-                    match key.code {
-                        KeyCode::Down | KeyCode::Char('j') => app.iface_down(),
-                        KeyCode::Up   | KeyCode::Char('k') => app.iface_up(),
-                        KeyCode::Char(' ') | KeyCode::Enter => app.confirm_iface(),
-                        _ => {}
-                    }
-                } else {
-                    match key.code {
-                        // Tab switching
-                        KeyCode::Char('1') => app.active_tab = Tab::Packets,
-                        KeyCode::Char('2') => app.active_tab = Tab::Analysis,
-                        KeyCode::Char('3') => app.active_tab = Tab::Strings,
-                        KeyCode::Char('4') => app.active_tab = Tab::Dynamic,
-                        KeyCode::Char('5') => app.active_tab = Tab::Visualize,
-                        KeyCode::Tab => app.next_tab(),
-
-                        // Navigation
-                        KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-                        KeyCode::Up   | KeyCode::Char('k') => app.move_up(),
-                        KeyCode::Char('g') => app.move_top(),
-                        KeyCode::Char('G') => app.move_bottom(),
-                        KeyCode::PageDown  => app.page_down(),
-                        KeyCode::PageUp    => app.page_up(),
-
-                        // Capture control
-                        KeyCode::Char(' ') => app.toggle_capture(),
-                        KeyCode::Char('C') => app.clear_packets(),
-
-                        // Filter
-                        KeyCode::Char('/') => app.toggle_filter_mode(),
-                        KeyCode::Esc => app.filter_mode = false,
-                        KeyCode::Enter if app.filter_mode => {
-                            app.filter_mode = false;
-                            app.apply_filter();
-                        }
-                        KeyCode::Backspace if app.filter_mode => {
-                            app.filter_input.pop();
-                            app.apply_filter();
-                        }
-                        KeyCode::Char(c) if app.filter_mode => {
-                            app.filter_input.push(c);
-                            app.apply_filter();
-                        }
-
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        if last_tick.elapsed() >= tick_rate {
-            app.tick();
-            last_tick = Instant::now();
-        }
-    }
-
-    // Restore terminal
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+
+    result
+}
+
+async fn run_loop(
+    terminal: &mut ratatui::Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    tick_interval: &mut time::Interval,
+    packet_rx: &mut tokio::sync::mpsc::Receiver<Packet>,
+    event_reader: &mut crossterm::event::EventStream,
+) -> Result<()> {
+    loop {
+        // Drain every packet already queued — non-blocking so tick never starves.
+        while let Ok(pkt) = packet_rx.try_recv() {
+            app.ingest_packet(pkt);
+        }
+
+        terminal.draw(|f| ui::draw(f, app))?;
+
+        tokio::select! {
+            _ = tick_interval.tick() => {
+                app.tick();
+            }
+            Some(Ok(evt)) = event_reader.next() => {
+                if event::handle(app, evt) {
+                    break;
+                }
+            }
+            // Also wake up when the first new packet arrives so the
+            // next iteration can drain it without waiting a full tick.
+            pkt = packet_rx.recv() => {
+                if let Some(p) = pkt { app.ingest_packet(p); }
+            }
+        }
+    }
     Ok(())
 }
