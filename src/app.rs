@@ -1,6 +1,17 @@
-use std::sync::{Arc, Mutex};
-use crate::packet::{Packet, generate_packet};
-use crate::dynamic::DynEntry;
+use std::collections::VecDeque;
+use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
+
+use crate::capture::CaptureSource;
+use crate::sim::capture::SimulatedCapture;
+use crate::sim::dynamic::DynEntry;
+use crate::export::PcapWriter;
+use crate::filter::PacketFilter;
+use crate::net::packet::Packet;
+use crate::tabs::Tab;
+use crate::topology::TopologyGraph;
+
+const MAX_PACKETS: usize = 10_000;
 
 fn list_interfaces() -> Vec<String> {
     let mut ifaces = vec!["simulated".to_string()];
@@ -15,78 +26,54 @@ fn list_interfaces() -> Vec<String> {
     ifaces
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Tab {
-    Packets,
-    Analysis,
-    Strings,
-    Dynamic,
-    Visualize,
-}
-
-impl Tab {
-    pub fn index(&self) -> usize {
-        match self {
-            Tab::Packets   => 0,
-            Tab::Analysis  => 1,
-            Tab::Strings   => 2,
-            Tab::Dynamic   => 3,
-            Tab::Visualize => 4,
-        }
-    }
-    pub fn from_index(i: usize) -> Self {
-        match i {
-            0 => Tab::Packets,
-            1 => Tab::Analysis,
-            2 => Tab::Strings,
-            3 => Tab::Dynamic,
-            4 => Tab::Visualize,
-            _ => Tab::Packets,
-        }
-    }
-}
-
 pub struct App {
     pub active_tab: Tab,
-    pub packets: Vec<Packet>,
-    pub filtered: Vec<usize>, // indices into packets
-    pub selected: Option<usize>, // index into filtered
-    pub capturing: bool,
-    pub filter_input: String,
-    pub filter_mode: bool,
+    pub packets: VecDeque<Packet>,
+    pub filtered: Vec<usize>,
+    pub selected: Option<usize>,
     pub total_bytes: u64,
     pub packet_counter: u64,
-    pub rate_history: Vec<u32>, // packets per second, last 60s
-    pub rate_this_sec: u32,
-    pub rate_tick: u32,
-    pub dyn_log: Vec<DynEntry>,
-    pub dyn_scroll: usize,
-    pub analysis_section: usize, // which nav item in analysis tab
-    pub strings_filter: String,
-    pub hex_scroll: u16,
-    // Interface selection
+    pub capturing: bool,
+    capture_handle: Option<JoinHandle<()>>,
+    packet_tx: Sender<Packet>,
     pub picking_iface: bool,
     pub iface_list: Vec<String>,
     pub iface_sel: usize,
     pub selected_iface: String,
-    // Real capture sink (populated by capture thread)
-    pub capture_sink: Arc<Mutex<Vec<Packet>>>,
-    pub capture_thread: Option<std::thread::JoinHandle<()>>,
+    pub filter: PacketFilter,
+    pub rate_history: Vec<u32>,
+    pub rate_this_sec: u32,
+    rate_tick: u32,
+    pub dyn_log: Vec<DynEntry>,
+    pub dyn_scroll: usize,
+    pub analysis_section: usize,
+    pub strings_filter: String,
+    pub hex_scroll: u16,
+    pub topology: TopologyGraph,
+    pub recording: bool,
+    pub pcap_path: String,
+    pcap_writer: Option<PcapWriter>,
+    pub show_help: bool,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(packet_tx: Sender<Packet>) -> Self {
         let iface_list = list_interfaces();
         Self {
             active_tab: Tab::Packets,
-            packets: Vec::new(),
+            packets: VecDeque::new(),
             filtered: Vec::new(),
             selected: None,
-            capturing: false,
-            filter_input: String::new(),
-            filter_mode: false,
             total_bytes: 0,
             packet_counter: 0,
+            capturing: false,
+            capture_handle: None,
+            packet_tx,
+            picking_iface: true,
+            iface_list,
+            iface_sel: 0,
+            selected_iface: "simulated".to_string(),
+            filter: PacketFilter::default(),
             rate_history: vec![0u32; 60],
             rate_this_sec: 0,
             rate_tick: 0,
@@ -95,59 +82,70 @@ impl App {
             analysis_section: 0,
             strings_filter: String::new(),
             hex_scroll: 0,
-            picking_iface: true,
-            iface_list,
-            iface_sel: 0,
-            selected_iface: "simulated".to_string(),
-            capture_sink: Arc::new(Mutex::new(Vec::new())),
-            capture_thread: None,
+            topology: TopologyGraph::default(),
+            recording: false,
+            pcap_path: String::new(),
+            pcap_writer: None,
+            show_help: false,
         }
     }
 
     pub fn iface_down(&mut self) {
-        if self.iface_sel + 1 < self.iface_list.len() {
-            self.iface_sel += 1;
-        }
+        if self.iface_sel + 1 < self.iface_list.len() { self.iface_sel += 1; }
     }
 
-    pub fn iface_up(&mut self) {
-        self.iface_sel = self.iface_sel.saturating_sub(1);
-    }
+    pub fn iface_up(&mut self) { self.iface_sel = self.iface_sel.saturating_sub(1); }
 
     pub fn confirm_iface(&mut self) {
         self.selected_iface = self.iface_list[self.iface_sel].clone();
         self.picking_iface = false;
+        self.abort_capture();
 
         if self.selected_iface == "simulated" {
+            self.capture_handle = Some(SimulatedCapture.run(self.packet_tx.clone()));
             self.capturing = true;
         } else {
             #[cfg(feature = "real-capture")]
             {
-                let sink = Arc::clone(&self.capture_sink);
-                let handle = crate::capture::live::start_capture(
-                    &self.selected_iface, None, sink,
-                );
-                self.capture_thread = Some(handle);
+                use crate::capture::live::LiveCapture;
+                let source = LiveCapture { iface: self.selected_iface.clone(), filter: None };
+                self.capture_handle = Some(source.run(self.packet_tx.clone()));
                 self.capturing = true;
             }
             #[cfg(not(feature = "real-capture"))]
-            {
-                self.capturing = false;
-            }
+            { self.capturing = false; }
         }
     }
 
-    fn ingest_packet(&mut self, pkt: Packet) {
+    pub fn switch_interface(&mut self) {
+        self.abort_capture();
+        self.picking_iface = true;
+        self.capturing = false;
+    }
+
+    fn abort_capture(&mut self) {
+        if let Some(handle) = self.capture_handle.take() { handle.abort(); }
+    }
+
+    pub fn ingest_packet(&mut self, pkt: Packet) {
+        if !self.capturing { return; }
         self.packet_counter += 1;
         self.total_bytes += pkt.length as u64;
         self.rate_this_sec += 1;
-        if self.matches_filter(&pkt) {
+        self.topology.update(&pkt);
+
+        if self.recording {
+            if let Some(ref mut writer) = self.pcap_writer { let _ = writer.write_packet(&pkt); }
+        }
+
+        if self.filter.matches(&pkt) {
             self.filtered.push(self.packets.len());
             if self.selected.is_none() { self.selected = Some(0); }
         }
-        self.packets.push(pkt);
-        if self.packets.len() > 2000 {
-            self.packets.remove(0);
+
+        self.packets.push_back(pkt);
+        if self.packets.len() > MAX_PACKETS {
+            self.packets.pop_front();
             self.rebuild_filtered();
         }
     }
@@ -156,35 +154,13 @@ impl App {
         self.rate_tick += 1;
 
         if self.capturing {
-            if self.selected_iface == "simulated" {
-                // Simulated: generate random packets each tick
-                let burst = (rand::random::<u8>() % 4) + 1;
-                for _ in 0..burst {
-                    let pkt = generate_packet(self.packet_counter);
-                    self.ingest_packet(pkt);
-                }
-                // Simulated dynamic trace entries
-                if rand::random::<u8>() % 3 == 0 {
-                    let entry = crate::dynamic::generate_entry(self.rate_tick);
-                    self.dyn_log.push(entry);
-                    if self.dyn_log.len() > 500 { self.dyn_log.remove(0); }
-                    self.dyn_scroll = self.dyn_log.len().saturating_sub(1);
-                }
-            } else {
-                // Real interface: drain packets delivered by the capture thread.
-                // Collect into a local vec first so the lock is released before
-                // we call ingest_packet (which needs &mut self).
-                let pkts: Vec<Packet> = self.capture_sink
-                    .try_lock()
-                    .map(|mut g| g.drain(..).collect())
-                    .unwrap_or_default();
-                for pkt in pkts {
-                    self.ingest_packet(pkt);
-                }
+            if rand::random::<u8>() % 3 == 0 {
+                let entry = crate::sim::dynamic::generate_entry(self.rate_tick);
+                self.dyn_log.push(entry);
+                if self.dyn_log.len() > 500 { self.dyn_log.remove(0); }
             }
         }
 
-        // Rate counter: every 10 ticks = 1 second
         if self.rate_tick % 10 == 0 {
             self.rate_history.push(self.rate_this_sec);
             self.rate_history.remove(0);
@@ -192,9 +168,7 @@ impl App {
         }
     }
 
-    pub fn toggle_capture(&mut self) {
-        self.capturing = !self.capturing;
-    }
+    pub fn toggle_capture(&mut self) { self.capturing = !self.capturing; }
 
     pub fn clear_packets(&mut self) {
         self.capturing = false;
@@ -203,87 +177,77 @@ impl App {
         self.selected = None;
         self.total_bytes = 0;
         self.packet_counter = 0;
+        self.topology.clear();
     }
 
-    pub fn apply_filter(&mut self) {
-        self.rebuild_filtered();
-    }
-
-    pub fn rebuild_filtered(&mut self) {
-        self.filtered = self.packets.iter().enumerate()
-            .filter(|(_, p)| self.matches_filter(p))
-            .map(|(i, _)| i)
-            .collect();
-        if let Some(sel) = self.selected {
-            if sel >= self.filtered.len() {
-                self.selected = if self.filtered.is_empty() {
-                    None
-                } else {
-                    Some(self.filtered.len() - 1)
-                };
+    pub fn toggle_recording(&mut self) {
+        if self.recording {
+            if let Some(ref mut w) = self.pcap_writer { let _ = w.flush(); }
+            self.pcap_writer = None;
+            self.recording = false;
+        } else {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default().as_secs();
+            let filename = format!("packrat_{}.pcap", ts);
+            // Try CWD first, then home directory as fallback.
+            let candidates = [
+                filename.clone(),
+                dirs_next::home_dir()
+                    .map(|h| h.join(&filename).to_string_lossy().into_owned())
+                    .unwrap_or_else(|| format!("/tmp/{}", filename)),
+            ];
+            for path in &candidates {
+                if let Ok(writer) = PcapWriter::new(std::path::Path::new(path)) {
+                    self.pcap_path = path.clone();
+                    self.pcap_writer = Some(writer);
+                    self.recording = true;
+                    break;
+                }
             }
         }
     }
 
-    pub fn matches_filter(&self, p: &Packet) -> bool {
-        let f = self.filter_input.trim().to_lowercase();
-        if f.is_empty() { return true; }
-        if let Some(ip) = f.strip_prefix("ip.src==") { return p.src == ip; }
-        if let Some(ip) = f.strip_prefix("ip.dst==") { return p.dst == ip; }
-        if let Some(port) = f.strip_prefix("tcp.port==") {
-            return p.src_port.map(|x| x.to_string()) == Some(port.to_string())
-                || p.dst_port.map(|x| x.to_string()) == Some(port.to_string());
+    pub fn rebuild_filtered(&mut self) {
+        self.filtered = self.packets.iter().enumerate()
+            .filter(|(_, p)| self.filter.matches(p))
+            .map(|(i, _)| i)
+            .collect();
+        if let Some(sel) = self.selected {
+            if sel >= self.filtered.len() {
+                self.selected = if self.filtered.is_empty() { None } else { Some(self.filtered.len() - 1) };
+            }
         }
-        p.protocol.to_lowercase().contains(&f)
-            || p.src.contains(&f)
-            || p.dst.contains(&f)
-            || p.info.to_lowercase().contains(&f)
-    }
-
-    pub fn toggle_filter_mode(&mut self) {
-        self.filter_mode = !self.filter_mode;
     }
 
     pub fn selected_packet(&self) -> Option<&Packet> {
         self.selected.and_then(|i| self.filtered.get(i)).and_then(|&pi| self.packets.get(pi))
     }
 
-    // Navigation
+    pub fn current_rate(&self) -> u32 { *self.rate_history.last().unwrap_or(&0) }
+
     pub fn move_down(&mut self) {
         match self.active_tab {
-            Tab::Packets => {
+            Tab::Packets  => {
                 if let Some(sel) = self.selected {
-                    if sel + 1 < self.filtered.len() {
-                        self.selected = Some(sel + 1);
-                    }
-                } else if !self.filtered.is_empty() {
-                    self.selected = Some(0);
-                }
+                    if sel + 1 < self.filtered.len() { self.selected = Some(sel + 1); }
+                } else if !self.filtered.is_empty() { self.selected = Some(0); }
             }
-            Tab::Analysis => {
-                if self.analysis_section < 5 { self.analysis_section += 1; }
-            }
-            Tab::Dynamic => {
-                if self.dyn_scroll + 1 < self.dyn_log.len() {
-                    self.dyn_scroll += 1;
-                }
-            }
+            Tab::Analysis => { if self.analysis_section < 5 { self.analysis_section += 1; } }
+            // j = toward tail (decrease offset-from-end)
+            Tab::Dynamic  => { self.dyn_scroll = self.dyn_scroll.saturating_sub(1); }
             _ => {}
         }
     }
 
     pub fn move_up(&mut self) {
         match self.active_tab {
-            Tab::Packets => {
-                if let Some(sel) = self.selected {
-                    if sel > 0 { self.selected = Some(sel - 1); }
-                }
-            }
-            Tab::Analysis => {
-                if self.analysis_section > 0 { self.analysis_section -= 1; }
-            }
-            Tab::Dynamic => {
-                self.dyn_scroll = self.dyn_scroll.saturating_sub(1);
+            Tab::Packets  => { if let Some(sel) = self.selected { if sel > 0 { self.selected = Some(sel - 1); } } }
+            Tab::Analysis => { if self.analysis_section > 0 { self.analysis_section -= 1; } }
+            // k = away from tail (increase offset-from-end), clamped to log length
+            Tab::Dynamic  => {
+                let max = self.dyn_log.len().saturating_sub(1);
+                if self.dyn_scroll < max { self.dyn_scroll += 1; }
             }
             _ => {}
         }
@@ -296,34 +260,33 @@ impl App {
     }
 
     pub fn move_bottom(&mut self) {
-        if matches!(self.active_tab, Tab::Packets) && !self.filtered.is_empty() {
-            self.selected = Some(self.filtered.len() - 1);
+        match self.active_tab {
+            Tab::Packets if !self.filtered.is_empty() => {
+                self.selected = Some(self.filtered.len() - 1);
+            }
+            Tab::Dynamic => {
+                self.dyn_scroll = 0; // 0 = tail (offset-from-end model)
+            }
+            _ => {}
         }
     }
 
     pub fn page_down(&mut self) {
         if matches!(self.active_tab, Tab::Packets) {
             if let Some(sel) = self.selected {
-                let new = (sel + 10).min(self.filtered.len().saturating_sub(1));
-                self.selected = Some(new);
+                self.selected = Some((sel + 10).min(self.filtered.len().saturating_sub(1)));
             }
         }
     }
 
     pub fn page_up(&mut self) {
         if matches!(self.active_tab, Tab::Packets) {
-            if let Some(sel) = self.selected {
-                self.selected = Some(sel.saturating_sub(10));
-            }
+            if let Some(sel) = self.selected { self.selected = Some(sel.saturating_sub(10)); }
         }
     }
 
     pub fn next_tab(&mut self) {
-        let next = (self.active_tab.index() + 1) % 5;
+        let next = (self.active_tab.index() + 1) % Tab::COUNT;
         self.active_tab = Tab::from_index(next);
-    }
-
-    pub fn current_rate(&self) -> u32 {
-        *self.rate_history.last().unwrap_or(&0)
     }
 }
