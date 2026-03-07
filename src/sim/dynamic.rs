@@ -34,7 +34,6 @@ pub fn generate_entry(tick: u32) -> DynEntry {
 
     let r: u8 = rng.gen_range(0..10);
     if r == 0 {
-        // Signal
         let sig = SIGNALS[rng.gen_range(0..SIGNALS.len())];
         DynEntry {
             ts,
@@ -44,7 +43,6 @@ pub fn generate_entry(tick: u32) -> DynEntry {
             retval: String::new(),
         }
     } else if r == 1 {
-        // Network event
         let src = LOCAL_IPS[rng.gen_range(0..LOCAL_IPS.len())];
         let dst = REMOTE_IPS[rng.gen_range(0..REMOTE_IPS.len())];
         let protos = ["TCP","UDP","DNS","TLS"];
@@ -57,7 +55,6 @@ pub fn generate_entry(tick: u32) -> DynEntry {
             retval: String::new(),
         }
     } else {
-        // Syscall
         let sc = SYSCALLS[rng.gen_range(0..SYSCALLS.len())];
         let args = gen_args(sc, &mut rng);
         let ret_neg = rng.gen_bool(0.08);

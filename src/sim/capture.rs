@@ -3,7 +3,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 
 use crate::capture::CaptureSource;
-use crate::net::generator::generate_packet;
+use crate::sim::generator::generate_packet;
 use crate::net::packet::Packet;
 
 pub struct SimulatedCapture;
