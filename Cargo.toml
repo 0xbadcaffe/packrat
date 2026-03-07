@@ -1,13 +1,10 @@
 [package]
 name = "packrat"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "A Wireshark-style network packet analyzer TUI, in the style of binsider"
+description = "A Wireshark-style network packet analyzer TUI"
 license = "MIT"
 authors = []
-repository = ""
-keywords = ["network", "packet", "tui", "analyzer", "wireshark"]
-categories = ["command-line-utilities", "network-programming"]
 
 [[bin]]
 name = "packrat"
@@ -15,15 +12,13 @@ path = "src/main.rs"
 
 [dependencies]
 ratatui    = "0.29"
-crossterm  = "0.28"
+crossterm  = { version = "0.28", features = ["event-stream"] }
+tokio      = { version = "1", features = ["full"] }
+futures    = "0.3"
 rand       = "0.8"
 chrono     = { version = "0.4", features = ["clock"] }
 anyhow     = "1.0"
-
-# Optional: enable real packet capture
-# Requires libpcap (Linux/macOS) or Npcap SDK (Windows) installed first
-# Build with: cargo build --release --features real-capture
-pcap = { version = "2.0", optional = true }
+pcap       = { version = "2.0", optional = true }
 
 [features]
 default        = []
