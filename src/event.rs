@@ -88,7 +88,7 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::Char('C') => app.clear_packets(),
 
         // PCAP export recording
-        KeyCode::Char('W') => app.toggle_recording(),
+        KeyCode::Char('w') => app.toggle_recording(),
 
         // Filter
         KeyCode::Char('/') => app.filter.active = true,
