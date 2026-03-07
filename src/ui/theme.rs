@@ -1,0 +1,46 @@
+use ratatui::style::Color;
+use crate::net::packet::FieldColor;
+
+pub const C_CYAN:    Color = Color::Rgb(95, 215, 215);
+pub const C_GREEN:   Color = Color::Rgb(135, 215, 0);
+pub const C_YELLOW:  Color = Color::Rgb(215, 175, 0);
+pub const C_RED:     Color = Color::Rgb(215, 95, 95);
+pub const C_MAGENTA: Color = Color::Rgb(175, 135, 215);
+pub const C_ORANGE:  Color = Color::Rgb(215, 135, 95);
+pub const C_FG:      Color = Color::Rgb(212, 212, 212);
+pub const C_FG2:     Color = Color::Rgb(154, 154, 154);
+pub const C_FG3:     Color = Color::Rgb(90, 90, 90);
+pub const C_BG:      Color = Color::Rgb(28, 28, 28);
+pub const C_BG2:     Color = Color::Rgb(36, 36, 36);
+pub const C_BG3:     Color = Color::Rgb(44, 44, 44);
+pub const C_SEL_BG:  Color = Color::Rgb(0, 95, 95);
+pub const C_BORDER:  Color = Color::Rgb(68, 68, 68);
+
+pub fn proto_color(proto: &str) -> Color {
+    match proto {
+        "TCP"           => C_CYAN,
+        "UDP"           => C_GREEN,
+        "DNS" | "mDNS"  => C_YELLOW,
+        "HTTP"          => C_ORANGE,
+        "HTTPS" | "TLS" => C_MAGENTA,
+        "ARP"           => C_FG2,
+        "ICMP"          => C_RED,
+        "DHCP"          => C_YELLOW,
+        "SSH"           => C_GREEN,
+        "QUIC"          => C_MAGENTA,
+        "NTP"           => C_FG2,
+        _               => C_FG,
+    }
+}
+
+pub fn field_color(fc: &FieldColor) -> Color {
+    match fc {
+        FieldColor::Cyan    => C_CYAN,
+        FieldColor::Green   => C_GREEN,
+        FieldColor::Yellow  => C_YELLOW,
+        FieldColor::Red     => C_RED,
+        FieldColor::Magenta => C_MAGENTA,
+        FieldColor::Orange  => C_ORANGE,
+        FieldColor::Default => C_FG,
+    }
+}
