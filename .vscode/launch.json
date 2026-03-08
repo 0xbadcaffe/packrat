@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug packrat",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=packrat"],
+        "filter": { "name": "packrat", "kind": "bin" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated"
+    },
+    {
+      "name": "Debug packrat (real-capture)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=packrat", "--features=real-capture"],
+        "filter": { "name": "packrat", "kind": "bin" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated"
+    },
+    {
+      "name": "Run packrat",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/packrat",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build",
+      "terminal": "integrated"
+    }
+  ]
+}
