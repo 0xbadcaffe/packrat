@@ -1,0 +1,9 @@
+{
+  "rust-analyzer.cargo.features": [],
+  "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.checkOnSave.extraArgs": ["--", "-W", "clippy::all"],
+  "[rust]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  }
+}
