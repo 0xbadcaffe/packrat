@@ -3,37 +3,34 @@
   "configurations": [
     {
       "name": "Debug packrat",
-      "type": "lldb",
-      "request": "launch",
-      "cargo": {
-        "args": ["build", "--bin=packrat"],
-        "filter": { "name": "packrat", "kind": "bin" }
-      },
-      "args": [],
-      "cwd": "${workspaceFolder}",
-      "terminal": "integrated"
-    },
-    {
-      "name": "Debug packrat (real-capture)",
-      "type": "lldb",
-      "request": "launch",
-      "cargo": {
-        "args": ["build", "--bin=packrat", "--features=real-capture"],
-        "filter": { "name": "packrat", "kind": "bin" }
-      },
-      "args": [],
-      "cwd": "${workspaceFolder}",
-      "terminal": "integrated"
-    },
-    {
-      "name": "Run packrat",
-      "type": "lldb",
+      "type": "lldb-dap",
       "request": "launch",
       "program": "${workspaceFolder}/target/debug/packrat",
       "args": [],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "cargo build",
       "terminal": "integrated"
+    },
+    {
+      "name": "Debug packrat (real-capture)",
+      "type": "lldb-dap",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/packrat",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build (real-capture)",
+      "terminal": "integrated"
+    },
+    {
+      "name": "Run packrat (no debugger)",
+      "type": "lldb-dap",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/packrat",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build",
+      "terminal": "integrated",
+      "noDebug": true
     }
   ]
 }
