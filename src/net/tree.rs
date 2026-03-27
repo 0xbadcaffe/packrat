@@ -68,7 +68,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
 
     // IP layer
     let ttl: u8 = rng.gen_range(48..=128);
-    let id: u16 = rng.gen();
+    let id: u16 = rng.r#gen();
     let proto_num = match pkt.protocol.as_str() {
         "TCP" | "HTTP" | "HTTPS" | "TLS" | "SSH" | "SMTP" | "MySQL" | "Redis" => "6 (TCP)",
         "UDP" | "DNS" | "mDNS" | "DHCP" | "NTP" | "QUIC" | "SNMP"            => "17 (UDP)",
@@ -100,14 +100,14 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 fields: vec![
                     tf("Type:", "8 (Echo Request)", FieldColor::Yellow),
                     tf("Code:", "0", FieldColor::Default),
-                    tf("Identifier:", &format!("0x{:04x}", rng.gen::<u16>()), FieldColor::Cyan),
+                    tf("Identifier:", &format!("0x{:04x}", rng.r#gen::<u16>()), FieldColor::Cyan),
                     tf("Sequence Number:", &rng.gen_range(0..=100u16).to_string(), FieldColor::Default),
                 ],
             });
         }
         "DNS" | "mDNS" => {
             let sp = pkt.src_port.unwrap_or(12345);
-            let tid: u16 = rng.gen();
+            let tid: u16 = rng.r#gen();
             let name = DNS_NAMES[rng.gen_range(0..DNS_NAMES.len())];
             let is_query = rng.gen_bool(0.5);
             sections.push(TreeSection {
@@ -127,7 +127,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
             ];
             if !is_query {
                 dns_fields.push(tf("Answer Addr:",
-                    &format!("{}.{}.{}.{}", rng.gen_range(1..254u8), rng.gen::<u8>(), rng.gen::<u8>(), rng.gen_range(1..254u8)),
+                    &format!("{}.{}.{}.{}", rng.gen_range(1..254u8), rng.r#gen::<u8>(), rng.r#gen::<u8>(), rng.gen_range(1..254u8)),
                     FieldColor::Orange));
             }
             sections.push(TreeSection {
@@ -177,15 +177,15 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 fields: vec![
                     tf("Version:", "1 (0x00000001)", FieldColor::Cyan),
                     tf("Packet Type:", "Initial", FieldColor::Yellow),
-                    tf("Destination CID:", &format!("0x{:016x}", rng.gen::<u64>()), FieldColor::Green),
+                    tf("Destination CID:", &format!("0x{:016x}", rng.r#gen::<u64>()), FieldColor::Green),
                 ],
             });
         }
         proto if matches!(proto, "TCP" | "HTTP" | "HTTPS" | "TLS" | "SSH" | "MySQL" | "Redis" | "PostgreSQL") => {
             let sp = pkt.src_port.unwrap_or(12345);
             let dp = pkt.dst_port.unwrap_or(80);
-            let seq: u32 = rng.gen();
-            let ack: u32 = rng.gen();
+            let seq: u32 = rng.r#gen();
+            let ack: u32 = rng.r#gen();
             let win: u16 = rng.gen_range(1024..=65535);
             let flags = ["ACK", "PSH, ACK", "SYN", "FIN, ACK", "RST, ACK"][rng.gen_range(0..5)];
             sections.push(TreeSection {

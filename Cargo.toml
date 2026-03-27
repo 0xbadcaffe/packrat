@@ -1,7 +1,7 @@
 [package]
 name = "packrat-tui"
-version = "0.2.0"
-edition = "2021"
+version = "0.2.1"
+edition = "2024"
 description = "A Wireshark-style terminal packet analyzer for live capture and simulated traffic inspection"
 license = "MIT"
 readme = "README.md"
