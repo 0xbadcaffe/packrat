@@ -1,0 +1,264 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1919" height="1016" viewBox="0 0 1919 1016" fill="none">
+  <defs>
+    <style>
+      .bg { fill: #1d1c1f; }
+      .panel { fill: #202124; stroke: #4a454c; stroke-width: 2; }
+      .muted { fill: #8b8791; font: 15px "JetBrains Mono", "Fira Code", monospace; }
+      .text { fill: #d5d0d8; font: 15px "JetBrains Mono", "Fira Code", monospace; }
+      .text-sm { fill: #d5d0d8; font: 13px "JetBrains Mono", "Fira Code", monospace; }
+      .text-lg { fill: #ebe7ef; font: 17px "JetBrains Mono", "Fira Code", monospace; }
+      .bold { font-weight: 700; }
+      .yellow { fill: #f0c419; }
+      .green { fill: #95e600; }
+      .cyan { fill: #59d8ff; }
+      .orange { fill: #ffb74d; }
+      .magenta { fill: #f68be0; }
+      .red { fill: #ff6b81; }
+      .select { fill: #005f66; }
+      .line { stroke: #4a454c; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1919" height="1016"/>
+
+  <text x="8" y="27" class="text-lg bold">
+    <tspan class="yellow">packrat</tspan>
+    <tspan class="muted"> - packet analyzer</tspan>
+    <tspan class="green">  capturing</tspan>
+    <tspan class="muted">  iface: simulated  1018 pkts  1018 total</tspan>
+  </text>
+  <text x="8" y="57" class="text">
+    <tspan class="muted">Display filter: &lt;press / to filter&gt;</tspan>
+    <tspan class="yellow">  [Space]</tspan>
+    <tspan class="muted"> cap</tspan>
+    <tspan class="yellow">  [C]</tspan>
+    <tspan class="muted"> clear</tspan>
+    <tspan class="yellow">  [/]</tspan>
+    <tspan class="muted"> filter</tspan>
+    <tspan class="yellow">  [i]</tspan>
+    <tspan class="muted"> iface</tspan>
+    <tspan class="yellow">  [w]</tspan>
+    <tspan class="muted"> record</tspan>
+    <tspan class="yellow">  [h]</tspan>
+    <tspan class="muted"> help</tspan>
+    <tspan class="yellow">  [q]</tspan>
+    <tspan class="muted"> quit</tspan>
+  </text>
+  <text x="8" y="88" class="text-lg">
+    <tspan class="cyan bold">1 Packets</tspan>
+    <tspan class="muted"> | </tspan>
+    <tspan class="yellow">2</tspan>
+    <tspan class="text"> Analysis</tspan>
+    <tspan class="muted"> | </tspan>
+    <tspan class="yellow">3</tspan>
+    <tspan class="text"> Strings</tspan>
+    <tspan class="muted"> | </tspan>
+    <tspan class="yellow">4</tspan>
+    <tspan class="text"> Dynamic</tspan>
+    <tspan class="muted"> | </tspan>
+    <tspan class="yellow">5</tspan>
+    <tspan class="text"> Visualize</tspan>
+    <tspan class="muted"> | </tspan>
+    <tspan class="yellow">6</tspan>
+    <tspan class="text"> Topology</tspan>
+  </text>
+  <line x1="0" y1="104" x2="1919" y2="104" class="line"/>
+
+  <rect class="panel" x="4" y="102" width="1911" height="330"/>
+  <text x="18" y="133" class="text-lg cyan bold">Packets [1018/1018]</text>
+  <line x1="4" y1="145" x2="1915" y2="145" class="line"/>
+
+  <text x="13" y="169" class="muted">No.</text>
+  <text x="80" y="169" class="muted">Time</text>
+  <text x="178" y="169" class="muted">Source</text>
+  <text x="340" y="169" class="muted">Destination</text>
+  <text x="530" y="169" class="muted">Protocol</text>
+  <text x="600" y="169" class="muted">VLAN</text>
+  <text x="660" y="169" class="muted">Len</text>
+  <text x="720" y="169" class="muted">Info</text>
+
+  <rect class="select" x="8" y="177" width="1898" height="21"/>
+  <text x="13" y="194" class="muted">1</text>
+  <text x="80" y="194" class="text cyan bold">0.0000</text>
+  <text x="178" y="194" class="text bold">10.0.0.1</text>
+  <text x="340" y="194" class="text bold">142.250.80.46</text>
+  <text x="530" y="194" class="text bold">TCP</text>
+  <text x="660" y="194" class="text">554</text>
+  <text x="720" y="194" class="text">27270 -&gt; 443 [SYN] Seq=2357625130 Ack=1991780748</text>
+
+  <text x="13" y="216" class="muted">2</text>
+  <text x="80" y="216" class="text">0.1002</text>
+  <text x="178" y="216" class="text">192.168.1.42</text>
+  <text x="340" y="216" class="text">1.1.1.1</text>
+  <text x="530" y="216" class="green bold">UDP</text>
+  <text x="660" y="216" class="text">851</text>
+  <text x="720" y="216" class="text">37753 -&gt; 9200 Len=809</text>
+
+  <text x="13" y="238" class="muted">3</text>
+  <text x="80" y="238" class="text">0.1002</text>
+  <text x="178" y="238" class="text">10.0.0.1</text>
+  <text x="340" y="238" class="text">172.217.14.206</text>
+  <text x="530" y="238" class="magenta bold">HTTPS</text>
+  <text x="660" y="238" class="text">106</text>
+  <text x="720" y="238" class="text">TLS Application Data</text>
+
+  <text x="13" y="260" class="muted">4</text>
+  <text x="80" y="260" class="text">0.1002</text>
+  <text x="178" y="260" class="text">192.168.1.1</text>
+  <text x="340" y="260" class="text">104.21.55.33</text>
+  <text x="530" y="260" class="magenta bold">HTTPS</text>
+  <text x="660" y="260" class="text">1310</text>
+  <text x="720" y="260" class="text">TLS Certificate</text>
+
+  <text x="13" y="282" class="muted">5</text>
+  <text x="80" y="282" class="text">0.2007</text>
+  <text x="178" y="282" class="text">192.168.1.42</text>
+  <text x="340" y="282" class="text">34.120.208.123</text>
+  <text x="530" y="282" class="magenta bold">HTTPS</text>
+  <text x="660" y="282" class="text">1149</text>
+  <text x="720" y="282" class="text">TLS Finished</text>
+
+  <text x="13" y="304" class="muted">6</text>
+  <text x="80" y="304" class="text">0.2007</text>
+  <text x="178" y="304" class="text">172.16.0.5</text>
+  <text x="340" y="304" class="text">151.101.64.81</text>
+  <text x="530" y="304" class="red bold">ICMP</text>
+  <text x="660" y="304" class="text">121</text>
+  <text x="720" y="304" class="text">Echo request id=0xce83 seq=27</text>
+
+  <text x="13" y="326" class="muted">7</text>
+  <text x="80" y="326" class="text">0.2007</text>
+  <text x="178" y="326" class="text">172.16.0.5</text>
+  <text x="340" y="326" class="text">8.8.8.8</text>
+  <text x="530" y="326" class="yellow bold">DNS</text>
+  <text x="660" y="326" class="text">350</text>
+  <text x="720" y="326" class="text">Response A 41.164.122.111</text>
+
+  <text x="13" y="348" class="muted">8</text>
+  <text x="80" y="348" class="text">0.2007</text>
+  <text x="178" y="348" class="text">192.168.1.1</text>
+  <text x="340" y="348" class="text">52.84.17.200</text>
+  <text x="530" y="348" class="text bold">TCP</text>
+  <text x="660" y="348" class="text">1354</text>
+  <text x="720" y="348" class="text">56836 -&gt; 8080 [SYN, ACK] Seq=3767348300 Ack=610769981</text>
+
+  <text x="13" y="370" class="muted">9</text>
+  <text x="80" y="370" class="text">0.3001</text>
+  <text x="178" y="370" class="text">192.168.1.100</text>
+  <text x="340" y="370" class="text">1.1.1.1</text>
+  <text x="530" y="370" class="yellow bold">DNS</text>
+  <text x="660" y="370" class="text">431</text>
+  <text x="720" y="370" class="text">Response A 11.153.229.245</text>
+
+  <text x="13" y="392" class="muted">10</text>
+  <text x="80" y="392" class="text">0.3001</text>
+  <text x="178" y="392" class="text">172.16.0.5</text>
+  <text x="340" y="392" class="text">1.1.1.1</text>
+  <text x="530" y="392" class="yellow bold">DNS</text>
+  <text x="660" y="392" class="text">1349</text>
+  <text x="720" y="392" class="text">Response A 226.169.134.172</text>
+
+  <text x="13" y="414" class="muted">11</text>
+  <text x="80" y="414" class="text">0.3001</text>
+  <text x="178" y="414" class="text">10.0.0.23</text>
+  <text x="340" y="414" class="text">8.8.8.8</text>
+  <text x="530" y="414" class="yellow bold">DNS</text>
+  <text x="660" y="414" class="text">470</text>
+  <text x="720" y="414" class="text">Response A 61.83.60.108</text>
+
+  <rect class="panel" x="4" y="453" width="792" height="528"/>
+  <rect class="panel" x="807" y="453" width="1107" height="528"/>
+
+  <text x="19" y="478" class="yellow text-lg bold">Protocol Tree</text>
+  <text x="18" y="510" class="yellow text-lg bold">v Frame 1: 554 bytes on wire</text>
+  <text x="24" y="535" class="muted">Frame Number:</text>
+  <text x="240" y="535" class="cyan">1</text>
+  <text x="24" y="558" class="muted">Frame Length:</text>
+  <text x="240" y="558" class="yellow">554 bytes</text>
+  <text x="24" y="581" class="muted">Capture Length:</text>
+  <text x="240" y="581" class="text">554 bytes</text>
+  <text x="24" y="604" class="muted">Protocols:</text>
+  <text x="240" y="604" class="green">eth:ip:tcp</text>
+  <text x="12" y="646" class="yellow text-lg bold">v Ethernet II, Src: 30:7d:33:be:93:fd, Dst: b0:28:f9:1b:a3:10</text>
+  <text x="24" y="671" class="muted">Destination:</text>
+  <text x="240" y="671" class="cyan">b0:28:f9:1b:a3:10</text>
+  <text x="24" y="704" class="yellow text-lg bold">v Internet Protocol Version 4, Src: 10.0.0.1, Dst: 142.250.80.46</text>
+  <text x="24" y="730" class="muted">Version:</text>
+  <text x="240" y="730" class="text">4</text>
+  <text x="24" y="753" class="muted">Header Length:</text>
+  <text x="240" y="753" class="text">20 bytes (5)</text>
+  <text x="24" y="776" class="muted">Total Length:</text>
+  <text x="240" y="776" class="yellow">554</text>
+  <text x="24" y="799" class="muted">TTL:</text>
+  <text x="240" y="799" class="green">73</text>
+  <text x="24" y="822" class="muted">Protocol:</text>
+  <text x="240" y="822" class="green">6 (TCP)</text>
+  <text x="24" y="845" class="muted">Src Address:</text>
+  <text x="240" y="845" class="green">10.0.0.1</text>
+  <text x="24" y="868" class="muted">Dst Address:</text>
+  <text x="240" y="868" class="orange">142.250.80.46</text>
+  <text x="12" y="904" class="yellow text-lg bold">v Transmission Control Protocol, Src Port: 27270, Dst Port: 443</text>
+  <text x="24" y="928" class="muted">Source Port:</text>
+  <text x="240" y="928" class="cyan">27270</text>
+  <text x="24" y="951" class="muted">Destination Port:</text>
+  <text x="240" y="951" class="yellow">443</text>
+
+  <text x="821" y="478" class="yellow text-lg bold">Hex Dump</text>
+  <text x="821" y="510" class="muted">554 bytes | 35 rows</text>
+  <text x="811" y="554" class="muted">0000</text>
+  <text x="870" y="554" class="cyan text-sm">cc f4 5e fa 10 c7 16 21  da 8c 8c bd 00 71 56 88</text>
+  <text x="1410" y="554" class="green text-sm">.^....!...qV.</text>
+  <text x="811" y="579" class="muted">0010</text>
+  <text x="870" y="579" class="cyan text-sm">a1 a2 a3 33 cc 99 86 30  04 2d 47 e3 0c a6 06 88</text>
+  <text x="1410" y="579" class="green text-sm">...3...0.-G.....</text>
+  <text x="811" y="604" class="muted">0020</text>
+  <text x="870" y="604" class="cyan text-sm">9f 35 1e 05 96 90 a0 cc  3a 0a 23 07 1c 0c e0 09</text>
+  <text x="1410" y="604" class="green text-sm">.5......:.#.....</text>
+  <text x="811" y="629" class="muted">0030</text>
+  <text x="870" y="629" class="cyan text-sm">c0 91 ef 9e 26 b4 7a 2b  45 3a 79 4d 30 5c 26 cd</text>
+  <text x="1410" y="629" class="green text-sm">....&amp;.z+E:yM0\&amp;.</text>
+  <text x="811" y="654" class="muted">0040</text>
+  <text x="870" y="654" class="cyan text-sm">38 64 c2 04 4c 2a ec 5f  92 f2 22 9d 61 95 74 32</text>
+  <text x="1410" y="654" class="green text-sm">8d..L*._..".a.t2</text>
+  <text x="811" y="679" class="muted">0050</text>
+  <text x="870" y="679" class="cyan text-sm">54 4c 79 bf 4f 59 97 7e  67 62 57 9e 02 56 11 bc</text>
+  <text x="1410" y="679" class="green text-sm">TLy.OY.~gbW..V..</text>
+  <text x="811" y="704" class="muted">0060</text>
+  <text x="870" y="704" class="cyan text-sm">3d 1f 26 e3 41 3e 2a ec  26 64 e8 0e 1f 6d 2d 26</text>
+  <text x="1410" y="704" class="green text-sm">=.&amp;.A&gt;*.&amp;d...m-&amp;</text>
+  <text x="811" y="729" class="muted">0070</text>
+  <text x="870" y="729" class="cyan text-sm">23 56 4f 0d 7d 01 d9 39  e9 7a 98 8c 20 37 da 35</text>
+  <text x="1410" y="729" class="green text-sm">#VO.}..9.z.. 7.5</text>
+  <text x="811" y="754" class="muted">0080</text>
+  <text x="870" y="754" class="cyan text-sm">5e 5f 3d eb 76 9d 2f 7c  e8 6a 34 42 7c 17 cd 46</text>
+  <text x="1410" y="754" class="green text-sm">^_=.v./|.j4B|..F</text>
+  <text x="811" y="779" class="muted">0090</text>
+  <text x="870" y="779" class="cyan text-sm">65 2f e2 70 49 37 b2 25  33 59 fd c8 d1 3f 2b 6a</text>
+  <text x="1410" y="779" class="green text-sm">e/.pI7.%3Y...?+j</text>
+  <text x="811" y="804" class="muted">00a0</text>
+  <text x="870" y="804" class="cyan text-sm">d1 6e dc 22 1d 4d 29 d3  63 2a 65 50 4d 1a 37 2f</text>
+  <text x="1410" y="804" class="green text-sm">.n.".M).c*ePM.7/</text>
+  <text x="811" y="829" class="muted">00b0</text>
+  <text x="870" y="829" class="cyan text-sm">ee 8f 67 2b 43 62 25 49  82 56 52 f5 0b 5c 2d 85</text>
+  <text x="1410" y="829" class="green text-sm">..g+Cb%I.VR..\-. </text>
+  <text x="811" y="854" class="muted">00c0</text>
+  <text x="870" y="854" class="cyan text-sm">0b 76 2a 61 2c 2b 56 ca  46 27 61 dd f7 a7 bb b2</text>
+  <text x="1410" y="854" class="green text-sm">.v*a,+V.F'a.....</text>
+  <text x="811" y="879" class="muted">00d0</text>
+  <text x="870" y="879" class="cyan text-sm">50 85 7a 64 25 19 56 53  e2 74 86 41 1c 20 fe 79</text>
+  <text x="1410" y="879" class="green text-sm">P.zd%.VS.t.A. .y</text>
+  <text x="811" y="904" class="muted">00e0</text>
+  <text x="870" y="904" class="cyan text-sm">0d 64 9b 57 4d 56 fd f1  9e bf ac 1a 71 31 01 5c</text>
+  <text x="1410" y="904" class="green text-sm">.d.WMV......q1.\</text>
+  <text x="811" y="929" class="muted">00f0</text>
+  <text x="870" y="929" class="cyan text-sm">6a 4f e6 40 89 e2 b9 82  f8 23 f2 3f 4c aa 69 85</text>
+  <text x="1410" y="929" class="green text-sm">jO.@.....#.?.L.i.</text>
+
+  <line x1="0" y1="982" x2="1919" y2="982" class="line"/>
+  <text x="10" y="1006" class="text-lg">
+    <tspan class="green bold">o LIVE</tspan>
+    <tspan class="muted">  pkts:1018 total:1018 bytes:716.3K</tspan>
+    <tspan class="green"> rate:32/s</tspan>
+    <tspan class="muted">   j/k:nav  g/G:top/bot  Space:cap  /:filter  i:iface  w:record  h:help  1-6:tabs  q:quit</tspan>
+  </text>
+</svg>
