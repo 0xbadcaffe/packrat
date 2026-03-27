@@ -1,6 +1,13 @@
-# 🐀 packrat
+# packrat
 
-> A Wireshark-style network packet analyzer TUI, built with **Rust + Ratatui** in the style of **binsider**.
+> A Wireshark-style network packet analyzer TUI built with **Rust + Ratatui**.
+
+> Crates.io package: `packrat-tui`  
+> Installed binary: `packrat`
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/0xbadcaffe/packrat/master/assets/packrat-screenshot.svg" alt="Packrat TUI screenshot" />
+</p>
 
 ```
                      __                   __
@@ -9,6 +16,20 @@ ___________    ____ |  | ______________ _/  |_
 |  |_> > __ \\  \___|    <  |  | \// __ \|  |
 |   __(____  /\___  >__|_ \ |__|  (____  /__|
 |__|       \/     \/     \/            \/
+```
+
+## Install
+
+```bash
+# Demo/simulated traffic mode (no libpcap/Npcap required)
+cargo install packrat-tui
+packrat
+```
+
+```bash
+# Real interface capture support
+cargo install packrat-tui --features real-capture
+packrat
 ```
 
 ## Features
@@ -20,13 +41,15 @@ ___________    ____ |  | ______________ _/  |_
 | **3 Strings**   | Extracted strings with sensitive data flagging |
 | **4 Dynamic**   | Live syscall / signal / network trace log |
 | **5 Visualize** | Protocol bars, traffic sparkline, top IPs, geo endpoints |
+| **6 Topology**  | Host relationship map with packet flow summaries |
 
-## Quick Start
+## Build From Source
 
 ```bash
 # Install Rust (one-time) — https://rustup.rs
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
+git clone https://github.com/0xbadcaffe/packrat.git
 cd packrat
 cargo run                          # dev build
 cargo build --release              # optimised binary
@@ -41,8 +64,11 @@ cargo build --release              # optimised binary
 | `Space` | Start / Stop capture |
 | `j/k` `↑↓` | Navigate |
 | `g / G` | Top / Bottom |
-| `1–5` | Switch tabs |
+| `1–6` | Switch tabs |
 | `/` | Filter |
+| `i` | Pick interface |
+| `w` | Toggle PCAP recording |
+| `h` | Help |
 | `C` | Clear |
 | `q` | Quit |
 

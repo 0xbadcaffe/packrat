@@ -1,10 +1,23 @@
 [package]
-name = "packrat"
+name = "packrat-tui"
 version = "0.2.0"
 edition = "2021"
-description = "A Wireshark-style network packet analyzer TUI"
+description = "A Wireshark-style terminal packet analyzer for live capture and simulated traffic inspection"
 license = "MIT"
-authors = []
+readme = "README.md"
+repository = "https://github.com/0xbadcaffe/packrat"
+homepage = "https://github.com/0xbadcaffe/packrat"
+documentation = "https://docs.rs/packrat-tui"
+keywords = ["network", "packet", "tui", "pcap", "wireshark"]
+categories = ["command-line-utilities", "network-programming", "visualization"]
+include = [
+    "src/**/*",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "LICENSE",
+    "assets/packrat-screenshot.svg",
+]
 
 [[bin]]
 name = "packrat"
