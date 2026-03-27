@@ -75,8 +75,8 @@ pub fn generate_entry(tick: u32) -> DynEntry {
 
 fn gen_args(sc: &str, rng: &mut impl Rng) -> String {
     match sc {
-        "read"    => format!("{}, 0x{:06x}, {}", rng.gen_range(0..20u8), rng.gen::<u32>() & 0xffffff, rng.gen_range(1..4096u16)),
-        "write"   => format!("{}, 0x{:06x}, {}", rng.gen_range(0..20u8), rng.gen::<u32>() & 0xffffff, rng.gen_range(1..1024u16)),
+        "read"    => format!("{}, 0x{:06x}, {}", rng.gen_range(0..20u8), rng.r#gen::<u32>() & 0xffffff, rng.gen_range(1..4096u16)),
+        "write"   => format!("{}, 0x{:06x}, {}", rng.gen_range(0..20u8), rng.r#gen::<u32>() & 0xffffff, rng.gen_range(1..1024u16)),
         "open"    => {
             let files = ["/etc/resolv.conf","/var/log/syslog","/proc/net/tcp","/dev/urandom","/etc/passwd"];
             format!("\"{}\", O_RDONLY, 0644", files[rng.gen_range(0..files.len())])
@@ -90,14 +90,14 @@ fn gen_args(sc: &str, rng: &mut impl Rng) -> String {
             let ip = REMOTE_IPS[rng.gen_range(0..REMOTE_IPS.len())];
             format!("{}, {{AF_INET, htons({}), \"{}\"}}, 16", rng.gen_range(3..20u8), rng.gen_range(1..65535u16), ip)
         }
-        "sendto"  => format!("{}, 0x{:06x}, {}, 0", rng.gen_range(3..20u8), rng.gen::<u32>() & 0xffffff, rng.gen_range(1..4096u16)),
-        "recvfrom"=> format!("{}, 0x{:06x}, {}, 0", rng.gen_range(3..20u8), rng.gen::<u32>() & 0xffffff, rng.gen_range(1..4096u16)),
+        "sendto"  => format!("{}, 0x{:06x}, {}, 0", rng.gen_range(3..20u8), rng.r#gen::<u32>() & 0xffffff, rng.gen_range(1..4096u16)),
+        "recvfrom"=> format!("{}, 0x{:06x}, {}, 0", rng.gen_range(3..20u8), rng.r#gen::<u32>() & 0xffffff, rng.gen_range(1..4096u16)),
         "mmap"    => format!("NULL, {}, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0", rng.gen_range(4096..65536u32)),
         "execve"  => {
             let bins = ["\"/bin/bash\"","\"/usr/bin/python3\"","\"/bin/sh\"","\"/usr/bin/curl\""];
             format!("{}, [...], [...]", bins[rng.gen_range(0..bins.len())])
         }
         "kill"    => format!("{}, SIG{}", rng.gen_range(1..9999u16), ["TERM","KILL","HUP","USR1"][rng.gen_range(0..4)]),
-        _         => format!("{}, 0x{:06x}", rng.gen_range(0..10u8), rng.gen::<u32>() & 0xffffff),
+        _         => format!("{}, 0x{:06x}", rng.gen_range(0..10u8), rng.r#gen::<u32>() & 0xffffff),
     }
 }

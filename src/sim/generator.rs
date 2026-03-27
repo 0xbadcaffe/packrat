@@ -36,7 +36,7 @@ pub fn generate_packet(counter: u64) -> Packet {
     };
 
     let bytes: Vec<u8> = (0..length).map(|i| {
-        let b: u8 = rng.gen();
+        let b: u8 = rng.r#gen();
         if i < 54 { b }
         else if b % 3 == 0 { rng.gen_range(32..127) }
         else { b }
@@ -52,7 +52,7 @@ pub fn generate_packet(counter: u64) -> Packet {
         "ICMP" => {
             let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
             let dst = rand_ip(REMOTE_IPS, &mut rng).to_string();
-            let id: u16 = rng.gen();
+            let id: u16 = rng.r#gen();
             let seq: u16 = rng.gen_range(1..=100);
             (src, dst, None, None,
              format!("Echo request id=0x{:04x} seq={}", id, seq))
@@ -61,20 +61,20 @@ pub fn generate_packet(counter: u64) -> Packet {
             let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
             let dst = if rng.gen_bool(0.7) { "8.8.8.8" } else { "1.1.1.1" }.to_string();
             let name = DNS_NAMES[rng.gen_range(0..DNS_NAMES.len())];
-            let tid: u16 = rng.gen();
+            let tid: u16 = rng.r#gen();
             let info = if rng.gen_bool(0.5) {
                 format!("Query 0x{:04x} A {}", tid, name)
             } else {
                 format!("Response A {}.{}.{}.{}",
-                    rng.gen_range(1..=254u8), rng.gen::<u8>(),
-                    rng.gen::<u8>(), rng.gen_range(1..=254u8))
+                    rng.gen_range(1..=254u8), rng.r#gen::<u8>(),
+                    rng.r#gen::<u8>(), rng.gen_range(1..=254u8))
             };
             let sp: u16 = rng.gen_range(1024..=65535);
             (src, dst, Some(sp), Some(53u16), info)
         }
         "DHCP" => {
             let msg = ["Discover", "Request", "Offer", "ACK"][rng.gen_range(0..4)];
-            let tid: u32 = rng.gen();
+            let tid: u32 = rng.r#gen();
             ("0.0.0.0".into(), "255.255.255.255".into(),
              Some(68u16), Some(67u16),
              format!("DHCP {} TID=0x{:08x}", msg, tid))
@@ -107,8 +107,8 @@ pub fn generate_packet(counter: u64) -> Packet {
             let info = if proto == "TCP" {
                 let flags = ["SYN", "ACK", "PSH, ACK", "FIN, ACK", "RST, ACK", "SYN, ACK"];
                 let f = flags[rng.gen_range(0..flags.len())];
-                let seq: u32 = rng.gen();
-                let ack: u32 = rng.gen();
+                let seq: u32 = rng.r#gen();
+                let ack: u32 = rng.r#gen();
                 format!("{} → {} [{}] Seq={} Ack={}", sp, dp, f, seq, ack)
             } else {
                 format!("{} → {} Len={}", sp, dp, length.saturating_sub(42))
@@ -148,7 +148,7 @@ fn rand_ip<'a>(pool: &[&'a str], rng: &mut impl Rng) -> &'a str {
 
 pub fn rand_mac(rng: &mut impl Rng) -> String {
     (0..6).map(|i| {
-        if i == 0 { format!("{:02x}", rng.gen::<u8>() & 0xfe) }
-        else       { format!("{:02x}", rng.gen::<u8>()) }
+        if i == 0 { format!("{:02x}", rng.r#gen::<u8>() & 0xfe) }
+        else       { format!("{:02x}", rng.r#gen::<u8>()) }
     }).collect::<Vec<_>>().join(":")
 }
