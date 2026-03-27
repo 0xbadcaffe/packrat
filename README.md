@@ -1,4 +1,4 @@
-# packrat
+# 🐀 packrat
 
 > A Wireshark-style network packet analyzer TUI built with **Rust + Ratatui**.
 
