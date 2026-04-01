@@ -2,6 +2,7 @@
 name = "packrat-tui"
 version = "0.2.1"
 edition = "2024"
+rust-version = "1.85"
 description = "A Wireshark-style terminal packet analyzer for live capture and simulated traffic inspection"
 license = "MIT"
 readme = "README.md"
@@ -15,8 +16,10 @@ include = [
     "Cargo.toml",
     "Cargo.lock",
     "README.md",
+    "BUILD.md",
     "LICENSE",
     "assets/packrat-screenshot.svg",
+    ".cargo/config.toml.example",
 ]
 
 [[bin]]

@@ -14,9 +14,30 @@ source ~/.cargo/env   # Linux / macOS
 
 Verify:
 ```bash
-rustc --version   # should print rustc 1.75.0 or newer
+rustc --version   # should print rustc 1.85.0 or newer
 cargo --version
 ```
+
+---
+
+## Supported Targets
+
+`packrat` is a hosted Rust TUI application. In practice that means:
+
+- `rustc` is the compiler; `gcc`, `clang`, `arm-gcc`, and MSVC are linker / toolchain choices underneath Rust.
+- QEMU is a way to run supported operating system targets in emulation. It is not a Cargo target by itself.
+- Bare-metal STM32 / `thumb*` targets are out of scope for this codebase because it depends on `std`, `tokio`, `crossterm`, filesystem access, and a terminal UI.
+
+| Target family | Simulated mode | Real capture | CI coverage | Notes |
+|---------------|----------------|--------------|-------------|-------|
+| Linux `x86_64` / `i686` | ✅ | ✅ | Native + target matrix | Good default for GCC or Clang builds |
+| Linux `aarch64` / `armv7` | ✅ | Best effort | Target matrix | Good fit for ARM SBCs and cross builds |
+| Linux `powerpc64le` | ✅ | Best effort | Target matrix | Useful for PPC server-class Linux |
+| macOS `x86_64` / `aarch64` | ✅ | ✅ | Native + target matrix | Intel + Apple Silicon |
+| Windows `x86_64` MSVC | ✅ | ✅ | Native + target matrix | Visual Studio / `cl` toolchain environment |
+| Windows `x86_64` GNU | ✅ | Best effort | Target matrix | MinGW-style cross builds |
+| QEMU Linux guests | ✅ | Best effort | Manual | Run a supported Linux target inside QEMU |
+| STM32 / bare-metal `thumb*` | ❌ | ❌ | None | Requires a separate no-std embedded app |
 
 ---
 
@@ -163,15 +184,51 @@ cargo install cross
 # Linux x86_64 (from any host)
 cross build --release --target x86_64-unknown-linux-gnu
 
-# Windows (from Linux/macOS) — simulated mode only (no Npcap cross-compile)
+# Linux ARM64
+cross build --release --target aarch64-unknown-linux-gnu
+
+# Linux ARMv7 hard-float
+cross build --release --target armv7-unknown-linux-gnueabihf
+
+# Linux PowerPC64 little-endian
+cross build --release --target powerpc64le-unknown-linux-gnu
+
+# Linux x86 (32-bit)
+cross build --release --target i686-unknown-linux-gnu
+
+# Windows GNU (from Linux/macOS) — simulated mode only
 cross build --release --target x86_64-pc-windows-gnu
 
 # macOS arm64 (Apple Silicon) — requires macOS host
 cargo build --release --target aarch64-apple-darwin
+
+# macOS x86_64 — requires macOS host
+cargo build --release --target x86_64-apple-darwin
 ```
 
 For automated multi-platform releases, see
 [cargo-dist](https://opensource.axo.dev/cargo-dist/).
+
+If you need explicit linker settings for `arm-gcc`-style cross builds, copy
+`.cargo/config.toml.example` to `.cargo/config.toml` and adjust the linker
+paths for your toolchains. For Windows MSVC builds, use a Visual Studio
+Developer Command Prompt or Build Tools environment rather than hard-coding
+`cl.exe` in the repo.
+
+---
+
+## QEMU
+
+QEMU is useful for running or smoke-testing supported Linux targets after you
+build them, especially `aarch64`, `armv7`, and `powerpc64le`. Treat it as a
+runtime environment:
+
+1. Build a normal Linux target with `cargo` or `cross`
+2. Boot a matching Linux guest in QEMU
+3. Copy the binary into the guest and run it there
+
+For packet capture inside QEMU, you still need a guest OS with terminal support
+and libpcap available.
 
 ---
 

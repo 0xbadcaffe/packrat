@@ -89,6 +89,8 @@ http                   tcp.port==443
 | Windows | Windows Terminal | ✅ |
 | WSL2 | Any | ✅ |
 
+For target, architecture, and toolchain details covering x86, x64, ARM, PPC, GCC, Clang, MSVC, and QEMU-based workflows, see [BUILD.md](https://github.com/0xbadcaffe/packrat/blob/master/BUILD.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE)
