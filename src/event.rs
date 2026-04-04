@@ -19,6 +19,14 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
+    // Stream overlay dismisses with Esc
+    if app.stream_overlay.is_some() {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+            app.stream_overlay = None;
+        }
+        return false;
+    }
+
     if app.picking_iface {
         handle_iface_picker(app, key);
     } else if app.strings_search_active {
@@ -148,6 +156,8 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::Char('b') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_bytes(),
         KeyCode::Char('p') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_packets(),
         KeyCode::Char('t') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_time(),
+        KeyCode::Char('s') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_beacon(),
+        KeyCode::Char('f') if matches!(app.active_tab, Tab::Flows) => app.flows_open_stream(),
 
         _ => {}
     }

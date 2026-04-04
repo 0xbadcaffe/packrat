@@ -6,7 +6,6 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
 use crate::app::App;
-use crate::net::flow::FlowFlags;
 use crate::ui::theme::*;
 use crate::ui::helpers::fmt_bytes;
 
@@ -20,15 +19,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     draw_hints(f, chunks[1]);
 }
 
-fn _flag_spans(flags: &FlowFlags) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
-    if flags.beacon    { spans.push(Span::styled("[BEACON] ",    Style::default().fg(C_YELLOW))); }
-    if flags.large     { spans.push(Span::styled("[LARGE] ",     Style::default().fg(C_CYAN))); }
-    if flags.encrypted { spans.push(Span::styled("[ENCRYPTED] ", Style::default().fg(C_MAGENTA))); }
-    if flags.scan      { spans.push(Span::styled("[SCAN] ",      Style::default().fg(C_RED))); }
-    spans
-}
-
 fn draw_flow_table(f: &mut Frame, app: &App, area: Rect) {
     let sorted = app.flow_tracker.sorted_flows(&app.flows_sort);
 
@@ -39,7 +29,9 @@ fn draw_flow_table(f: &mut Frame, app: &App, area: Rect) {
         Cell::from("Pkts").style(Style::default().fg(C_FG2)),
         Cell::from("Bytes").style(Style::default().fg(C_FG2)),
         Cell::from("Duration").style(Style::default().fg(C_FG2)),
+        Cell::from("Score").style(Style::default().fg(C_FG2)),
         Cell::from("Flags").style(Style::default().fg(C_FG2)),
+        Cell::from("Fingerprint").style(Style::default().fg(C_FG2)),
     ]).style(Style::default().bg(C_BG3)).height(1);
 
     let visible_h = area.height.saturating_sub(3) as usize;
@@ -62,17 +54,29 @@ fn draw_flow_table(f: &mut Frame, app: &App, area: Rect) {
             };
             let flag_str = {
                 let mut s = String::new();
-                if flow.flags.beacon    { s.push_str("BEACON "); }
-                if flow.flags.large     { s.push_str("LARGE "); }
+                if flow.flags.beacon    { s.push_str("BCN "); }
+                if flow.flags.large     { s.push_str("LRG "); }
                 if flow.flags.encrypted { s.push_str("ENC "); }
-                if flow.flags.scan      { s.push_str("SCAN"); }
+                if flow.flags.scan      { s.push_str("SCN "); }
+                if flow.flags.long_conn { s.push_str("LNG "); }
+                if flow.flags.strobe    { s.push_str("STR "); }
+                if flow.flags.tcp_anomaly { s.push_str("ANOM"); }
                 s.trim().to_string()
             };
-            let flag_color = if flow.flags.scan { C_RED }
+            let flag_color = if flow.flags.scan || flow.flags.tcp_anomaly { C_RED }
                 else if flow.flags.beacon { C_YELLOW }
                 else if flow.flags.encrypted { C_MAGENTA }
                 else if flow.flags.large { C_CYAN }
                 else { C_FG3 };
+
+            let score_color = if flow.beacon_score > 0.7 { C_RED }
+                else if flow.beacon_score > 0.4 { C_YELLOW }
+                else { C_FG3 };
+
+            let fp = flow.ja3.as_deref()
+                .or(flow.hassh.as_deref())
+                .map(|s| s[..8.min(s.len())].to_string())
+                .unwrap_or_default();
 
             Row::new(vec![
                 Cell::from(flow.key.proto.clone())
@@ -87,25 +91,32 @@ fn draw_flow_table(f: &mut Frame, app: &App, area: Rect) {
                     .style(Style::default().fg(C_FG2).bg(bg)),
                 Cell::from(dur_str)
                     .style(Style::default().fg(C_FG3).bg(bg)),
+                Cell::from(format!("{:.2}", flow.beacon_score))
+                    .style(Style::default().fg(score_color).bg(bg)),
                 Cell::from(flag_str)
                     .style(Style::default().fg(flag_color).bg(bg).add_modifier(Modifier::BOLD)),
+                Cell::from(fp)
+                    .style(Style::default().fg(C_MAGENTA).bg(bg)),
             ])
         })
         .collect();
 
     let sort_label = match app.flows_sort {
-        crate::net::flow::FlowSort::Bytes   => "bytes",
-        crate::net::flow::FlowSort::Packets => "packets",
-        crate::net::flow::FlowSort::Time    => "time",
+        crate::net::flow::FlowSort::Bytes       => "bytes",
+        crate::net::flow::FlowSort::Packets     => "packets",
+        crate::net::flow::FlowSort::Time        => "time",
+        crate::net::flow::FlowSort::BeaconScore => "beacon score",
     };
 
     let widths = [
-        Constraint::Length(12),
-        Constraint::Length(21),
-        Constraint::Length(21),
+        Constraint::Length(10),
+        Constraint::Length(20),
+        Constraint::Length(20),
         Constraint::Length(6),
-        Constraint::Length(9),
         Constraint::Length(8),
+        Constraint::Length(8),
+        Constraint::Length(6),
+        Constraint::Length(14),
         Constraint::Min(0),
     ];
 
@@ -132,15 +143,14 @@ fn draw_hints(f: &mut Frame, area: Rect) {
         Span::styled(":packets  ", Style::default().fg(C_FG3)),
         Span::styled("t", Style::default().fg(C_CYAN)),
         Span::styled(":time  ", Style::default().fg(C_FG3)),
+        Span::styled("s", Style::default().fg(C_CYAN)),
+        Span::styled(":beacon score  ", Style::default().fg(C_FG3)),
+        Span::styled("f", Style::default().fg(C_CYAN)),
+        Span::styled(":follow stream  ", Style::default().fg(C_FG3)),
         Span::styled("Enter", Style::default().fg(C_CYAN)),
-        Span::styled(":filter packets by IP  ", Style::default().fg(C_FG3)),
+        Span::styled(":filter by IP  ", Style::default().fg(C_FG3)),
         Span::styled("j/k", Style::default().fg(C_CYAN)),
-        Span::styled(":navigate  ", Style::default().fg(C_FG3)),
-        Span::styled("Flags: ", Style::default().fg(C_FG3)),
-        Span::styled("[BEACON]", Style::default().fg(C_YELLOW)),
-        Span::styled(" [LARGE]", Style::default().fg(C_CYAN)),
-        Span::styled(" [ENC]", Style::default().fg(C_MAGENTA)),
-        Span::styled(" [SCAN]", Style::default().fg(C_RED)),
+        Span::styled(":navigate", Style::default().fg(C_FG3)),
     ]);
     let p = Paragraph::new(hints).style(Style::default().bg(C_BG));
     f.render_widget(p, area);

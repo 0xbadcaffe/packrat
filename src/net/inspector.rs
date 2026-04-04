@@ -1,4 +1,4 @@
-//! Payload inspector — magic byte detection, XOR analysis, anomaly flagging.
+//! Payload inspector — magic byte detection, XOR analysis, anomaly flagging, credential extraction.
 use crate::net::packet::Packet;
 
 pub struct MagicMatch {
@@ -16,6 +16,13 @@ pub struct Indicators {
     pub xor:       Option<XorResult>,
     pub anomalies: Vec<String>,
     pub entropy:   f64,
+}
+
+pub struct CredentialHit {
+    pub proto:  String,
+    pub kind:   &'static str,  // "HTTP-BasicAuth", "FTP-USER", "FTP-PASS", "SMTP-AUTH", "IMAP-LOGIN"
+    pub value:  String,        // decoded credential
+    pub pkt_no: u64,
 }
 
 const MAGIC_SIGS: &[(&str, &[u8])] = &[
@@ -47,6 +54,10 @@ pub fn shannon_entropy(data: &[u8]) -> f64 {
     -counts.iter().filter(|&&c| c > 0)
         .map(|&c| { let p = c as f64 / n; p * p.log2() })
         .sum::<f64>()
+}
+
+fn shannon_entropy_str(s: &str) -> f64 {
+    shannon_entropy(s.as_bytes())
 }
 
 pub fn detect_magic(payload: &[u8]) -> Vec<MagicMatch> {
@@ -99,6 +110,35 @@ pub fn detect_anomalies(pkt: &Packet) -> Vec<String> {
     if entropy > 7.2 && matches!(pkt.protocol.as_str(), "HTTP" | "FTP" | "Telnet" | "SMTP") {
         anomalies.push(format!("High entropy ({:.2} bits/byte) in cleartext protocol — possible tunneling", entropy));
     }
+
+    // TCP flag anomalies — look for flag byte at typical TCP header offset
+    let flag_offsets = [47usize, 33, 13]; // try multiple offsets
+    for &off in &flag_offsets {
+        if pkt.bytes.len() > off {
+            let flags = pkt.bytes[off];
+            // XMAS scan: FIN+PSH+URG (0x29)
+            if flags == 0x29 {
+                anomalies.push("TCP XMAS scan (FIN+PSH+URG flags)".to_string());
+                break;
+            }
+            // NULL scan: no flags (0x00)
+            if flags == 0x00 && pkt.protocol == "TCP" {
+                anomalies.push("TCP NULL scan (no flags set)".to_string());
+                break;
+            }
+            // SYN+FIN: invalid combination
+            if flags & 0x03 == 0x03 {
+                anomalies.push("TCP SYN+FIN — invalid flag combination".to_string());
+                break;
+            }
+            // FIN only (no ACK): FIN probe
+            if flags == 0x01 {
+                anomalies.push("TCP FIN-only probe (no ACK)".to_string());
+                break;
+            }
+        }
+    }
+
     anomalies
 }
 
@@ -110,4 +150,153 @@ pub fn inspect(pkt: &Packet) -> Indicators {
         anomalies: detect_anomalies(pkt),
         entropy,
     }
+}
+
+// ── Inline base64 decoder ─────────────────────────────────────────────────────
+
+fn b64_decode(input: &str) -> Option<Vec<u8>> {
+    let input = input.trim().replace(['\r', '\n', ' '], "");
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut lookup = [255u8; 256];
+    for (i, &c) in alphabet.iter().enumerate() { lookup[c as usize] = i as u8; }
+    let mut out = Vec::new();
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        let a = lookup.get(bytes[i] as usize).copied().unwrap_or(255);
+        let b = lookup.get(bytes[i+1] as usize).copied().unwrap_or(255);
+        let c = lookup.get(bytes[i+2] as usize).copied().unwrap_or(255);
+        let d = lookup.get(bytes[i+3] as usize).copied().unwrap_or(255);
+        if a == 255 || b == 255 { break; }
+        out.push((a << 2) | (b >> 4));
+        if bytes[i+2] != b'=' { out.push(((b & 0x0f) << 4) | (c >> 2)); }
+        if bytes[i+3] != b'=' && c != 255 { out.push(((c & 0x03) << 6) | d); }
+        i += 4;
+    }
+    Some(out)
+}
+
+// ── Credential extraction ─────────────────────────────────────────────────────
+
+pub fn extract_credentials(pkt: &Packet) -> Vec<CredentialHit> {
+    let mut hits = Vec::new();
+    let text = match std::str::from_utf8(&pkt.bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => return hits,
+    };
+
+    // HTTP Basic Auth: "Authorization: Basic <b64>"
+    if let Some(pos) = text.find("Authorization: Basic ") {
+        let rest = &text[pos + 21..];
+        let end = rest.find(|c: char| c == '\r' || c == '\n').unwrap_or(rest.len());
+        let b64 = &rest[..end.min(rest.len())];
+        if let Some(decoded) = b64_decode(b64.trim()) {
+            if let Ok(s) = std::str::from_utf8(&decoded) {
+                hits.push(CredentialHit {
+                    proto: pkt.protocol.clone(),
+                    kind: "HTTP-BasicAuth",
+                    value: s.to_string(),
+                    pkt_no: pkt.no,
+                });
+            }
+        }
+    }
+
+    // FTP USER / PASS
+    for line in text.lines() {
+        let upper = line.trim_start().to_uppercase();
+        if upper.starts_with("USER ") {
+            hits.push(CredentialHit {
+                proto: "FTP".into(),
+                kind: "FTP-USER",
+                value: line.trim().to_string(),
+                pkt_no: pkt.no,
+            });
+        } else if upper.starts_with("PASS ") {
+            hits.push(CredentialHit {
+                proto: "FTP".into(),
+                kind: "FTP-PASS",
+                value: line.trim().to_string(),
+                pkt_no: pkt.no,
+            });
+        }
+    }
+
+    // SMTP AUTH PLAIN / LOGIN (base64-encoded credentials)
+    if text.contains("AUTH PLAIN") || text.contains("AUTH LOGIN") {
+        // Look for base64 blobs on their own lines
+        for line in text.lines() {
+            let t = line.trim();
+            if t.len() > 8 && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=') {
+                if let Some(decoded) = b64_decode(t) {
+                    if let Ok(s) = std::str::from_utf8(&decoded) {
+                        if s.contains('\0') || s.len() > 3 {
+                            hits.push(CredentialHit {
+                                proto: "SMTP".into(),
+                                kind: "SMTP-AUTH",
+                                value: s.replace('\0', ":"),
+                                pkt_no: pkt.no,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // IMAP LOGIN / POP3 USER+PASS (cleartext)
+    for line in text.lines() {
+        let t = line.trim();
+        let u = t.to_uppercase();
+        if u.contains("LOGIN ") && !u.starts_with('*') {
+            hits.push(CredentialHit {
+                proto: pkt.protocol.clone(),
+                kind: "IMAP-LOGIN",
+                value: t.to_string(),
+                pkt_no: pkt.no,
+            });
+        }
+    }
+
+    hits
+}
+
+// ── DNS tunneling detection ───────────────────────────────────────────────────
+
+pub fn detect_dns_tunneling(packets: &std::collections::VecDeque<Packet>) -> Vec<String> {
+    use std::collections::HashMap;
+    let mut apex_map: HashMap<String, (usize, f64, usize)> = HashMap::new(); // apex → (unique_subdomains, max_entropy, max_label_len)
+
+    for pkt in packets {
+        if pkt.protocol != "DNS" && pkt.protocol != "mDNS" { continue; }
+        // Extract domain from info string (format: "Query 0xXXXX A domain.com")
+        let parts: Vec<&str> = pkt.info.split_whitespace().collect();
+        if let Some(domain) = parts.last() {
+            if domain.contains('.') {
+                let labels: Vec<&str> = domain.split('.').collect();
+                if labels.len() >= 2 {
+                    let apex = format!("{}.{}", labels[labels.len()-2], labels[labels.len()-1]);
+                    let subdomain = if labels.len() > 2 { labels[..labels.len()-2].join(".") } else { String::new() };
+                    let entry = apex_map.entry(apex).or_insert((0, 0.0, 0));
+                    if !subdomain.is_empty() {
+                        entry.0 += 1; // unique subdomain count (approximate)
+                        let ent = shannon_entropy_str(&subdomain);
+                        if ent > entry.1 { entry.1 = ent; }
+                        if subdomain.len() > entry.2 { entry.2 = subdomain.len(); }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut findings = Vec::new();
+    for (apex, (count, max_ent, max_len)) in &apex_map {
+        if *count > 20 || *max_ent > 3.5 || *max_len > 30 {
+            findings.push(format!(
+                "DNS tunneling candidate: {} ({} unique subdomains, max entropy={:.2}, max label len={})",
+                apex, count, max_ent, max_len
+            ));
+        }
+    }
+    findings
 }
