@@ -11,6 +11,7 @@ use tokio::time;
 
 mod app;
 mod capture;
+mod dissector;
 mod event;
 mod export;
 mod filter;

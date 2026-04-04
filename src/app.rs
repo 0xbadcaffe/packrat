@@ -8,6 +8,8 @@ use crate::sim::dynamic::DynEntry;
 use crate::export::PcapWriter;
 use crate::filter::PacketFilter;
 use crate::net::packet::Packet;
+use crate::dissector::DissectorDef;
+use crate::net::packet::TreeSection;
 use crate::tabs::Tab;
 use crate::topology::TopologyGraph;
 
@@ -54,6 +56,8 @@ pub struct App {
     pub pcap_path: String,
     pcap_writer: Option<PcapWriter>,
     pub show_help: bool,
+    pub dissectors: Vec<DissectorDef>,
+    pub strings_search_active: bool,
 }
 
 impl App {
@@ -87,7 +91,17 @@ impl App {
             pcap_path: String::new(),
             pcap_writer: None,
             show_help: false,
+            dissectors: crate::dissector::load(),
+            strings_search_active: false,
         }
+    }
+
+    /// Build the protocol dissection tree for `pkt`, then apply any custom
+    /// dissectors loaded from ~/.config/packrat/dissectors/.
+    pub fn dissect_packet(&self, pkt: &Packet) -> Vec<TreeSection> {
+        let mut sections = crate::net::tree::build_tree(pkt);
+        crate::dissector::apply(&self.dissectors, pkt, &mut sections);
+        sections
     }
 
     pub fn iface_down(&mut self) {
