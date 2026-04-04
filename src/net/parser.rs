@@ -36,6 +36,9 @@ pub fn parse_ethernet(data: &[u8], no: u64, ts: f64) -> Packet {
         0x0806 => parse_arp(payload, data, no, ts, vlan_id),
         0x0800 => parse_ipv4(payload, data, no, ts, vlan_id),
         0x86DD => parse_ipv6(payload, data, no, ts, vlan_id),
+        0x8847 | 0x8848 => parse_mpls(payload, data, no, ts, vlan_id),
+        0x8863 => parse_pppoe(payload, data, no, ts, vlan_id, "discovery"),
+        0x8864 => parse_pppoe(payload, data, no, ts, vlan_id, "session"),
         _ => unknown(data, no, ts),
     }
 }
@@ -104,9 +107,14 @@ fn parse_transport(
 ) -> Packet {
     match proto_num {
         1 => parse_icmp(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
+        2 => parse_igmp(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
         6 => parse_tcp(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
         17 => parse_udp(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
+        47 => parse_gre(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
+        50 => parse_esp(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
+        51 => parse_ah(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
         58 => parse_icmpv6(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
+        112 => parse_vrrp(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
         _ => Packet {
             no,
             timestamp: ts,
@@ -265,6 +273,14 @@ fn classify_tcp(sp: u16, dp: u16) -> &'static str {
         (_, 44818) | (44818, _)                      => "EtherNet/IP",
         (_, 102)   | (102, _)                        => "S7comm",
         (_, 2404)  | (2404, _)                       => "IEC-104",
+        (_, 20) | (20, _) | (_, 21) | (21, _)        => "FTP",
+        (_, 23) | (23, _)                             => "Telnet",
+        (_, 179) | (179, _)                           => "BGP",
+        (_, 389) | (389, _)                           => "LDAP",
+        (_, 5060) | (5060, _)                         => "SIP",
+        (_, 5061) | (5061, _)                         => "SIPS",
+        (_, 13400) | (13400, _)                       => "DoIP",
+        (_, 30490) | (30490, _)                       => "SOME/IP",
         _                                             => "TCP",
     }
 }
@@ -285,8 +301,74 @@ fn classify_udp(sp: u16, dp: u16) -> &'static str {
         (47808, _) | (_, 47808) => "BACnet",
         (20000, _) | (_, 20000) => "DNP3",
         (2222, _) | (_, 2222)   => "EtherNet/IP",
+        (319, _) | (_, 319) | (320, _) | (_, 320) => "PTP",
+        (546, _) | (_, 546) | (547, _) | (_, 547) => "DHCPv6",
+        (4789, _) | (_, 4789)                      => "VXLAN",
+        (2152, _) | (_, 2152)                      => "GTP",
+        (51820, _) | (_, 51820)                    => "WireGuard",
+        (5060, _) | (_, 5060)                      => "SIP",
+        (5061, _) | (_, 5061)                      => "SIPS",
+        (1812, _) | (_, 1812) | (1813, _) | (_, 1813) | (1645, _) | (_, 1645) | (1646, _) | (_, 1646) => "Radius",
+        (30490, _) | (_, 30490)                    => "SOME/IP",
+        (9, _) | (_, 9)                            => "WoL",
         _                       => "UDP",
     }
+}
+
+fn parse_igmp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan_id: Option<u16>) -> Packet {
+    let info = if t.len() >= 8 {
+        let group = fmt_ip(&t[4..8]);
+        match t[0] {
+            0x11 => format!("Membership Query group={}", group),
+            0x16 => format!("Membership Report v2 group={}", group),
+            0x17 => format!("Leave Group {}", group),
+            0x22 => "Membership Report v3".into(),
+            _ => format!("IGMP type=0x{:02x}", t[0]),
+        }
+    } else { "IGMP".into() };
+    Packet { no, timestamp: ts, src, dst, protocol: "IGMP".into(), length: raw.len() as u16, info, src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
+}
+
+fn parse_gre(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan_id: Option<u16>) -> Packet {
+    let encap = if t.len() >= 4 {
+        match u16::from_be_bytes([t[2], t[3]]) { 0x0800 => " (IPv4)", 0x86DD => " (IPv6)", _ => "" }
+    } else { "" };
+    Packet { no, timestamp: ts, src, dst, protocol: "GRE".into(), length: raw.len() as u16, info: format!("GRE Encapsulated{}", encap), src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
+}
+
+fn parse_esp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan_id: Option<u16>) -> Packet {
+    let spi = if t.len() >= 4 { format!("SPI=0x{:08x}", u32::from_be_bytes([t[0],t[1],t[2],t[3]])) } else { "SPI=?".into() };
+    Packet { no, timestamp: ts, src, dst, protocol: "ESP".into(), length: raw.len() as u16, info: format!("IPSec ESP {}", spi), src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
+}
+
+fn parse_ah(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan_id: Option<u16>) -> Packet {
+    let spi = if t.len() >= 8 { format!("SPI=0x{:08x}", u32::from_be_bytes([t[4],t[5],t[6],t[7]])) } else { "SPI=?".into() };
+    Packet { no, timestamp: ts, src, dst, protocol: "AH".into(), length: raw.len() as u16, info: format!("IPSec AH {}", spi), src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
+}
+
+fn parse_vrrp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan_id: Option<u16>) -> Packet {
+    let info = if t.len() >= 4 {
+        format!("VRRPv{} VRID={} Priority={}", t[0] >> 4, t[1], t[2])
+    } else { "VRRP".into() };
+    Packet { no, timestamp: ts, src, dst, protocol: "VRRP".into(), length: raw.len() as u16, info, src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
+}
+
+fn parse_mpls(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan_id: Option<u16>) -> Packet {
+    let label = if payload.len() >= 4 {
+        (u32::from_be_bytes([payload[0],payload[1],payload[2],payload[3]]) >> 12) & 0xFFFFF
+    } else { 0 };
+    Packet { no, timestamp: ts, src: "?.?.?.?".into(), dst: "?.?.?.?".into(), protocol: "MPLS".into(), length: raw.len() as u16, info: format!("MPLS Label={}", label), src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
+}
+
+fn parse_pppoe(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan_id: Option<u16>, kind: &str) -> Packet {
+    let info = if kind == "session" {
+        let sid = if payload.len() >= 4 { u16::from_be_bytes([payload[2], payload[3]]) } else { 0 };
+        format!("PPPoE Session id=0x{:04x}", sid)
+    } else {
+        let code = payload.get(1).copied().unwrap_or(0);
+        match code { 0x09=>"PPPoE PADI".into(), 0x07=>"PPPoE PADO".into(), 0x19=>"PPPoE PADR".into(), 0x65=>"PPPoE PADS".into(), 0xa7=>"PPPoE PADT".into(), _=>format!("PPPoE code=0x{:02x}",code) }
+    };
+    Packet { no, timestamp: ts, src: "?.?.?.?".into(), dst: "?.?.?.?".into(), protocol: "PPPoE".into(), length: raw.len() as u16, info, src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
 }
 
 fn unknown(raw: &[u8], no: u64, ts: f64) -> Packet {
