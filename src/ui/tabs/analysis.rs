@@ -22,7 +22,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_nav(f: &mut Frame, app: &App, area: Rect) {
     let sections = nav_sections();
-    let icons = ["◈", "⬡", "⊞", "⊡", "◉", "≡", "◆", "⊗", "⚑"];
+    let icons = ["◈", "⬡", "⊞", "⊡", "◉", "≡", "◆", "⊗", "⚑", "§", "∑"];
     let items: Vec<ListItem> = sections.iter().enumerate().map(|(i, &name)| {
         let style = if i == app.analysis_section {
             Style::default().fg(Color::White).bg(C_SEL_BG)
@@ -59,9 +59,9 @@ fn draw_content(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(p, area);
 }
 
-fn nav_sections() -> [&'static str; 9] {
+fn nav_sections() -> [&'static str; 11] {
     ["General Info", "Protocol Stats", "Top Talkers", "Conversations", "IP Endpoints", "Port Summary",
-     "Magic Bytes", "XOR Analysis", "Anomaly Report"]
+     "Magic Bytes", "XOR Analysis", "Anomaly Report", "Credentials", "Flow Stats"]
 }
 
 fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
@@ -341,6 +341,71 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                     "  No anomalies detected.",
                     Style::default().fg(C_FG3),
                 )));
+            }
+        }
+        9 => {
+            // Credential extraction
+            lines.push(Line::raw(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Cleartext credentials and encoded auth tokens detected in traffic",
+                Style::default().fg(C_FG2),
+            )]));
+            lines.push(Line::raw("  ".to_string() + &"─".repeat(60)));
+            let mut found = false;
+            for pkt in app.packets.iter().take(500) {
+                let creds = crate::net::inspector::extract_credentials(pkt);
+                for cred in creds {
+                    found = true;
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  pkt #{:<6}", cred.pkt_no), Style::default().fg(C_FG3)),
+                        Span::styled(format!("{:<14}", cred.kind), Style::default().fg(C_ORANGE).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            truncate(&cred.value, 60),
+                            Style::default().fg(C_RED),
+                        ),
+                    ]));
+                }
+            }
+            if !found {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled(
+                    "  No cleartext credentials detected in captured packets.",
+                    Style::default().fg(C_FG3),
+                )));
+            }
+        }
+        10 => {
+            // Flow statistics
+            lines.push(Line::raw(""));
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {:<14} {:<12} {:<10} {:<12} {:<10} {:<8} {}",
+                    "Flow", "Throughput", "Pkts", "Bytes", "Duration", "Score", "JA3/HASSH"),
+                Style::default().fg(C_FG2),
+            )]));
+            lines.push(Line::raw("  ".to_string() + &"─".repeat(80)));
+            let sorted = app.flow_tracker.sorted_flows(&app.flows_sort);
+            for flow in sorted.iter().take(20) {
+                let dur = flow.last_seen - flow.first_seen;
+                let dur_str = if dur < 1.0 { format!("{:.0}ms", dur * 1000.0) }
+                              else if dur < 60.0 { format!("{:.1}s", dur) }
+                              else { format!("{:.0}m", dur / 60.0) };
+                let fp = flow.ja3.as_deref()
+                    .or(flow.hassh.as_deref())
+                    .map(|s| &s[..8.min(s.len())])
+                    .unwrap_or("\u{2014}");
+                let tp = fmt_bytes(flow.throughput as u64);
+                let ep = format!("{}:{}", flow.key.ep1.0, flow.key.ep1.1);
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {:<14}", truncate(&ep, 14)), Style::default().fg(C_CYAN)),
+                    Span::styled(format!("{:<12}", format!("{}/s", tp)), Style::default().fg(C_FG2)),
+                    Span::styled(format!("{:<10}", flow.packets), Style::default().fg(C_FG2)),
+                    Span::styled(format!("{:<12}", fmt_bytes(flow.bytes)), Style::default().fg(C_GREEN)),
+                    Span::styled(format!("{:<10}", dur_str), Style::default().fg(C_FG3)),
+                    Span::styled(format!("{:<8.2}", flow.beacon_score), Style::default().fg(
+                        if flow.beacon_score > 0.7 { C_RED } else if flow.beacon_score > 0.4 { C_YELLOW } else { C_FG3 }
+                    )),
+                    Span::styled(fp.to_string(), Style::default().fg(C_MAGENTA)),
+                ]));
             }
         }
         _ => {}

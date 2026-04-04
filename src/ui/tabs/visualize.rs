@@ -26,7 +26,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     draw_proto_bars(f, app, top[0]);
     draw_sparkline(f, app, top[1]);
     draw_top_ips(f, app, bot[0]);
-    draw_geo(f, app, bot[1]);
+    draw_size_histogram(f, app, bot[1]);
 }
 
 fn draw_proto_bars(f: &mut Frame, app: &App, area: Rect) {
@@ -112,43 +112,41 @@ fn draw_top_ips(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(p, area);
 }
 
-fn draw_geo(f: &mut Frame, app: &App, area: Rect) {
-    const GEO: &[(&str, &str, &str)] = &[
-        ("8.8.8.8",        "US", "Mountain View, US"),
-        ("1.1.1.1",        "AU", "Sydney, AU"),
-        ("151.101.64.81",  "US", "San Francisco, US"),
-        ("142.250.80.46",  "US", "Kansas City, US"),
-        ("104.21.55.33",   "US", "San Jose, US"),
-        ("172.217.14.206", "US", "Mountain View, US"),
-        ("13.107.42.14",   "IE", "Dublin, IE"),
-        ("52.84.17.200",   "US", "Ashburn, US"),
-        ("34.120.208.123", "BE", "Brussels, BE"),
+fn draw_size_histogram(f: &mut Frame, app: &App, area: Rect) {
+    let buckets: &[(u16, u16, &str)] = &[
+        (0,    63,       "0-63"),
+        (64,   127,      "64-127"),
+        (128,  255,      "128-255"),
+        (256,  511,      "256-511"),
+        (512,  767,      "512-767"),
+        (768,  1023,     "768-1023"),
+        (1024, 1279,     "1024-1279"),
+        (1280, 1500,     "1280-1500"),
+        (1501, u16::MAX, "1501+"),
     ];
-
-    let mut remote_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut counts = vec![0usize; buckets.len()];
     for p in &app.packets {
-        if GEO.iter().any(|(ip, _, _)| *ip == p.dst.as_str()) {
-            *remote_counts.entry(p.dst.as_str()).or_default() += 1;
+        for (i, &(lo, hi, _)) in buckets.iter().enumerate() {
+            if p.length >= lo && p.length <= hi { counts[i] += 1; break; }
         }
     }
-    let mut sorted: Vec<_> = remote_counts.iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(a.1));
+    let max = counts.iter().max().copied().unwrap_or(1).max(1);
+    let bar_w = area.width.saturating_sub(16) as usize;
 
     let mut lines: Vec<Line> = vec![Line::raw("")];
-    for (ip, count) in sorted.iter().take(10) {
-        if let Some((_, cc, loc)) = GEO.iter().find(|(gip, _, _)| gip == *ip) {
-            lines.push(Line::from(vec![
-                Span::styled(format!(" [{}]", cc), Style::default().fg(C_YELLOW)),
-                Span::styled(format!(" {:<16}", ip), Style::default().fg(C_CYAN)),
-                Span::styled(format!("{:<20}", loc), Style::default().fg(C_FG2)),
-                Span::styled(format!(" {}p", count), Style::default().fg(C_GREEN)),
-            ]));
-        }
+    for (i, &(_, _, label)) in buckets.iter().enumerate() {
+        let w = (counts[i] as f64 / max as f64 * bar_w as f64) as usize;
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {:<9}", label), Style::default().fg(C_FG2)),
+            Span::styled("\u{2588}".repeat(w), Style::default().fg(C_CYAN)),
+            Span::styled(format!(" {}", counts[i]), Style::default().fg(C_FG3)),
+        ]));
     }
 
     let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Remote Endpoints ", Style::default().fg(C_CYAN))))
+        .block(Block::default().borders(Borders::ALL)
+            .border_style(Style::default().fg(C_BORDER))
+            .title(Span::styled(" Packet Size Distribution (bytes) ", Style::default().fg(C_CYAN))))
         .style(Style::default().bg(C_BG));
     f.render_widget(p, area);
 }

@@ -61,10 +61,10 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
     let header = Row::new(vec![
         Cell::from("No.").style(Style::default().fg(C_FG2)),
         Cell::from("Time").style(Style::default().fg(C_FG2)),
+        Cell::from("dT ms").style(Style::default().fg(C_FG2)),
         Cell::from("Source").style(Style::default().fg(C_FG2)),
         Cell::from("Destination").style(Style::default().fg(C_FG2)),
         Cell::from("Protocol").style(Style::default().fg(C_FG2)),
-        Cell::from("VLAN").style(Style::default().fg(C_FG2)),
         Cell::from("Len").style(Style::default().fg(C_FG2)),
         Cell::from("Info").style(Style::default().fg(C_FG2)),
     ]).style(Style::default().bg(C_BG3)).height(1);
@@ -73,36 +73,39 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
     let sel = app.selected.unwrap_or(0);
     let offset = if sel >= visible_h { sel - visible_h + 1 } else { 0 };
 
-    let rows: Vec<Row> = app.filtered.iter().enumerate()
-        .skip(offset).take(visible_h)
-        .filter_map(|(fi, &pi)| app.packets.get(pi).map(|p| (fi, p)))
-        .map(|(fi, p)| {
-            let selected = app.selected == Some(fi);
-            let bg = if selected { C_SEL_BG } else { C_BG };
-            let fg = if selected { Color::White } else { C_FG };
-            let proto_fg = if selected { Color::White } else { proto_color(&p.protocol) };
-            let vlan_str = p.vlan_id.map(|v| v.to_string()).unwrap_or_default();
-
-            Row::new(vec![
-                Cell::from(p.no.to_string()).style(Style::default().fg(C_FG3).bg(bg)),
-                Cell::from(format!("{:.4}", p.timestamp)).style(Style::default().fg(C_FG2).bg(bg)),
-                Cell::from(p.src.clone()).style(Style::default().fg(fg).bg(bg)),
-                Cell::from(p.dst.clone()).style(Style::default().fg(fg).bg(bg)),
-                Cell::from(p.protocol.clone()).style(Style::default().fg(proto_fg).bg(bg).add_modifier(Modifier::BOLD)),
-                Cell::from(vlan_str).style(Style::default().fg(C_FG3).bg(bg)),
-                Cell::from(p.length.to_string()).style(Style::default().fg(C_FG2).bg(bg)),
-                Cell::from(truncate(&p.info, 55)).style(Style::default().fg(C_FG2).bg(bg)),
-            ])
-        })
-        .collect();
+    let mut prev_ts: Option<f64> = None;
+    let mut rows: Vec<Row> = Vec::new();
+    for (fi, &pi) in app.filtered.iter().enumerate().skip(offset).take(visible_h) {
+        let Some(p) = app.packets.get(pi) else { continue };
+        let delta_ms = if let Some(prev) = prev_ts {
+            format!("{:.1}", (p.timestamp - prev) * 1000.0)
+        } else {
+            "\u{2014}".to_string()
+        };
+        prev_ts = Some(p.timestamp);
+        let selected = app.selected == Some(fi);
+        let bg = if selected { C_SEL_BG } else { C_BG };
+        let fg = if selected { Color::White } else { C_FG };
+        let proto_fg = if selected { Color::White } else { proto_color(&p.protocol) };
+        rows.push(Row::new(vec![
+            Cell::from(p.no.to_string()).style(Style::default().fg(C_FG3).bg(bg)),
+            Cell::from(format!("{:.4}", p.timestamp)).style(Style::default().fg(C_FG2).bg(bg)),
+            Cell::from(delta_ms).style(Style::default().fg(C_FG3).bg(bg)),
+            Cell::from(p.src.clone()).style(Style::default().fg(fg).bg(bg)),
+            Cell::from(p.dst.clone()).style(Style::default().fg(fg).bg(bg)),
+            Cell::from(p.protocol.clone()).style(Style::default().fg(proto_fg).bg(bg).add_modifier(Modifier::BOLD)),
+            Cell::from(p.length.to_string()).style(Style::default().fg(C_FG2).bg(bg)),
+            Cell::from(truncate(&p.info, 55)).style(Style::default().fg(C_FG2).bg(bg)),
+        ]));
+    }
 
     let widths = [
         Constraint::Length(6),
         Constraint::Length(9),
-        Constraint::Length(15),
-        Constraint::Length(15),
-        Constraint::Length(9),
-        Constraint::Length(5),
+        Constraint::Length(7),
+        Constraint::Length(16),
+        Constraint::Length(16),
+        Constraint::Length(10),
         Constraint::Length(5),
         Constraint::Min(0),
     ];

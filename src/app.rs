@@ -7,7 +7,7 @@ use crate::sim::capture::SimulatedCapture;
 use crate::sim::dynamic::DynEntry;
 use crate::export::PcapWriter;
 use crate::filter::PacketFilter;
-use crate::net::flow::{FlowTracker, FlowSort};
+use crate::net::flow::{FlowTracker, FlowSort, FlowKey};
 use crate::net::packet::Packet;
 use crate::dissector::DissectorDef;
 use crate::net::packet::TreeSection;
@@ -64,6 +64,7 @@ pub struct App {
     pub flow_tracker: FlowTracker,
     pub flows_selected: Option<usize>,
     pub flows_sort: FlowSort,
+    pub stream_overlay: Option<(String, Vec<(bool, Vec<u8>)>)>,
 }
 
 impl App {
@@ -104,6 +105,7 @@ impl App {
             flow_tracker: FlowTracker::new(),
             flows_selected: None,
             flows_sort: FlowSort::Bytes,
+            stream_overlay: None,
         }
     }
 
@@ -296,6 +298,7 @@ impl App {
         self.topology.clear();
         self.flow_tracker.clear();
         self.flows_selected = None;
+        self.stream_overlay = None;
     }
 
     pub fn toggle_recording(&mut self) {
@@ -351,7 +354,7 @@ impl App {
                     if sel + 1 < self.filtered.len() { self.selected = Some(sel + 1); }
                 } else if !self.filtered.is_empty() { self.selected = Some(0); }
             }
-            Tab::Analysis => { if self.analysis_section < 8 { self.analysis_section += 1; } }
+            Tab::Analysis => { if self.analysis_section < 10 { self.analysis_section += 1; } }
             // j = toward tail (decrease offset-from-end)
             Tab::Dynamic  => { self.dyn_scroll = self.dyn_scroll.saturating_sub(1); }
             Tab::Flows => {
@@ -387,6 +390,32 @@ impl App {
     pub fn flows_sort_bytes(&mut self)   { self.flows_sort = FlowSort::Bytes; }
     pub fn flows_sort_packets(&mut self) { self.flows_sort = FlowSort::Packets; }
     pub fn flows_sort_time(&mut self)    { self.flows_sort = FlowSort::Time; }
+    pub fn flows_sort_beacon(&mut self)  { self.flows_sort = FlowSort::BeaconScore; }
+
+    pub fn flows_open_stream(&mut self) {
+        let sorted = self.flow_tracker.sorted_flows(&self.flows_sort);
+        if let Some(sel) = self.flows_selected {
+            if let Some(flow) = sorted.get(sel) {
+                let key = flow.key.clone();
+                let initiator = flow.initiator.clone();
+                let mut segments: Vec<(bool, Vec<u8>)> = Vec::new();
+                for pkt in &self.packets {
+                    let pkt_key = FlowKey::from_packet(pkt);
+                    if pkt_key == key {
+                        let is_init = pkt.src == initiator;
+                        // Skip headers: try offset 54 (Eth14+IP20+TCP20)
+                        let payload = if pkt.bytes.len() > 54 { pkt.bytes[54..].to_vec() } else { Vec::new() };
+                        if !payload.is_empty() {
+                            segments.push((is_init, payload));
+                        }
+                    }
+                }
+                let title = format!("{}:{} <-> {}:{} ({})",
+                    key.ep1.0, key.ep1.1, key.ep2.0, key.ep2.1, key.proto);
+                self.stream_overlay = Some((title, segments));
+            }
+        }
+    }
 
     pub fn flows_jump_to_packets(&mut self) {
         let sorted = self.flow_tracker.sorted_flows(&self.flows_sort);

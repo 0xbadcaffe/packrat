@@ -1,9 +1,9 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Tabs},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs, Wrap},
 };
 
 use crate::app::App;
@@ -40,6 +40,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.show_help {
         help::draw(f);
+    }
+
+    if let Some((title, segments)) = &app.stream_overlay {
+        draw_stream_overlay(f, title, segments);
     }
 }
 
@@ -123,6 +127,43 @@ fn draw_workspace(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Tab::Topology  => tabs::topology::draw(f, app, area),
         Tab::Flows     => tabs::flows::draw(f, app, area),
     }
+}
+
+fn draw_stream_overlay(f: &mut Frame, title: &str, segments: &[(bool, Vec<u8>)]) {
+    let area = f.area();
+    let popup = Rect {
+        x: area.x + 4,
+        y: area.y + 2,
+        width: area.width.saturating_sub(8),
+        height: area.height.saturating_sub(4),
+    };
+    f.render_widget(Clear, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (is_init, bytes) in segments.iter().take(50) {
+        let color = if *is_init { C_CYAN } else { C_GREEN };
+        let direction = if *is_init { "\u{2192}" } else { "\u{2190}" };
+        let text: String = bytes.iter().take(200).map(|&b| {
+            if b >= 32 && b < 127 { b as char } else { '.' }
+        }).collect();
+        lines.push(Line::from(vec![
+            Span::styled(format!("{} ", direction), Style::default().fg(color)),
+            Span::styled(text, Style::default().fg(color)),
+        ]));
+    }
+
+    let p = Paragraph::new(lines)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .border_style(Style::default().fg(C_CYAN))
+            .title(Span::styled(
+                format!(" Follow Stream: {}  [Esc to close] ", title),
+                Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
+            )))
+        .style(Style::default().bg(C_BG2))
+        .wrap(Wrap { trim: false });
+    f.render_widget(p, popup);
 }
 
 fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
