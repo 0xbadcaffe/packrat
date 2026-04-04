@@ -58,6 +58,8 @@ pub struct App {
     pub show_help: bool,
     pub dissectors: Vec<DissectorDef>,
     pub strings_search_active: bool,
+    pub strings_selected: Option<usize>,
+    pub strings_scroll: usize,
 }
 
 impl App {
@@ -93,7 +95,99 @@ impl App {
             show_help: false,
             dissectors: crate::dissector::load(),
             strings_search_active: false,
+            strings_selected: None,
+            strings_scroll: 0,
         }
+    }
+
+    /// Navigate the strings list (only when capture is stopped).
+    /// list_len is the number of strings currently shown after filtering.
+    pub fn strings_move_down(&mut self, list_len: usize) {
+        if self.capturing || list_len == 0 { return; }
+        let cur = self.strings_selected.unwrap_or(0);
+        let next = (cur + 1).min(list_len.saturating_sub(1));
+        self.strings_selected = Some(next);
+        // Scroll to keep selection visible (assume ~30 visible rows).
+        if next >= self.strings_scroll + 30 { self.strings_scroll += 1; }
+    }
+
+    pub fn strings_move_up(&mut self) {
+        if self.capturing { return; }
+        let cur = self.strings_selected.unwrap_or(0);
+        if cur > 0 {
+            let prev = cur - 1;
+            self.strings_selected = Some(prev);
+            if prev < self.strings_scroll { self.strings_scroll = prev; }
+        } else {
+            // At top — ensure something is selected.
+            self.strings_selected = Some(0);
+        }
+    }
+
+    pub fn strings_select(&mut self) {
+        // Enter just confirms — selection is already set by j/k.
+        // If nothing is selected yet, select the first item.
+        if self.strings_selected.is_none() {
+            self.strings_selected = Some(0);
+        }
+    }
+
+    pub fn strings_deselect(&mut self) {
+        self.strings_selected = None;
+    }
+
+    /// Count extracted strings (after filter) for navigation bounds.
+    /// Mirrors the extraction logic in strings.rs but just counts.
+    pub fn strings_list_len(&self) -> usize {
+        const MIN_LEN: usize = 4;
+        let mut count = 0usize;
+        for pkt in self.packets.iter().take(500) {
+            let mut in_run = false;
+            let mut run_start = 0usize;
+            for (i, &b) in pkt.bytes.iter().enumerate() {
+                if b >= 32 && b < 127 {
+                    if !in_run { run_start = i; in_run = true; }
+                } else if in_run {
+                    in_run = false;
+                    if i - run_start >= MIN_LEN { count += 1; }
+                }
+            }
+            if in_run && pkt.bytes.len() - run_start >= MIN_LEN { count += 1; }
+        }
+        // Apply filter if active
+        if self.strings_filter.is_empty() {
+            count
+        } else {
+            // Re-extract to filter — acceptable since this only runs on keypress
+            let q = self.strings_filter.to_lowercase();
+            let mut filt_count = 0usize;
+            for pkt in self.packets.iter().take(500) {
+                let bytes = &pkt.bytes;
+                let mut in_run = false;
+                let mut run_start = 0usize;
+                for (i, &b) in bytes.iter().enumerate() {
+                    if b >= 32 && b < 127 {
+                        if !in_run { run_start = i; in_run = true; }
+                    } else if in_run {
+                        in_run = false;
+                        if i - run_start >= MIN_LEN {
+                            let val = String::from_utf8_lossy(&bytes[run_start..i]);
+                            if val.to_lowercase().contains(&q) { filt_count += 1; }
+                        }
+                    }
+                }
+                if in_run && pkt.bytes.len() - run_start >= MIN_LEN {
+                    let val = String::from_utf8_lossy(&pkt.bytes[run_start..]);
+                    if val.to_lowercase().contains(&q) { filt_count += 1; }
+                }
+            }
+            filt_count
+        }
+    }
+
+    /// Look up a packet by its frame number (pkt.no).
+    pub fn packet_by_no(&self, no: u64) -> Option<&Packet> {
+        self.packets.iter().find(|p| p.no == no)
     }
 
     /// Build the protocol dissection tree for `pkt`, then apply any custom

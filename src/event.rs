@@ -92,9 +92,32 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         // Interface switch (back to picker)
         KeyCode::Char('i') => app.switch_interface(),
 
-        // Navigation
-        KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-        KeyCode::Up   | KeyCode::Char('k') => app.move_up(),
+        // Navigation — strings tab gets its own j/k/Enter/Esc when capture is stopped
+        KeyCode::Down | KeyCode::Char('j') => {
+            if matches!(app.active_tab, Tab::Strings) && !app.capturing {
+                let list_len = app.strings_list_len();
+                app.strings_move_down(list_len);
+            } else {
+                app.move_down();
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if matches!(app.active_tab, Tab::Strings) && !app.capturing {
+                app.strings_move_up();
+            } else {
+                app.move_up();
+            }
+        }
+        KeyCode::Enter => {
+            if matches!(app.active_tab, Tab::Strings) && !app.capturing {
+                app.strings_select();
+            }
+        }
+        KeyCode::Esc => {
+            if matches!(app.active_tab, Tab::Strings) {
+                app.strings_deselect();
+            }
+        }
         KeyCode::Char('g') => app.move_top(),
         KeyCode::Char('G') => app.move_bottom(),
         KeyCode::PageDown  => app.page_down(),

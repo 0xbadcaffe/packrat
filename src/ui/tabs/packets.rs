@@ -122,21 +122,48 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(table, area);
 }
 
-fn draw_protocol_tree(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(C_BORDER))
-        .title(Span::styled(" Protocol Tree ", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)))
-        .style(Style::default().bg(C_BG));
+/// Draw protocol tree + hex dump side by side for an explicit packet.
+/// Used by the Strings tab detail panel.
+pub fn draw_packet_detail(f: &mut Frame, app: &App, pkt: &crate::net::packet::Packet, area: Rect) {
+    let hchunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Min(0)])
+        .split(area);
+    draw_protocol_tree_for(f, app, pkt, hchunks[0]);
+    draw_hex_dump_for(f, pkt, hchunks[1]);
+}
 
+fn draw_protocol_tree(f: &mut Frame, app: &App, area: Rect) {
     let Some(pkt) = app.selected_packet() else {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .border_style(Style::default().fg(C_BORDER))
+            .title(Span::styled(" Protocol Tree ", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)));
         let p = Paragraph::new("No packet selected.\n\nPress Space to start capture,\nthen j/k to navigate.")
             .style(Style::default().fg(C_FG3))
             .block(block);
         f.render_widget(p, area);
         return;
     };
+    draw_protocol_tree_for(f, app, pkt, area);
+}
+
+fn draw_protocol_tree_for(
+    f: &mut Frame,
+    app: &App,
+    pkt: &crate::net::packet::Packet,
+    area: Rect,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(C_BORDER))
+        .title(Span::styled(
+            format!(" Protocol Tree  pkt #{} ", pkt.no),
+            Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(C_BG));
 
     let sections = app.dissect_packet(pkt);
     let mut items: Vec<ListItem> = Vec::new();
@@ -168,14 +195,12 @@ fn draw_protocol_tree(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_hex_dump(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(C_BORDER))
-        .title(Span::styled(" Hex Dump ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)))
-        .style(Style::default().bg(C_BG));
-
     let Some(pkt) = app.selected_packet() else {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .border_style(Style::default().fg(C_BORDER))
+            .title(Span::styled(" Hex Dump ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)));
         let p = Paragraph::new("No packet selected.")
             .style(Style::default().fg(C_FG3))
             .block(block)
@@ -183,6 +208,19 @@ fn draw_hex_dump(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(p, area);
         return;
     };
+    draw_hex_dump_for(f, pkt, area);
+}
+
+fn draw_hex_dump_for(f: &mut Frame, pkt: &crate::net::packet::Packet, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(C_BORDER))
+        .title(Span::styled(
+            format!(" Hex Dump  {} bytes ", pkt.length),
+            Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(C_BG));
 
     let bytes = &pkt.bytes;
     let bytes_per_row = 16usize;
@@ -215,7 +253,7 @@ fn draw_hex_dump(f: &mut Frame, app: &App, area: Rect) {
 
     let mut all_lines = vec![
         Line::from(vec![Span::styled(
-            format!(" {} bytes │ {} rows ", pkt.length, lines.len()),
+            format!(" pkt #{} │ {} bytes │ {} rows ", pkt.no, pkt.length, lines.len()),
             Style::default().fg(C_FG3),
         )]),
         Line::raw(""),
