@@ -28,8 +28,9 @@ const MQTT_TOPICS: &[&str] = &[
 const PROTOS: &[&str] = &[
     "TCP", "UDP", "DNS", "HTTP", "HTTPS", "TLS", "ARP", "ICMP", "DHCP",
     "Modbus", "MQTT", "CoAP", "BACnet", "DNP3", "OPC-UA", "S7comm", "EtherNet/IP",
+    "NTP", "PTP", "SIP", "FTP", "BGP", "WireGuard", "VXLAN", "GRE", "IGMP",
 ];
-const WEIGHTS: &[u32] = &[26, 13, 18, 7, 10, 7, 3, 3, 1, 3, 3, 2, 1, 1, 1, 1, 1];
+const WEIGHTS: &[u32] = &[26, 13, 18, 7, 10, 7, 3, 3, 1, 3, 3, 2, 1, 1, 1, 1, 1, 3, 1, 2, 2, 1, 1, 1, 1, 1];
 
 static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
@@ -197,6 +198,85 @@ pub fn generate_packet(counter: u64) -> Packet {
             let cmd = cmds[rng.gen_range(0..cmds.len())];
             (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(44818),
              format!("{} session=0x{:08x}", cmd, rng.r#gen::<u32>()))
+        }
+        "NTP" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let ntp_servers = ["216.239.35.0", "129.6.15.28", "132.163.97.1", "time.cloudflare.com"];
+            let dst = ntp_servers[rng.gen_range(0..ntp_servers.len())].to_string();
+            let stratum: u8 = rng.gen_range(1..=4);
+            let modes = ["client", "server", "broadcast"];
+            let mode = modes[rng.gen_range(0..modes.len())];
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(123),
+             format!("NTP v4 {} stratum={}", mode, stratum))
+        }
+        "PTP" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let msg_types = ["Sync", "Delay_Req", "Follow_Up", "Delay_Resp", "Announce"];
+            let msg = msg_types[rng.gen_range(0..msg_types.len())];
+            let seq: u16 = rng.r#gen();
+            (src, dst, Some(319u16), Some(319),
+             format!("PTP {} seq={} domain=0", msg, seq))
+        }
+        "SIP" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let methods = ["INVITE", "BYE", "ACK", "REGISTER", "OPTIONS", "CANCEL", "REFER"];
+            let m = methods[rng.gen_range(0..methods.len())];
+            let ext: u16 = rng.gen_range(1000..=9999);
+            (src, dst.clone(), Some(rng.gen_range(1024u16..=65535)), Some(5060),
+             format!("{} sip:{}@{}", m, ext, dst))
+        }
+        "FTP" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(REMOTE_IPS, &mut rng).to_string();
+            let cmds = [
+                "USER anonymous", "PASS secret@example.com", "LIST", "RETR file.txt",
+                "STOR upload.bin", "PWD", "CWD /pub", "QUIT", "PASV", "PORT",
+            ];
+            let cmd = cmds[rng.gen_range(0..cmds.len())];
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(21),
+             format!("FTP Request: {}", cmd))
+        }
+        "BGP" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(REMOTE_IPS, &mut rng).to_string();
+            let types = ["OPEN", "UPDATE", "NOTIFICATION", "KEEPALIVE"];
+            let t = types[rng.gen_range(0..types.len())];
+            let asn: u32 = rng.gen_range(64512..=65534);
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(179),
+             format!("BGP {} AS={}", t, asn))
+        }
+        "WireGuard" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(REMOTE_IPS, &mut rng).to_string();
+            let types = ["Handshake Initiation", "Handshake Response", "Transport Data", "Cookie Reply"];
+            let t = types[rng.gen_range(0..types.len())];
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(51820),
+             format!("WireGuard {}", t))
+        }
+        "VXLAN" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let vni: u32 = rng.gen_range(1..=16_777_215);
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(4789),
+             format!("VXLAN VNI={} encapsulated Ethernet", vni))
+        }
+        "GRE" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(REMOTE_IPS, &mut rng).to_string();
+            let encap = ["IPv4", "IPv6", "MPLS", "Ethernet"];
+            let e = encap[rng.gen_range(0..encap.len())];
+            (src, dst, None, None,
+             format!("GRE Encapsulated {}", e))
+        }
+        "IGMP" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let mcast = format!("239.{}.{}.{}", rng.gen_range(1u8..=2), rng.r#gen::<u8>(), rng.gen_range(1u8..=254));
+            let types = ["Membership Query", "Membership Report v3", "Leave Group"];
+            let t = types[rng.gen_range(0..types.len())];
+            (src, mcast, None, None,
+             format!("IGMPv3 {} group={}", t, rand_ip(LOCAL_IPS, &mut rng)))
         }
         _ => {
             let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
