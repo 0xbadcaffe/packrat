@@ -22,7 +22,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_nav(f: &mut Frame, app: &App, area: Rect) {
     let sections = nav_sections();
-    let icons = ["◈", "⬡", "⊞", "⊡", "◉", "≡"];
+    let icons = ["◈", "⬡", "⊞", "⊡", "◉", "≡", "◆", "⊗", "⚑"];
     let items: Vec<ListItem> = sections.iter().enumerate().map(|(i, &name)| {
         let style = if i == app.analysis_section {
             Style::default().fg(Color::White).bg(C_SEL_BG)
@@ -59,8 +59,9 @@ fn draw_content(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(p, area);
 }
 
-fn nav_sections() -> [&'static str; 6] {
-    ["General Info", "Protocol Stats", "Top Talkers", "Conversations", "IP Endpoints", "Port Summary"]
+fn nav_sections() -> [&'static str; 9] {
+    ["General Info", "Protocol Stats", "Top Talkers", "Conversations", "IP Endpoints", "Port Summary",
+     "Magic Bytes", "XOR Analysis", "Anomaly Report"]
 }
 
 fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
@@ -214,6 +215,132 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                     Span::styled(format!("{:<16}", port_name(**port)), Style::default().fg(C_FG2)),
                     Span::styled(count.to_string(), Style::default().fg(C_CYAN)),
                 ]));
+            }
+        }
+        6 => {
+            // Magic Bytes
+            lines.push(Line::raw(""));
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {:<8} {:<12} {}", "Pkt#", "Magic", "Offset / Details"),
+                Style::default().fg(C_FG2),
+            )]));
+            lines.push(Line::raw("  ".to_string() + &"─".repeat(55)));
+            let mut found = false;
+            for pkt in app.packets.iter().take(500) {
+                let ind = crate::net::inspector::inspect(pkt);
+                for m in &ind.magic {
+                    found = true;
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {:<8}", pkt.no), Style::default().fg(C_FG3)),
+                        Span::styled(format!("{:<12}", m.name), Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("at byte offset {}  proto={}  {} bytes",
+                                m.offset, pkt.protocol, pkt.length),
+                            Style::default().fg(C_FG2),
+                        ),
+                    ]));
+                }
+            }
+            if !found {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled(
+                    "  No file magic signatures detected in captured packets.",
+                    Style::default().fg(C_FG3),
+                )));
+            }
+        }
+        7 => {
+            // XOR Analysis
+            lines.push(Line::raw(""));
+            lines.push(Line::from(vec![Span::styled(
+                "  Single-byte XOR obfuscation detection (score = printable bytes after XOR)",
+                Style::default().fg(C_FG2),
+            )]));
+            lines.push(Line::raw("  ".to_string() + &"─".repeat(55)));
+            let mut found = false;
+            for pkt in app.packets.iter().take(500) {
+                let ind = crate::net::inspector::inspect(pkt);
+                if let Some(xor) = ind.xor {
+                    found = true;
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  pkt #{:<6}", pkt.no), Style::default().fg(C_FG3)),
+                        Span::styled(
+                            format!("key=0x{:02x} ({:3})", xor.key, xor.key),
+                            Style::default().fg(C_ORANGE).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("  score={:.0}%  proto={}  len={}",
+                                xor.score * 100.0, pkt.protocol, pkt.length),
+                            Style::default().fg(C_FG3),
+                        ),
+                    ]));
+                }
+            }
+            if !found {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled(
+                    "  No XOR obfuscation candidates detected.",
+                    Style::default().fg(C_FG3),
+                )));
+            }
+        }
+        8 => {
+            // Anomaly Report
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                "  ⚑ Anomaly Report — non-standard ports, tunneling, beacons, scans",
+                Style::default().fg(C_FG2),
+            )));
+            lines.push(Line::raw("  ".to_string() + &"─".repeat(55)));
+            let mut found = false;
+            // Per-packet anomalies
+            for pkt in app.packets.iter().take(500) {
+                let ind = crate::net::inspector::inspect(pkt);
+                for anomaly in &ind.anomalies {
+                    found = true;
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  pkt #{:<6}", pkt.no), Style::default().fg(C_FG3)),
+                        Span::styled(format!("⚑ {}", anomaly), Style::default().fg(C_RED)),
+                    ]));
+                }
+            }
+            // Flow-level anomalies (beacon / scan)
+            for flow in app.flow_tracker.sorted_flows(&app.flows_sort) {
+                if flow.flags.beacon {
+                    found = true;
+                    let n = flow.intervals.len() as f64;
+                    let mean = if n > 0.0 {
+                        flow.intervals.iter().sum::<f64>() / n
+                    } else { 0.0 };
+                    lines.push(Line::from(vec![
+                        Span::styled("  ⚑ BEACON ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("{}:{} ↔ {}:{}  ~{:.1}s interval  {} pkts",
+                                flow.key.ep1.0, flow.key.ep1.1,
+                                flow.key.ep2.0, flow.key.ep2.1,
+                                mean, flow.packets),
+                            Style::default().fg(C_FG2),
+                        ),
+                    ]));
+                }
+                if flow.flags.scan {
+                    found = true;
+                    lines.push(Line::from(vec![
+                        Span::styled("  ⚑ SCAN   ", Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("{}  → ≥5 distinct destinations",
+                                flow.key.ep1.0),
+                            Style::default().fg(C_FG2),
+                        ),
+                    ]));
+                }
+            }
+            if !found {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled(
+                    "  No anomalies detected.",
+                    Style::default().fg(C_FG3),
+                )));
             }
         }
         _ => {}

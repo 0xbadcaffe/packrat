@@ -29,8 +29,9 @@ const PROTOS: &[&str] = &[
     "TCP", "UDP", "DNS", "HTTP", "HTTPS", "TLS", "ARP", "ICMP", "DHCP",
     "Modbus", "MQTT", "CoAP", "BACnet", "DNP3", "OPC-UA", "S7comm", "EtherNet/IP",
     "NTP", "PTP", "SIP", "FTP", "BGP", "WireGuard", "VXLAN", "GRE", "IGMP",
+    "SMB", "RDP", "Kafka", "AMQP", "NATS", "Kerberos",
 ];
-const WEIGHTS: &[u32] = &[26, 13, 18, 7, 10, 7, 3, 3, 1, 3, 3, 2, 1, 1, 1, 1, 1, 3, 1, 2, 2, 1, 1, 1, 1, 1];
+const WEIGHTS: &[u32] = &[26, 13, 18, 7, 10, 7, 3, 3, 1, 3, 3, 2, 1, 1, 1, 1, 1, 3, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
 
 static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
@@ -277,6 +278,60 @@ pub fn generate_packet(counter: u64) -> Packet {
             let t = types[rng.gen_range(0..types.len())];
             (src, mcast, None, None,
              format!("IGMPv3 {} group={}", t, rand_ip(LOCAL_IPS, &mut rng)))
+        }
+        "SMB" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let cmds = ["Negotiate", "SessionSetup", "TreeConnect", "Create", "Read", "Write", "Close"];
+            let cmd = cmds[rng.gen_range(0..cmds.len())];
+            let session: u64 = rng.r#gen::<u64>() & 0xFFFFFFFFFFFF;
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(445),
+             format!("SMB2 {} session=0x{:012x}", cmd, session))
+        }
+        "RDP" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let pdus = ["X.224 Connection Request", "MCS Connect Initial", "Client Info", "Demand Active PDU", "Bitmap Update"];
+            let pdu = pdus[rng.gen_range(0..pdus.len())];
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(3389),
+             format!("RDP {}", pdu))
+        }
+        "Kafka" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let apis = [("Produce",0u16), ("Fetch",1), ("Metadata",3), ("OffsetFetch",9), ("JoinGroup",11)];
+            let (name, api_key) = apis[rng.gen_range(0..apis.len())];
+            let corr: i32 = rng.r#gen();
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(9092),
+             format!("Kafka {} apiKey={} corr={}", name, api_key, corr))
+        }
+        "AMQP" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let methods = ["connection.start", "connection.open", "channel.open", "basic.publish", "basic.deliver", "queue.declare"];
+            let m = methods[rng.gen_range(0..methods.len())];
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(5672),
+             format!("AMQP {}", m))
+        }
+        "NATS" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let ops = ["PUB", "SUB", "MSG", "PING", "PONG", "+OK"];
+            let op = ops[rng.gen_range(0..ops.len())];
+            let subjects = ["events.>", "orders.created", "users.login", "_INBOX.reply"];
+            let subj = subjects[rng.gen_range(0..subjects.len())];
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(4222),
+             format!("NATS {} {}", op, subj))
+        }
+        "Kerberos" => {
+            let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let dst = rand_ip(LOCAL_IPS, &mut rng).to_string();
+            let msgs = ["AS-REQ", "AS-REP", "TGS-REQ", "TGS-REP", "AP-REQ"];
+            let m = msgs[rng.gen_range(0..msgs.len())];
+            let users = ["administrator", "svc_backup", "john.doe", "svc_sql"];
+            let u = users[rng.gen_range(0..users.len())];
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(88),
+             format!("Kerberos {} user={} realm=CORP.EXAMPLE.COM", m, u))
         }
         _ => {
             let src = rand_ip(LOCAL_IPS, &mut rng).to_string();
