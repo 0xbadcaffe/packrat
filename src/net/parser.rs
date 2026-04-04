@@ -115,6 +115,9 @@ fn parse_transport(
         51 => parse_ah(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
         58 => parse_icmpv6(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
         112 => parse_vrrp(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
+        89  => parse_ospf(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
+        88  => parse_eigrp(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
+        103 => parse_pim(transport, raw, no, ts, src_ip, dst_ip, vlan_id),
         _ => Packet {
             no,
             timestamp: ts,
@@ -235,6 +238,11 @@ fn parse_udp(
     let payload_len = (t.len() as u16).saturating_sub(8);
 
     let protocol = classify_udp(sp, dp);
+    let protocol = if protocol == "UDP" && t.len() >= 12 && (t[8] >> 6) == 2 {
+        "RTP"
+    } else {
+        protocol
+    };
     let info = format!("{} → {} Len={}", sp, dp, payload_len);
 
     Packet {
@@ -281,6 +289,19 @@ fn classify_tcp(sp: u16, dp: u16) -> &'static str {
         (_, 5061) | (5061, _)                         => "SIPS",
         (_, 13400) | (13400, _)                       => "DoIP",
         (_, 30490) | (30490, _)                       => "SOME/IP",
+        (_, 445)   | (445, _)                         => "SMB",
+        (_, 3389)  | (3389, _)                        => "RDP",
+        (_, 88)    | (88, _)                          => "Kerberos",
+        (_, 139)   | (139, _)                         => "NetBIOS-SSN",
+        (_, 554)   | (554, _)                         => "RTSP",
+        (_, 9092)  | (9092, _)                        => "Kafka",
+        (_, 5672)  | (5672, _)                        => "AMQP",
+        (_, 4222)  | (4222, _)                        => "NATS",
+        (_, 11211) | (11211, _)                       => "Memcached",
+        (_, 5900)  | (5900, _)                        => "VNC",
+        (_, 2375)  | (2375, _) | (_, 2376) | (2376, _) => "Docker",
+        (_, 9090)  | (9090, _)                        => "Prometheus",
+        (_, 2379)  | (2379, _) | (_, 2380) | (2380, _) => "etcd",
         _                                             => "TCP",
     }
 }
@@ -311,6 +332,12 @@ fn classify_udp(sp: u16, dp: u16) -> &'static str {
         (1812, _) | (_, 1812) | (1813, _) | (_, 1813) | (1645, _) | (_, 1645) | (1646, _) | (_, 1646) => "Radius",
         (30490, _) | (_, 30490)                    => "SOME/IP",
         (9, _) | (_, 9)                            => "WoL",
+        (137, _) | (_, 137)   => "NBNS",
+        (69, _)  | (_, 69)    => "TFTP",
+        (3478, _)| (_, 3478)  => "STUN",
+        (1900, _)| (_, 1900)  => "SSDP",
+        (520, _) | (_, 520)   => "RIP",
+        (88, _)  | (_, 88)    => "Kerberos",
         _                       => "UDP",
     }
 }
@@ -369,6 +396,23 @@ fn parse_pppoe(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan_id: Option<u16
         match code { 0x09=>"PPPoE PADI".into(), 0x07=>"PPPoE PADO".into(), 0x19=>"PPPoE PADR".into(), 0x65=>"PPPoE PADS".into(), 0xa7=>"PPPoE PADT".into(), _=>format!("PPPoE code=0x{:02x}",code) }
     };
     Packet { no, timestamp: ts, src: "?.?.?.?".into(), dst: "?.?.?.?".into(), protocol: "PPPoE".into(), length: raw.len() as u16, info, src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
+}
+
+fn parse_ospf(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan_id: Option<u16>) -> Packet {
+    let msg = if t.len() >= 2 { match t[1] { 1=>"Hello", 2=>"DBD", 3=>"LSR", 4=>"LSU", 5=>"LSAck", _=>"Unknown" } } else { "OSPF" };
+    Packet { no, timestamp: ts, src, dst, protocol: "OSPF".into(), length: raw.len() as u16, info: format!("OSPF {}", msg), src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
+}
+
+fn parse_eigrp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan_id: Option<u16>) -> Packet {
+    let op = t.get(1).copied().unwrap_or(0);
+    Packet { no, timestamp: ts, src, dst, protocol: "EIGRP".into(), length: raw.len() as u16, info: format!("EIGRP opcode={}", op), src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
+}
+
+fn parse_pim(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan_id: Option<u16>) -> Packet {
+    let types = ["Hello", "Register", "Register-Stop", "Join/Prune", "Bootstrap", "Assert", "Graft", "State-Refresh", "Candidate-RP"];
+    let mt = (t.get(1).copied().unwrap_or(0) & 0x0F) as usize;
+    let name = types.get(mt).copied().unwrap_or("Unknown");
+    Packet { no, timestamp: ts, src, dst, protocol: "PIM".into(), length: raw.len() as u16, info: format!("PIM {}", name), src_port: None, dst_port: None, vlan_id, bytes: raw.to_vec() }
 }
 
 fn unknown(raw: &[u8], no: u64, ts: f64) -> Packet {

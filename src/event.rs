@@ -87,6 +87,7 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::Char('4') => app.active_tab = Tab::Dynamic,
         KeyCode::Char('5') => app.active_tab = Tab::Visualize,
         KeyCode::Char('6') => app.active_tab = Tab::Topology,
+        KeyCode::Char('7') => app.active_tab = Tab::Flows,
         KeyCode::Tab       => app.next_tab(),
 
         // Interface switch (back to picker)
@@ -111,6 +112,8 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if matches!(app.active_tab, Tab::Strings) && !app.capturing {
                 app.strings_select();
+            } else if matches!(app.active_tab, Tab::Flows) {
+                app.flows_jump_to_packets();
             }
         }
         KeyCode::Esc => {
@@ -141,6 +144,10 @@ fn handle_main(app: &mut App, key: KeyEvent) {
 
         // Help popup
         KeyCode::Char('h') => app.show_help = true,
+
+        KeyCode::Char('b') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_bytes(),
+        KeyCode::Char('p') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_packets(),
+        KeyCode::Char('t') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_time(),
 
         _ => {}
     }

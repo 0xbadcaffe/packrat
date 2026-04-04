@@ -96,6 +96,7 @@ fn draw_tabs(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Line::from(vec![Span::styled("4 ", Style::default().fg(C_YELLOW)), Span::raw("Dynamic")]),
         Line::from(vec![Span::styled("5 ", Style::default().fg(C_YELLOW)), Span::raw("Visualize")]),
         Line::from(vec![Span::styled("6 ", Style::default().fg(C_YELLOW)), Span::raw("Topology")]),
+        Line::from(vec![Span::styled("7 ", Style::default().fg(C_YELLOW)), Span::raw("Flows")]),
     ];
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
@@ -120,6 +121,7 @@ fn draw_workspace(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Tab::Dynamic   => tabs::dynamic::draw(f, app, area),
         Tab::Visualize => tabs::visualize::draw(f, app, area),
         Tab::Topology  => tabs::topology::draw(f, app, area),
+        Tab::Flows     => tabs::flows::draw(f, app, area),
     }
 }
 
@@ -146,7 +148,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(format!("rate:{}/s ", app.current_rate()), Style::default().fg(C_GREEN)),
         Span::styled("│ ", Style::default().fg(C_FG3)),
         Span::styled(
-            "j/k:nav  g/G:top/bot  Space:cap  /:filter  i:iface  w:record  h:help  1-6:tabs  q:quit",
+            "j/k:nav  g/G:top/bot  Space:cap  /:filter  i:iface  w:record  h:help  1-7:tabs  q:quit",
             Style::default().fg(C_FG3),
         ),
     ]);

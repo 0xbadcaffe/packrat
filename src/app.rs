@@ -7,6 +7,7 @@ use crate::sim::capture::SimulatedCapture;
 use crate::sim::dynamic::DynEntry;
 use crate::export::PcapWriter;
 use crate::filter::PacketFilter;
+use crate::net::flow::{FlowTracker, FlowSort};
 use crate::net::packet::Packet;
 use crate::dissector::DissectorDef;
 use crate::net::packet::TreeSection;
@@ -60,6 +61,9 @@ pub struct App {
     pub strings_search_active: bool,
     pub strings_selected: Option<usize>,
     pub strings_scroll: usize,
+    pub flow_tracker: FlowTracker,
+    pub flows_selected: Option<usize>,
+    pub flows_sort: FlowSort,
 }
 
 impl App {
@@ -97,6 +101,9 @@ impl App {
             strings_search_active: false,
             strings_selected: None,
             strings_scroll: 0,
+            flow_tracker: FlowTracker::new(),
+            flows_selected: None,
+            flows_sort: FlowSort::Bytes,
         }
     }
 
@@ -241,6 +248,7 @@ impl App {
         self.total_bytes += pkt.length as u64;
         self.rate_this_sec += 1;
         self.topology.update(&pkt);
+        self.flow_tracker.update(&pkt);
 
         if self.recording {
             if let Some(ref mut writer) = self.pcap_writer { let _ = writer.write_packet(&pkt); }
@@ -286,6 +294,8 @@ impl App {
         self.total_bytes = 0;
         self.packet_counter = 0;
         self.topology.clear();
+        self.flow_tracker.clear();
+        self.flows_selected = None;
     }
 
     pub fn toggle_recording(&mut self) {
@@ -341,9 +351,17 @@ impl App {
                     if sel + 1 < self.filtered.len() { self.selected = Some(sel + 1); }
                 } else if !self.filtered.is_empty() { self.selected = Some(0); }
             }
-            Tab::Analysis => { if self.analysis_section < 5 { self.analysis_section += 1; } }
+            Tab::Analysis => { if self.analysis_section < 8 { self.analysis_section += 1; } }
             // j = toward tail (decrease offset-from-end)
             Tab::Dynamic  => { self.dyn_scroll = self.dyn_scroll.saturating_sub(1); }
+            Tab::Flows => {
+                let len = self.flow_tracker.flows.len();
+                if let Some(sel) = self.flows_selected {
+                    if sel + 1 < len { self.flows_selected = Some(sel + 1); }
+                } else if len > 0 {
+                    self.flows_selected = Some(0);
+                }
+            }
             _ => {}
         }
     }
@@ -357,7 +375,29 @@ impl App {
                 let max = self.dyn_log.len().saturating_sub(1);
                 if self.dyn_scroll < max { self.dyn_scroll += 1; }
             }
+            Tab::Flows => {
+                if let Some(sel) = self.flows_selected {
+                    if sel > 0 { self.flows_selected = Some(sel - 1); }
+                }
+            }
             _ => {}
+        }
+    }
+
+    pub fn flows_sort_bytes(&mut self)   { self.flows_sort = FlowSort::Bytes; }
+    pub fn flows_sort_packets(&mut self) { self.flows_sort = FlowSort::Packets; }
+    pub fn flows_sort_time(&mut self)    { self.flows_sort = FlowSort::Time; }
+
+    pub fn flows_jump_to_packets(&mut self) {
+        let sorted = self.flow_tracker.sorted_flows(&self.flows_sort);
+        if let Some(sel) = self.flows_selected {
+            if let Some(flow) = sorted.get(sel) {
+                let ip = flow.key.ep1.0.clone();
+                self.filter.input = ip;
+                self.filter.active = false;
+                self.rebuild_filtered();
+                self.active_tab = crate::tabs::Tab::Packets;
+            }
         }
     }
 

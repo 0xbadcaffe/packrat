@@ -74,10 +74,16 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         | "PostgreSQL" | "IMAP" | "IMAPS" | "POP3" | "MongoDB" | "Elasticsearch"
         | "Modbus" | "MQTT" | "MQTT-TLS" | "OPC-UA" | "DNP3" | "S7comm"
         | "EtherNet/IP" | "IEC-104" | "SIP" | "SIPS" | "BGP" | "FTP"
-        | "Telnet" | "LDAP" | "DoIP" | "SOME/IP"                              => "6 (TCP)",
+        | "Telnet" | "LDAP" | "DoIP" | "SOME/IP"
+        | "SMB" | "RDP" | "Kerberos" | "NetBIOS-SSN" | "RTSP" | "Kafka"
+        | "AMQP" | "NATS" | "Memcached" | "VNC" | "Docker" | "Prometheus" | "etcd" => "6 (TCP)",
         "UDP" | "DNS" | "mDNS" | "DHCP" | "NTP" | "QUIC" | "SNMP"
         | "CoAP" | "CoAP-DTLS" | "BACnet" | "PTP" | "DHCPv6" | "VXLAN"
-        | "WireGuard" | "GTP" | "Radius" | "WoL" | "SNMP-trap" | "Syslog"   => "17 (UDP)",
+        | "WireGuard" | "GTP" | "Radius" | "WoL" | "SNMP-trap" | "Syslog"
+        | "NBNS" | "TFTP" | "STUN" | "SSDP" | "RIP" | "RTP"                => "17 (UDP)",
+        "OSPF"  => "89 (OSPF)",
+        "EIGRP" => "88 (EIGRP)",
+        "PIM"   => "103 (PIM)",
         "ICMP"   => "1 (ICMP)",
         "IGMP"   => "2 (IGMP)",
         "GRE"    => "47 (GRE)",
@@ -1097,6 +1103,618 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Sync Stream:", "0xffffffffffff", FieldColor::Default),
                     tf("Target MAC:", &mac, FieldColor::Cyan),
                     tf("MAC Repetitions:", "16", FieldColor::Default),
+                ],
+            });
+        }
+
+        "SMB" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 445", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "445", FieldColor::Yellow),
+                ],
+            });
+            let cmds = ["Negotiate", "SessionSetup", "TreeConnect", "Create", "Read", "Write", "Close", "Ioctl", "QueryInfo"];
+            let cmd = cmds[rng.gen_range(0..cmds.len())];
+            let dialects = ["SMB 2.0.2", "SMB 2.1", "SMB 3.0", "SMB 3.1.1"];
+            let dialect = dialects[rng.gen_range(0..dialects.len())];
+            let session: u64 = rng.r#gen::<u64>() & 0xFFFFFFFFFFFF;
+            let tree_id: u32 = rng.r#gen();
+            sections.push(TreeSection {
+                title: format!("SMB2 (Server Message Block 2) — {}", cmd),
+                expanded: true,
+                fields: vec![
+                    tf("Protocol ID:", "0xfe534d42 (SMB2)", FieldColor::Cyan),
+                    tf("Header Length:", "64", FieldColor::Default),
+                    tf("Dialect:", dialect, FieldColor::Yellow),
+                    tf("Command:", cmd, FieldColor::Green),
+                    tf("NT Status:", "0x00000000 (STATUS_SUCCESS)", FieldColor::Default),
+                    tf("Session ID:", &format!("0x{:012x}", session), FieldColor::Cyan),
+                    tf("Tree ID:", &format!("0x{:08x}", tree_id), FieldColor::Default),
+                    tf("Message ID:", &rng.r#gen::<u64>().to_string(), FieldColor::Default),
+                ],
+            });
+        }
+
+        "RDP" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 3389", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "3389", FieldColor::Yellow),
+                ],
+            });
+            let pdus = [
+                "X.224 Connection Request", "X.224 Connection Confirm",
+                "MCS Connect Initial", "MCS Connect Response",
+                "Client Security Exchange", "Client Info",
+                "License Request", "Demand Active PDU",
+                "Confirm Active PDU", "Bitmap Update",
+            ];
+            let pdu = pdus[rng.gen_range(0..pdus.len())];
+            let channel: u16 = rng.gen_range(1001..=1007);
+            sections.push(TreeSection {
+                title: format!("Remote Desktop Protocol — {}", pdu),
+                expanded: true,
+                fields: vec![
+                    tf("TPKT Version:", "3", FieldColor::Default),
+                    tf("PDU Type:", pdu, FieldColor::Yellow),
+                    tf("MCS Channel:", &channel.to_string(), FieldColor::Cyan),
+                    tf("Encryption:", "128-bit RC4", FieldColor::Magenta),
+                    tf("PDU Length:", &pkt.length.to_string(), FieldColor::Default),
+                ],
+            });
+        }
+
+        "Kerberos" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 88", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "88 (Kerberos)", FieldColor::Yellow),
+                ],
+            });
+            let msg_types = [
+                (10u8, "AS-REQ"), (11, "AS-REP"), (12, "TGS-REQ"), (13, "TGS-REP"),
+                (14, "AP-REQ"), (15, "AP-REP"), (30, "KRB-ERROR"),
+            ];
+            let (mt, mt_name) = msg_types[rng.gen_range(0..msg_types.len())];
+            let realms = ["CORP.EXAMPLE.COM", "EXAMPLE.LOCAL", "INTERNAL.NET"];
+            let realm = realms[rng.gen_range(0..realms.len())];
+            let users = ["administrator", "svc_backup", "john.doe", "svc_sql", "krbtgt"];
+            let user = users[rng.gen_range(0..users.len())];
+            let etype = ["aes256-cts-hmac-sha1-96", "aes128-cts-hmac-sha1-96", "rc4-hmac"];
+            let enc = etype[rng.gen_range(0..etype.len())];
+            sections.push(TreeSection {
+                title: format!("Kerberos — {} (msg-type={})", mt_name, mt),
+                expanded: true,
+                fields: vec![
+                    tf("pvno:", "5", FieldColor::Default),
+                    tf("msg-type:", &format!("{} ({})", mt, mt_name), FieldColor::Yellow),
+                    tf("realm:", realm, FieldColor::Cyan),
+                    tf("cname:", user, FieldColor::Green),
+                    tf("sname:", "krbtgt", FieldColor::Default),
+                    tf("etype:", enc, FieldColor::Magenta),
+                    tf("nonce:", &format!("0x{:08x}", rng.r#gen::<u32>()), FieldColor::Default),
+                ],
+            });
+        }
+
+        "NetBIOS-SSN" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 139", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "139 (NetBIOS-SSN)", FieldColor::Yellow),
+                ],
+            });
+            let types = [(0x00u8,"Session Message"),(0x81,"Session Request"),(0x82,"Positive Session Response"),(0x83,"Negative Session Response")];
+            let (mt, mt_name) = types[rng.gen_range(0..types.len())];
+            sections.push(TreeSection {
+                title: "NetBIOS Session Service".into(),
+                expanded: true,
+                fields: vec![
+                    tf("Message Type:", &format!("0x{:02x} ({})", mt, mt_name), FieldColor::Yellow),
+                    tf("Length:", &pkt.length.to_string(), FieldColor::Default),
+                    tf("Called Name:", "FILESERVER<20>", FieldColor::Cyan),
+                    tf("Calling Name:", "WORKSTATION<00>", FieldColor::Green),
+                ],
+            });
+        }
+
+        "RTSP" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 554", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "554 (RTSP)", FieldColor::Yellow),
+                ],
+            });
+            let methods = ["DESCRIBE", "ANNOUNCE", "SETUP", "PLAY", "PAUSE", "TEARDOWN", "OPTIONS"];
+            let m = methods[rng.gen_range(0..methods.len())];
+            let streams = ["rtsp://stream.example.com/live.sdp", "rtsp://camera.local/h264", "rtsp://server/track1"];
+            let url = streams[rng.gen_range(0..streams.len())];
+            let cseq: u32 = rng.gen_range(1..=100);
+            sections.push(TreeSection {
+                title: format!("Real-Time Streaming Protocol — {}", m),
+                expanded: true,
+                fields: vec![
+                    tf("Method:", m, FieldColor::Green),
+                    tf("URL:", url, FieldColor::Cyan),
+                    tf("Version:", "RTSP/1.0", FieldColor::Default),
+                    tf("CSeq:", &cseq.to_string(), FieldColor::Yellow),
+                    tf("Session:", &format!("{:016x}", rng.r#gen::<u64>()), FieldColor::Default),
+                ],
+            });
+        }
+
+        "Kafka" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 9092", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "9092 (Kafka)", FieldColor::Yellow),
+                ],
+            });
+            let apis = [(0u16,"Produce"),(1,"Fetch"),(2,"ListOffsets"),(3,"Metadata"),(8,"OffsetCommit"),(9,"OffsetFetch"),(10,"FindCoordinator"),(11,"JoinGroup"),(12,"Heartbeat"),(13,"LeaveGroup"),(14,"SyncGroup")];
+            let (api_key, api_name) = apis[rng.gen_range(0..apis.len())];
+            let corr: i32 = rng.r#gen();
+            let topics = ["orders", "events", "metrics", "logs", "payments", "user-activity"];
+            let topic = topics[rng.gen_range(0..topics.len())];
+            sections.push(TreeSection {
+                title: format!("Apache Kafka — {} (apiKey={})", api_name, api_key),
+                expanded: true,
+                fields: vec![
+                    tf("API Key:", &format!("{} ({})", api_key, api_name), FieldColor::Yellow),
+                    tf("API Version:", &rng.gen_range(0u16..=10).to_string(), FieldColor::Default),
+                    tf("Correlation ID:", &corr.to_string(), FieldColor::Cyan),
+                    tf("Client ID:", "kafka-consumer-1", FieldColor::Default),
+                    tf("Topic:", topic, FieldColor::Green),
+                    tf("Partition:", &rng.gen_range(0u32..=7).to_string(), FieldColor::Default),
+                ],
+            });
+        }
+
+        "AMQP" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 5672", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "5672 (AMQP)", FieldColor::Yellow),
+                ],
+            });
+            let methods = [
+                (10u16, 10u16, "connection.start"), (10, 30, "connection.tune"), (10, 40, "connection.open"),
+                (20, 10, "channel.open"), (40, 10, "exchange.declare"), (50, 10, "queue.declare"),
+                (50, 20, "queue.bind"), (60, 40, "basic.publish"), (60, 60, "basic.deliver"),
+                (60, 80, "basic.ack"),
+            ];
+            let (class_id, method_id, method_name) = methods[rng.gen_range(0..methods.len())];
+            let exchange = ["amq.direct", "amq.topic", "amq.fanout", "events", "orders"];
+            let routing_key = ["order.created", "user.signup", "payment.processed", "error.fatal"];
+            sections.push(TreeSection {
+                title: format!("AMQP 0-9-1 — {}", method_name),
+                expanded: true,
+                fields: vec![
+                    tf("Frame Type:", "1 (method)", FieldColor::Default),
+                    tf("Channel:", "1", FieldColor::Cyan),
+                    tf("Class ID:", &class_id.to_string(), FieldColor::Default),
+                    tf("Method ID:", &method_id.to_string(), FieldColor::Default),
+                    tf("Method:", method_name, FieldColor::Yellow),
+                    tf("Exchange:", exchange[rng.gen_range(0..exchange.len())], FieldColor::Green),
+                    tf("Routing Key:", routing_key[rng.gen_range(0..routing_key.len())], FieldColor::Cyan),
+                ],
+            });
+        }
+
+        "NATS" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 4222", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "4222 (NATS)", FieldColor::Yellow),
+                ],
+            });
+            let ops = ["INFO", "CONNECT", "PUB", "SUB", "UNSUB", "MSG", "PING", "PONG", "+OK", "-ERR"];
+            let op = ops[rng.gen_range(0..ops.len())];
+            let subjects = ["events.>", "orders.created", "users.login", "_INBOX.reply", "health.check"];
+            let subj = subjects[rng.gen_range(0..subjects.len())];
+            sections.push(TreeSection {
+                title: format!("NATS Messaging — {}", op),
+                expanded: true,
+                fields: vec![
+                    tf("Operation:", op, FieldColor::Yellow),
+                    tf("Subject:", subj, FieldColor::Cyan),
+                    tf("Payload Length:", &rng.gen_range(0u16..=512).to_string(), FieldColor::Default),
+                    tf("Version:", "2.x", FieldColor::Default),
+                ],
+            });
+        }
+
+        "Memcached" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 11211", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "11211 (Memcached)", FieldColor::Yellow),
+                ],
+            });
+            let cmds = ["get", "set", "delete", "incr", "decr", "flush_all", "stats", "version"];
+            let cmd = cmds[rng.gen_range(0..cmds.len())];
+            let keys = ["session:abc123", "user:42:profile", "cache:homepage", "token:xyz789"];
+            let key = keys[rng.gen_range(0..keys.len())];
+            sections.push(TreeSection {
+                title: format!("Memcached — {}", cmd),
+                expanded: true,
+                fields: vec![
+                    tf("Command:", cmd, FieldColor::Yellow),
+                    tf("Key:", key, FieldColor::Cyan),
+                    tf("Flags:", "0", FieldColor::Default),
+                    tf("Exptime:", &rng.gen_range(0u32..=3600).to_string(), FieldColor::Default),
+                    tf("Bytes:", &rng.gen_range(0u16..=4096).to_string(), FieldColor::Default),
+                ],
+            });
+        }
+
+        "VNC" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 5900", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "5900 (VNC)", FieldColor::Yellow),
+                ],
+            });
+            let msgs = ["ProtocolVersion 3.8", "SecurityType: VNC Authentication", "ServerInit", "FramebufferUpdateRequest", "KeyEvent", "PointerEvent", "FramebufferUpdate"];
+            let msg = msgs[rng.gen_range(0..msgs.len())];
+            sections.push(TreeSection {
+                title: format!("Virtual Network Computing (VNC) — {}", msg),
+                expanded: true,
+                fields: vec![
+                    tf("Message:", msg, FieldColor::Yellow),
+                    tf("Desktop Width:", "1920", FieldColor::Cyan),
+                    tf("Desktop Height:", "1080", FieldColor::Cyan),
+                    tf("Pixel Format:", "32 bits/pixel, BGR888", FieldColor::Default),
+                    tf("Name:", "Remote Desktop", FieldColor::Default),
+                ],
+            });
+        }
+
+        "Docker" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let dp = pkt.dst_port.unwrap_or(2375);
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: {}", sp, dp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", &format!("{} (Docker API)", dp), FieldColor::Yellow),
+                ],
+            });
+            let endpoints = ["/containers/json", "/images/json", "/networks", "/volumes", "/containers/{id}/start", "/containers/{id}/logs", "/_ping", "/version", "/events"];
+            let ep = endpoints[rng.gen_range(0..endpoints.len())];
+            let methods = ["GET", "POST", "DELETE"];
+            let m = methods[rng.gen_range(0..methods.len())];
+            let sec_field = if pkt.dst_port == Some(2375) || pkt.src_port == Some(2375) {
+                tf("Security:", "UNENCRYPTED (plain HTTP)", FieldColor::Red)
+            } else {
+                tf("Security:", "TLS mutual auth", FieldColor::Green)
+            };
+            sections.push(TreeSection {
+                title: format!("Docker Remote API — {} {}", m, ep),
+                expanded: true,
+                fields: vec![
+                    tf("Method:", m, FieldColor::Green),
+                    tf("Endpoint:", ep, FieldColor::Cyan),
+                    tf("Version:", "HTTP/1.1", FieldColor::Default),
+                    tf("Host:", "unix:/var/run/docker.sock", FieldColor::Default),
+                    tf("API Version:", "v1.43", FieldColor::Yellow),
+                    sec_field,
+                ],
+            });
+        }
+
+        "Prometheus" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 9090", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "9090 (Prometheus)", FieldColor::Yellow),
+                ],
+            });
+            let paths = ["/metrics", "/api/v1/query", "/api/v1/query_range", "/api/v1/targets", "/api/v1/alerts", "/api/v1/rules"];
+            let path = paths[rng.gen_range(0..paths.len())];
+            let queries = ["http_requests_total", "node_cpu_seconds_total", "go_goroutines", "process_resident_memory_bytes"];
+            let q = queries[rng.gen_range(0..queries.len())];
+            sections.push(TreeSection {
+                title: format!("Prometheus — GET {}", path),
+                expanded: true,
+                fields: vec![
+                    tf("Method:", "GET", FieldColor::Green),
+                    tf("Path:", path, FieldColor::Cyan),
+                    tf("Query:", q, FieldColor::Yellow),
+                    tf("Format:", "OpenMetrics", FieldColor::Default),
+                ],
+            });
+        }
+
+        "etcd" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let dp = pkt.dst_port.unwrap_or(2379);
+            sections.push(TreeSection {
+                title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: {}", sp, dp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", &format!("{} (etcd)", dp), FieldColor::Yellow),
+                ],
+            });
+            let ops = ["Range", "Put", "DeleteRange", "Txn", "Watch", "LeaseGrant", "MemberList", "Status"];
+            let op = ops[rng.gen_range(0..ops.len())];
+            let keys = ["/registry/pods/default", "/registry/services", "/election/master", "/config/app"];
+            let key = keys[rng.gen_range(0..keys.len())];
+            let rev: u64 = rng.gen_range(1000..=99999);
+            sections.push(TreeSection {
+                title: format!("etcd gRPC — {}", op),
+                expanded: true,
+                fields: vec![
+                    tf("Operation:", op, FieldColor::Yellow),
+                    tf("Key:", key, FieldColor::Cyan),
+                    tf("Revision:", &rev.to_string(), FieldColor::Default),
+                    tf("Cluster ID:", &format!("0x{:016x}", rng.r#gen::<u64>()), FieldColor::Default),
+                    tf("Member ID:", &format!("0x{:016x}", rng.r#gen::<u64>()), FieldColor::Default),
+                ],
+            });
+        }
+
+        "NBNS" => {
+            let sp = pkt.src_port.unwrap_or(137);
+            sections.push(TreeSection {
+                title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 137", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "137 (NBNS)", FieldColor::Yellow),
+                ],
+            });
+            let names = ["WORKSTATION01", "FILESERVER", "PRINTSERVER", "DOMAIN-CTRL", "WIN10-PC"];
+            let name = names[rng.gen_range(0..names.len())];
+            let types = [(0x0000u16,"General"), (0x0020,"Server"), (0x0000,"Workstation"), (0x001c,"Domain Controller")];
+            let (nt, nt_name) = types[rng.gen_range(0..types.len())];
+            let tid: u16 = rng.r#gen();
+            let is_query = rng.gen_bool(0.5);
+            sections.push(TreeSection {
+                title: format!("NetBIOS Name Service — {} {}", if is_query {"Query"} else {"Response"}, name),
+                expanded: true,
+                fields: vec![
+                    tf("Transaction ID:", &format!("0x{:04x}", tid), FieldColor::Cyan),
+                    tf("Flags:", if is_query { "0x0110 (Query)" } else { "0x8500 (Response)" }, FieldColor::Yellow),
+                    tf("Name:", name, FieldColor::Green),
+                    tf("Type:", &format!("0x{:04x} ({})", nt, nt_name), FieldColor::Default),
+                    tf("IP:", &format!("192.168.1.{}", rng.gen_range(1u8..=254)), FieldColor::Cyan),
+                ],
+            });
+        }
+
+        "TFTP" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 69", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "69 (TFTP)", FieldColor::Yellow),
+                ],
+            });
+            let opcodes = [(1u16,"Read Request (RRQ)"),(2,"Write Request (WRQ)"),(3,"Data (DAT)"),(4,"Acknowledgment (ACK)"),(5,"Error (ERROR)")];
+            let (op, op_name) = opcodes[rng.gen_range(0..opcodes.len())];
+            let files = ["pxelinux.0", "firmware.bin", "config.cfg", "initrd.img", "bootloader.img"];
+            let file = files[rng.gen_range(0..files.len())];
+            let block_field = if op <= 2 { tf("Filename:", file, FieldColor::Cyan) }
+                              else       { tf("Block:", &rng.gen_range(1u16..=512).to_string(), FieldColor::Cyan) };
+            sections.push(TreeSection {
+                title: format!("Trivial File Transfer Protocol — {}", op_name),
+                expanded: true,
+                fields: vec![
+                    tf("Opcode:", &format!("{} ({})", op, op_name), FieldColor::Yellow),
+                    block_field,
+                    tf("Mode:", "octet", FieldColor::Default),
+                ],
+            });
+        }
+
+        "STUN" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 3478", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "3478 (STUN)", FieldColor::Yellow),
+                ],
+            });
+            let types = [(0x0001u16,"Binding Request"),(0x0101,"Binding Success Response"),(0x0111,"Binding Error Response"),(0x0003,"Allocate Request"),(0x0103,"Allocate Response")];
+            let (mt, mt_name) = types[rng.gen_range(0..types.len())];
+            let tid_hi: u64 = rng.r#gen();
+            let tid_lo: u32 = rng.r#gen();
+            sections.push(TreeSection {
+                title: format!("Session Traversal Utilities for NAT (STUN) — {}", mt_name),
+                expanded: true,
+                fields: vec![
+                    tf("Message Type:", &format!("0x{:04x} ({})", mt, mt_name), FieldColor::Yellow),
+                    tf("Message Length:", &pkt.length.to_string(), FieldColor::Default),
+                    tf("Magic Cookie:", "0x2112a442", FieldColor::Default),
+                    tf("Transaction ID:", &format!("0x{:016x}{:08x}", tid_hi, tid_lo), FieldColor::Cyan),
+                    tf("XOR-MAPPED-ADDRESS:", &format!("{}:{}", pkt.src, sp), FieldColor::Green),
+                ],
+            });
+        }
+
+        "SSDP" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            sections.push(TreeSection {
+                title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 1900", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "1900 (SSDP)", FieldColor::Yellow),
+                ],
+            });
+            let methods = ["M-SEARCH * HTTP/1.1", "NOTIFY * HTTP/1.1", "HTTP/1.1 200 OK"];
+            let m = methods[rng.gen_range(0..methods.len())];
+            let services = ["upnp:rootdevice", "urn:schemas-upnp-org:service:RenderingControl:1", "urn:schemas-upnp-org:device:MediaServer:1"];
+            let svc = services[rng.gen_range(0..services.len())];
+            sections.push(TreeSection {
+                title: format!("Simple Service Discovery Protocol (SSDP) — {}", m),
+                expanded: true,
+                fields: vec![
+                    tf("Method:", m, FieldColor::Yellow),
+                    tf("Host:", "239.255.255.250:1900", FieldColor::Cyan),
+                    tf("ST/NT:", svc, FieldColor::Green),
+                    tf("MX:", &rng.gen_range(1u8..=5).to_string(), FieldColor::Default),
+                    tf("USN:", &format!("uuid:{:08x}-{:04x}-{:04x}-{:04x}-{:012x}::{}", rng.r#gen::<u32>(), rng.r#gen::<u16>(), rng.r#gen::<u16>(), rng.r#gen::<u16>(), rng.r#gen::<u64>() & 0xFFFFFFFFFFFF, svc), FieldColor::Default),
+                ],
+            });
+        }
+
+        "RIP" => {
+            let sp = pkt.src_port.unwrap_or(520);
+            sections.push(TreeSection {
+                title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 520", sp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", "520 (RIP)", FieldColor::Yellow),
+                ],
+            });
+            let cmds = [(1u8,"Request"),(2,"Response")];
+            let (cmd, cmd_name) = cmds[rng.gen_range(0..cmds.len())];
+            let prefix = format!("{}.0.0.0/8", rng.gen_range(1u8..=223));
+            let metric: u8 = rng.gen_range(1..=15);
+            sections.push(TreeSection {
+                title: format!("Routing Information Protocol v2 — {}", cmd_name),
+                expanded: true,
+                fields: vec![
+                    tf("Command:", &format!("{} ({})", cmd, cmd_name), FieldColor::Yellow),
+                    tf("Version:", "2", FieldColor::Cyan),
+                    tf("Address Family:", "2 (IPv4)", FieldColor::Default),
+                    tf("Route Tag:", "0", FieldColor::Default),
+                    tf("Network:", &prefix, FieldColor::Green),
+                    tf("Subnet Mask:", "255.0.0.0", FieldColor::Default),
+                    tf("Next Hop:", &pkt.src, FieldColor::Cyan),
+                    tf("Metric:", &metric.to_string(), FieldColor::Yellow),
+                ],
+            });
+        }
+
+        "RTP" => {
+            let sp = pkt.src_port.unwrap_or(rng.gen_range(10000u16..=20000));
+            let dp = pkt.dst_port.unwrap_or(rng.gen_range(10000u16..=20000));
+            sections.push(TreeSection {
+                title: format!("User Datagram Protocol, Src Port: {}, Dst Port: {}", sp, dp),
+                expanded: false,
+                fields: vec![
+                    tf("Source Port:", &sp.to_string(), FieldColor::Cyan),
+                    tf("Destination Port:", &dp.to_string(), FieldColor::Yellow),
+                ],
+            });
+            let payload_types = [(0u8,"PCMU"),(3,"GSM"),(8,"PCMA"),(9,"G722"),(96,"H264"),(97,"H265"),(111,"OPUS")];
+            let (pt, pt_name) = payload_types[rng.gen_range(0..payload_types.len())];
+            let ssrc: u32 = rng.r#gen();
+            let seq: u16 = rng.r#gen();
+            let rtp_ts: u32 = rng.r#gen();
+            sections.push(TreeSection {
+                title: format!("Real-Time Transport Protocol — {} (PT={})", pt_name, pt),
+                expanded: true,
+                fields: vec![
+                    tf("Version:", "2", FieldColor::Cyan),
+                    tf("Padding:", "0", FieldColor::Default),
+                    tf("Extension:", "0", FieldColor::Default),
+                    tf("Payload Type:", &format!("{} ({})", pt, pt_name), FieldColor::Yellow),
+                    tf("Sequence Number:", &seq.to_string(), FieldColor::Default),
+                    tf("Timestamp:", &rtp_ts.to_string(), FieldColor::Default),
+                    tf("SSRC:", &format!("0x{:08x}", ssrc), FieldColor::Cyan),
+                ],
+            });
+        }
+
+        "OSPF" => {
+            let msg_types = ["Hello", "Database Description", "Link State Request", "Link State Update", "Link State Acknowledgment"];
+            let mt_idx = rng.gen_range(0..msg_types.len());
+            let mt_name = msg_types[mt_idx];
+            let router_id = format!("{}.{}.{}.{}", rng.gen_range(1u8..=10), rng.r#gen::<u8>(), rng.r#gen::<u8>(), rng.gen_range(1u8..=10));
+            let area_id = format!("0.0.0.{}", rng.gen_range(0u8..=3));
+            let hello_or_lsa = if mt_idx == 0 {
+                tf("Hello Interval:", "10", FieldColor::Default)
+            } else {
+                tf("LSA Count:", &rng.gen_range(1u8..=10).to_string(), FieldColor::Default)
+            };
+            sections.push(TreeSection {
+                title: format!("Open Shortest Path First v2 — {}", mt_name),
+                expanded: true,
+                fields: vec![
+                    tf("Version:", "2", FieldColor::Cyan),
+                    tf("Message Type:", &format!("{} ({})", mt_idx + 1, mt_name), FieldColor::Yellow),
+                    tf("Router ID:", &router_id, FieldColor::Green),
+                    tf("Area ID:", &area_id, FieldColor::Cyan),
+                    tf("Auth Type:", "0 (None)", FieldColor::Default),
+                    hello_or_lsa,
+                ],
+            });
+        }
+
+        "EIGRP" => {
+            let ops = [(1u8,"Update"),(3,"Query"),(4,"Reply"),(5,"Hello"),(10,"SIA-Query"),(11,"SIA-Reply")];
+            let (op, op_name) = ops[rng.gen_range(0..ops.len())];
+            let asn: u16 = rng.gen_range(1..=65535);
+            sections.push(TreeSection {
+                title: format!("Enhanced Interior Gateway Routing Protocol — {}", op_name),
+                expanded: true,
+                fields: vec![
+                    tf("Version:", "2", FieldColor::Cyan),
+                    tf("Opcode:", &format!("{} ({})", op, op_name), FieldColor::Yellow),
+                    tf("AS Number:", &asn.to_string(), FieldColor::Green),
+                    tf("Sequence:", &rng.r#gen::<u32>().to_string(), FieldColor::Default),
+                    tf("Ack:", &rng.r#gen::<u32>().to_string(), FieldColor::Default),
+                ],
+            });
+        }
+
+        "PIM" => {
+            let types = ["Hello", "Register", "Register-Stop", "Join/Prune", "Bootstrap", "Assert"];
+            let mt_idx = rng.gen_range(0..types.len());
+            let mt_name = types[mt_idx];
+            let group = format!("239.{}.{}.{}", rng.gen_range(1u8..=2), rng.r#gen::<u8>(), rng.gen_range(1u8..=254));
+            sections.push(TreeSection {
+                title: format!("Protocol Independent Multicast — {}", mt_name),
+                expanded: true,
+                fields: vec![
+                    tf("Version:", "2", FieldColor::Cyan),
+                    tf("Type:", &format!("{} ({})", mt_idx, mt_name), FieldColor::Yellow),
+                    tf("Group:", &group, FieldColor::Green),
+                    tf("Checksum:", &format!("0x{:04x}", rng.r#gen::<u16>()), FieldColor::Default),
                 ],
             });
         }

@@ -37,11 +37,12 @@ packrat
 | Tab | Contents |
 |-----|----------|
 | **1 Packets**   | Live packet list with protocol tree + hex dump |
-| **2 Analysis**  | Protocol stats, top talkers, conversations, port summary |
+| **2 Analysis**  | Protocol stats, top talkers, conversations, port summary, magic bytes, XOR, anomalies |
 | **3 Strings**   | Extracted strings with entropy scoring, RE dictionary, live search |
 | **4 Dynamic**   | Live syscall / signal / network trace log |
 | **5 Visualize** | Protocol bars, traffic sparkline, top IPs, geo endpoints |
 | **6 Topology**  | Flow graph with circular node layout and per-protocol edge colors |
+| **7 Flows**     | Bidirectional flow tracker with beacon/scan/encrypted/large detection |
 
 ## Protocol Support
 
@@ -176,6 +177,27 @@ display = "ascii"
 
 Multiple dissector files can be loaded simultaneously. Dissectors are applied after the built-in parser so they can layer on top of any protocol that uses TCP/UDP.
 
+## Flows Tab (Tab 7)
+
+Tracks all bidirectional TCP/UDP flows and automatically flags suspicious behavior:
+
+| Flag | Meaning |
+|------|---------|
+| `[BEACON]` | Periodic inter-arrival CV < 0.15, mean interval > 0.5s — possible C2 heartbeat |
+| `[LARGE]` | Flow exceeds 1 MB — bulk transfer or exfiltration candidate |
+| `[ENCRYPTED]` | Payload entropy > 7.2 bits/byte — likely encrypted or compressed |
+| `[SCAN]` | Source IP seen communicating with 5+ distinct destinations — port/host scan |
+
+Sort by **b**ytes, **p**ackets, or **t**ime. Press **Enter** on a flow to jump to filtered Packets view.
+
+## Analysis Tab — Payload Inspector (sections 7–9)
+
+| Section | Description |
+|---------|-------------|
+| **Magic Bytes** | Detects ELF, PE/EXE, PNG, JPEG, ZIP, PDF, gzip, LZ4, Zstd, OGG, RIFF, bzip2, SQLite, 7-Zip, SSH key, PEM at common offsets |
+| **XOR Analysis** | Brute-forces single-byte XOR (keys 1–255) and reports candidates with >70% printable result — finds obfuscated payloads |
+| **Anomaly Report** | Non-standard ports, SSH/HTTP banners on unexpected ports, high-entropy cleartext, beacon flows, scan activity |
+
 ## Keyboard Shortcuts
 
 | Key | Action |
@@ -183,8 +205,10 @@ Multiple dissector files can be loaded simultaneously. Dissectors are applied af
 | `Space` | Start / Stop capture |
 | `j/k` `↑↓` | Navigate |
 | `g / G` | Top / Bottom |
-| `1–6` | Switch tabs |
+| `1–7` | Switch tabs |
 | `/` | Filter (packet filter on most tabs; string search on Strings tab) |
+| `b / p / t` | Flows tab: sort by bytes / packets / time |
+| `Enter` | Flows tab: jump to filtered packet view |
 | `i` | Pick interface |
 | `w` | Toggle PCAP recording |
 | `h` | Help |
