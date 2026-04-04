@@ -7,7 +7,6 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::net::tree::build_tree;
 use crate::ui::helpers::{truncate, pad_right};
 use crate::ui::theme::*;
 
@@ -139,7 +138,7 @@ fn draw_protocol_tree(f: &mut Frame, app: &App, area: Rect) {
         return;
     };
 
-    let sections = build_tree(pkt);
+    let sections = app.dissect_packet(pkt);
     let mut items: Vec<ListItem> = Vec::new();
 
     for sec in &sections {

@@ -11,15 +11,25 @@ const REMOTE_IPS: &[&str] = &[
     "142.250.80.46", "104.21.55.33", "172.217.14.206",
     "13.107.42.14", "52.84.17.200", "34.120.208.123",
 ];
+const OT_IPS: &[&str] = &[
+    "192.168.0.10", "192.168.0.20", "192.168.100.1",
+    "10.10.1.5", "10.10.1.10", "10.10.1.100",
+];
 const DNS_NAMES: &[&str] = &[
     "google.com", "github.com", "api.stripe.com",
     "fonts.googleapis.com", "cdn.cloudflare.com",
     "s3.amazonaws.com", "app.slack.com", "discord.com",
 ];
+const MQTT_TOPICS: &[&str] = &[
+    "sensors/temperature", "sensors/pressure", "sensors/humidity",
+    "actuators/valve", "actuators/pump", "actuators/relay",
+    "plant/line1/status", "plant/line2/alarm", "device/plc01/health",
+];
 const PROTOS: &[&str] = &[
     "TCP", "UDP", "DNS", "HTTP", "HTTPS", "TLS", "ARP", "ICMP", "DHCP",
+    "Modbus", "MQTT", "CoAP", "BACnet", "DNP3", "OPC-UA", "S7comm", "EtherNet/IP",
 ];
-const WEIGHTS: &[u32] = &[30, 15, 20, 8, 12, 8, 3, 3, 1];
+const WEIGHTS: &[u32] = &[26, 13, 18, 7, 10, 7, 3, 3, 1, 3, 3, 2, 1, 1, 1, 1, 1];
 
 static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
@@ -96,6 +106,97 @@ pub fn generate_packet(counter: u64) -> Packet {
             let sp: u16 = rng.gen_range(1024..=65535);
             (src, dst, Some(sp), Some(443u16),
              format!("TLS {}", hs[rng.gen_range(0..hs.len())]))
+        }
+        "Modbus" => {
+            let src = rand_ip(OT_IPS, &mut rng).to_string();
+            let dst = rand_ip(OT_IPS, &mut rng).to_string();
+            let fn_codes = [
+                (1u8, "Read Coils"), (2, "Read Discrete Inputs"),
+                (3, "Read Holding Registers"), (4, "Read Input Registers"),
+                (5, "Write Single Coil"), (6, "Write Single Register"),
+                (15, "Write Multiple Coils"), (16, "Write Multiple Registers"),
+            ];
+            let (fc, fc_name) = fn_codes[rng.gen_range(0..fn_codes.len())];
+            let unit: u8 = rng.gen_range(1..=10);
+            let addr: u16 = rng.gen_range(0..=1000);
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(502),
+             format!("FC{} {} unit={} addr=0x{:04x}", fc, fc_name, unit, addr))
+        }
+        "MQTT" => {
+            let src = rand_ip(OT_IPS, &mut rng).to_string();
+            let dst = rand_ip(OT_IPS, &mut rng).to_string();
+            let topic = MQTT_TOPICS[rng.gen_range(0..MQTT_TOPICS.len())];
+            let msg_types = [
+                "CONNECT client=sensor_01", "CONNACK rc=0",
+                "SUBSCRIBE", "SUBACK",
+            ];
+            let info = if rng.gen_bool(0.6) {
+                format!("PUBLISH topic={} qos={} len={}", topic, rng.gen_range(0u8..=2), rng.gen_range(4u16..=64))
+            } else {
+                msg_types[rng.gen_range(0..msg_types.len())].to_string()
+            };
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(1883), info)
+        }
+        "CoAP" => {
+            let src = rand_ip(OT_IPS, &mut rng).to_string();
+            let dst = rand_ip(OT_IPS, &mut rng).to_string();
+            let resources = ["/sensors/temperature", "/sensors/pressure", "/actuators/relay", "/status"];
+            let methods = ["GET", "PUT", "POST", "DELETE"];
+            let types = ["CON", "NON", "ACK"];
+            let res = resources[rng.gen_range(0..resources.len())];
+            let m = methods[rng.gen_range(0..methods.len())];
+            let t = types[rng.gen_range(0..types.len())];
+            let mid: u16 = rng.r#gen();
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(5683),
+             format!("{} {} {} mid=0x{:04x}", t, m, res, mid))
+        }
+        "BACnet" => {
+            let src = rand_ip(OT_IPS, &mut rng).to_string();
+            let dst = rand_ip(OT_IPS, &mut rng).to_string();
+            let objs = ["AI:1", "AI:2", "AO:1", "BI:1", "AV:10", "BV:5"];
+            let props = ["present-value", "object-name", "description", "units", "status-flags"];
+            let obj = objs[rng.gen_range(0..objs.len())];
+            let prop = props[rng.gen_range(0..props.len())];
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(47808),
+             format!("ReadProperty objectId={} propId={}", obj, prop))
+        }
+        "DNP3" => {
+            let src = rand_ip(OT_IPS, &mut rng).to_string();
+            let dst = rand_ip(OT_IPS, &mut rng).to_string();
+            let fns = ["Read Class 0", "Read Class 1", "Read Class 2",
+                       "Write", "Select", "Operate", "Direct Operate", "Unsolicited Response"];
+            let fn_name = fns[rng.gen_range(0..fns.len())];
+            let outstation: u16 = rng.gen_range(1..=10);
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(20000),
+             format!("{} outstation={}", fn_name, outstation))
+        }
+        "OPC-UA" => {
+            let src = rand_ip(OT_IPS, &mut rng).to_string();
+            let dst = rand_ip(OT_IPS, &mut rng).to_string();
+            let services = ["ReadRequest", "WriteRequest", "Browse", "CreateSession",
+                            "ActivateSession", "Subscribe", "Publish"];
+            let svc = services[rng.gen_range(0..services.len())];
+            let ns: u8 = rng.gen_range(1..=3);
+            let node: u16 = rng.gen_range(1000..=9999);
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(4840),
+             format!("{} nodeId=ns={};i={}", svc, ns, node))
+        }
+        "S7comm" => {
+            let src = rand_ip(OT_IPS, &mut rng).to_string();
+            let dst = rand_ip(OT_IPS, &mut rng).to_string();
+            let fns = ["Read Var", "Write Var", "Request Download", "Upload", "PLC Stop", "PLC Start"];
+            let fn_name = fns[rng.gen_range(0..fns.len())];
+            let db: u16 = rng.gen_range(1..=100);
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(102),
+             format!("{} DB{} offset=0x{:04x}", fn_name, db, rng.gen_range(0u16..=512)))
+        }
+        "EtherNet/IP" => {
+            let src = rand_ip(OT_IPS, &mut rng).to_string();
+            let dst = rand_ip(OT_IPS, &mut rng).to_string();
+            let cmds = ["ListIdentity", "RegisterSession", "SendRRData", "SendUnitData"];
+            let cmd = cmds[rng.gen_range(0..cmds.len())];
+            (src, dst, Some(rng.gen_range(1024u16..=65535)), Some(44818),
+             format!("{} session=0x{:08x}", cmd, rng.r#gen::<u32>()))
         }
         _ => {
             let src = rand_ip(LOCAL_IPS, &mut rng).to_string();

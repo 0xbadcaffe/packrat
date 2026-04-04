@@ -21,6 +21,8 @@ pub fn handle(app: &mut App, event: Event) -> bool {
 
     if app.picking_iface {
         handle_iface_picker(app, key);
+    } else if app.strings_search_active {
+        handle_strings_search(app, key);
     } else {
         handle_main(app, key);
     }
@@ -30,6 +32,21 @@ pub fn handle(app: &mut App, event: Event) -> bool {
 fn is_quit(key: &KeyEvent) -> bool {
     key.code == KeyCode::Char('q')
         || (key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL)
+}
+
+fn handle_strings_search(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.strings_search_active = false;
+            app.strings_filter.clear();
+        }
+        KeyCode::Enter => {
+            app.strings_search_active = false;
+        }
+        KeyCode::Backspace => { app.strings_filter.pop(); }
+        KeyCode::Char(c) => { app.strings_filter.push(c); }
+        _ => {}
+    }
 }
 
 fn handle_iface_picker(app: &mut App, key: KeyEvent) {
@@ -90,8 +107,14 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         // PCAP export recording
         KeyCode::Char('w') => app.toggle_recording(),
 
-        // Filter
-        KeyCode::Char('/') => app.filter.active = true,
+        // Filter — on Strings tab '/' activates string search; elsewhere packet filter
+        KeyCode::Char('/') => {
+            if matches!(app.active_tab, Tab::Strings) {
+                app.strings_search_active = true;
+            } else {
+                app.filter.active = true;
+            }
+        }
 
         // Help popup
         KeyCode::Char('h') => app.show_help = true,

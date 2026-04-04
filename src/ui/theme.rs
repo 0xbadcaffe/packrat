@@ -18,18 +18,27 @@ pub const C_BORDER:  Color = Color::Rgb(68, 68, 68);
 
 pub fn proto_color(proto: &str) -> Color {
     match proto {
-        "TCP"           => C_CYAN,
-        "UDP"           => C_GREEN,
-        "DNS" | "mDNS"  => C_YELLOW,
-        "HTTP"          => C_ORANGE,
-        "HTTPS" | "TLS" => C_MAGENTA,
-        "ARP"           => C_FG2,
-        "ICMP"          => C_RED,
-        "DHCP"          => C_YELLOW,
-        "SSH"           => C_GREEN,
-        "QUIC"          => C_MAGENTA,
-        "NTP"           => C_FG2,
-        _               => C_FG,
+        "TCP"                        => C_CYAN,
+        "UDP"                        => C_GREEN,
+        "DNS" | "mDNS"               => C_YELLOW,
+        "HTTP"                       => C_ORANGE,
+        "HTTPS" | "TLS"              => C_MAGENTA,
+        "ARP"                        => C_FG2,
+        "ICMP" | "ICMPv6"            => C_RED,
+        "DHCP"                       => C_YELLOW,
+        "SSH"                        => C_GREEN,
+        "QUIC"                       => C_MAGENTA,
+        "NTP"                        => C_FG2,
+        // Industrial / OT
+        "Modbus"                     => C_ORANGE,
+        "MQTT" | "MQTT-TLS"          => C_GREEN,
+        "OPC-UA"                     => C_MAGENTA,
+        "CoAP" | "CoAP-DTLS"         => C_CYAN,
+        "BACnet"                     => C_YELLOW,
+        "DNP3" | "IEC-104"           => C_RED,
+        "S7comm"                     => C_ORANGE,
+        "EtherNet/IP"                => C_CYAN,
+        _                            => C_FG,
     }
 }
 
