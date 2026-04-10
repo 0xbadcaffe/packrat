@@ -1,15 +1,73 @@
 /// Build a protocol dissector tree for a packet (for the UI detail pane).
-use rand::Rng;
 use crate::net::packet::{FieldColor, Packet, TreeField, TreeSection, make_field};
-use crate::sim::generator::rand_mac;
 
 const DNS_NAMES: &[&str] = &[
     "google.com", "github.com", "api.stripe.com",
     "fonts.googleapis.com", "cdn.cloudflare.com",
 ];
 
+
+// ─── Byte-parsing helpers ─────────────────────────────────────────────────────
+
+fn parse_mac(b: &[u8], off: usize) -> String {
+    if b.len() >= off + 6 {
+        format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            b[off], b[off+1], b[off+2], b[off+3], b[off+4], b[off+5])
+    } else {
+        "??:??:??:??:??:??".into()
+    }
+}
+
+fn u8_at(b: &[u8], off: usize) -> u8   { b.get(off).copied().unwrap_or(0) }
+
+fn u16_be(b: &[u8], off: usize) -> u16 {
+    if b.len() >= off + 2 { u16::from_be_bytes([b[off], b[off+1]]) } else { 0 }
+}
+
+fn u32_be(b: &[u8], off: usize) -> u32 {
+    if b.len() >= off + 4 {
+        u32::from_be_bytes([b[off], b[off+1], b[off+2], b[off+3]])
+    } else { 0 }
+}
+
+fn u64_be(b: &[u8], off: usize) -> u64 {
+    if b.len() >= off + 8 {
+        u64::from_be_bytes([b[off],b[off+1],b[off+2],b[off+3],
+                            b[off+4],b[off+5],b[off+6],b[off+7]])
+    } else { 0 }
+}
+
+/// Stable index from packet number — never changes on re-render.
+fn stable(pkt_no: u64, max: usize) -> usize {
+    if max == 0 { return 0; }
+    (pkt_no.wrapping_mul(2654435761u64) as usize) % max
+}
+
+/// NTP fixed-point seconds (NTP epoch) → unix timestamp string.
+fn ntp_ts(secs: u64) -> String {
+    let unix = secs.saturating_sub(2_208_988_800);
+    format!("{}.000000000", unix)
+}
+
+/// Format TCP flags byte as string.
+fn fmt_tcp_flags(f: u8) -> String {
+    let mut s = String::new();
+    if f & 0x02 != 0 { s.push_str("SYN "); }
+    if f & 0x10 != 0 { s.push_str("ACK "); }
+    if f & 0x01 != 0 { s.push_str("FIN "); }
+    if f & 0x04 != 0 { s.push_str("RST "); }
+    if f & 0x08 != 0 { s.push_str("PSH "); }
+    if f & 0x20 != 0 { s.push_str("URG "); }
+    if s.is_empty() { s.push_str("NONE"); }
+    s.trim_end().to_string()
+}
+
 pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
-    let mut rng = rand::thread_rng();
+    let raw = &pkt.bytes;
+    let eth_extra = if pkt.vlan_id.is_some() { 4usize } else { 0usize };
+    let ip_off    = 14 + eth_extra;
+    let ihl       = (u8_at(raw, ip_off) & 0x0F) as usize * 4;
+    let tp_off    = ip_off + ihl.max(20);
     let mut sections = Vec::new();
 
     // Frame section
@@ -37,9 +95,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         });
     }
 
-    // Ethernet
-    let src_mac = rand_mac(&mut rng);
-    let dst_mac = rand_mac(&mut rng);
+    // Ethernet — read real MACs from bytes 0-11
+    let dst_mac  = parse_mac(raw, 0);
+    let src_mac  = parse_mac(raw, 6);
     let eth_type = if pkt.protocol == "ARP" { "ARP (0x0806)" } else { "IPv4 (0x0800)" };
     sections.push(TreeSection {
         title: format!("Ethernet II, Src: {}, Dst: {}", src_mac, dst_mac),
@@ -67,8 +125,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
     }
 
     // IP layer
-    let ttl: u8 = rng.gen_range(48..=128);
-    let id: u16 = rng.r#gen();
+    let ttl: u8 = ((48u64 + (pkt.no.wrapping_mul(8388617u64).wrapping_add(79u64) % 81u64)) as u8);
+    let id: u16 = (pkt.no.wrapping_mul(987654323u64).wrapping_add(49u64) as u16);
     let proto_num = match pkt.protocol.as_str() {
         "TCP" | "HTTP" | "HTTPS" | "TLS" | "SSH" | "SMTP" | "MySQL" | "Redis"
         | "PostgreSQL" | "IMAP" | "IMAPS" | "POP3" | "MongoDB" | "Elasticsearch"
@@ -117,16 +175,16 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 fields: vec![
                     tf("Type:", "8 (Echo Request)", FieldColor::Yellow),
                     tf("Code:", "0", FieldColor::Default),
-                    tf("Identifier:", &format!("0x{:04x}", rng.r#gen::<u16>()), FieldColor::Cyan),
-                    tf("Sequence Number:", &rng.gen_range(0..=100u16).to_string(), FieldColor::Default),
+                    tf("Identifier:", &format!("0x{:04x}", (pkt.no.wrapping_mul(2654435761u64).wrapping_add(0u64) as u16)), FieldColor::Cyan),
+                    tf("Sequence Number:", &(0u16 + (pkt.no.wrapping_mul(2654435761u64).wrapping_add(80u64) % 101u64) as u16).to_string(), FieldColor::Default),
                 ],
             });
         }
         "DNS" | "mDNS" => {
             let sp = pkt.src_port.unwrap_or(12345);
-            let tid: u16 = rng.r#gen();
-            let name = DNS_NAMES[rng.gen_range(0..DNS_NAMES.len())];
-            let is_query = rng.gen_bool(0.5);
+            let tid: u16 = (pkt.no.wrapping_mul(4294967291u64).wrapping_add(50u64) as u16);
+            let name = DNS_NAMES[stable(pkt.no, DNS_NAMES.len())];
+            let is_query = (pkt.no & 1) == 0;
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 53", sp),
                 expanded: false,
@@ -144,7 +202,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
             ];
             if !is_query {
                 dns_fields.push(tf("Answer Addr:",
-                    &format!("{}.{}.{}.{}", rng.gen_range(1..254u8), rng.r#gen::<u8>(), rng.r#gen::<u8>(), rng.gen_range(1..254u8)),
+                    &format!("{}.{}.{}.{}", (1u8 + (pkt.no.wrapping_mul(2654435761u64).wrapping_add(300u64) % 253u64) as u8), (pkt.no.wrapping_mul(2246822519u64).wrapping_add(1u64) as u8), (pkt.no.wrapping_mul(3266489917u64).wrapping_add(2u64) as u8), (1u8 + (pkt.no.wrapping_mul(2246822519u64).wrapping_add(301u64) % 253u64) as u8)),
                     FieldColor::Orange));
             }
             sections.push(TreeSection {
@@ -176,7 +234,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
             });
         }
         "NTP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(2246822519u64).wrapping_add(81u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 123", sp),
                 expanded: false,
@@ -187,19 +245,19 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let strata = ["1 (primary reference)", "2 (secondary reference)", "3 (tertiary reference)", "4"];
-            let stratum_idx = rng.gen_range(0..strata.len());
+            let stratum_idx = stable(pkt.no, strata.len());
             let stratum = strata[stratum_idx];
             let modes = ["3 (client)", "4 (server)", "5 (broadcast)"];
-            let mode = modes[rng.gen_range(0..modes.len())];
-            let poll: u8 = rng.gen_range(6..=10);
-            let precision: i8 = -rng.gen_range(10i8..=20);
+            let mode = modes[stable(pkt.no, modes.len())];
+            let poll: u8 = ((6u64 + (pkt.no.wrapping_mul(3266489917u64).wrapping_add(82u64) % 5u64)) as u8);
+            let precision: i8 = -(10i8 + (pkt.no.wrapping_mul(668265263u64).wrapping_add(83u64) % 11u64) as i8);
             let ref_ids = ["GPS\0", "PPS\0", "ACTS", "USNO"];
             let ref_id = if stratum_idx == 0 {
-                ref_ids[rng.gen_range(0..ref_ids.len())].trim_end_matches('\0').to_string()
+                ref_ids[stable(pkt.no, ref_ids.len())].trim_end_matches('\0').to_string()
             } else {
-                format!("{}.{}.{}.{}", rng.gen_range(1u8..=254), rng.r#gen::<u8>(), rng.r#gen::<u8>(), rng.gen_range(1u8..=254))
+                format!("{}.{}.{}.{}", (1u8 + (pkt.no.wrapping_mul(374761393u64).wrapping_add(84u64) % 254u64) as u8), (pkt.no.wrapping_mul(668265263u64).wrapping_add(3u64) as u8), (pkt.no.wrapping_mul(374761393u64).wrapping_add(4u64) as u8), (1u8 + (pkt.no.wrapping_mul(2870177450u64).wrapping_add(85u64) % 254u64) as u8))
             };
-            let base_ts: u64 = 3_915_000_000 + rng.gen_range(0u64..=86400);
+            let base_ts: u64 = 3_915_000_000 + (0u64 + (pkt.no.wrapping_mul(1145919239u64).wrapping_add(86u64) % 86401u64) as u64);
             sections.push(TreeSection {
                 title: "Network Time Protocol (v4)".into(),
                 expanded: true,
@@ -210,13 +268,13 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Stratum:", stratum, FieldColor::Default),
                     tf("Poll Interval:", &format!("{} ({} sec)", poll, 1u32 << poll), FieldColor::Default),
                     tf("Precision:", &format!("{}", precision), FieldColor::Default),
-                    tf("Root Delay:", &format!("0.{:04} sec", rng.gen_range(0u32..=5000)), FieldColor::Default),
-                    tf("Root Dispersion:", &format!("0.{:04} sec", rng.gen_range(0u32..=5000)), FieldColor::Default),
+                    tf("Root Delay:", &format!("0.{:04} sec", (0u32 + (pkt.no.wrapping_mul(3264354801u64).wrapping_add(87u64) % 5001u64) as u32)), FieldColor::Default),
+                    tf("Root Dispersion:", &format!("0.{:04} sec", (0u32 + (pkt.no.wrapping_mul(1452813781u64).wrapping_add(88u64) % 5001u64) as u32)), FieldColor::Default),
                     tf("Reference ID:", &ref_id, FieldColor::Cyan),
-                    tf("Reference Timestamp:", &format!("{}.{:06}", base_ts, rng.gen_range(0u32..=999999)), FieldColor::Default),
-                    tf("Originate Timestamp:", &format!("{}.{:06}", base_ts + 1, rng.gen_range(0u32..=999999)), FieldColor::Default),
-                    tf("Receive Timestamp:", &format!("{}.{:06}", base_ts + 1, rng.gen_range(0u32..=999999)), FieldColor::Default),
-                    tf("Transmit Timestamp:", &format!("{}.{:06}", base_ts + 1, rng.gen_range(0u32..=999999)), FieldColor::Green),
+                    tf("Reference Timestamp:", &format!("{}.{:06}", base_ts, (0u32 + (pkt.no.wrapping_mul(987654323u64).wrapping_add(89u64) % 1000000u64) as u32)), FieldColor::Default),
+                    tf("Originate Timestamp:", &format!("{}.{:06}", base_ts + 1, (0u32 + (pkt.no.wrapping_mul(4294967291u64).wrapping_add(90u64) % 1000000u64) as u32)), FieldColor::Default),
+                    tf("Receive Timestamp:", &format!("{}.{:06}", base_ts + 1, (0u32 + (pkt.no.wrapping_mul(2147483647u64).wrapping_add(91u64) % 1000000u64) as u32)), FieldColor::Default),
+                    tf("Transmit Timestamp:", &format!("{}.{:06}", base_ts + 1, (0u32 + (pkt.no.wrapping_mul(1073741827u64).wrapping_add(92u64) % 1000000u64) as u32)), FieldColor::Green),
                 ],
             });
         }
@@ -227,17 +285,17 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 fields: vec![
                     tf("Version:", "1 (0x00000001)", FieldColor::Cyan),
                     tf("Packet Type:", "Initial", FieldColor::Yellow),
-                    tf("Destination CID:", &format!("0x{:016x}", rng.r#gen::<u64>()), FieldColor::Green),
+                    tf("Destination CID:", &format!("0x{:016x}", pkt.no.wrapping_mul(2870177450u64).wrapping_add(5u64)), FieldColor::Green),
                 ],
             });
         }
         proto if matches!(proto, "TCP" | "HTTP" | "HTTPS" | "TLS" | "SSH" | "MySQL" | "Redis" | "PostgreSQL") => {
             let sp = pkt.src_port.unwrap_or(12345);
             let dp = pkt.dst_port.unwrap_or(80);
-            let seq: u32 = rng.r#gen();
-            let ack: u32 = rng.r#gen();
-            let win: u16 = rng.gen_range(1024..=65535);
-            let flags = ["ACK", "PSH, ACK", "SYN", "FIN, ACK", "RST, ACK"][rng.gen_range(0..5)];
+            let seq: u32 = (pkt.no.wrapping_mul(2147483647u64).wrapping_add(51u64) as u32);
+            let ack: u32 = (pkt.no.wrapping_mul(1073741827u64).wrapping_add(52u64) as u32);
+            let win: u16 = (1024u16 + (pkt.no.wrapping_mul(536870923u64).wrapping_add(93u64) % 64512u64) as u16);
+            let flags = ["ACK", "PSH, ACK", "SYN", "FIN, ACK", "RST, ACK"][stable(pkt.no, 5)];
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: {}", sp, dp),
                 expanded: true,
@@ -246,7 +304,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Destination Port:", &dp.to_string(), FieldColor::Yellow),
                     tf("Sequence Number:", &seq.to_string(), FieldColor::Default),
                     tf("Acknowledgment:", &ack.to_string(), FieldColor::Default),
-                    tf("Flags:", &format!("0x{:03x} ({})", rng.gen_range(0..=0xfffu16), flags), FieldColor::Magenta),
+                    tf("Flags:", &format!("0x{:03x} ({})", ((pkt.no.wrapping_mul(1145919239u64).wrapping_add(306u64) & 0xfffu64) as u16), flags), FieldColor::Magenta),
                     tf("Window Size:", &win.to_string(), FieldColor::Default),
                 ],
             });
@@ -257,8 +315,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     title: "Hypertext Transfer Protocol".into(),
                     expanded: true,
                     fields: vec![
-                        tf("Method:", methods[rng.gen_range(0..methods.len())], FieldColor::Green),
-                        tf("URI:", paths[rng.gen_range(0..paths.len())], FieldColor::Cyan),
+                        tf("Method:", methods[stable(pkt.no, methods.len())], FieldColor::Green),
+                        tf("URI:", paths[stable(pkt.no, paths.len())], FieldColor::Cyan),
                         tf("Version:", "HTTP/1.1", FieldColor::Default),
                         tf("Host:", "api.example.com", FieldColor::Yellow),
                     ],
@@ -272,8 +330,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     expanded: true,
                     fields: vec![
                         tf("Version:", "TLS 1.3 (0x0304)", FieldColor::Cyan),
-                        tf("Handshake Type:", hs[rng.gen_range(0..hs.len())], FieldColor::Yellow),
-                        tf("Cipher Suite:", ciphers[rng.gen_range(0..ciphers.len())], FieldColor::Magenta),
+                        tf("Handshake Type:", hs[stable(pkt.no, hs.len())], FieldColor::Yellow),
+                        tf("Cipher Suite:", ciphers[stable(pkt.no, ciphers.len())], FieldColor::Magenta),
                     ],
                 });
             }
@@ -302,17 +360,17 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Destination Port:", "502", FieldColor::Yellow),
                 ],
             });
-            let tid: u16 = rng.r#gen();
-            let unit_id: u8 = rng.gen_range(1..=247);
+            let tid: u16 = (pkt.no.wrapping_mul(536870923u64).wrapping_add(53u64) as u16);
+            let unit_id: u8 = ((1u64 + (pkt.no.wrapping_mul(268435459u64).wrapping_add(94u64) % 247u64)) as u8);
             let fn_codes = [
                 (1u8, "Read Coils"), (2, "Read Discrete Inputs"),
                 (3, "Read Holding Registers"), (4, "Read Input Registers"),
                 (5, "Write Single Coil"), (6, "Write Single Register"),
                 (15, "Write Multiple Coils"), (16, "Write Multiple Registers"),
             ];
-            let (fc, fc_name) = fn_codes[rng.gen_range(0..fn_codes.len())];
-            let addr: u16 = rng.gen_range(0..=1000);
-            let qty: u16 = rng.gen_range(1..=125);
+            let (fc, fc_name) = fn_codes[stable(pkt.no, fn_codes.len())];
+            let addr: u16 = ((0u64 + (pkt.no.wrapping_mul(134217757u64).wrapping_add(95u64) % 1001u64)) as u16);
+            let qty: u16 = ((1u64 + (pkt.no.wrapping_mul(67108859u64).wrapping_add(96u64) % 125u64)) as u16);
             sections.push(TreeSection {
                 title: "Modbus/TCP".into(),
                 expanded: true,
@@ -340,12 +398,12 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let topics = ["sensors/temperature", "sensors/pressure", "actuators/valve", "plant/line1/status"];
-            let topic = topics[rng.gen_range(0..topics.len())];
+            let topic = topics[stable(pkt.no, topics.len())];
             let msg_types = [
                 (1u8, "CONNECT"), (2, "CONNACK"), (3, "PUBLISH"),
                 (4, "PUBACK"), (8, "SUBSCRIBE"), (9, "SUBACK"), (14, "DISCONNECT"),
             ];
-            let (mt, mt_name) = msg_types[rng.gen_range(0..msg_types.len())];
+            let (mt, mt_name) = msg_types[stable(pkt.no, msg_types.len())];
             let mut fields = vec![
                 tf("Message Type:", &format!("{} ({})", mt, mt_name), FieldColor::Yellow),
                 tf("QoS:", "0 (At most once)", FieldColor::Default),
@@ -353,10 +411,10 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
             ];
             if mt == 3 {
                 fields.push(tf("Topic:", topic, FieldColor::Cyan));
-                fields.push(tf("Payload Length:", &rng.gen_range(4u16..=64).to_string(), FieldColor::Default));
+                fields.push(tf("Payload Length:", &(4u16 + (pkt.no.wrapping_mul(33554467u64).wrapping_add(97u64) % 61u64) as u16).to_string(), FieldColor::Default));
             } else if mt == 1 {
                 let client = ["sensor_01", "plc_gateway", "hmi_client", "mqtt_logger"];
-                fields.push(tf("Client ID:", client[rng.gen_range(0..client.len())], FieldColor::Cyan));
+                fields.push(tf("Client ID:", client[stable(pkt.no, client.len())], FieldColor::Cyan));
                 fields.push(tf("Keep Alive:", "60", FieldColor::Default));
                 fields.push(tf("Clean Session:", "1", FieldColor::Default));
             }
@@ -383,10 +441,10 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 (527, "CreateSessionRequest"), (461, "Browse"),
                 (839, "PublishRequest"), (842, "PublishResponse"),
             ];
-            let (svc_id, svc_name) = services[rng.gen_range(0..services.len())];
-            let ns: u8 = rng.gen_range(1..=3);
-            let node: u16 = rng.gen_range(1000..=9999);
-            let req_id: u32 = rng.gen_range(1..=9999);
+            let (svc_id, svc_name) = services[stable(pkt.no, services.len())];
+            let ns: u8 = ((1u64 + (pkt.no.wrapping_mul(16777259u64).wrapping_add(98u64) % 3u64)) as u8);
+            let node: u16 = ((1000u64 + (pkt.no.wrapping_mul(8388617u64).wrapping_add(99u64) % 9000u64)) as u16);
+            let req_id: u32 = ((1u64 + (pkt.no.wrapping_mul(2654435761u64).wrapping_add(100u64) % 9999u64)) as u32);
             sections.push(TreeSection {
                 title: "OPC UA Binary".into(),
                 expanded: true,
@@ -394,7 +452,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Message Type:", "MSG", FieldColor::Cyan),
                     tf("Chunk Type:", "F (Final)", FieldColor::Default),
                     tf("Message Size:", &pkt.length.to_string(), FieldColor::Default),
-                    tf("Security Channel ID:", &format!("0x{:08x}", rng.r#gen::<u32>()), FieldColor::Default),
+                    tf("Security Channel ID:", &format!("0x{:08x}", (pkt.no.wrapping_mul(1145919239u64).wrapping_add(6u64) as u32)), FieldColor::Default),
                     tf("Request ID:", &req_id.to_string(), FieldColor::Yellow),
                     tf("Service:", &format!("{} (id={})", svc_name, svc_id), FieldColor::Green),
                     tf("Node ID:", &format!("ns={};i={}", ns, node), FieldColor::Cyan),
@@ -416,9 +474,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 (1u8, "Read"), (2, "Write"), (3, "Select"), (4, "Operate"),
                 (5, "Direct Operate"), (129, "Response"), (130, "Unsolicited Response"),
             ];
-            let (fc, fc_name) = fn_codes[rng.gen_range(0..fn_codes.len())];
-            let dst_addr: u16 = rng.gen_range(1..=10);
-            let src_addr: u16 = rng.gen_range(1..=5);
+            let (fc, fc_name) = fn_codes[stable(pkt.no, fn_codes.len())];
+            let dst_addr: u16 = ((1u64 + (pkt.no.wrapping_mul(2246822519u64).wrapping_add(101u64) % 10u64)) as u16);
+            let src_addr: u16 = ((1u64 + (pkt.no.wrapping_mul(3266489917u64).wrapping_add(102u64) % 5u64)) as u16);
             sections.push(TreeSection {
                 title: "DNP3 Application Layer".into(),
                 expanded: true,
@@ -446,12 +504,12 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let coap_types = [(0u8, "CON"), (1, "NON"), (2, "ACK"), (3, "RST")];
-            let (ct, ct_name) = coap_types[rng.gen_range(0..coap_types.len())];
+            let (ct, ct_name) = coap_types[stable(pkt.no, coap_types.len())];
             let codes = [(1u8, "GET"), (2, "POST"), (3, "PUT"), (4, "DELETE")];
-            let (code, code_name) = codes[rng.gen_range(0..codes.len())];
-            let mid: u16 = rng.r#gen();
+            let (code, code_name) = codes[stable(pkt.no, codes.len())];
+            let mid: u16 = (pkt.no.wrapping_mul(268435459u64).wrapping_add(54u64) as u16);
             let resources = ["/sensors/temp", "/sensors/pressure", "/actuators/relay", "/status"];
-            let res = resources[rng.gen_range(0..resources.len())];
+            let res = resources[stable(pkt.no, resources.len())];
             sections.push(TreeSection {
                 title: "Constrained Application Protocol".into(),
                 expanded: true,
@@ -461,7 +519,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Token Length:", "4", FieldColor::Default),
                     tf("Code:", &format!("0.0{} {}", code, code_name), FieldColor::Green),
                     tf("Message ID:", &format!("0x{:04x}", mid), FieldColor::Cyan),
-                    tf("Token:", &format!("0x{:08x}", rng.r#gen::<u32>()), FieldColor::Default),
+                    tf("Token:", &format!("0x{:08x}", (pkt.no.wrapping_mul(3264354801u64).wrapping_add(7u64) as u32)), FieldColor::Default),
                     tf("Uri-Path:", res, FieldColor::Cyan),
                 ],
             });
@@ -478,13 +536,13 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let bvlc_fns = [(0x0au8, "Original-Unicast-NPDU"), (0x0b, "Original-Broadcast-NPDU"), (0x04, "Forwarded-NPDU")];
-            let (bvlc_fn, bvlc_name) = bvlc_fns[rng.gen_range(0..bvlc_fns.len())];
+            let (bvlc_fn, bvlc_name) = bvlc_fns[stable(pkt.no, bvlc_fns.len())];
             let services = ["ReadProperty-Request", "WriteProperty-Request", "Who-Is", "I-Am", "SubscribeCOV-Request"];
-            let svc = services[rng.gen_range(0..services.len())];
+            let svc = services[stable(pkt.no, services.len())];
             let objs = ["Analog Input 1", "Analog Output 1", "Binary Input 2", "Binary Value 5", "Analog Value 10"];
-            let obj = objs[rng.gen_range(0..objs.len())];
+            let obj = objs[stable(pkt.no, objs.len())];
             let props = ["present-value", "object-name", "units", "description", "status-flags"];
-            let prop = props[rng.gen_range(0..props.len())];
+            let prop = props[stable(pkt.no, props.len())];
             sections.push(TreeSection {
                 title: "BACnet/IP".into(),
                 expanded: true,
@@ -514,10 +572,10 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 (0x1a, "Request Download"), (0x1b, "Download Block"),
                 (0x29, "PLC Stop"), (0x28, "PLC Start"),
             ];
-            let (fc, fc_name) = fns[rng.gen_range(0..fns.len())];
-            let db: u16 = rng.gen_range(1..=100);
-            let offset: u16 = rng.gen_range(0..=512);
-            let pdu_ref: u16 = rng.r#gen();
+            let (fc, fc_name) = fns[stable(pkt.no, fns.len())];
+            let db: u16 = ((1u64 + (pkt.no.wrapping_mul(668265263u64).wrapping_add(103u64) % 100u64)) as u16);
+            let offset: u16 = ((0u64 + (pkt.no.wrapping_mul(374761393u64).wrapping_add(104u64) % 513u64)) as u16);
+            let pdu_ref: u16 = (pkt.no.wrapping_mul(134217757u64).wrapping_add(55u64) as u16);
             sections.push(TreeSection {
                 title: "S7 Communication".into(),
                 expanded: true,
@@ -549,8 +607,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 (0x0063, "ListIdentity"), (0x0064, "ListInterfaces"),
                 (0x0065, "SendRRData"), (0x0070, "SendUnitData"),
             ];
-            let (cmd, cmd_name) = cmds[rng.gen_range(0..cmds.len())];
-            let session: u32 = rng.r#gen();
+            let (cmd, cmd_name) = cmds[stable(pkt.no, cmds.len())];
+            let session: u32 = (pkt.no.wrapping_mul(67108859u64).wrapping_add(56u64) as u32);
             sections.push(TreeSection {
                 title: "EtherNet/IP (ENIP)".into(),
                 expanded: true,
@@ -559,7 +617,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Length:", &pkt.length.to_string(), FieldColor::Default),
                     tf("Session Handle:", &format!("0x{:08x}", session), FieldColor::Cyan),
                     tf("Status:", "0x00000000 (Success)", FieldColor::Default),
-                    tf("Sender Context:", &format!("0x{:016x}", rng.r#gen::<u64>()), FieldColor::Default),
+                    tf("Sender Context:", &format!("0x{:016x}", pkt.no.wrapping_mul(1452813781u64).wrapping_add(8u64)), FieldColor::Default),
                     tf("Service:", "Get Attribute Single", FieldColor::Yellow),
                     tf("Class:", "0x01 (Identity)", FieldColor::Default),
                     tf("Instance:", "0x01", FieldColor::Default),
@@ -579,11 +637,11 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let msg_types = [(0u8,"Sync"),(1,"Delay_Req"),(8,"Follow_Up"),(9,"Delay_Resp"),(11,"Announce"),(12,"Signaling")];
-            let (mt, mt_name) = msg_types[rng.gen_range(0..msg_types.len())];
-            let domain: u8 = rng.gen_range(0..=3);
-            let seq_id: u16 = rng.r#gen();
-            let clock_hi: u32 = rng.r#gen();
-            let clock_lo: u32 = rng.r#gen();
+            let (mt, mt_name) = msg_types[stable(pkt.no, msg_types.len())];
+            let domain: u8 = ((0u64 + (pkt.no.wrapping_mul(2870177450u64).wrapping_add(105u64) % 4u64)) as u8);
+            let seq_id: u16 = (pkt.no.wrapping_mul(33554467u64).wrapping_add(57u64) as u16);
+            let clock_hi: u32 = (pkt.no.wrapping_mul(16777259u64).wrapping_add(58u64) as u32);
+            let clock_lo: u32 = (pkt.no.wrapping_mul(8388617u64).wrapping_add(59u64) as u32);
             sections.push(TreeSection {
                 title: format!("Precision Time Protocol v2 (IEEE 1588) — {}", mt_name),
                 expanded: true,
@@ -604,7 +662,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "SIP" | "SIPS" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(5060u16..=5070));
+            let sp = pkt.src_port.unwrap_or((5060u16 + (pkt.no.wrapping_mul(1145919239u64).wrapping_add(106u64) % 11u64) as u16));
             let dp = pkt.dst_port.unwrap_or(5060);
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: {}", sp, dp),
@@ -617,17 +675,17 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
             let methods = [("INVITE","Initiate session"),("BYE","Terminate session"),
                            ("ACK","Acknowledge"),("REGISTER","Register UA"),
                            ("OPTIONS","Query capabilities"),("CANCEL","Cancel pending request")];
-            let (method, _desc) = methods[rng.gen_range(0..methods.len())];
-            let ext: u16 = rng.gen_range(1000..=9999);
-            let call_id = format!("{:08x}-{:04x}@sip.local", rng.r#gen::<u32>(), rng.r#gen::<u16>());
-            let cseq: u32 = rng.gen_range(1..=100);
+            let (method, _desc) = methods[stable(pkt.no, methods.len())];
+            let ext: u16 = ((1000u64 + (pkt.no.wrapping_mul(3264354801u64).wrapping_add(107u64) % 9000u64)) as u16);
+            let call_id = format!("{:08x}-{:04x}@sip.local", (pkt.no.wrapping_mul(987654323u64).wrapping_add(9u64) as u32), (pkt.no.wrapping_mul(4294967291u64).wrapping_add(10u64) as u16));
+            let cseq: u32 = ((1u64 + (pkt.no.wrapping_mul(1452813781u64).wrapping_add(108u64) % 100u64)) as u32);
             sections.push(TreeSection {
                 title: format!("Session Initiation Protocol — {}", method),
                 expanded: true,
                 fields: vec![
                     tf("Method:", method, FieldColor::Green),
                     tf("Request-URI:", &format!("sip:{}@{}", ext, pkt.dst), FieldColor::Cyan),
-                    tf("Via:", &format!("SIP/2.0/UDP {};branch=z9hG4bK{:08x}", pkt.src, rng.r#gen::<u32>()), FieldColor::Default),
+                    tf("Via:", &format!("SIP/2.0/UDP {};branch=z9hG4bK{:08x}", pkt.src, (pkt.no.wrapping_mul(2147483647u64).wrapping_add(11u64) as u32)), FieldColor::Default),
                     tf("From:", &format!("<sip:user@{}>", pkt.src), FieldColor::Yellow),
                     tf("To:", &format!("<sip:{}>", ext), FieldColor::Yellow),
                     tf("Call-ID:", &call_id, FieldColor::Cyan),
@@ -639,7 +697,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "BGP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(987654323u64).wrapping_add(109u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 179", sp),
                 expanded: false,
@@ -649,8 +707,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let types = [(1u8,"OPEN"),(2,"UPDATE"),(3,"NOTIFICATION"),(4,"KEEPALIVE")];
-            let (bt, bt_name) = types[rng.gen_range(0..types.len())];
-            let asn: u32 = rng.gen_range(64512..=65534);
+            let (bt, bt_name) = types[stable(pkt.no, types.len())];
+            let asn: u32 = ((64512u64 + (pkt.no.wrapping_mul(4294967291u64).wrapping_add(110u64) % 1023u64)) as u32);
             let hold: u16 = 90;
             let mut fields = vec![
                 tf("Marker:", "0xffffffffffffffffffffffffffffffff", FieldColor::Default),
@@ -663,11 +721,11 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 fields.push(tf("Hold Time:", &hold.to_string(), FieldColor::Default));
                 fields.push(tf("BGP ID:", &pkt.src, FieldColor::Cyan));
             } else if bt == 2 {
-                let prefix = format!("{}.0.0/8", rng.gen_range(1u8..=254));
-                let next_hop = format!("{}.{}.{}.{}", rng.gen_range(1u8..=254), rng.r#gen::<u8>(), rng.r#gen::<u8>(), rng.gen_range(1u8..=254));
+                let prefix = format!("{}.0.0/8", (1u8 + (pkt.no.wrapping_mul(2147483647u64).wrapping_add(111u64) % 254u64) as u8));
+                let next_hop = format!("{}.{}.{}.{}", (1u8 + (pkt.no.wrapping_mul(1073741827u64).wrapping_add(112u64) % 254u64) as u8), (pkt.no.wrapping_mul(1073741827u64).wrapping_add(12u64) as u8), (pkt.no.wrapping_mul(536870923u64).wrapping_add(13u64) as u8), (1u8 + (pkt.no.wrapping_mul(536870923u64).wrapping_add(113u64) % 254u64) as u8));
                 fields.push(tf("NLRI Prefix:", &prefix, FieldColor::Cyan));
                 fields.push(tf("Next Hop:", &next_hop, FieldColor::Green));
-                fields.push(tf("AS Path:", &format!("AS{} AS{}", asn, rng.gen_range(1u32..=64511)), FieldColor::Yellow));
+                fields.push(tf("AS Path:", &format!("AS{} AS{}", asn, (1u32 + (pkt.no.wrapping_mul(268435459u64).wrapping_add(114u64) % 64511u64) as u32)), FieldColor::Yellow));
                 fields.push(tf("Origin:", "IGP (0)", FieldColor::Default));
             }
             sections.push(TreeSection {
@@ -678,7 +736,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "FTP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(134217757u64).wrapping_add(115u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 21", sp),
                 expanded: false,
@@ -692,7 +750,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ("RETR", "file.txt"), ("STOR", "upload.bin"), ("PWD", ""),
                 ("CWD", "/pub/data"), ("QUIT", ""), ("PASV", ""), ("TYPE", "I"),
             ];
-            let (cmd, arg) = cmds[rng.gen_range(0..cmds.len())];
+            let (cmd, arg) = cmds[stable(pkt.no, cmds.len())];
             let arg_str = if arg.is_empty() { String::new() } else { format!(" {}", arg) };
             sections.push(TreeSection {
                 title: "File Transfer Protocol (FTP)".into(),
@@ -706,7 +764,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "Telnet" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(67108859u64).wrapping_add(116u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 23", sp),
                 expanded: false,
@@ -721,7 +779,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ("IAC SB", "Terminal Type IS xterm-256color"),
                 ("Data", "login: "),
             ];
-            let (cmd, detail) = cmds[rng.gen_range(0..cmds.len())];
+            let (cmd, detail) = cmds[stable(pkt.no, cmds.len())];
             sections.push(TreeSection {
                 title: "Telnet Protocol".into(),
                 expanded: true,
@@ -734,7 +792,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "LDAP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(33554467u64).wrapping_add(117u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 389", sp),
                 expanded: false,
@@ -748,8 +806,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 (4, "SearchResultEntry"), (5, "SearchResultDone"), (6, "ModifyRequest"),
                 (8, "AddRequest"), (10, "DelRequest"),
             ];
-            let (op, op_name) = ops[rng.gen_range(0..ops.len())];
-            let msg_id: u32 = rng.gen_range(1..=9999);
+            let (op, op_name) = ops[stable(pkt.no, ops.len())];
+            let msg_id: u32 = ((1u64 + (pkt.no.wrapping_mul(16777259u64).wrapping_add(118u64) % 9999u64)) as u32);
             sections.push(TreeSection {
                 title: format!("Lightweight Directory Access Protocol (LDAP) — {}", op_name),
                 expanded: true,
@@ -778,22 +836,22 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 (1u8,"Solicit"),(2,"Advertise"),(3,"Request"),(5,"Renew"),
                 (7,"Reply"),(8,"Release"),(11,"Inform-request"),
             ];
-            let (mt, mt_name) = msg_types[rng.gen_range(0..msg_types.len())];
-            let tid: u32 = rng.r#gen::<u32>() & 0xFFFFFF;
+            let (mt, mt_name) = msg_types[stable(pkt.no, msg_types.len())];
+            let tid: u32 = (pkt.no.wrapping_mul(268435459u64).wrapping_add(14u64) as u32) & 0xFFFFFF;
             sections.push(TreeSection {
                 title: format!("DHCPv6 — {}", mt_name),
                 expanded: true,
                 fields: vec![
                     tf("Message type:", &format!("{} ({})", mt, mt_name), FieldColor::Yellow),
                     tf("Transaction ID:", &format!("0x{:06x}", tid), FieldColor::Cyan),
-                    tf("Client DUID:", &format!("0003000100{:012x}", rng.r#gen::<u64>() & 0xFFFFFFFFFFFF), FieldColor::Default),
-                    tf("IA_NA:", &format!("IAID=0x{:08x}", rng.r#gen::<u32>()), FieldColor::Default),
+                    tf("Client DUID:", &format!("0003000100{:012x}", pkt.no.wrapping_mul(134217757u64).wrapping_add(15u64) & 0xFFFFFFFFFFFF), FieldColor::Default),
+                    tf("IA_NA:", &format!("IAID=0x{:08x}", (pkt.no.wrapping_mul(67108859u64).wrapping_add(16u64) as u32)), FieldColor::Default),
                 ],
             });
         }
 
         "VXLAN" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(8388617u64).wrapping_add(119u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 4789", sp),
                 expanded: false,
@@ -802,9 +860,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Destination Port:", "4789", FieldColor::Yellow),
                 ],
             });
-            let vni: u32 = rng.gen_range(1..=16_777_215);
-            let inner_src = format!("{}.{}.{}.{}", rng.gen_range(10u8..=10), rng.r#gen::<u8>(), rng.r#gen::<u8>(), rng.gen_range(1u8..=254));
-            let inner_dst = format!("{}.{}.{}.{}", rng.gen_range(10u8..=10), rng.r#gen::<u8>(), rng.r#gen::<u8>(), rng.gen_range(1u8..=254));
+            let vni: u32 = ((1u64 + (pkt.no.wrapping_mul(2654435761u64).wrapping_add(120u64) % 16777215u64)) as u32);
+            let inner_src = format!("{}.{}.{}.{}", 10u8, (pkt.no.wrapping_mul(33554467u64).wrapping_add(17u64) as u8), (pkt.no.wrapping_mul(16777259u64).wrapping_add(18u64) as u8), (1u8 + (pkt.no.wrapping_mul(3266489917u64).wrapping_add(122u64) % 254u64) as u8));
+            let inner_dst = format!("{}.{}.{}.{}", 10u8, (pkt.no.wrapping_mul(8388617u64).wrapping_add(19u64) as u8), (pkt.no.wrapping_mul(2654435761u64).wrapping_add(20u64) as u8), (1u8 + (pkt.no.wrapping_mul(374761393u64).wrapping_add(124u64) % 254u64) as u8));
             sections.push(TreeSection {
                 title: format!("Virtual eXtensible Local Area Network (VNI={})", vni),
                 expanded: true,
@@ -812,8 +870,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Flags:", "0x08 (VNI present)", FieldColor::Default),
                     tf("VNI:", &vni.to_string(), FieldColor::Yellow),
                     tf("Reserved:", "0x000000", FieldColor::Default),
-                    tf("Inner Src MAC:", &rand_mac(&mut rng), FieldColor::Cyan),
-                    tf("Inner Dst MAC:", &rand_mac(&mut rng), FieldColor::Cyan),
+                    tf("Inner Src MAC:", &format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", ((pkt.no.wrapping_mul(4294967291u64).wrapping_add(190u64) >> 40) & 0xff) as u8, ((pkt.no.wrapping_mul(2147483647u64).wrapping_add(191u64) >> 32) & 0xff) as u8, ((pkt.no.wrapping_mul(1073741827u64).wrapping_add(192u64) >> 24) & 0xff) as u8, ((pkt.no.wrapping_mul(536870923u64).wrapping_add(193u64) >> 16) & 0xff) as u8, ((pkt.no.wrapping_mul(268435459u64).wrapping_add(194u64) >> 8) & 0xff) as u8, (pkt.no.wrapping_mul(134217757u64).wrapping_add(195u64) & 0xff) as u8), FieldColor::Cyan),
+                    tf("Inner Dst MAC:", &format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", ((pkt.no.wrapping_mul(67108859u64).wrapping_add(196u64) >> 40) & 0xff) as u8, ((pkt.no.wrapping_mul(33554467u64).wrapping_add(197u64) >> 32) & 0xff) as u8, ((pkt.no.wrapping_mul(16777259u64).wrapping_add(198u64) >> 24) & 0xff) as u8, ((pkt.no.wrapping_mul(8388617u64).wrapping_add(199u64) >> 16) & 0xff) as u8, ((pkt.no.wrapping_mul(2654435761u64).wrapping_add(200u64) >> 8) & 0xff) as u8, (pkt.no.wrapping_mul(2246822519u64).wrapping_add(201u64) & 0xff) as u8), FieldColor::Cyan),
                     tf("Inner Src IP:", &inner_src, FieldColor::Green),
                     tf("Inner Dst IP:", &inner_dst, FieldColor::Orange),
                 ],
@@ -821,7 +879,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "WireGuard" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(2870177450u64).wrapping_add(125u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 51820", sp),
                 expanded: false,
@@ -831,24 +889,24 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let types = [(1u8,"Handshake Initiation"),(2,"Handshake Response"),(3,"Cookie Reply"),(4,"Transport Data")];
-            let (wt, wt_name) = types[rng.gen_range(0..types.len())];
-            let sender: u32 = rng.r#gen();
+            let (wt, wt_name) = types[stable(pkt.no, types.len())];
+            let sender: u32 = (pkt.no.wrapping_mul(2654435761u64).wrapping_add(60u64) as u32);
             let mut fields = vec![
                 tf("Message Type:", &format!("{} ({})", wt, wt_name), FieldColor::Yellow),
                 tf("Reserved:", "0x000000", FieldColor::Default),
             ];
             if wt == 4 {
-                let receiver: u32 = rng.r#gen();
-                let counter: u64 = rng.r#gen();
+                let receiver: u32 = (pkt.no.wrapping_mul(2246822519u64).wrapping_add(61u64) as u32);
+                let counter: u64 = (pkt.no.wrapping_mul(3266489917u64).wrapping_add(62u64) as u64);
                 fields.push(tf("Receiver Index:", &format!("0x{:08x}", receiver), FieldColor::Cyan));
                 fields.push(tf("Counter:", &counter.to_string(), FieldColor::Default));
                 fields.push(tf("Encrypted Payload:", &format!("[{} bytes]", pkt.length.saturating_sub(32)), FieldColor::Magenta));
             } else {
                 fields.push(tf("Sender Index:", &format!("0x{:08x}", sender), FieldColor::Cyan));
-                fields.push(tf("Ephemeral Key:", &format!("0x{:064x}", rng.r#gen::<u64>()), FieldColor::Green));
+                fields.push(tf("Ephemeral Key:", &format!("0x{:064x}", pkt.no.wrapping_mul(2246822519u64).wrapping_add(21u64)), FieldColor::Green));
                 fields.push(tf("Encrypted Static:", "[32 bytes]", FieldColor::Default));
                 fields.push(tf("Encrypted Timestamp:", "[12 bytes]", FieldColor::Default));
-                fields.push(tf("MAC1:", &format!("0x{:032x}", rng.r#gen::<u64>()), FieldColor::Default));
+                fields.push(tf("MAC1:", &format!("0x{:032x}", pkt.no.wrapping_mul(3266489917u64).wrapping_add(22u64)), FieldColor::Default));
             }
             sections.push(TreeSection {
                 title: format!("WireGuard — {}", wt_name),
@@ -865,23 +923,23 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Flags:", "0x0000", FieldColor::Default),
                     tf("Version:", "0", FieldColor::Default),
                     tf("Protocol Type:", "0x0800 (IPv4)", FieldColor::Yellow),
-                    tf("Key:", &format!("0x{:08x}", rng.r#gen::<u32>()), FieldColor::Cyan),
-                    tf("Sequence Number:", &rng.r#gen::<u32>().to_string(), FieldColor::Default),
+                    tf("Key:", &format!("0x{:08x}", (pkt.no.wrapping_mul(668265263u64).wrapping_add(23u64) as u32)), FieldColor::Cyan),
+                    tf("Sequence Number:", &(pkt.no.wrapping_mul(374761393u64).wrapping_add(24u64) as u32).to_string(), FieldColor::Default),
                 ],
             });
         }
 
         "IGMP" => {
-            let group = format!("239.{}.{}.{}", rng.gen_range(1u8..=2), rng.r#gen::<u8>(), rng.gen_range(1u8..=254));
+            let group = format!("239.{}.{}.{}", (1u8 + (pkt.no.wrapping_mul(1145919239u64).wrapping_add(126u64) % 2u64) as u8), (pkt.no.wrapping_mul(2870177450u64).wrapping_add(25u64) as u8), (1u8 + (pkt.no.wrapping_mul(3264354801u64).wrapping_add(127u64) % 254u64) as u8));
             let types = [(0x11u8,"Membership Query"),(0x16,"Membership Report v2"),(0x17,"Leave Group"),(0x22,"Membership Report v3")];
-            let (it, it_name) = types[rng.gen_range(0..types.len())];
+            let (it, it_name) = types[stable(pkt.no, types.len())];
             sections.push(TreeSection {
                 title: format!("Internet Group Management Protocol ({})", it_name),
                 expanded: true,
                 fields: vec![
                     tf("Type:", &format!("0x{:02x} ({})", it, it_name), FieldColor::Yellow),
                     tf("Max Resp Time:", "10.0 sec", FieldColor::Default),
-                    tf("Checksum:", &format!("0x{:04x}", rng.r#gen::<u16>()), FieldColor::Default),
+                    tf("Checksum:", &format!("0x{:04x}", (pkt.no.wrapping_mul(1145919239u64).wrapping_add(26u64) as u16)), FieldColor::Default),
                     tf("Multicast Address:", &group, FieldColor::Cyan),
                     tf("S Flag:", "0", FieldColor::Default),
                     tf("QRV:", "2", FieldColor::Default),
@@ -890,9 +948,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "VRRP" => {
-            let vrid: u8 = rng.gen_range(1..=255);
-            let prio: u8 = rng.gen_range(1..=254);
-            let ips: u8 = rng.gen_range(1..=3);
+            let vrid: u8 = ((1u64 + (pkt.no.wrapping_mul(1452813781u64).wrapping_add(128u64) % 255u64)) as u8);
+            let prio: u8 = ((1u64 + (pkt.no.wrapping_mul(987654323u64).wrapping_add(129u64) % 254u64)) as u8);
+            let ips: u8 = ((1u64 + (pkt.no.wrapping_mul(4294967291u64).wrapping_add(130u64) % 3u64)) as u8);
             sections.push(TreeSection {
                 title: format!("Virtual Router Redundancy Protocol (VRID={})", vrid),
                 expanded: true,
@@ -903,15 +961,15 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Priority:", &prio.to_string(), if prio == 255 { FieldColor::Green } else { FieldColor::Default }),
                     tf("Count IP Addrs:", &ips.to_string(), FieldColor::Default),
                     tf("Adver Interval:", "100 centiseconds", FieldColor::Default),
-                    tf("Checksum:", &format!("0x{:04x}", rng.r#gen::<u16>()), FieldColor::Default),
-                    tf("Virtual IP:", &format!("10.0.0.{}", rng.gen_range(1u8..=10)), FieldColor::Cyan),
+                    tf("Checksum:", &format!("0x{:04x}", (pkt.no.wrapping_mul(3264354801u64).wrapping_add(27u64) as u16)), FieldColor::Default),
+                    tf("Virtual IP:", &format!("10.0.0.{}", (1u8 + (pkt.no.wrapping_mul(2147483647u64).wrapping_add(131u64) % 10u64) as u8)), FieldColor::Cyan),
                 ],
             });
         }
 
         "ESP" => {
-            let spi: u32 = rng.r#gen();
-            let seq: u32 = rng.r#gen();
+            let spi: u32 = (pkt.no.wrapping_mul(668265263u64).wrapping_add(63u64) as u32);
+            let seq: u32 = (pkt.no.wrapping_mul(374761393u64).wrapping_add(64u64) as u32);
             sections.push(TreeSection {
                 title: "IPSec Encapsulating Security Payload (ESP)".into(),
                 expanded: true,
@@ -924,8 +982,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "AH" => {
-            let spi: u32 = rng.r#gen();
-            let seq: u32 = rng.r#gen();
+            let spi: u32 = (pkt.no.wrapping_mul(2870177450u64).wrapping_add(65u64) as u32);
+            let seq: u32 = (pkt.no.wrapping_mul(1145919239u64).wrapping_add(66u64) as u32);
             sections.push(TreeSection {
                 title: "IPSec Authentication Header (AH)".into(),
                 expanded: true,
@@ -934,13 +992,13 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Length:", "4", FieldColor::Default),
                     tf("SPI:", &format!("0x{:08x}", spi), FieldColor::Cyan),
                     tf("Sequence Number:", &seq.to_string(), FieldColor::Default),
-                    tf("ICV:", &format!("0x{:032x}", rng.r#gen::<u64>()), FieldColor::Green),
+                    tf("ICV:", &format!("0x{:032x}", pkt.no.wrapping_mul(1452813781u64).wrapping_add(28u64)), FieldColor::Green),
                 ],
             });
         }
 
         "GTP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(1073741827u64).wrapping_add(132u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 2152", sp),
                 expanded: false,
@@ -950,8 +1008,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let msg_types = [(0xffu8,"G-PDU"),(16,"Create PDP Ctx Req"),(17,"Create PDP Ctx Resp"),(18,"Update PDP Ctx Req"),(26,"Error Indication")];
-            let (mt, mt_name) = msg_types[rng.gen_range(0..msg_types.len())];
-            let teid: u32 = rng.r#gen();
+            let (mt, mt_name) = msg_types[stable(pkt.no, msg_types.len())];
+            let teid: u32 = (pkt.no.wrapping_mul(3264354801u64).wrapping_add(67u64) as u32);
             sections.push(TreeSection {
                 title: format!("GPRS Tunneling Protocol v1 (GTP) — {}", mt_name),
                 expanded: true,
@@ -961,13 +1019,13 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Message Type:", &format!("0x{:02x} ({})", mt, mt_name), FieldColor::Yellow),
                     tf("Length:", &pkt.length.to_string(), FieldColor::Default),
                     tf("TEID:", &format!("0x{:08x}", teid), FieldColor::Cyan),
-                    tf("Sequence Number:", &rng.r#gen::<u16>().to_string(), FieldColor::Default),
+                    tf("Sequence Number:", &(pkt.no.wrapping_mul(987654323u64).wrapping_add(29u64) as u16).to_string(), FieldColor::Default),
                 ],
             });
         }
 
         "Radius" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(536870923u64).wrapping_add(133u64) % 64512u64) as u16));
             let dp = pkt.dst_port.unwrap_or(1812);
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: {}", sp, dp),
@@ -978,8 +1036,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let codes = [(1u8,"Access-Request"),(2,"Access-Accept"),(3,"Access-Reject"),(4,"Accounting-Request"),(5,"Accounting-Response"),(11,"Access-Challenge")];
-            let (code, code_name) = codes[rng.gen_range(0..codes.len())];
-            let id: u8 = rng.r#gen();
+            let (code, code_name) = codes[stable(pkt.no, codes.len())];
+            let id: u8 = (pkt.no.wrapping_mul(1452813781u64).wrapping_add(68u64) as u8);
             sections.push(TreeSection {
                 title: format!("RADIUS — {}", code_name),
                 expanded: true,
@@ -987,16 +1045,16 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Code:", &format!("{} ({})", code, code_name), FieldColor::Yellow),
                     tf("ID:", &id.to_string(), FieldColor::Cyan),
                     tf("Length:", &pkt.length.to_string(), FieldColor::Default),
-                    tf("Authenticator:", &format!("0x{:032x}", rng.r#gen::<u64>()), FieldColor::Default),
+                    tf("Authenticator:", &format!("0x{:032x}", pkt.no.wrapping_mul(4294967291u64).wrapping_add(30u64)), FieldColor::Default),
                     tf("User-Name:", "user@example.com", FieldColor::Green),
                     tf("NAS-IP-Address:", &pkt.src, FieldColor::Cyan),
-                    tf("NAS-Port:", &rng.gen_range(1u32..=100).to_string(), FieldColor::Default),
+                    tf("NAS-Port:", &(1u32 + (pkt.no.wrapping_mul(268435459u64).wrapping_add(134u64) % 100u64) as u32).to_string(), FieldColor::Default),
                 ],
             });
         }
 
         "DoIP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(134217757u64).wrapping_add(135u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 13400", sp),
                 expanded: false,
@@ -1013,9 +1071,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 (0x8003,"Diagnostic Message Negative Ack"),
                 (0x4001,"Vehicle Announcement"),
             ];
-            let (pt, pt_name) = payloads[rng.gen_range(0..payloads.len())];
-            let src_addr: u16 = rng.gen_range(0x0e00..=0x0eff);
-            let tgt_addr: u16 = rng.gen_range(0x0001..=0x00ff);
+            let (pt, pt_name) = payloads[stable(pkt.no, payloads.len())];
+            let src_addr: u16 = (0x0e00u16 + (pkt.no.wrapping_mul(3266489917u64).wrapping_add(302u64) % 256u64) as u16);
+            let tgt_addr: u16 = (0x0001u16 + (pkt.no.wrapping_mul(668265263u64).wrapping_add(303u64) % 255u64) as u16);
             sections.push(TreeSection {
                 title: format!("Diagnostic over IP (DoIP) — {}", pt_name),
                 expanded: true,
@@ -1031,7 +1089,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "SOME/IP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(67108859u64).wrapping_add(136u64) % 64512u64) as u16));
             let dp = pkt.dst_port.unwrap_or(30490);
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: {}", sp, dp),
@@ -1041,12 +1099,12 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Destination Port:", &dp.to_string(), FieldColor::Yellow),
                 ],
             });
-            let service_id: u16 = rng.gen_range(0x0100..=0x0200);
-            let method_id: u16 = rng.gen_range(0x0001..=0x000f);
+            let service_id: u16 = (0x0100u16 + (pkt.no.wrapping_mul(374761393u64).wrapping_add(304u64) % 257u64) as u16);
+            let method_id: u16 = (0x0001u16 + (pkt.no.wrapping_mul(2870177450u64).wrapping_add(305u64) % 15u64) as u16);
             let msg_types = [(0x00u8,"REQUEST"),(0x01,"REQUEST_NO_RETURN"),(0x02,"NOTIFICATION"),(0x80,"RESPONSE"),(0x81,"ERROR")];
-            let (mt, mt_name) = msg_types[rng.gen_range(0..msg_types.len())];
-            let client_id: u16 = rng.r#gen();
-            let session_id: u16 = rng.r#gen();
+            let (mt, mt_name) = msg_types[stable(pkt.no, msg_types.len())];
+            let client_id: u16 = (pkt.no.wrapping_mul(987654323u64).wrapping_add(69u64) as u16);
+            let session_id: u16 = (pkt.no.wrapping_mul(4294967291u64).wrapping_add(70u64) as u16);
             sections.push(TreeSection {
                 title: format!("SOME/IP — {} (Service 0x{:04x})", mt_name, service_id),
                 expanded: true,
@@ -1064,8 +1122,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "MPLS" => {
-            let label: u32 = rng.gen_range(16..=1048575);
-            let tc: u8 = rng.gen_range(0..=7);
+            let label: u32 = ((16u64 + (pkt.no.wrapping_mul(33554467u64).wrapping_add(137u64) % 1048560u64)) as u32);
+            let tc: u8 = ((0u64 + (pkt.no.wrapping_mul(16777259u64).wrapping_add(138u64) % 8u64)) as u8);
             sections.push(TreeSection {
                 title: format!("MultiProtocol Label Switching (Label={})", label),
                 expanded: true,
@@ -1073,14 +1131,14 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Label:", &label.to_string(), FieldColor::Cyan),
                     tf("Traffic Class:", &tc.to_string(), FieldColor::Default),
                     tf("Bottom of Stack:", "1", FieldColor::Default),
-                    tf("TTL:", &rng.gen_range(48u8..=128).to_string(), FieldColor::Default),
+                    tf("TTL:", &(48u8 + (pkt.no.wrapping_mul(8388617u64).wrapping_add(139u64) % 81u64) as u8).to_string(), FieldColor::Default),
                 ],
             });
         }
 
         "PPPoE" => {
             let code_names = ["PADI", "PADO", "PADR", "PADS", "PADT", "Session"];
-            let cn = code_names[rng.gen_range(0..code_names.len())];
+            let cn = code_names[stable(pkt.no, code_names.len())];
             sections.push(TreeSection {
                 title: format!("Point-to-Point Protocol over Ethernet ({})", cn),
                 expanded: true,
@@ -1088,14 +1146,14 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Version:", "1", FieldColor::Default),
                     tf("Type:", "1", FieldColor::Default),
                     tf("Code:", cn, FieldColor::Yellow),
-                    tf("Session ID:", &format!("0x{:04x}", rng.r#gen::<u16>()), FieldColor::Cyan),
+                    tf("Session ID:", &format!("0x{:04x}", (pkt.no.wrapping_mul(2147483647u64).wrapping_add(31u64) as u16)), FieldColor::Cyan),
                     tf("Payload Length:", &pkt.length.saturating_sub(6).to_string(), FieldColor::Default),
                 ],
             });
         }
 
         "WoL" => {
-            let mac = rand_mac(&mut rng);
+            let mac = format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", ((pkt.no.wrapping_mul(3266489917u64).wrapping_add(202u64) >> 40) & 0xff) as u8, ((pkt.no.wrapping_mul(668265263u64).wrapping_add(203u64) >> 32) & 0xff) as u8, ((pkt.no.wrapping_mul(374761393u64).wrapping_add(204u64) >> 24) & 0xff) as u8, ((pkt.no.wrapping_mul(2870177450u64).wrapping_add(205u64) >> 16) & 0xff) as u8, ((pkt.no.wrapping_mul(1145919239u64).wrapping_add(206u64) >> 8) & 0xff) as u8, (pkt.no.wrapping_mul(3264354801u64).wrapping_add(207u64) & 0xff) as u8);
             sections.push(TreeSection {
                 title: "Wake on LAN (Magic Packet)".into(),
                 expanded: true,
@@ -1108,7 +1166,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "SMB" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(2654435761u64).wrapping_add(140u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 445", sp),
                 expanded: false,
@@ -1118,11 +1176,11 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let cmds = ["Negotiate", "SessionSetup", "TreeConnect", "Create", "Read", "Write", "Close", "Ioctl", "QueryInfo"];
-            let cmd = cmds[rng.gen_range(0..cmds.len())];
+            let cmd = cmds[stable(pkt.no, cmds.len())];
             let dialects = ["SMB 2.0.2", "SMB 2.1", "SMB 3.0", "SMB 3.1.1"];
-            let dialect = dialects[rng.gen_range(0..dialects.len())];
-            let session: u64 = rng.r#gen::<u64>() & 0xFFFFFFFFFFFF;
-            let tree_id: u32 = rng.r#gen();
+            let dialect = dialects[stable(pkt.no, dialects.len())];
+            let session: u64 = pkt.no.wrapping_mul(1073741827u64).wrapping_add(32u64) & 0xFFFFFFFFFFFF;
+            let tree_id: u32 = (pkt.no.wrapping_mul(2147483647u64).wrapping_add(71u64) as u32);
             sections.push(TreeSection {
                 title: format!("SMB2 (Server Message Block 2) — {}", cmd),
                 expanded: true,
@@ -1134,13 +1192,13 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("NT Status:", "0x00000000 (STATUS_SUCCESS)", FieldColor::Default),
                     tf("Session ID:", &format!("0x{:012x}", session), FieldColor::Cyan),
                     tf("Tree ID:", &format!("0x{:08x}", tree_id), FieldColor::Default),
-                    tf("Message ID:", &rng.r#gen::<u64>().to_string(), FieldColor::Default),
+                    tf("Message ID:", &pkt.no.wrapping_mul(536870923u64).wrapping_add(33u64).to_string(), FieldColor::Default),
                 ],
             });
         }
 
         "RDP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(2246822519u64).wrapping_add(141u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 3389", sp),
                 expanded: false,
@@ -1156,8 +1214,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 "License Request", "Demand Active PDU",
                 "Confirm Active PDU", "Bitmap Update",
             ];
-            let pdu = pdus[rng.gen_range(0..pdus.len())];
-            let channel: u16 = rng.gen_range(1001..=1007);
+            let pdu = pdus[stable(pkt.no, pdus.len())];
+            let channel: u16 = ((1001u64 + (pkt.no.wrapping_mul(3266489917u64).wrapping_add(142u64) % 7u64)) as u16);
             sections.push(TreeSection {
                 title: format!("Remote Desktop Protocol — {}", pdu),
                 expanded: true,
@@ -1172,7 +1230,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "Kerberos" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(668265263u64).wrapping_add(143u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 88", sp),
                 expanded: false,
@@ -1185,13 +1243,13 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 (10u8, "AS-REQ"), (11, "AS-REP"), (12, "TGS-REQ"), (13, "TGS-REP"),
                 (14, "AP-REQ"), (15, "AP-REP"), (30, "KRB-ERROR"),
             ];
-            let (mt, mt_name) = msg_types[rng.gen_range(0..msg_types.len())];
+            let (mt, mt_name) = msg_types[stable(pkt.no, msg_types.len())];
             let realms = ["CORP.EXAMPLE.COM", "EXAMPLE.LOCAL", "INTERNAL.NET"];
-            let realm = realms[rng.gen_range(0..realms.len())];
+            let realm = realms[stable(pkt.no, realms.len())];
             let users = ["administrator", "svc_backup", "john.doe", "svc_sql", "krbtgt"];
-            let user = users[rng.gen_range(0..users.len())];
+            let user = users[stable(pkt.no, users.len())];
             let etype = ["aes256-cts-hmac-sha1-96", "aes128-cts-hmac-sha1-96", "rc4-hmac"];
-            let enc = etype[rng.gen_range(0..etype.len())];
+            let enc = etype[stable(pkt.no, etype.len())];
             sections.push(TreeSection {
                 title: format!("Kerberos — {} (msg-type={})", mt_name, mt),
                 expanded: true,
@@ -1202,13 +1260,13 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("cname:", user, FieldColor::Green),
                     tf("sname:", "krbtgt", FieldColor::Default),
                     tf("etype:", enc, FieldColor::Magenta),
-                    tf("nonce:", &format!("0x{:08x}", rng.r#gen::<u32>()), FieldColor::Default),
+                    tf("nonce:", &format!("0x{:08x}", (pkt.no.wrapping_mul(268435459u64).wrapping_add(34u64) as u32)), FieldColor::Default),
                 ],
             });
         }
 
         "NetBIOS-SSN" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(374761393u64).wrapping_add(144u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 139", sp),
                 expanded: false,
@@ -1218,7 +1276,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let types = [(0x00u8,"Session Message"),(0x81,"Session Request"),(0x82,"Positive Session Response"),(0x83,"Negative Session Response")];
-            let (mt, mt_name) = types[rng.gen_range(0..types.len())];
+            let (mt, mt_name) = types[stable(pkt.no, types.len())];
             sections.push(TreeSection {
                 title: "NetBIOS Session Service".into(),
                 expanded: true,
@@ -1232,7 +1290,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "RTSP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(2870177450u64).wrapping_add(145u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 554", sp),
                 expanded: false,
@@ -1242,10 +1300,10 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let methods = ["DESCRIBE", "ANNOUNCE", "SETUP", "PLAY", "PAUSE", "TEARDOWN", "OPTIONS"];
-            let m = methods[rng.gen_range(0..methods.len())];
+            let m = methods[stable(pkt.no, methods.len())];
             let streams = ["rtsp://stream.example.com/live.sdp", "rtsp://camera.local/h264", "rtsp://server/track1"];
-            let url = streams[rng.gen_range(0..streams.len())];
-            let cseq: u32 = rng.gen_range(1..=100);
+            let url = streams[stable(pkt.no, streams.len())];
+            let cseq: u32 = ((1u64 + (pkt.no.wrapping_mul(1145919239u64).wrapping_add(146u64) % 100u64)) as u32);
             sections.push(TreeSection {
                 title: format!("Real-Time Streaming Protocol — {}", m),
                 expanded: true,
@@ -1254,13 +1312,13 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("URL:", url, FieldColor::Cyan),
                     tf("Version:", "RTSP/1.0", FieldColor::Default),
                     tf("CSeq:", &cseq.to_string(), FieldColor::Yellow),
-                    tf("Session:", &format!("{:016x}", rng.r#gen::<u64>()), FieldColor::Default),
+                    tf("Session:", &format!("{:016x}", pkt.no.wrapping_mul(134217757u64).wrapping_add(35u64)), FieldColor::Default),
                 ],
             });
         }
 
         "Kafka" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(3264354801u64).wrapping_add(147u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 9092", sp),
                 expanded: false,
@@ -1270,26 +1328,26 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let apis = [(0u16,"Produce"),(1,"Fetch"),(2,"ListOffsets"),(3,"Metadata"),(8,"OffsetCommit"),(9,"OffsetFetch"),(10,"FindCoordinator"),(11,"JoinGroup"),(12,"Heartbeat"),(13,"LeaveGroup"),(14,"SyncGroup")];
-            let (api_key, api_name) = apis[rng.gen_range(0..apis.len())];
-            let corr: i32 = rng.r#gen();
+            let (api_key, api_name) = apis[stable(pkt.no, apis.len())];
+            let corr: i32 = (pkt.no.wrapping_mul(1073741827u64).wrapping_add(72u64) as i32);
             let topics = ["orders", "events", "metrics", "logs", "payments", "user-activity"];
-            let topic = topics[rng.gen_range(0..topics.len())];
+            let topic = topics[stable(pkt.no, topics.len())];
             sections.push(TreeSection {
                 title: format!("Apache Kafka — {} (apiKey={})", api_name, api_key),
                 expanded: true,
                 fields: vec![
                     tf("API Key:", &format!("{} ({})", api_key, api_name), FieldColor::Yellow),
-                    tf("API Version:", &rng.gen_range(0u16..=10).to_string(), FieldColor::Default),
+                    tf("API Version:", &(0u16 + (pkt.no.wrapping_mul(1452813781u64).wrapping_add(148u64) % 11u64) as u16).to_string(), FieldColor::Default),
                     tf("Correlation ID:", &corr.to_string(), FieldColor::Cyan),
                     tf("Client ID:", "kafka-consumer-1", FieldColor::Default),
                     tf("Topic:", topic, FieldColor::Green),
-                    tf("Partition:", &rng.gen_range(0u32..=7).to_string(), FieldColor::Default),
+                    tf("Partition:", &(0u32 + (pkt.no.wrapping_mul(987654323u64).wrapping_add(149u64) % 8u64) as u32).to_string(), FieldColor::Default),
                 ],
             });
         }
 
         "AMQP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(4294967291u64).wrapping_add(150u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 5672", sp),
                 expanded: false,
@@ -1304,7 +1362,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 (50, 20, "queue.bind"), (60, 40, "basic.publish"), (60, 60, "basic.deliver"),
                 (60, 80, "basic.ack"),
             ];
-            let (class_id, method_id, method_name) = methods[rng.gen_range(0..methods.len())];
+            let (class_id, method_id, method_name) = methods[stable(pkt.no, methods.len())];
             let exchange = ["amq.direct", "amq.topic", "amq.fanout", "events", "orders"];
             let routing_key = ["order.created", "user.signup", "payment.processed", "error.fatal"];
             sections.push(TreeSection {
@@ -1316,14 +1374,14 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Class ID:", &class_id.to_string(), FieldColor::Default),
                     tf("Method ID:", &method_id.to_string(), FieldColor::Default),
                     tf("Method:", method_name, FieldColor::Yellow),
-                    tf("Exchange:", exchange[rng.gen_range(0..exchange.len())], FieldColor::Green),
-                    tf("Routing Key:", routing_key[rng.gen_range(0..routing_key.len())], FieldColor::Cyan),
+                    tf("Exchange:", exchange[stable(pkt.no, exchange.len())], FieldColor::Green),
+                    tf("Routing Key:", routing_key[stable(pkt.no, routing_key.len())], FieldColor::Cyan),
                 ],
             });
         }
 
         "NATS" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(2147483647u64).wrapping_add(151u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 4222", sp),
                 expanded: false,
@@ -1333,23 +1391,23 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let ops = ["INFO", "CONNECT", "PUB", "SUB", "UNSUB", "MSG", "PING", "PONG", "+OK", "-ERR"];
-            let op = ops[rng.gen_range(0..ops.len())];
+            let op = ops[stable(pkt.no, ops.len())];
             let subjects = ["events.>", "orders.created", "users.login", "_INBOX.reply", "health.check"];
-            let subj = subjects[rng.gen_range(0..subjects.len())];
+            let subj = subjects[stable(pkt.no, subjects.len())];
             sections.push(TreeSection {
                 title: format!("NATS Messaging — {}", op),
                 expanded: true,
                 fields: vec![
                     tf("Operation:", op, FieldColor::Yellow),
                     tf("Subject:", subj, FieldColor::Cyan),
-                    tf("Payload Length:", &rng.gen_range(0u16..=512).to_string(), FieldColor::Default),
+                    tf("Payload Length:", &(0u16 + (pkt.no.wrapping_mul(1073741827u64).wrapping_add(152u64) % 513u64) as u16).to_string(), FieldColor::Default),
                     tf("Version:", "2.x", FieldColor::Default),
                 ],
             });
         }
 
         "Memcached" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(536870923u64).wrapping_add(153u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 11211", sp),
                 expanded: false,
@@ -1359,9 +1417,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let cmds = ["get", "set", "delete", "incr", "decr", "flush_all", "stats", "version"];
-            let cmd = cmds[rng.gen_range(0..cmds.len())];
+            let cmd = cmds[stable(pkt.no, cmds.len())];
             let keys = ["session:abc123", "user:42:profile", "cache:homepage", "token:xyz789"];
-            let key = keys[rng.gen_range(0..keys.len())];
+            let key = keys[stable(pkt.no, keys.len())];
             sections.push(TreeSection {
                 title: format!("Memcached — {}", cmd),
                 expanded: true,
@@ -1369,14 +1427,14 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Command:", cmd, FieldColor::Yellow),
                     tf("Key:", key, FieldColor::Cyan),
                     tf("Flags:", "0", FieldColor::Default),
-                    tf("Exptime:", &rng.gen_range(0u32..=3600).to_string(), FieldColor::Default),
-                    tf("Bytes:", &rng.gen_range(0u16..=4096).to_string(), FieldColor::Default),
+                    tf("Exptime:", &(0u32 + (pkt.no.wrapping_mul(268435459u64).wrapping_add(154u64) % 3601u64) as u32).to_string(), FieldColor::Default),
+                    tf("Bytes:", &(0u16 + (pkt.no.wrapping_mul(134217757u64).wrapping_add(155u64) % 4097u64) as u16).to_string(), FieldColor::Default),
                 ],
             });
         }
 
         "VNC" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(67108859u64).wrapping_add(156u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 5900", sp),
                 expanded: false,
@@ -1386,7 +1444,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let msgs = ["ProtocolVersion 3.8", "SecurityType: VNC Authentication", "ServerInit", "FramebufferUpdateRequest", "KeyEvent", "PointerEvent", "FramebufferUpdate"];
-            let msg = msgs[rng.gen_range(0..msgs.len())];
+            let msg = msgs[stable(pkt.no, msgs.len())];
             sections.push(TreeSection {
                 title: format!("Virtual Network Computing (VNC) — {}", msg),
                 expanded: true,
@@ -1401,7 +1459,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "Docker" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(33554467u64).wrapping_add(157u64) % 64512u64) as u16));
             let dp = pkt.dst_port.unwrap_or(2375);
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: {}", sp, dp),
@@ -1412,9 +1470,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let endpoints = ["/containers/json", "/images/json", "/networks", "/volumes", "/containers/{id}/start", "/containers/{id}/logs", "/_ping", "/version", "/events"];
-            let ep = endpoints[rng.gen_range(0..endpoints.len())];
+            let ep = endpoints[stable(pkt.no, endpoints.len())];
             let methods = ["GET", "POST", "DELETE"];
-            let m = methods[rng.gen_range(0..methods.len())];
+            let m = methods[stable(pkt.no, methods.len())];
             let sec_field = if pkt.dst_port == Some(2375) || pkt.src_port == Some(2375) {
                 tf("Security:", "UNENCRYPTED (plain HTTP)", FieldColor::Red)
             } else {
@@ -1435,7 +1493,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "Prometheus" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(16777259u64).wrapping_add(158u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: 9090", sp),
                 expanded: false,
@@ -1445,9 +1503,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let paths = ["/metrics", "/api/v1/query", "/api/v1/query_range", "/api/v1/targets", "/api/v1/alerts", "/api/v1/rules"];
-            let path = paths[rng.gen_range(0..paths.len())];
+            let path = paths[stable(pkt.no, paths.len())];
             let queries = ["http_requests_total", "node_cpu_seconds_total", "go_goroutines", "process_resident_memory_bytes"];
-            let q = queries[rng.gen_range(0..queries.len())];
+            let q = queries[stable(pkt.no, queries.len())];
             sections.push(TreeSection {
                 title: format!("Prometheus — GET {}", path),
                 expanded: true,
@@ -1461,7 +1519,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "etcd" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(8388617u64).wrapping_add(159u64) % 64512u64) as u16));
             let dp = pkt.dst_port.unwrap_or(2379);
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: {}", sp, dp),
@@ -1472,10 +1530,10 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let ops = ["Range", "Put", "DeleteRange", "Txn", "Watch", "LeaseGrant", "MemberList", "Status"];
-            let op = ops[rng.gen_range(0..ops.len())];
+            let op = ops[stable(pkt.no, ops.len())];
             let keys = ["/registry/pods/default", "/registry/services", "/election/master", "/config/app"];
-            let key = keys[rng.gen_range(0..keys.len())];
-            let rev: u64 = rng.gen_range(1000..=99999);
+            let key = keys[stable(pkt.no, keys.len())];
+            let rev: u64 = (1000u64 + (pkt.no.wrapping_mul(2654435761u64).wrapping_add(160u64) % 99000u64));
             sections.push(TreeSection {
                 title: format!("etcd gRPC — {}", op),
                 expanded: true,
@@ -1483,8 +1541,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Operation:", op, FieldColor::Yellow),
                     tf("Key:", key, FieldColor::Cyan),
                     tf("Revision:", &rev.to_string(), FieldColor::Default),
-                    tf("Cluster ID:", &format!("0x{:016x}", rng.r#gen::<u64>()), FieldColor::Default),
-                    tf("Member ID:", &format!("0x{:016x}", rng.r#gen::<u64>()), FieldColor::Default),
+                    tf("Cluster ID:", &format!("0x{:016x}", pkt.no.wrapping_mul(67108859u64).wrapping_add(36u64)), FieldColor::Default),
+                    tf("Member ID:", &format!("0x{:016x}", pkt.no.wrapping_mul(33554467u64).wrapping_add(37u64)), FieldColor::Default),
                 ],
             });
         }
@@ -1500,11 +1558,11 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let names = ["WORKSTATION01", "FILESERVER", "PRINTSERVER", "DOMAIN-CTRL", "WIN10-PC"];
-            let name = names[rng.gen_range(0..names.len())];
+            let name = names[stable(pkt.no, names.len())];
             let types = [(0x0000u16,"General"), (0x0020,"Server"), (0x0000,"Workstation"), (0x001c,"Domain Controller")];
-            let (nt, nt_name) = types[rng.gen_range(0..types.len())];
-            let tid: u16 = rng.r#gen();
-            let is_query = rng.gen_bool(0.5);
+            let (nt, nt_name) = types[stable(pkt.no, types.len())];
+            let tid: u16 = (pkt.no.wrapping_mul(536870923u64).wrapping_add(73u64) as u16);
+            let is_query = (pkt.no & 1) == 0;
             sections.push(TreeSection {
                 title: format!("NetBIOS Name Service — {} {}", if is_query {"Query"} else {"Response"}, name),
                 expanded: true,
@@ -1513,13 +1571,13 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Flags:", if is_query { "0x0110 (Query)" } else { "0x8500 (Response)" }, FieldColor::Yellow),
                     tf("Name:", name, FieldColor::Green),
                     tf("Type:", &format!("0x{:04x} ({})", nt, nt_name), FieldColor::Default),
-                    tf("IP:", &format!("192.168.1.{}", rng.gen_range(1u8..=254)), FieldColor::Cyan),
+                    tf("IP:", &format!("192.168.1.{}", (1u8 + (pkt.no.wrapping_mul(2246822519u64).wrapping_add(161u64) % 254u64) as u8)), FieldColor::Cyan),
                 ],
             });
         }
 
         "TFTP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(3266489917u64).wrapping_add(162u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 69", sp),
                 expanded: false,
@@ -1529,11 +1587,11 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let opcodes = [(1u16,"Read Request (RRQ)"),(2,"Write Request (WRQ)"),(3,"Data (DAT)"),(4,"Acknowledgment (ACK)"),(5,"Error (ERROR)")];
-            let (op, op_name) = opcodes[rng.gen_range(0..opcodes.len())];
+            let (op, op_name) = opcodes[stable(pkt.no, opcodes.len())];
             let files = ["pxelinux.0", "firmware.bin", "config.cfg", "initrd.img", "bootloader.img"];
-            let file = files[rng.gen_range(0..files.len())];
+            let file = files[stable(pkt.no, files.len())];
             let block_field = if op <= 2 { tf("Filename:", file, FieldColor::Cyan) }
-                              else       { tf("Block:", &rng.gen_range(1u16..=512).to_string(), FieldColor::Cyan) };
+                              else       { tf("Block:", &(1u16 + (pkt.no.wrapping_mul(668265263u64).wrapping_add(163u64) % 512u64) as u16).to_string(), FieldColor::Cyan) };
             sections.push(TreeSection {
                 title: format!("Trivial File Transfer Protocol — {}", op_name),
                 expanded: true,
@@ -1546,7 +1604,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "STUN" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(374761393u64).wrapping_add(164u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 3478", sp),
                 expanded: false,
@@ -1556,9 +1614,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let types = [(0x0001u16,"Binding Request"),(0x0101,"Binding Success Response"),(0x0111,"Binding Error Response"),(0x0003,"Allocate Request"),(0x0103,"Allocate Response")];
-            let (mt, mt_name) = types[rng.gen_range(0..types.len())];
-            let tid_hi: u64 = rng.r#gen();
-            let tid_lo: u32 = rng.r#gen();
+            let (mt, mt_name) = types[stable(pkt.no, types.len())];
+            let tid_hi: u64 = (pkt.no.wrapping_mul(268435459u64).wrapping_add(74u64) as u64);
+            let tid_lo: u32 = (pkt.no.wrapping_mul(134217757u64).wrapping_add(75u64) as u32);
             sections.push(TreeSection {
                 title: format!("Session Traversal Utilities for NAT (STUN) — {}", mt_name),
                 expanded: true,
@@ -1573,7 +1631,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "SSDP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(1024u16..=65535));
+            let sp = pkt.src_port.unwrap_or((1024u16 + (pkt.no.wrapping_mul(2870177450u64).wrapping_add(165u64) % 64512u64) as u16));
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: 1900", sp),
                 expanded: false,
@@ -1583,9 +1641,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let methods = ["M-SEARCH * HTTP/1.1", "NOTIFY * HTTP/1.1", "HTTP/1.1 200 OK"];
-            let m = methods[rng.gen_range(0..methods.len())];
+            let m = methods[stable(pkt.no, methods.len())];
             let services = ["upnp:rootdevice", "urn:schemas-upnp-org:service:RenderingControl:1", "urn:schemas-upnp-org:device:MediaServer:1"];
-            let svc = services[rng.gen_range(0..services.len())];
+            let svc = services[stable(pkt.no, services.len())];
             sections.push(TreeSection {
                 title: format!("Simple Service Discovery Protocol (SSDP) — {}", m),
                 expanded: true,
@@ -1593,8 +1651,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Method:", m, FieldColor::Yellow),
                     tf("Host:", "239.255.255.250:1900", FieldColor::Cyan),
                     tf("ST/NT:", svc, FieldColor::Green),
-                    tf("MX:", &rng.gen_range(1u8..=5).to_string(), FieldColor::Default),
-                    tf("USN:", &format!("uuid:{:08x}-{:04x}-{:04x}-{:04x}-{:012x}::{}", rng.r#gen::<u32>(), rng.r#gen::<u16>(), rng.r#gen::<u16>(), rng.r#gen::<u16>(), rng.r#gen::<u64>() & 0xFFFFFFFFFFFF, svc), FieldColor::Default),
+                    tf("MX:", &(1u8 + (pkt.no.wrapping_mul(1145919239u64).wrapping_add(166u64) % 5u64) as u8).to_string(), FieldColor::Default),
+                    tf("USN:", &format!("uuid:{:08x}-{:04x}-{:04x}-{:04x}-{:012x}::{}", (pkt.no.wrapping_mul(16777259u64).wrapping_add(38u64) as u32), (pkt.no.wrapping_mul(8388617u64).wrapping_add(39u64) as u16), (pkt.no.wrapping_mul(2654435761u64).wrapping_add(40u64) as u16), (pkt.no.wrapping_mul(2246822519u64).wrapping_add(41u64) as u16), pkt.no.wrapping_mul(3266489917u64).wrapping_add(42u64) & 0xFFFFFFFFFFFF, svc), FieldColor::Default),
                 ],
             });
         }
@@ -1610,9 +1668,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let cmds = [(1u8,"Request"),(2,"Response")];
-            let (cmd, cmd_name) = cmds[rng.gen_range(0..cmds.len())];
-            let prefix = format!("{}.0.0.0/8", rng.gen_range(1u8..=223));
-            let metric: u8 = rng.gen_range(1..=15);
+            let (cmd, cmd_name) = cmds[stable(pkt.no, cmds.len())];
+            let prefix = format!("{}.0.0.0/8", (1u8 + (pkt.no.wrapping_mul(3264354801u64).wrapping_add(167u64) % 223u64) as u8));
+            let metric: u8 = ((1u64 + (pkt.no.wrapping_mul(1452813781u64).wrapping_add(168u64) % 15u64)) as u8);
             sections.push(TreeSection {
                 title: format!("Routing Information Protocol v2 — {}", cmd_name),
                 expanded: true,
@@ -1630,8 +1688,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         "RTP" => {
-            let sp = pkt.src_port.unwrap_or(rng.gen_range(10000u16..=20000));
-            let dp = pkt.dst_port.unwrap_or(rng.gen_range(10000u16..=20000));
+            let sp = pkt.src_port.unwrap_or((10000u16 + (pkt.no.wrapping_mul(987654323u64).wrapping_add(169u64) % 10001u64) as u16));
+            let dp = pkt.dst_port.unwrap_or((10000u16 + (pkt.no.wrapping_mul(4294967291u64).wrapping_add(170u64) % 10001u64) as u16));
             sections.push(TreeSection {
                 title: format!("User Datagram Protocol, Src Port: {}, Dst Port: {}", sp, dp),
                 expanded: false,
@@ -1641,10 +1699,10 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                 ],
             });
             let payload_types = [(0u8,"PCMU"),(3,"GSM"),(8,"PCMA"),(9,"G722"),(96,"H264"),(97,"H265"),(111,"OPUS")];
-            let (pt, pt_name) = payload_types[rng.gen_range(0..payload_types.len())];
-            let ssrc: u32 = rng.r#gen();
-            let seq: u16 = rng.r#gen();
-            let rtp_ts: u32 = rng.r#gen();
+            let (pt, pt_name) = payload_types[stable(pkt.no, payload_types.len())];
+            let ssrc: u32 = (pkt.no.wrapping_mul(67108859u64).wrapping_add(76u64) as u32);
+            let seq: u16 = (pkt.no.wrapping_mul(33554467u64).wrapping_add(77u64) as u16);
+            let rtp_ts: u32 = (pkt.no.wrapping_mul(16777259u64).wrapping_add(78u64) as u32);
             sections.push(TreeSection {
                 title: format!("Real-Time Transport Protocol — {} (PT={})", pt_name, pt),
                 expanded: true,
@@ -1662,14 +1720,14 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
 
         "OSPF" => {
             let msg_types = ["Hello", "Database Description", "Link State Request", "Link State Update", "Link State Acknowledgment"];
-            let mt_idx = rng.gen_range(0..msg_types.len());
+            let mt_idx = stable(pkt.no, msg_types.len());
             let mt_name = msg_types[mt_idx];
-            let router_id = format!("{}.{}.{}.{}", rng.gen_range(1u8..=10), rng.r#gen::<u8>(), rng.r#gen::<u8>(), rng.gen_range(1u8..=10));
-            let area_id = format!("0.0.0.{}", rng.gen_range(0u8..=3));
+            let router_id = format!("{}.{}.{}.{}", (1u8 + (pkt.no.wrapping_mul(2147483647u64).wrapping_add(171u64) % 10u64) as u8), (pkt.no.wrapping_mul(668265263u64).wrapping_add(43u64) as u8), (pkt.no.wrapping_mul(374761393u64).wrapping_add(44u64) as u8), (1u8 + (pkt.no.wrapping_mul(1073741827u64).wrapping_add(172u64) % 10u64) as u8));
+            let area_id = format!("0.0.0.{}", (0u8 + (pkt.no.wrapping_mul(536870923u64).wrapping_add(173u64) % 4u64) as u8));
             let hello_or_lsa = if mt_idx == 0 {
                 tf("Hello Interval:", "10", FieldColor::Default)
             } else {
-                tf("LSA Count:", &rng.gen_range(1u8..=10).to_string(), FieldColor::Default)
+                tf("LSA Count:", &(1u8 + (pkt.no.wrapping_mul(268435459u64).wrapping_add(174u64) % 10u64) as u8).to_string(), FieldColor::Default)
             };
             sections.push(TreeSection {
                 title: format!("Open Shortest Path First v2 — {}", mt_name),
@@ -1687,8 +1745,8 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
 
         "EIGRP" => {
             let ops = [(1u8,"Update"),(3,"Query"),(4,"Reply"),(5,"Hello"),(10,"SIA-Query"),(11,"SIA-Reply")];
-            let (op, op_name) = ops[rng.gen_range(0..ops.len())];
-            let asn: u16 = rng.gen_range(1..=65535);
+            let (op, op_name) = ops[stable(pkt.no, ops.len())];
+            let asn: u16 = ((1u64 + (pkt.no.wrapping_mul(134217757u64).wrapping_add(175u64) % 65535u64)) as u16);
             sections.push(TreeSection {
                 title: format!("Enhanced Interior Gateway Routing Protocol — {}", op_name),
                 expanded: true,
@@ -1696,17 +1754,17 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Version:", "2", FieldColor::Cyan),
                     tf("Opcode:", &format!("{} ({})", op, op_name), FieldColor::Yellow),
                     tf("AS Number:", &asn.to_string(), FieldColor::Green),
-                    tf("Sequence:", &rng.r#gen::<u32>().to_string(), FieldColor::Default),
-                    tf("Ack:", &rng.r#gen::<u32>().to_string(), FieldColor::Default),
+                    tf("Sequence:", &(pkt.no.wrapping_mul(2870177450u64).wrapping_add(45u64) as u32).to_string(), FieldColor::Default),
+                    tf("Ack:", &(pkt.no.wrapping_mul(1145919239u64).wrapping_add(46u64) as u32).to_string(), FieldColor::Default),
                 ],
             });
         }
 
         "PIM" => {
             let types = ["Hello", "Register", "Register-Stop", "Join/Prune", "Bootstrap", "Assert"];
-            let mt_idx = rng.gen_range(0..types.len());
+            let mt_idx = stable(pkt.no, types.len());
             let mt_name = types[mt_idx];
-            let group = format!("239.{}.{}.{}", rng.gen_range(1u8..=2), rng.r#gen::<u8>(), rng.gen_range(1u8..=254));
+            let group = format!("239.{}.{}.{}", (1u8 + (pkt.no.wrapping_mul(67108859u64).wrapping_add(176u64) % 2u64) as u8), (pkt.no.wrapping_mul(3264354801u64).wrapping_add(47u64) as u8), (1u8 + (pkt.no.wrapping_mul(33554467u64).wrapping_add(177u64) % 254u64) as u8));
             sections.push(TreeSection {
                 title: format!("Protocol Independent Multicast — {}", mt_name),
                 expanded: true,
@@ -1714,7 +1772,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Version:", "2", FieldColor::Cyan),
                     tf("Type:", &format!("{} ({})", mt_idx, mt_name), FieldColor::Yellow),
                     tf("Group:", &group, FieldColor::Green),
-                    tf("Checksum:", &format!("0x{:04x}", rng.r#gen::<u16>()), FieldColor::Default),
+                    tf("Checksum:", &format!("0x{:04x}", (pkt.no.wrapping_mul(1452813781u64).wrapping_add(48u64) as u16)), FieldColor::Default),
                 ],
             });
         }
