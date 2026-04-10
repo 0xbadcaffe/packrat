@@ -1,6 +1,6 @@
 [package]
 name = "packrat-tui"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.85"
 description = "A Wireshark-style terminal packet analyzer, reverse engineering, and security research tool with live capture, IDS, port scanner, packet crafter, and PCAP replay"
@@ -9,7 +9,7 @@ readme = "README.md"
 repository = "https://github.com/0xbadcaffe/packrat"
 homepage = "https://github.com/0xbadcaffe/packrat"
 documentation = "https://docs.rs/packrat-tui"
-keywords = ["network", "packet", "tui", "pcap", "wireshark"]
+keywords = ["network", "packet", "tui", "security", "reverse-engineering"]
 categories = ["command-line-utilities", "network-programming", "visualization"]
 include = [
     "src/**/*",
