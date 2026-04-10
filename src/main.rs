@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{io, time::Duration};
 
 use anyhow::Result;
@@ -17,6 +19,8 @@ mod event;
 mod export;
 mod filter;
 mod net;
+mod pcap_replay;
+mod scan;
 mod sim;
 mod tabs;
 mod traceroute;

@@ -1,4 +1,5 @@
-/// Build a protocol dissector tree for a packet (for the UI detail pane).
+// Build a protocol dissector tree for a packet (for the UI detail pane).
+#![allow(dead_code, unused_parens)]
 use crate::net::packet::{FieldColor, Packet, TreeField, TreeSection, make_field};
 
 const DNS_NAMES: &[&str] = &[
@@ -67,7 +68,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
     let eth_extra = if pkt.vlan_id.is_some() { 4usize } else { 0usize };
     let ip_off    = 14 + eth_extra;
     let ihl       = (u8_at(raw, ip_off) & 0x0F) as usize * 4;
-    let tp_off    = ip_off + ihl.max(20);
+    let _tp_off   = ip_off + ihl.max(20);
     let mut sections = Vec::new();
 
     // Frame section

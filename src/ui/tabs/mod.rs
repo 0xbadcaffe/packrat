@@ -3,6 +3,8 @@ pub mod craft;
 pub mod dynamic;
 pub mod flows;
 pub mod packets;
+pub mod scanner;
+pub mod security;
 pub mod strings;
 pub mod traceroute;
 pub mod visualize;

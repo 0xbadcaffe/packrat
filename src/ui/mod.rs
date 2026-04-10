@@ -47,14 +47,29 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
 }
 
-fn draw_titlebar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
     let cap_str = if app.capturing { "● capturing" } else { "○ idle" };
     let cap_color = if app.capturing { C_GREEN } else { C_FG3 };
     let rec_span = if app.recording {
-        Span::styled(format!("  ◉ recording → {}", app.pcap_path), Style::default().fg(C_RED).add_modifier(Modifier::BOLD))
+        Span::styled(
+            format!("  ◉ recording → {}", app.pcap_path),
+            Style::default().fg(C_RED).add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::raw("")
     };
+
+    // Security alert badge
+    let sec_count = app.security.alert_count() + app.credentials.len();
+    let sec_span = if sec_count > 0 {
+        Span::styled(
+            format!("  ⚠ {} alerts", sec_count),
+            Style::default().fg(C_RED).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("")
+    };
+
     let line = Line::from(vec![
         Span::styled(" packrat ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
         Span::styled("─ packet analyzer  ", Style::default().fg(C_FG3)),
@@ -65,11 +80,12 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             Style::default().fg(C_FG3),
         ),
         rec_span,
+        sec_span,
     ]);
     f.render_widget(Paragraph::new(line).style(Style::default().bg(C_BG2)), area);
 }
 
-fn draw_filterbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn draw_filterbar(f: &mut Frame, app: &App, area: Rect) {
     let filter_display = if app.filter.active {
         format!("{}_", app.filter.input)
     } else if app.filter.input.is_empty() {
@@ -92,7 +108,7 @@ fn draw_filterbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     f.render_widget(Paragraph::new(line).style(Style::default().bg(C_BG2)), area);
 }
 
-fn draw_tabs(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
     let titles = vec![
         Line::from(vec![Span::styled("1 ", Style::default().fg(C_YELLOW)), Span::raw("Packets")]),
         Line::from(vec![Span::styled("2 ", Style::default().fg(C_YELLOW)), Span::raw("Analysis")]),
@@ -101,7 +117,9 @@ fn draw_tabs(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Line::from(vec![Span::styled("5 ", Style::default().fg(C_YELLOW)), Span::raw("Visualize")]),
         Line::from(vec![Span::styled("6 ", Style::default().fg(C_YELLOW)), Span::raw("Flows")]),
         Line::from(vec![Span::styled("7 ", Style::default().fg(C_YELLOW)), Span::raw("Craft")]),
-        Line::from(vec![Span::styled("8 ", Style::default().fg(C_YELLOW)), Span::raw("Traceroute")]),
+        Line::from(vec![Span::styled("8 ", Style::default().fg(C_YELLOW)), Span::raw("Trace")]),
+        Line::from(vec![Span::styled("9 ", Style::default().fg(C_YELLOW)), Span::raw("Security")]),
+        Line::from(vec![Span::styled("0 ", Style::default().fg(C_YELLOW)), Span::raw("Scanner")]),
     ];
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
@@ -128,6 +146,8 @@ fn draw_workspace(f: &mut Frame, app: &App, area: Rect) {
         Tab::Flows      => tabs::flows::draw(f, app, area),
         Tab::Craft      => tabs::craft::draw(f, app, area),
         Tab::Traceroute => tabs::traceroute::draw(f, app, area),
+        Tab::Security   => tabs::security::draw(f, app, area),
+        Tab::Scanner    => tabs::scanner::draw(f, app, area),
     }
 }
 
@@ -168,7 +188,7 @@ fn draw_stream_overlay(f: &mut Frame, title: &str, segments: &[(bool, Vec<u8>)])
     f.render_widget(p, popup);
 }
 
-fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
     let cap_indicator = if app.capturing {
         Span::styled("● LIVE ", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD))
     } else {
@@ -183,10 +203,14 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let lua_span = if let Some(msg) = &app.lua_reload_msg {
         Span::styled(format!("│ {} ", msg), Style::default().fg(C_CYAN))
     } else if app.lua_plugins.plugin_count() > 0 {
-        Span::styled(
-            format!("│ Lua:{} ", app.lua_plugins.proto_count()),
-            Style::default().fg(C_FG3),
-        )
+        Span::styled(format!("│ Lua:{} ", app.lua_plugins.proto_count()), Style::default().fg(C_FG3))
+    } else {
+        Span::raw("")
+    };
+
+    let sec_count = app.security.alert_count() + app.credentials.len();
+    let sec_span = if sec_count > 0 {
+        Span::styled(format!("│ ⚠ {} ", sec_count), Style::default().fg(C_RED).add_modifier(Modifier::BOLD))
     } else {
         Span::raw("")
     };
@@ -201,9 +225,10 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(format!("bytes:{} ", fmt_bytes(app.total_bytes)), Style::default().fg(C_FG2)),
         Span::styled(format!("rate:{}/s ", app.current_rate()), Style::default().fg(C_GREEN)),
         lua_span,
+        sec_span,
         Span::styled("│ ", Style::default().fg(C_FG3)),
         Span::styled(
-            "j/k:nav  Space:cap  /:filter  r:reload-lua  1-8:tabs  q:quit",
+            "j/k:nav  Space:cap  /:filter  r:reload-lua  1-0:tabs  q:quit",
             Style::default().fg(C_FG3),
         ),
     ]);
