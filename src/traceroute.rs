@@ -19,6 +19,7 @@ pub struct TraceHop {
 
 pub struct TracerouteState {
     pub target:        String,
+    pub editing:       bool,   // true while user is typing the target
     pub hops:          Vec<TraceHop>,
     pub running:       bool,
     pub complete:      bool,
@@ -41,6 +42,7 @@ impl Default for TracerouteState {
     fn default() -> Self {
         Self {
             target:        String::new(),
+            editing:       false,
             hops:          Vec::new(),
             running:       false,
             complete:      false,

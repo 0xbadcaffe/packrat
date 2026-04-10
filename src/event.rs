@@ -7,7 +7,15 @@ use crate::tabs::Tab;
 pub fn handle(app: &mut App, event: Event) -> bool {
     let Event::Key(key) = event else { return false; };
 
-    if is_quit(&key) { return true; }
+    // Only quit when not in a text-entry mode — otherwise 'q' is a valid character.
+    let in_text_mode = app.strings_search_active
+        || app.filter.active
+        || app.craft.editing
+        || app.replay_editing
+        || app.scan_editing
+        || app.traceroute.editing;
+
+    if !in_text_mode && is_quit(&key) { return true; }
 
     if app.show_help {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q')) {
@@ -127,18 +135,36 @@ fn handle_craft(app: &mut App, key: KeyEvent) {
 // ─── Traceroute tab ───────────────────────────────────────────────────────────
 
 fn handle_traceroute(app: &mut App, key: KeyEvent) {
-    if global_tab_switch(app, &key) { return; }
-    match key.code {
-        KeyCode::Tab       => app.next_tab(),
-        KeyCode::Backspace => { app.traceroute.target.pop(); }
-        KeyCode::Enter     => {
-            if app.traceroute.running { app.traceroute.running = false; }
-            else { app.traceroute.start(); }
+    // While editing the target — all chars go to the field, no tab switching.
+    if app.traceroute.editing {
+        match key.code {
+            KeyCode::Esc               => { app.traceroute.editing = false; }
+            KeyCode::Enter             => {
+                app.traceroute.editing = false;
+                if !app.traceroute.running { app.traceroute.start(); }
+            }
+            KeyCode::Backspace         => { app.traceroute.target.pop(); }
+            KeyCode::Char(c)           => { app.traceroute.target.push(c); }
+            _ => {}
         }
-        KeyCode::Esc => app.traceroute.clear(),
-        KeyCode::Down | KeyCode::Char('j') => app.traceroute.scroll_down(),
-        KeyCode::Up   | KeyCode::Char('k') => app.traceroute.scroll_up(),
-        KeyCode::Char(c) => { app.traceroute.target.push(c); }
+        return;
+    }
+
+    if global_tab_switch(app, &key) { return; }
+
+    match key.code {
+        KeyCode::Tab                            => app.next_tab(),
+        // Enter/e starts editing the target field
+        KeyCode::Enter | KeyCode::Char('e')     => { app.traceroute.editing = true; }
+        // Space starts/stops the trace when target is set
+        KeyCode::Char(' ') | KeyCode::Char('x') => {
+            if app.traceroute.running { app.traceroute.running = false; }
+            else if !app.traceroute.target.is_empty() { app.traceroute.start(); }
+            else { app.traceroute.editing = true; }
+        }
+        KeyCode::Esc                            => app.traceroute.clear(),
+        KeyCode::Down | KeyCode::Char('j')      => app.traceroute.scroll_down(),
+        KeyCode::Up   | KeyCode::Char('k')      => app.traceroute.scroll_up(),
         _ => {}
     }
 }
@@ -146,9 +172,8 @@ fn handle_traceroute(app: &mut App, key: KeyEvent) {
 // ─── Security tab ─────────────────────────────────────────────────────────────
 
 fn handle_security(app: &mut App, key: KeyEvent) {
-    if global_tab_switch(app, &key) { return; }
-
-    // Replay editing
+    // Replay editing intercepts all keys — must check before global_tab_switch
+    // so that typing digits in the file path doesn't jump to another tab.
     if matches!(app.security_tab, SecuritySubTab::Replay) && app.replay_editing {
         match key.code {
             KeyCode::Esc | KeyCode::Enter => {
@@ -161,6 +186,8 @@ fn handle_security(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+
+    if global_tab_switch(app, &key) { return; }
 
     match key.code {
         // Sub-tab cycling with [ / ]

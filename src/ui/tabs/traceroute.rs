@@ -40,20 +40,33 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
         Span::raw("")
     };
 
-    let target_display = format!("{}█", tr.target);  // always show cursor
+    let target_display = if tr.editing {
+        format!("{}_", tr.target)
+    } else if tr.target.is_empty() {
+        "<press e or Enter to type target>".into()
+    } else {
+        tr.target.clone()
+    };
+    let target_color = if tr.editing { C_YELLOW } else if tr.target.is_empty() { C_FG3 } else { C_CYAN };
     let line = Line::from(vec![
         Span::styled(" Target: ", Style::default().fg(C_FG2)),
-        Span::styled(&target_display, Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),
+        Span::styled(target_display, Style::default().fg(target_color).add_modifier(Modifier::BOLD)),
         status,
     ]);
+
+    let title = if tr.editing {
+        " Traceroute  [Enter] confirm  [Esc] cancel "
+    } else {
+        " Traceroute  [e/Enter] edit target  [Space/x] run  [Esc] clear "
+    };
 
     f.render_widget(
         Paragraph::new(line)
             .block(Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(C_BORDER))
+                .border_style(Style::default().fg(if tr.editing { C_CYAN } else { C_BORDER }))
                 .title(Span::styled(
-                    " Traceroute  [Enter] start  [Esc] clear ",
+                    title,
                     Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
                 ))),
         area,
@@ -162,7 +175,7 @@ fn draw_hints(f: &mut Frame, app: &App, area: Rect) {
     } else if tr.complete {
         format!("{} hops to {}", hop_count, tr.target)
     } else {
-        "type target  [Enter] run  [Esc] clear  [j/k] scroll  [1-8] tab  [q] quit".into()
+        "[e/Enter] edit target  [Space/x] run  [Esc] clear  [j/k] scroll  [1-0] tab  [q] quit".into()
     };
 
     f.render_widget(
