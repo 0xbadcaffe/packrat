@@ -1,6 +1,6 @@
 [package]
 name = "packrat-tui"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.85"
 description = "A Wireshark-style terminal packet analyzer, reverse engineering, and security research tool with live capture, IDS, port scanner, packet crafter, and PCAP replay"
