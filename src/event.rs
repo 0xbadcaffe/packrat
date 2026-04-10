@@ -94,8 +94,7 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::Char('3') => app.active_tab = Tab::Strings,
         KeyCode::Char('4') => app.active_tab = Tab::Dynamic,
         KeyCode::Char('5') => app.active_tab = Tab::Visualize,
-        KeyCode::Char('6') => app.active_tab = Tab::Topology,
-        KeyCode::Char('7') => app.active_tab = Tab::Flows,
+        KeyCode::Char('6') => app.active_tab = Tab::Flows,
         KeyCode::Tab       => app.next_tab(),
 
         // Interface switch (back to picker)

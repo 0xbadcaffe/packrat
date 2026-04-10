@@ -204,9 +204,6 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     for s in &filt { *cat_counts.entry(s.kind).or_insert(0) += 1; }
     let top_cat = cat_counts.iter().max_by_key(|(_, c)| *c).map(|(k, _)| *k).unwrap_or("-");
 
-    // When capture is stopped and a string is selected, show split view.
-    let show_detail = !app.capturing && app.strings_selected.is_some();
-
     let outer_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -220,23 +217,31 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let inner = outer_block.inner(area);
     f.render_widget(outer_block, area);
 
-    // Outer vertical split: stats/search bar on top, content below.
     let search_height = if app.strings_search_active || !app.strings_filter.is_empty() { 1u16 } else { 0 };
+
+    let show_detail = !app.capturing && app.strings_selected.is_some();
+
+    // ── Vertical layout ──
+    // [stats bar] [optional search] [list] [optional detail panel]
+    let (list_pct, detail_pct) = if show_detail { (35, 65) } else { (100, 0) };
+
     let vchunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),             // stats bar
-            Constraint::Length(search_height), // search (collapsible)
-            Constraint::Min(0),                // content
+            Constraint::Length(1),                       // stats bar
+            Constraint::Length(search_height),           // search (collapsible)
+            Constraint::Percentage(list_pct),            // string list
+            Constraint::Percentage(detail_pct),          // detail (tree + hex)
         ])
         .split(inner);
 
     // ── Stats bar ──
     let nav_hint = if !app.capturing && !filt.is_empty() {
-        "  [j/k] navigate  [Enter] inspect  [Esc] deselect"
+        "  [j/k] navigate  [Enter] inspect packet  [Esc] close"
     } else if app.capturing {
         "  [stop capture to inspect]"
     } else { "" };
+
     let stats_line = Line::from(vec![
         Span::styled(" strings: ", Style::default().fg(C_FG3)),
         Span::styled(filt.len().to_string(), Style::default().fg(C_FG)),
@@ -269,28 +274,31 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         );
     }
 
-    let content_area = vchunks[2];
+    // ── String list ──
+    draw_string_list(f, app, &filt, vchunks[2]);
 
+    // ── Detail panel (protocol tree + hex dump, like Packets tab) ──
     if show_detail {
-        // ── Split: list left, detail right ──
-        let hchunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-            .split(content_area);
-
-        draw_string_list(f, app, &filt, hchunks[0]);
-        draw_detail_panel(f, app, &filt, hchunks[1]);
-    } else {
-        draw_string_list(f, app, &filt, content_area);
+        draw_detail_panel(f, app, &filt, vchunks[3]);
     }
 }
 
-// ─── String list (scrollable, selectable) ────────────────────────────────────
+// ─── String list ─────────────────────────────────────────────────────────────
 
 fn draw_string_list(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: Rect) {
-    let scroll = app.strings_scroll;
-    let visible = area.height.saturating_sub(2) as usize; // -2 for header row + border
+    // -3 = top border (1) + header row (1) + bottom border (1)
+    let visible = area.height.saturating_sub(3) as usize;
+    let total   = filt.len();
     let can_nav = !app.capturing;
+
+    // Derive scroll purely from selection so it's always correct regardless of
+    // terminal height. Keep the selected row in the lower third of the view
+    // (scroll only when selection goes out of bounds).
+    let scroll = match app.strings_selected {
+        Some(sel) if sel < app.strings_scroll           => sel,
+        Some(sel) if sel >= app.strings_scroll + visible => sel + 1 - visible,
+        _                                                => app.strings_scroll,
+    }.min(total.saturating_sub(visible));
 
     let header = Row::new(vec![
         Cell::from("Pkt:Off").style(Style::default().fg(C_FG2)),
@@ -336,11 +344,12 @@ fn draw_string_list(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: R
         Constraint::Min(0),
     ];
 
-    let title = if can_nav && !filt.is_empty() {
-        let sel = app.strings_selected.map(|i| i + 1).unwrap_or(0);
-        format!(" Strings [{}/{}] ", sel, filt.len())
+    let sel_label = if can_nav && !filt.is_empty() {
+        let sel_num = app.strings_selected.map(|i| i + 1).unwrap_or(0);
+        let end = (scroll + visible).min(total);
+        format!(" Strings [{}/{}  showing {}-{}] ", sel_num, total, scroll + 1, end)
     } else {
-        format!(" Strings [{}] ", filt.len())
+        format!(" Strings [{}] ", total)
     };
 
     let table = Table::new(rows, widths)
@@ -349,28 +358,28 @@ fn draw_string_list(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: R
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
             .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(title, Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD))))
+            .title(Span::styled(sel_label, Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD))))
         .style(Style::default().bg(C_BG));
 
     f.render_widget(table, area);
 }
 
-// ─── Detail panel (protocol tree + hex dump) ─────────────────────────────────
+// ─── Detail panel — full protocol tree + hex dump ────────────────────────────
 
 fn draw_detail_panel(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: Rect) {
     let sel_idx = match app.strings_selected {
         Some(i) => i,
         None => return,
     };
-    let pkt_no = match filt.get(sel_idx) {
-        Some(s) => s.pkt_no,
+    let entry = match filt.get(sel_idx) {
+        Some(s) => *s,
         None => return,
     };
-    let pkt = match app.packet_by_no(pkt_no) {
+    let pkt = match app.packet_by_no(entry.pkt_no) {
         Some(p) => p,
         None => {
             f.render_widget(
-                Paragraph::new("Packet no longer in buffer.")
+                Paragraph::new("  Packet no longer in buffer.")
                     .style(Style::default().fg(C_FG3).bg(C_BG)),
                 area,
             );
@@ -378,34 +387,31 @@ fn draw_detail_panel(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: 
         }
     };
 
-    // Highlight the matched string value in a header above the detail.
-    let matched_val = &filt[sel_idx].value;
-    let info_line = Line::from(vec![
-        Span::styled(" matched: ", Style::default().fg(C_FG3)),
-        Span::styled(
-            if matched_val.len() > 60 {
-                format!("{}…", &matched_val[..59])
-            } else {
-                matched_val.clone()
-            },
-            Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  ({} · {})", filt[sel_idx].kind, filt[sel_idx].offset_label),
-            Style::default().fg(C_FG3),
-        ),
-    ]);
-
+    // One-line header showing the matched string and its context.
     let vchunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(area);
 
+    let preview = if entry.value.len() > 70 {
+        format!("{}…", &entry.value[..69])
+    } else {
+        entry.value.clone()
+    };
+    let header_line = Line::from(vec![
+        Span::styled(" ↳ ", Style::default().fg(C_FG3)),
+        Span::styled(preview, Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("  ({} · {} · pkt #{})", entry.kind, entry.offset_label, pkt.no),
+            Style::default().fg(C_FG3),
+        ),
+        Span::styled("  [Esc] close", Style::default().fg(C_FG3)),
+    ]);
     f.render_widget(
-        Paragraph::new(info_line).style(Style::default().bg(C_BG2)),
+        Paragraph::new(header_line).style(Style::default().bg(C_BG2)),
         vchunks[0],
     );
 
-    // Tree + hex side by side.
+    // Protocol tree (left) + hex dump (right) — same layout as Packets tab.
     super::packets::draw_packet_detail(f, app, pkt, vchunks[1]);
 }

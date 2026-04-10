@@ -18,7 +18,6 @@ mod filter;
 mod net;
 mod sim;
 mod tabs;
-mod topology;
 mod ui;
 
 use app::App;
