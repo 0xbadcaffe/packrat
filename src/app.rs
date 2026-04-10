@@ -13,7 +13,6 @@ use crate::net::packet::Packet;
 use crate::dissector::DissectorDef;
 use crate::net::packet::TreeSection;
 use crate::tabs::Tab;
-use crate::topology::TopologyGraph;
 
 const MAX_PACKETS: usize = 10_000;
 
@@ -53,7 +52,6 @@ pub struct App {
     pub analysis_section: usize,
     pub strings_filter: String,
     pub _hex_scroll: u16,
-    pub topology: TopologyGraph,
     pub recording: bool,
     pub pcap_path: String,
     pcap_writer: Option<PcapWriter>,
@@ -96,7 +94,6 @@ impl App {
             analysis_section: 0,
             strings_filter: String::new(),
             _hex_scroll: 0,
-            topology: TopologyGraph::default(),
             recording: false,
             pcap_path: String::new(),
             pcap_writer: None,
@@ -136,27 +133,23 @@ impl App {
     }
 
     /// Navigate the strings list (only when capture is stopped).
-    /// list_len is the number of strings currently shown after filtering.
     pub fn strings_move_down(&mut self, list_len: usize) {
         if self.capturing || list_len == 0 { return; }
         let cur = self.strings_selected.unwrap_or(0);
         let next = (cur + 1).min(list_len.saturating_sub(1));
         self.strings_selected = Some(next);
-        // Scroll to keep selection visible (assume ~30 visible rows).
-        if next >= self.strings_scroll + 30 { self.strings_scroll += 1; }
+        // strings_scroll is a scroll hint used by the draw function.
+        // We advance it by 1 each time we go past the current view to
+        // produce smooth scrolling (draw clamps this to selection bounds).
+        if next > self.strings_scroll { self.strings_scroll = next; }
     }
 
     pub fn strings_move_up(&mut self) {
         if self.capturing { return; }
         let cur = self.strings_selected.unwrap_or(0);
-        if cur > 0 {
-            let prev = cur - 1;
-            self.strings_selected = Some(prev);
-            if prev < self.strings_scroll { self.strings_scroll = prev; }
-        } else {
-            // At top — ensure something is selected.
-            self.strings_selected = Some(0);
-        }
+        let prev = cur.saturating_sub(1);
+        self.strings_selected = Some(prev);
+        if prev < self.strings_scroll { self.strings_scroll = prev; }
     }
 
     pub fn strings_select(&mut self) {
@@ -276,7 +269,6 @@ impl App {
         self.packet_counter += 1;
         self.total_bytes += pkt.length as u64;
         self.rate_this_sec += 1;
-        self.topology.update(&pkt);
         self.flow_tracker.update(&pkt);
 
         if self.recording {
@@ -322,7 +314,6 @@ impl App {
         self.selected = None;
         self.total_bytes = 0;
         self.packet_counter = 0;
-        self.topology.clear();
         self.flow_tracker.clear();
         self.flows_selected = None;
         self.stream_overlay = None;
