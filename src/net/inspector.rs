@@ -15,10 +15,12 @@ pub struct Indicators {
     pub magic:     Vec<MagicMatch>,
     pub xor:       Option<XorResult>,
     pub anomalies: Vec<String>,
+    #[allow(dead_code)]
     pub entropy:   f64,
 }
 
 pub struct CredentialHit {
+    #[allow(dead_code)]
     pub proto:  String,
     pub kind:   &'static str,  // "HTTP-BasicAuth", "FTP-USER", "FTP-PASS", "SMTP-AUTH", "IMAP-LOGIN"
     pub value:  String,        // decoded credential
@@ -56,9 +58,6 @@ pub fn shannon_entropy(data: &[u8]) -> f64 {
         .sum::<f64>()
 }
 
-fn shannon_entropy_str(s: &str) -> f64 {
-    shannon_entropy(s.as_bytes())
-}
 
 pub fn detect_magic(payload: &[u8]) -> Vec<MagicMatch> {
     let mut found = Vec::new();
@@ -263,6 +262,7 @@ pub fn extract_credentials(pkt: &Packet) -> Vec<CredentialHit> {
 
 // ── DNS tunneling detection ───────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub fn detect_dns_tunneling(packets: &std::collections::VecDeque<Packet>) -> Vec<String> {
     use std::collections::HashMap;
     let mut apex_map: HashMap<String, (usize, f64, usize)> = HashMap::new(); // apex → (unique_subdomains, max_entropy, max_label_len)
@@ -280,7 +280,7 @@ pub fn detect_dns_tunneling(packets: &std::collections::VecDeque<Packet>) -> Vec
                     let entry = apex_map.entry(apex).or_insert((0, 0.0, 0));
                     if !subdomain.is_empty() {
                         entry.0 += 1; // unique subdomain count (approximate)
-                        let ent = shannon_entropy_str(&subdomain);
+                        let ent = shannon_entropy(subdomain.as_bytes());
                         if ent > entry.1 { entry.1 = ent; }
                         if subdomain.len() > entry.2 { entry.2 = subdomain.len(); }
                     }

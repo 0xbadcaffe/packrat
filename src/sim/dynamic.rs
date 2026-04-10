@@ -27,7 +27,7 @@ const REMOTE_IPS: &[&str] = &["8.8.8.8","1.1.1.1","142.250.80.46"];
 
 static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
-pub fn generate_entry(tick: u32) -> DynEntry {
+pub fn generate_entry(_tick: u32) -> DynEntry {
     let start = START.get_or_init(std::time::Instant::now);
     let ts = start.elapsed().as_secs_f64();
     let mut rng = rand::thread_rng();
