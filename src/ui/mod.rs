@@ -100,6 +100,8 @@ fn draw_tabs(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Line::from(vec![Span::styled("4 ", Style::default().fg(C_YELLOW)), Span::raw("Dynamic")]),
         Line::from(vec![Span::styled("5 ", Style::default().fg(C_YELLOW)), Span::raw("Visualize")]),
         Line::from(vec![Span::styled("6 ", Style::default().fg(C_YELLOW)), Span::raw("Flows")]),
+        Line::from(vec![Span::styled("7 ", Style::default().fg(C_YELLOW)), Span::raw("Craft")]),
+        Line::from(vec![Span::styled("8 ", Style::default().fg(C_YELLOW)), Span::raw("Traceroute")]),
     ];
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
@@ -112,18 +114,20 @@ fn draw_tabs(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     f.render_widget(tabs, area);
 }
 
-fn draw_workspace(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn draw_workspace(f: &mut Frame, app: &App, area: Rect) {
     if app.picking_iface {
         iface_picker::draw(f, app, area);
         return;
     }
     match app.active_tab {
-        Tab::Packets   => tabs::packets::draw(f, app, area),
-        Tab::Analysis  => tabs::analysis::draw(f, app, area),
-        Tab::Strings   => tabs::strings::draw(f, app, area),
-        Tab::Dynamic   => tabs::dynamic::draw(f, app, area),
-        Tab::Visualize => tabs::visualize::draw(f, app, area),
-        Tab::Flows     => tabs::flows::draw(f, app, area),
+        Tab::Packets    => tabs::packets::draw(f, app, area),
+        Tab::Analysis   => tabs::analysis::draw(f, app, area),
+        Tab::Strings    => tabs::strings::draw(f, app, area),
+        Tab::Dynamic    => tabs::dynamic::draw(f, app, area),
+        Tab::Visualize  => tabs::visualize::draw(f, app, area),
+        Tab::Flows      => tabs::flows::draw(f, app, area),
+        Tab::Craft      => tabs::craft::draw(f, app, area),
+        Tab::Traceroute => tabs::traceroute::draw(f, app, area),
     }
 }
 
@@ -199,7 +203,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         lua_span,
         Span::styled("│ ", Style::default().fg(C_FG3)),
         Span::styled(
-            "j/k:nav  Space:cap  /:filter  r:reload-lua  1-6:tabs  q:quit",
+            "j/k:nav  Space:cap  /:filter  r:reload-lua  1-8:tabs  q:quit",
             Style::default().fg(C_FG3),
         ),
     ]);

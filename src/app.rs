@@ -3,6 +3,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 
 use crate::capture::CaptureSource;
+use crate::craft::CraftState;
 use crate::sim::capture::SimulatedCapture;
 use crate::sim::dynamic::DynEntry;
 use crate::export::PcapWriter;
@@ -13,6 +14,7 @@ use crate::net::packet::Packet;
 use crate::dissector::DissectorDef;
 use crate::net::packet::TreeSection;
 use crate::tabs::Tab;
+use crate::traceroute::TracerouteState;
 
 const MAX_PACKETS: usize = 10_000;
 
@@ -66,6 +68,8 @@ pub struct App {
     pub stream_overlay: Option<(String, Vec<(bool, Vec<u8>)>)>,
     pub lua_plugins: PluginManager,
     pub lua_reload_msg: Option<String>,
+    pub craft: CraftState,
+    pub traceroute: TracerouteState,
 }
 
 impl App {
@@ -112,6 +116,8 @@ impl App {
                 pm
             },
             lua_reload_msg: None,
+            craft: CraftState::default(),
+            traceroute: TracerouteState::default(),
         }
     }
 
@@ -266,6 +272,15 @@ impl App {
 
     pub fn ingest_packet(&mut self, pkt: Packet) {
         if !self.capturing { return; }
+        self.ingest_packet_inner(pkt);
+    }
+
+    /// Inject a packet regardless of capturing state (used by packet crafter).
+    pub fn inject_packet(&mut self, pkt: Packet) {
+        self.ingest_packet_inner(pkt);
+    }
+
+    fn ingest_packet_inner(&mut self, pkt: Packet) {
         self.packet_counter += 1;
         self.total_bytes += pkt.length as u64;
         self.rate_this_sec += 1;
@@ -287,8 +302,27 @@ impl App {
         }
     }
 
+    /// Inject a crafted packet into the live packet list.
+    pub fn craft_inject(&mut self) {
+        let next_no = self.packet_counter + 1;
+        match self.craft.build_packet(next_no) {
+            Ok(pkt) => {
+                let label = format!("Injected #{} — {} {} → {}",
+                    next_no, pkt.protocol, pkt.src, pkt.dst);
+                self.craft.result = Some(Ok(label));
+                self.inject_packet(pkt);
+            }
+            Err(e) => {
+                self.craft.result = Some(Err(e));
+            }
+        }
+    }
+
     pub fn tick(&mut self) {
         self.rate_tick += 1;
+
+        // Advance traceroute simulation one hop at a time
+        self.traceroute.tick();
 
         if self.capturing {
             if rand::random::<u8>() % 3 == 0 {

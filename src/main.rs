@@ -11,6 +11,7 @@ use tokio::time;
 
 mod app;
 mod capture;
+mod craft;
 mod dissector;
 mod event;
 mod export;
@@ -18,6 +19,7 @@ mod filter;
 mod net;
 mod sim;
 mod tabs;
+mod traceroute;
 mod ui;
 
 use app::App;

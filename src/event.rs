@@ -31,6 +31,10 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         handle_iface_picker(app, key);
     } else if app.strings_search_active {
         handle_strings_search(app, key);
+    } else if matches!(app.active_tab, Tab::Craft) {
+        handle_craft(app, key);
+    } else if matches!(app.active_tab, Tab::Traceroute) {
+        handle_traceroute(app, key);
     } else {
         handle_main(app, key);
     }
@@ -66,6 +70,84 @@ fn handle_iface_picker(app: &mut App, key: KeyEvent) {
     }
 }
 
+// ─── Craft tab ────────────────────────────────────────────────────────────────
+
+fn handle_craft(app: &mut App, key: KeyEvent) {
+    if app.craft.editing {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => app.craft.stop_edit(),
+            KeyCode::Backspace            => app.craft.pop_char(),
+            KeyCode::Tab                  => { app.craft.stop_edit(); app.craft.focus_next(); }
+            KeyCode::BackTab              => { app.craft.stop_edit(); app.craft.focus_prev(); }
+            KeyCode::Char(c)              => app.craft.push_char(c),
+            _ => {}
+        }
+        return;
+    }
+
+    match key.code {
+        // Global tab keys — switch to tab 1–8 or cycle
+        KeyCode::Char('1') => app.active_tab = Tab::Packets,
+        KeyCode::Char('2') => app.active_tab = Tab::Analysis,
+        KeyCode::Char('3') => app.active_tab = Tab::Strings,
+        KeyCode::Char('4') => app.active_tab = Tab::Dynamic,
+        KeyCode::Char('5') => app.active_tab = Tab::Visualize,
+        KeyCode::Char('6') => app.active_tab = Tab::Flows,
+        KeyCode::Char('7') => app.active_tab = Tab::Craft,
+        KeyCode::Char('8') => app.active_tab = Tab::Traceroute,
+        KeyCode::Tab        => { app.craft.focus_next(); }
+        KeyCode::BackTab    => { app.craft.focus_prev(); }
+        KeyCode::Down | KeyCode::Char('j') => app.craft.focus_next(),
+        KeyCode::Up   | KeyCode::Char('k') => app.craft.focus_prev(),
+        // Enter or 'e' starts editing the focused field
+        KeyCode::Enter | KeyCode::Char('e') => app.craft.start_edit(),
+        // Space or 'x' injects the packet
+        KeyCode::Char(' ') | KeyCode::Char('x') => app.craft_inject(),
+        // 'C' clears result message
+        KeyCode::Char('C') => app.craft.result = None,
+        KeyCode::Char('i') => app.switch_interface(),
+        KeyCode::Char('h') => app.show_help = true,
+        _ => {}
+    }
+}
+
+// ─── Traceroute tab ───────────────────────────────────────────────────────────
+
+fn handle_traceroute(app: &mut App, key: KeyEvent) {
+    match key.code {
+        // Global tab keys
+        KeyCode::Char('1') => app.active_tab = Tab::Packets,
+        KeyCode::Char('2') => app.active_tab = Tab::Analysis,
+        KeyCode::Char('3') => app.active_tab = Tab::Strings,
+        KeyCode::Char('4') => app.active_tab = Tab::Dynamic,
+        KeyCode::Char('5') => app.active_tab = Tab::Visualize,
+        KeyCode::Char('6') => app.active_tab = Tab::Flows,
+        KeyCode::Char('7') => app.active_tab = Tab::Craft,
+        KeyCode::Char('8') => app.active_tab = Tab::Traceroute,
+        KeyCode::Tab        => app.next_tab(),
+        // Target input — always active
+        KeyCode::Backspace  => { app.traceroute.target.pop(); }
+        KeyCode::Enter      => {
+            if app.traceroute.running {
+                // Stop in-progress
+                app.traceroute.running = false;
+            } else {
+                app.traceroute.start();
+            }
+        }
+        KeyCode::Esc        => app.traceroute.clear(),
+        KeyCode::Down | KeyCode::Char('j') => app.traceroute.scroll_down(),
+        KeyCode::Up   | KeyCode::Char('k') => app.traceroute.scroll_up(),
+        KeyCode::Char(c)    => {
+            // Normal printable chars go to the target input
+            app.traceroute.target.push(c);
+        }
+        _ => {}
+    }
+}
+
+// ─── Main handler (all other tabs) ────────────────────────────────────────────
+
 fn handle_main(app: &mut App, key: KeyEvent) {
     // Filter input mode intercepts most keys
     if app.filter.active {
@@ -95,6 +177,8 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::Char('4') => app.active_tab = Tab::Dynamic,
         KeyCode::Char('5') => app.active_tab = Tab::Visualize,
         KeyCode::Char('6') => app.active_tab = Tab::Flows,
+        KeyCode::Char('7') => app.active_tab = Tab::Craft,
+        KeyCode::Char('8') => app.active_tab = Tab::Traceroute,
         KeyCode::Tab       => app.next_tab(),
 
         // Interface switch (back to picker)

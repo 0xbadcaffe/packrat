@@ -7,19 +7,23 @@ pub enum Tab {
     Dynamic,
     Visualize,
     Flows,
+    Craft,
+    Traceroute,
 }
 
 impl Tab {
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 8;
 
     pub fn index(&self) -> usize {
         match self {
-            Tab::Packets   => 0,
-            Tab::Analysis  => 1,
-            Tab::Strings   => 2,
-            Tab::Dynamic   => 3,
-            Tab::Visualize => 4,
-            Tab::Flows     => 5,
+            Tab::Packets    => 0,
+            Tab::Analysis   => 1,
+            Tab::Strings    => 2,
+            Tab::Dynamic    => 3,
+            Tab::Visualize  => 4,
+            Tab::Flows      => 5,
+            Tab::Craft      => 6,
+            Tab::Traceroute => 7,
         }
     }
 
@@ -31,6 +35,8 @@ impl Tab {
             3 => Tab::Dynamic,
             4 => Tab::Visualize,
             5 => Tab::Flows,
+            6 => Tab::Craft,
+            7 => Tab::Traceroute,
             _ => Tab::Packets,
         }
     }
