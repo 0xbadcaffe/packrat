@@ -4,6 +4,10 @@ use tokio::task::JoinHandle;
 
 use crate::capture::CaptureSource;
 use crate::craft::CraftState;
+use crate::net::inspector::CredentialHit;
+use crate::net::security::SecurityEngine;
+use crate::pcap_replay::ReplayState;
+use crate::scan::ScanState;
 use crate::sim::capture::SimulatedCapture;
 use crate::sim::dynamic::DynEntry;
 use crate::export::PcapWriter;
@@ -17,6 +21,21 @@ use crate::tabs::Tab;
 use crate::traceroute::TracerouteState;
 
 const MAX_PACKETS: usize = 10_000;
+
+/// Sub-sections within the Security tab
+#[derive(Debug, Clone, PartialEq)]
+pub enum SecuritySubTab {
+    Ids,
+    Credentials,
+    OsFingerprint,
+    ArpWatch,
+    DnsTunnel,
+    HttpAnalytics,
+    TlsWeakness,
+    BruteForce,
+    VulnHits,
+    Replay,
+}
 
 fn list_interfaces() -> Vec<String> {
     let mut ifaces = vec!["simulated".to_string()];
@@ -70,6 +89,15 @@ pub struct App {
     pub lua_reload_msg: Option<String>,
     pub craft: CraftState,
     pub traceroute: TracerouteState,
+    pub security: SecurityEngine,
+    pub credentials: Vec<CredentialHit>,
+    pub scan: ScanState,
+    pub replay: ReplayState,
+    pub security_tab: SecuritySubTab,
+    pub security_scroll: usize,
+    pub scanner_scroll: usize,
+    pub replay_editing: bool,
+    pub scan_editing: bool,
 }
 
 impl App {
@@ -118,6 +146,15 @@ impl App {
             lua_reload_msg: None,
             craft: CraftState::default(),
             traceroute: TracerouteState::default(),
+            security: SecurityEngine::default(),
+            credentials: Vec::new(),
+            scan: ScanState::new(),
+            replay: ReplayState::default(),
+            security_tab: SecuritySubTab::Ids,
+            security_scroll: 0,
+            scanner_scroll: 0,
+            replay_editing: false,
+            scan_editing: false,
         }
     }
 
@@ -286,6 +323,16 @@ impl App {
         self.rate_this_sec += 1;
         self.flow_tracker.update(&pkt);
 
+        // Security analysis
+        self.security.update(&pkt);
+
+        // Credential extraction
+        let new_creds = crate::net::inspector::extract_credentials(&pkt);
+        if !new_creds.is_empty() {
+            self.credentials.extend(new_creds);
+            if self.credentials.len() > 1000 { self.credentials.drain(0..100); }
+        }
+
         if self.recording {
             if let Some(ref mut writer) = self.pcap_writer { let _ = writer.write_packet(&pkt); }
         }
@@ -321,8 +368,25 @@ impl App {
     pub fn tick(&mut self) {
         self.rate_tick += 1;
 
+        // Flood mode — inject packets from the crafter
+        let flood_n = self.craft.flood_tick();
+        for i in 0..flood_n {
+            let next_no = self.packet_counter + 1 + i as u64;
+            if let Ok(pkt) = self.craft.build_packet(next_no) {
+                self.craft.flood_sent += 1;
+                self.inject_packet(pkt);
+            }
+        }
+
         // Advance traceroute simulation one hop at a time
         self.traceroute.tick();
+
+        // Advance port scanner
+        if self.scan.running { self.scan.tick(); }
+
+        // Advance PCAP replay — inject replayed packets
+        let replayed = self.replay.tick();
+        for pkt in replayed { self.ingest_packet_inner(pkt); }
 
         if self.capturing {
             if rand::random::<u8>() % 3 == 0 {
@@ -351,6 +415,8 @@ impl App {
         self.flow_tracker.clear();
         self.flows_selected = None;
         self.stream_overlay = None;
+        self.security.clear();
+        self.credentials.clear();
     }
 
     pub fn toggle_recording(&mut self) {
@@ -517,5 +583,35 @@ impl App {
     pub fn next_tab(&mut self) {
         let next = (self.active_tab.index() + 1) % Tab::COUNT;
         self.active_tab = Tab::from_index(next);
+    }
+
+    pub fn security_subtab_next(&mut self) {
+        self.security_tab = match self.security_tab {
+            SecuritySubTab::Ids           => SecuritySubTab::Credentials,
+            SecuritySubTab::Credentials   => SecuritySubTab::OsFingerprint,
+            SecuritySubTab::OsFingerprint => SecuritySubTab::ArpWatch,
+            SecuritySubTab::ArpWatch      => SecuritySubTab::DnsTunnel,
+            SecuritySubTab::DnsTunnel     => SecuritySubTab::HttpAnalytics,
+            SecuritySubTab::HttpAnalytics => SecuritySubTab::TlsWeakness,
+            SecuritySubTab::TlsWeakness   => SecuritySubTab::BruteForce,
+            SecuritySubTab::BruteForce    => SecuritySubTab::VulnHits,
+            SecuritySubTab::VulnHits      => SecuritySubTab::Replay,
+            SecuritySubTab::Replay        => SecuritySubTab::Ids,
+        };
+    }
+
+    pub fn security_subtab_prev(&mut self) {
+        self.security_tab = match self.security_tab {
+            SecuritySubTab::Ids           => SecuritySubTab::Replay,
+            SecuritySubTab::Credentials   => SecuritySubTab::Ids,
+            SecuritySubTab::OsFingerprint => SecuritySubTab::Credentials,
+            SecuritySubTab::ArpWatch      => SecuritySubTab::OsFingerprint,
+            SecuritySubTab::DnsTunnel     => SecuritySubTab::ArpWatch,
+            SecuritySubTab::HttpAnalytics => SecuritySubTab::DnsTunnel,
+            SecuritySubTab::TlsWeakness   => SecuritySubTab::HttpAnalytics,
+            SecuritySubTab::BruteForce    => SecuritySubTab::TlsWeakness,
+            SecuritySubTab::VulnHits      => SecuritySubTab::BruteForce,
+            SecuritySubTab::Replay        => SecuritySubTab::VulnHits,
+        };
     }
 }

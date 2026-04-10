@@ -9,10 +9,12 @@ pub enum Tab {
     Flows,
     Craft,
     Traceroute,
+    Security,
+    Scanner,
 }
 
 impl Tab {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 10;
 
     pub fn index(&self) -> usize {
         match self {
@@ -24,6 +26,8 @@ impl Tab {
             Tab::Flows      => 5,
             Tab::Craft      => 6,
             Tab::Traceroute => 7,
+            Tab::Security   => 8,
+            Tab::Scanner    => 9,
         }
     }
 
@@ -37,6 +41,8 @@ impl Tab {
             5 => Tab::Flows,
             6 => Tab::Craft,
             7 => Tab::Traceroute,
+            8 => Tab::Security,
+            9 => Tab::Scanner,
             _ => Tab::Packets,
         }
     }
