@@ -153,6 +153,9 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         // Help popup
         KeyCode::Char('h') => app.show_help = true,
 
+        // Hot-reload Lua plugins
+        KeyCode::Char('r') => app.reload_lua_plugins(),
+
         KeyCode::Char('b') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_bytes(),
         KeyCode::Char('p') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_packets(),
         KeyCode::Char('t') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_time(),

@@ -145,37 +145,98 @@ The Strings tab extracts printable ASCII runs from packet payloads and classifie
 
 Press **`/`** on the Strings tab to open live search — type to filter strings by value or category, **Enter** to keep filter, **Esc** to clear.
 
-## Custom Dissectors
+## Lua Dissectors (Wireshark-compatible)
 
-packrat supports user-defined protocol dissectors loaded from TOML files. Drop a `.toml` file in `~/.config/packrat/dissectors/` and packrat will automatically apply it to matching packets, appending a custom section to the Analysis tree.
+packrat supports user-defined protocol dissectors written in **Lua 5.4** using a Wireshark-compatible API. Drop a `.lua` file into `~/.config/packrat/plugins/` and press **`r`** inside packrat to load or hot-reload it without restarting.
 
-### Dissector file format
+### Wireshark API subset supported
+
+| Object | Description |
+|--------|-------------|
+| `Proto(name, desc)` | Declare a new protocol |
+| `ProtoField.uint8/16/32/64(abbr, label, base)` | Typed field descriptors |
+| `ProtoField.bytes/string/bool/ipv4/ether(...)` | Additional field types |
+| `base.HEX`, `base.DEC`, `base.OCT`, `base.ASCII` | Display bases |
+| `DissectorTable.get("tcp.port"):add(port, proto)` | Register by TCP port |
+| `DissectorTable.get("udp.port"):add(port, proto)` | Register by UDP port |
+| `buf(offset, length)` → TvbRange | Slice packet payload |
+| `buf:len()` | Payload length in bytes |
+| `range:uint()`, `:uint8()`, `:uint16()`, `:uint32()` | Unsigned integer extraction |
+| `range:int()` | Signed integer extraction |
+| `range:string()` | UTF-8 string |
+| `range:bytes_hex()` | Colon-separated hex (`de:ad:be:ef`) |
+| `range:tohex()` | `0x`-prefixed hex string |
+| `pinfo.src_port`, `pinfo.dst_port` | Source/destination port |
+| `pinfo.cols.protocol = "NAME"` | Override protocol column |
+| `tree:add(field, range)` | Add a field to the detail tree |
+| `tree:add(proto, buf(), "Label")` | Add a subtree section header |
+| `tree:add("Label", value)` | Add a plain string field |
+
+### Minimal example — custom protocol on TCP 9999
+
+```lua
+local myproto = Proto("MyProto", "My Custom Protocol")
+
+local f_magic = ProtoField.uint16("myproto.magic", "Magic", base.HEX)
+local f_cmd   = ProtoField.uint8 ("myproto.cmd",   "Command", base.DEC)
+local f_data  = ProtoField.bytes ("myproto.data",  "Payload")
+
+myproto.fields = { f_magic, f_cmd, f_data }
+
+function myproto.dissector(buf, pinfo, tree)
+    if buf:len() < 3 then return end
+    pinfo.cols.protocol = "MyProto"
+
+    local subtree = tree:add(myproto, buf(0, buf:len()), "My Protocol")
+    subtree:add(f_magic, buf(0, 2))
+    subtree:add(f_cmd,   buf(2, 1))
+    if buf:len() > 3 then
+        subtree:add(f_data, buf(3, buf:len() - 3))
+    end
+end
+
+DissectorTable.get("tcp.port"):add(9999, myproto)
+```
+
+### Installing plugins
+
+```bash
+mkdir -p ~/.config/packrat/plugins
+cp plugins/example_myproto.lua ~/.config/packrat/plugins/
+
+# In packrat, press r to reload — status bar shows:
+# Lua: 1 files, 1 dissectors loaded
+```
+
+### Bundled example plugins
+
+| File | Protocol | Port | Description |
+|------|----------|------|-------------|
+| `plugins/example_myproto.lua` | MyProto | TCP 9999 | Simple custom protocol with magic, command, length, payload |
+| `plugins/example_modbus.lua` | Modbus/TCP | TCP 502 | Full Modbus ADU with function-code parsing and register display |
+| `plugins/example_mqtt.lua` | MQTT 3.1.1 | TCP 1883/8883 | CONNECT/CONNACK/PUBLISH/SUBSCRIBE with topic and QoS parsing |
+
+### TOML dissectors (simpler, no scripting)
+
+For static field layouts without logic, TOML dissectors are still supported. Drop a `.toml` file in `~/.config/packrat/dissectors/`:
 
 ```toml
-name      = "MyProto"     # displayed in the tree
-transport = "tcp"         # "tcp" or "udp"
-port      = 9999          # matched against src/dst port
+name      = "MyProto"
+transport = "tcp"
+port      = 9999
 
 [[fields]]
-offset  = 0               # byte offset into transport payload
-length  = 2               # number of bytes to read
-name    = "Magic"         # field label
-display = "hex"           # "hex", "dec", or "ascii"
+offset  = 0
+length  = 2
+name    = "Magic"
+display = "hex"
 
 [[fields]]
 offset  = 2
 length  = 1
 name    = "Command"
 display = "dec"
-
-[[fields]]
-offset  = 3
-length  = 16
-name    = "Payload"
-display = "ascii"
 ```
-
-Multiple dissector files can be loaded simultaneously. Dissectors are applied after the built-in parser so they can layer on top of any protocol that uses TCP/UDP.
 
 ## Flows Tab (Tab 7)
 
@@ -207,8 +268,10 @@ Sort by **b**ytes, **p**ackets, or **t**ime. Press **Enter** on a flow to jump t
 | `g / G` | Top / Bottom |
 | `1–7` | Switch tabs |
 | `/` | Filter (packet filter on most tabs; string search on Strings tab) |
-| `b / p / t` | Flows tab: sort by bytes / packets / time |
+| `b / p / t / s` | Flows tab: sort by bytes / packets / time / beacon score |
+| `f` | Flows tab: Follow Stream overlay |
 | `Enter` | Flows tab: jump to filtered packet view |
+| `r` | Hot-reload Lua dissector plugins from `~/.config/packrat/plugins/` |
 | `i` | Pick interface |
 | `w` | Toggle PCAP recording |
 | `h` | Help |

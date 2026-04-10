@@ -178,6 +178,17 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::raw("")
     };
 
+    let lua_span = if let Some(msg) = &app.lua_reload_msg {
+        Span::styled(format!("│ {} ", msg), Style::default().fg(C_CYAN))
+    } else if app.lua_plugins.plugin_count() > 0 {
+        Span::styled(
+            format!("│ Lua:{} ", app.lua_plugins.proto_count()),
+            Style::default().fg(C_FG3),
+        )
+    } else {
+        Span::raw("")
+    };
+
     let line = Line::from(vec![
         Span::styled(" ", Style::default()),
         cap_indicator,
@@ -187,9 +198,10 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(format!("total:{} ", app.packets.len()), Style::default().fg(C_FG2)),
         Span::styled(format!("bytes:{} ", fmt_bytes(app.total_bytes)), Style::default().fg(C_FG2)),
         Span::styled(format!("rate:{}/s ", app.current_rate()), Style::default().fg(C_GREEN)),
+        lua_span,
         Span::styled("│ ", Style::default().fg(C_FG3)),
         Span::styled(
-            "j/k:nav  g/G:top/bot  Space:cap  /:filter  i:iface  w:record  h:help  1-7:tabs  q:quit",
+            "j/k:nav  Space:cap  /:filter  r:reload-lua  1-7:tabs  q:quit",
             Style::default().fg(C_FG3),
         ),
     ]);

@@ -8,6 +8,7 @@ use crate::sim::dynamic::DynEntry;
 use crate::export::PcapWriter;
 use crate::filter::PacketFilter;
 use crate::net::flow::{FlowTracker, FlowSort, FlowKey};
+use crate::net::lua_plugin::PluginManager;
 use crate::net::packet::Packet;
 use crate::dissector::DissectorDef;
 use crate::net::packet::TreeSection;
@@ -65,6 +66,8 @@ pub struct App {
     pub flows_selected: Option<usize>,
     pub flows_sort: FlowSort,
     pub stream_overlay: Option<(String, Vec<(bool, Vec<u8>)>)>,
+    pub lua_plugins: PluginManager,
+    pub lua_reload_msg: Option<String>,
 }
 
 impl App {
@@ -106,6 +109,29 @@ impl App {
             flows_selected: None,
             flows_sort: FlowSort::Bytes,
             stream_overlay: None,
+            lua_plugins: {
+                let mut pm = PluginManager::new();
+                pm.reload();
+                pm
+            },
+            lua_reload_msg: None,
+        }
+    }
+
+    /// Hot-reload all Lua plugins from ~/.config/packrat/plugins/
+    pub fn reload_lua_plugins(&mut self) {
+        self.lua_plugins.reload();
+        let n = self.lua_plugins.plugin_count();
+        let p = self.lua_plugins.proto_count();
+        let errs = self.lua_plugins.error_log.len();
+        if errs > 0 {
+            self.lua_reload_msg = Some(format!(
+                "Lua: {n} files, {p} dissectors — {} error(s)", errs
+            ));
+        } else {
+            self.lua_reload_msg = Some(format!(
+                "Lua: {n} files, {p} dissectors loaded"
+            ));
         }
     }
 
@@ -204,6 +230,7 @@ impl App {
     pub fn dissect_packet(&self, pkt: &Packet) -> Vec<TreeSection> {
         let mut sections = crate::net::tree::build_tree(pkt);
         crate::dissector::apply(&self.dissectors, pkt, &mut sections);
+        self.lua_plugins.apply(pkt, &mut sections);
         sections
     }
 
