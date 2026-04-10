@@ -1,4 +1,5 @@
-/// Raw byte parser: Ethernet → VLAN → IPv4/v6 → transport protocols.
+// These functions are called from live.rs (real-capture feature only).
+#![allow(dead_code)]
 use crate::net::packet::Packet;
 
 /// Parse a raw Ethernet frame into a `Packet`.

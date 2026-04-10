@@ -26,6 +26,7 @@ pub struct FlowFlags {
     pub scan:        bool,
     pub long_conn:   bool,   // duration > 5 minutes
     pub strobe:      bool,   // same pair > 100 pkts/s
+    #[allow(dead_code)]
     pub dns_tunnel:  bool,
     pub tcp_anomaly: bool,   // XMAS / NULL / SYN+FIN
 }
