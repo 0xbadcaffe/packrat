@@ -13,7 +13,9 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.craft.editing
         || app.replay_editing
         || app.scan_editing
-        || app.traceroute.editing;
+        || app.traceroute.editing
+        || app.notebook_editing
+        || app.hosts_searching;
 
     if !in_text_mode && is_quit(&key) { return true; }
 
@@ -41,6 +43,9 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             Tab::Traceroute => handle_traceroute(app, key),
             Tab::Security   => handle_security(app, key),
             Tab::Scanner    => handle_scanner(app, key),
+            Tab::Hosts      => handle_hosts(app, key),
+            Tab::Notebook   => handle_notebook(app, key),
+            Tab::Workbench  => handle_workbench(app, key),
             _               => handle_main(app, key),
         }
     }
@@ -54,16 +59,22 @@ fn is_quit(key: &KeyEvent) -> bool {
 
 fn global_tab_switch(app: &mut App, key: &KeyEvent) -> bool {
     match key.code {
-        KeyCode::Char('1') => { app.active_tab = Tab::Packets;    true }
-        KeyCode::Char('2') => { app.active_tab = Tab::Analysis;   true }
-        KeyCode::Char('3') => { app.active_tab = Tab::Strings;    true }
-        KeyCode::Char('4') => { app.active_tab = Tab::Dynamic;    true }
-        KeyCode::Char('5') => { app.active_tab = Tab::Visualize;  true }
-        KeyCode::Char('6') => { app.active_tab = Tab::Flows;      true }
-        KeyCode::Char('7') => { app.active_tab = Tab::Craft;      true }
-        KeyCode::Char('8') => { app.active_tab = Tab::Traceroute; true }
-        KeyCode::Char('9') => { app.active_tab = Tab::Security;   true }
-        KeyCode::Char('0') => { app.active_tab = Tab::Scanner;    true }
+        KeyCode::Char('1') => { app.active_tab = Tab::Packets;     true }
+        KeyCode::Char('2') => { app.active_tab = Tab::Analysis;    true }
+        KeyCode::Char('3') => { app.active_tab = Tab::Strings;     true }
+        KeyCode::Char('4') => { app.active_tab = Tab::Dynamic;     true }
+        KeyCode::Char('5') => { app.active_tab = Tab::Visualize;   true }
+        KeyCode::Char('6') => { app.active_tab = Tab::Flows;       true }
+        KeyCode::Char('7') => { app.active_tab = Tab::Craft;       true }
+        KeyCode::Char('8') => { app.active_tab = Tab::Traceroute;  true }
+        KeyCode::Char('9') => { app.active_tab = Tab::Security;    true }
+        KeyCode::Char('0') => { app.active_tab = Tab::Scanner;     true }
+        KeyCode::Char('H') => { app.active_tab = Tab::Hosts;       true }
+        KeyCode::Char('N') => { app.active_tab = Tab::Notebook;    true }
+        KeyCode::Char('T') => { app.active_tab = Tab::TlsAnalysis; true }
+        KeyCode::Char('O') => { app.active_tab = Tab::Objects;     true }
+        KeyCode::Char('R') => { app.active_tab = Tab::Rules;       true }
+        KeyCode::Char('W') => { app.active_tab = Tab::Workbench;   true }
         _ => false,
     }
 }
@@ -319,6 +330,104 @@ fn handle_scanner(app: &mut App, key: KeyEvent) {
             app.scanner_scroll = app.scanner_scroll.saturating_sub(20);
         }
         KeyCode::Char('h') => app.show_help = true,
+        _ => {}
+    }
+}
+
+// ─── Hosts tab ────────────────────────────────────────────────────────────────
+
+fn handle_hosts(app: &mut App, key: KeyEvent) {
+    if app.hosts_searching {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => { app.hosts_searching = false; }
+            KeyCode::Backspace => { app.hosts_search.pop(); }
+            KeyCode::Char(c)   => { app.hosts_search.push(c); }
+            _ => {}
+        }
+        return;
+    }
+
+    if global_tab_switch(app, &key) { return; }
+
+    match key.code {
+        KeyCode::Char('s') | KeyCode::Char('/') => { app.hosts_searching = true; }
+        KeyCode::Down | KeyCode::Char('j') => { app.hosts_scroll = app.hosts_scroll.saturating_add(1); }
+        KeyCode::Up   | KeyCode::Char('k') => { app.hosts_scroll = app.hosts_scroll.saturating_sub(1); }
+        KeyCode::Char('g') => { app.hosts_scroll = 0; }
+        KeyCode::Char('C') => { app.hosts_search.clear(); app.hosts_scroll = 0; }
+        KeyCode::Char('c') => { app.hosts.clear(); }
+        KeyCode::Char('h') => { app.show_help = true; }
+        _ => {}
+    }
+}
+
+// ─── Notebook tab ─────────────────────────────────────────────────────────────
+
+fn handle_notebook(app: &mut App, key: KeyEvent) {
+    if app.notebook_editing {
+        match key.code {
+            KeyCode::Esc => {
+                app.notebook_editing = false;
+                app.notebook_input.clear();
+            }
+            KeyCode::Enter => {
+                if !app.notebook_input.is_empty() {
+                    let text = app.notebook_input.clone();
+                    app.notebook.add(text, None);
+                    app.notebook_input.clear();
+                }
+                app.notebook_editing = false;
+            }
+            KeyCode::Backspace => { app.notebook_input.pop(); }
+            KeyCode::Char(c)   => { app.notebook_input.push(c); }
+            _ => {}
+        }
+        return;
+    }
+
+    if global_tab_switch(app, &key) { return; }
+
+    match key.code {
+        KeyCode::Char('n')   => { app.notebook_editing = true; }
+        KeyCode::Down | KeyCode::Char('j') => { app.notebook_scroll = app.notebook_scroll.saturating_add(1); }
+        KeyCode::Up   | KeyCode::Char('k') => { app.notebook_scroll = app.notebook_scroll.saturating_sub(1); }
+        KeyCode::Char('g')   => { app.notebook_scroll = 0; }
+        KeyCode::Char('d')   => {
+            // Delete the note at scroll position
+            let notes = app.notebook.all();
+            if let Some(note) = notes.get(app.notebook_scroll) {
+                let id = note.id;
+                app.notebook.delete(id);
+            }
+        }
+        KeyCode::Char('h')   => { app.show_help = true; }
+        _ => {}
+    }
+}
+
+// ─── Workbench tab ────────────────────────────────────────────────────────────
+
+fn handle_workbench(app: &mut App, key: KeyEvent) {
+    if global_tab_switch(app, &key) { return; }
+
+    const HEX_COLS: usize = 16;
+    match key.code {
+        KeyCode::Char('h') | KeyCode::Left  => app.workbench.cursor_left(),
+        KeyCode::Char('l') | KeyCode::Right => app.workbench.cursor_right(),
+        KeyCode::Char('k') | KeyCode::Up    => app.workbench.cursor_up(HEX_COLS),
+        KeyCode::Char('j') | KeyCode::Down  => app.workbench.cursor_down(HEX_COLS),
+        KeyCode::Char(' ')                  => app.workbench.toggle_selection(),
+        KeyCode::Enter => {
+            // Load selected packet into workbench
+            if let Some(pkt) = app.selected_packet() {
+                let pkt = pkt.clone();
+                app.workbench.load_packet(&pkt);
+                app.active_tab = Tab::Workbench;
+            }
+        }
+        KeyCode::Esc => {
+            app.workbench.sel_start = None;
+        }
         _ => {}
     }
 }

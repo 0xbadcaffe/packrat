@@ -2,8 +2,21 @@ use std::collections::VecDeque;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 
+use crate::analysis::carving::{Carver, CarvedObject};
+use crate::analysis::diff::DiffEngine;
+use crate::analysis::display_filter::DisplayFilter;
+use crate::analysis::ioc::IocEngine;
+use crate::analysis::jobs::JobQueue;
+use crate::analysis::notebook::Notebook;
+use crate::analysis::protocol_workbench::ProtocolWorkbench;
+use crate::analysis::rules::RuleEngine;
+use crate::analysis::stream::StreamAssembler;
+use crate::analysis::timeline::ProtocolTimelines;
+use crate::analysis::tls::TlsTracker;
 use crate::capture::CaptureSource;
 use crate::craft::CraftState;
+use crate::model::hosts::HostInventory;
+use crate::model::tags::TagStore;
 use crate::net::inspector::CredentialHit;
 use crate::net::security::SecurityEngine;
 use crate::pcap_replay::ReplayState;
@@ -98,6 +111,35 @@ pub struct App {
     pub scanner_scroll: usize,
     pub replay_editing: bool,
     pub scan_editing: bool,
+    // ─── Phase 1–4 analysis state ──────────────────────────────────────────────
+    pub hosts:           HostInventory,
+    pub tag_store:       TagStore,
+    pub notebook:        Notebook,
+    pub streams:         StreamAssembler,
+    pub timeline:        ProtocolTimelines,
+    pub tls_tracker:     TlsTracker,
+    pub ioc_engine:      IocEngine,
+    pub rule_engine:     RuleEngine,
+    pub carver:          Carver,
+    pub carved_objects:  Vec<CarvedObject>,
+    pub workbench:       ProtocolWorkbench,
+    pub diff_engine:     DiffEngine,
+    pub job_queue:       JobQueue,
+    pub display_filter:  DisplayFilter,
+    // Notebook UI state
+    pub notebook_scroll: usize,
+    pub notebook_input:  String,
+    pub notebook_editing: bool,
+    // Hosts UI state
+    pub hosts_scroll:    usize,
+    pub hosts_search:    String,
+    pub hosts_searching: bool,
+    // TLS UI state
+    pub tls_scroll:      usize,
+    // Objects UI state
+    pub objects_scroll:  usize,
+    // Rules UI state
+    pub rules_scroll:    usize,
 }
 
 impl App {
@@ -155,6 +197,29 @@ impl App {
             scanner_scroll: 0,
             replay_editing: false,
             scan_editing: false,
+            hosts:            HostInventory::default(),
+            tag_store:        TagStore::default(),
+            notebook:         Notebook::default(),
+            streams:          StreamAssembler::default(),
+            timeline:         ProtocolTimelines::default(),
+            tls_tracker:      TlsTracker::default(),
+            ioc_engine:       IocEngine::default(),
+            rule_engine:      RuleEngine::default(),
+            carver:           Carver::default(),
+            carved_objects:   Vec::new(),
+            workbench:        ProtocolWorkbench::default(),
+            diff_engine:      DiffEngine::default(),
+            job_queue:        JobQueue::default(),
+            display_filter:   DisplayFilter::default(),
+            notebook_scroll:  0,
+            notebook_input:   String::new(),
+            notebook_editing: false,
+            hosts_scroll:     0,
+            hosts_search:     String::new(),
+            hosts_searching:  false,
+            tls_scroll:       0,
+            objects_scroll:   0,
+            rules_scroll:     0,
         }
     }
 
@@ -326,6 +391,24 @@ impl App {
         // Security analysis
         self.security.update(&pkt);
 
+        // Host inventory
+        self.hosts.update(&pkt);
+
+        // Stream reassembly
+        self.streams.ingest(&pkt);
+
+        // Timeline
+        self.timeline.ingest(&pkt);
+
+        // TLS intelligence
+        self.tls_tracker.ingest(&pkt);
+
+        // IOC matching
+        self.ioc_engine.check_packet(&pkt);
+
+        // Rule engine
+        self.rule_engine.evaluate(&pkt);
+
         // Credential extraction
         let new_creds = crate::net::inspector::extract_credentials(&pkt);
         if !new_creds.is_empty() {
@@ -417,6 +500,13 @@ impl App {
         self.stream_overlay = None;
         self.security.clear();
         self.credentials.clear();
+        self.hosts.clear();
+        self.streams.clear();
+        self.timeline.clear();
+        self.tls_tracker.clear();
+        self.ioc_engine.clear_hits();
+        self.rule_engine.clear_hits();
+        self.carved_objects.clear();
     }
 
     pub fn toggle_recording(&mut self) {
