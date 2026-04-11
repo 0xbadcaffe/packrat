@@ -120,6 +120,12 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![Span::styled("8 ", Style::default().fg(C_YELLOW)), Span::raw("Trace")]),
         Line::from(vec![Span::styled("9 ", Style::default().fg(C_YELLOW)), Span::raw("Security")]),
         Line::from(vec![Span::styled("0 ", Style::default().fg(C_YELLOW)), Span::raw("Scanner")]),
+        Line::from(vec![Span::styled("H ", Style::default().fg(C_YELLOW)), Span::raw("Hosts")]),
+        Line::from(vec![Span::styled("N ", Style::default().fg(C_YELLOW)), Span::raw("Notebook")]),
+        Line::from(vec![Span::styled("T ", Style::default().fg(C_YELLOW)), Span::raw("TLS")]),
+        Line::from(vec![Span::styled("O ", Style::default().fg(C_YELLOW)), Span::raw("Objects")]),
+        Line::from(vec![Span::styled("R ", Style::default().fg(C_YELLOW)), Span::raw("Rules")]),
+        Line::from(vec![Span::styled("W ", Style::default().fg(C_YELLOW)), Span::raw("Workbench")]),
     ];
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
@@ -138,16 +144,22 @@ fn draw_workspace(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
     match app.active_tab {
-        Tab::Packets    => tabs::packets::draw(f, app, area),
-        Tab::Analysis   => tabs::analysis::draw(f, app, area),
-        Tab::Strings    => tabs::strings::draw(f, app, area),
-        Tab::Dynamic    => tabs::dynamic::draw(f, app, area),
-        Tab::Visualize  => tabs::visualize::draw(f, app, area),
-        Tab::Flows      => tabs::flows::draw(f, app, area),
-        Tab::Craft      => tabs::craft::draw(f, app, area),
-        Tab::Traceroute => tabs::traceroute::draw(f, app, area),
-        Tab::Security   => tabs::security::draw(f, app, area),
-        Tab::Scanner    => tabs::scanner::draw(f, app, area),
+        Tab::Packets     => tabs::packets::draw(f, app, area),
+        Tab::Analysis    => tabs::analysis::draw(f, app, area),
+        Tab::Strings     => tabs::strings::draw(f, app, area),
+        Tab::Dynamic     => tabs::dynamic::draw(f, app, area),
+        Tab::Visualize   => tabs::visualize::draw(f, app, area),
+        Tab::Flows       => tabs::flows::draw(f, app, area),
+        Tab::Craft       => tabs::craft::draw(f, app, area),
+        Tab::Traceroute  => tabs::traceroute::draw(f, app, area),
+        Tab::Security    => tabs::security::draw(f, app, area),
+        Tab::Scanner     => tabs::scanner::draw(f, app, area),
+        Tab::Hosts       => tabs::hosts::draw(f, app, area),
+        Tab::Notebook    => tabs::notebook::draw(f, app, area),
+        Tab::TlsAnalysis => tabs::tls_tab::draw(f, app, area),
+        Tab::Objects     => tabs::objects::draw(f, app, area),
+        Tab::Rules       => tabs::rules::draw(f, app, area),
+        Tab::Workbench   => tabs::workbench::draw(f, app, area),
     }
 }
 
