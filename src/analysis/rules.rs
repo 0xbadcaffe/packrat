@@ -91,6 +91,46 @@ impl RuleEngine {
 
     pub fn remove_rule(&mut self, id: &str) { self.rules.retain(|r| r.id != id); }
 
+    /// Load rules from JSON files in `~/.config/packrat/rules/`.
+    /// Each file may contain a single Rule object or an array of Rule objects.
+    pub fn load_from_dir(&mut self) -> Vec<String> {
+        let dir = dirs_next::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("packrat")
+            .join("rules");
+
+        let mut errors: Vec<String> = Vec::new();
+        if !dir.exists() { return errors; }
+
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) => { errors.push(format!("read dir: {e}")); return errors; }
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext != "json" { continue; }
+
+            let source = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+
+            match std::fs::read_to_string(&path) {
+                Ok(text) => {
+                    // Try array first, then single rule
+                    if let Ok(rules) = serde_json::from_str::<Vec<Rule>>(&text) {
+                        for r in rules { self.rules.push(r); }
+                    } else if let Ok(rule) = serde_json::from_str::<Rule>(&text) {
+                        self.rules.push(rule);
+                    } else {
+                        errors.push(format!("{source}: invalid JSON rule format"));
+                    }
+                }
+                Err(e) => errors.push(format!("{source}: {e}")),
+            }
+        }
+        errors
+    }
+
     pub fn toggle(&mut self, id: &str) {
         if let Some(r) = self.rules.iter_mut().find(|r| r.id == id) {
             r.enabled = !r.enabled;

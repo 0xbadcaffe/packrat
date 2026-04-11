@@ -145,6 +145,62 @@ impl IocEngine {
         });
     }
 
+    /// Load IOC feeds from all `.csv`, `.txt`, `.ioc` files in `~/.config/packrat/ioc/`.
+    /// Each file is expected to be in simple CSV format: `type,value[,description]`.
+    /// Also supports plain-text single-column files where each line is an IP or domain.
+    pub fn load_from_dir(&mut self) -> Vec<String> {
+        let dir = dirs_next::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("packrat")
+            .join("ioc");
+
+        let mut errors: Vec<String> = Vec::new();
+        if !dir.exists() { return errors; }
+
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) => { errors.push(format!("read dir: {e}")); return errors; }
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            if !matches!(ext.as_str(), "csv" | "txt" | "ioc") { continue; }
+
+            let source = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+
+            match std::fs::read_to_string(&path) {
+                Ok(text) => {
+                    if ext == "csv" {
+                        self.load_csv(&text, &source);
+                    } else {
+                        // Plain text: detect type per line
+                        for line in text.lines() {
+                            let line = line.trim();
+                            if line.starts_with('#') || line.is_empty() { continue; }
+                            // If line looks like an IP
+                            let kind = if line.parse::<std::net::Ipv4Addr>().is_ok() {
+                                IocKind::Ip
+                            } else if line.contains('.') && !line.contains('/') {
+                                IocKind::Domain
+                            } else {
+                                continue; // skip unrecognised
+                            };
+                            self.load_ioc(Ioc {
+                                value:       line.to_string(),
+                                kind,
+                                description: String::new(),
+                                source:      source.clone(),
+                            });
+                        }
+                    }
+                }
+                Err(e) => errors.push(format!("{source}: {e}")),
+            }
+        }
+        errors
+    }
+
     pub fn ioc_count(&self) -> usize { self.iocs.len() }
     pub fn hit_count(&self) -> usize { self.hits.len() }
 
