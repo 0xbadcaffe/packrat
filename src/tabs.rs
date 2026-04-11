@@ -18,10 +18,11 @@ pub enum Tab {
     Rules,
     Workbench,
     OperatorGraph,
+    Diff,
 }
 
 impl Tab {
-    pub const COUNT: usize = 17;
+    pub const COUNT: usize = 18;
 
     pub fn index(&self) -> usize {
         match self {
@@ -42,6 +43,7 @@ impl Tab {
             Tab::Rules         => 14,
             Tab::Workbench     => 15,
             Tab::OperatorGraph => 16,
+            Tab::Diff          => 17,
         }
     }
 
@@ -64,6 +66,7 @@ impl Tab {
             14 => Tab::Rules,
             15 => Tab::Workbench,
             16 => Tab::OperatorGraph,
+            17 => Tab::Diff,
             _  => Tab::Packets,
         }
     }
@@ -87,6 +90,7 @@ impl Tab {
             Tab::Rules         => "Rules",
             Tab::Workbench     => "Workbench",
             Tab::OperatorGraph => "Graph",
+            Tab::Diff          => "Diff",
         }
     }
 }

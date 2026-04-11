@@ -150,7 +150,10 @@ pub struct App {
     pub carver:          Carver,
     pub carved_objects:  Vec<CarvedObject>,
     pub workbench:       ProtocolWorkbench,
-    pub diff_engine:     DiffEngine,
+    pub diff_engine:      DiffEngine,
+    pub diff_scroll:      usize,
+    /// Cloned packet snapshot used as baseline for differential analysis.
+    pub diff_baseline:    Vec<crate::net::packet::Packet>,
     pub job_queue:       JobQueue,
     pub display_filter:  DisplayFilter,
     // Notebook UI state
@@ -268,6 +271,8 @@ impl App {
             carved_objects:   Vec::new(),
             workbench:        ProtocolWorkbench::default(),
             diff_engine:      DiffEngine::default(),
+            diff_scroll:      0,
+            diff_baseline:    Vec::new(),
             job_queue:        JobQueue::default(),
             display_filter:   DisplayFilter::default(),
             notebook_scroll:  0,
@@ -320,6 +325,29 @@ impl App {
         } else {
             self.set_status(format!("IOC: {count} indicators, {} error(s)", errs.len()));
         }
+    }
+
+    /// Snapshot current live packets as diff baseline (set A).
+    pub fn diff_snapshot_baseline(&mut self) {
+        let pkts: Vec<_> = self.packets.iter().cloned().collect();
+        self.diff_engine.load_a(&pkts);
+        self.diff_baseline = pkts.clone();
+        self.set_status(format!("Diff baseline set: {} packets", pkts.len()));
+    }
+
+    /// Compute diff between baseline (A) and current live packets (B), then jump to Diff tab.
+    pub fn diff_compute(&mut self) {
+        if self.diff_baseline.is_empty() {
+            self.set_status("No baseline — press B first".to_string());
+            return;
+        }
+        let current: Vec<_> = self.packets.iter().cloned().collect();
+        self.diff_engine.load_b(&current);
+        self.diff_engine.compute(&self.diff_baseline.clone(), &current);
+        self.active_tab = crate::tabs::Tab::Diff;
+        self.diff_scroll = 0;
+        self.set_status(format!("Diff: {} baseline vs {} current packets",
+            self.diff_baseline.len(), current.len()));
     }
 
     /// Apply the current `hosts_tag_input` as a tag to the host at `hosts_scroll`.

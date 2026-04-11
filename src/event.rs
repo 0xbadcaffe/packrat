@@ -72,6 +72,12 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             return false;
         }
 
+        // Diff baseline snapshot with 'B' from any tab
+        if key.code == KeyCode::Char('B') {
+            app.diff_snapshot_baseline();
+            return false;
+        }
+
         match app.active_tab {
             Tab::Craft         => handle_craft(app, key),
             Tab::Traceroute    => handle_traceroute(app, key),
@@ -82,6 +88,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             Tab::Workbench     => handle_workbench(app, key),
             Tab::Objects       => handle_objects(app, key),
             Tab::Rules         => handle_rules(app, key),
+            Tab::Diff          => handle_diff(app, key),
             Tab::OperatorGraph => handle_graph(app, key),
             _                  => handle_main(app, key),
         }
@@ -113,6 +120,7 @@ fn global_tab_switch(app: &mut App, key: &KeyEvent) -> bool {
         KeyCode::Char('R') => { app.active_tab = Tab::Rules;       true }
         KeyCode::Char('W') => { app.active_tab = Tab::Workbench;       true }
         KeyCode::Char('G') => { app.active_tab = Tab::OperatorGraph;   true }
+        KeyCode::Char('D') => { app.active_tab = Tab::Diff;            true }
         _ => false,
     }
 }
@@ -851,6 +859,28 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::Char('s') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_beacon(),
         KeyCode::Char('f') if matches!(app.active_tab, Tab::Flows) => app.flows_open_stream(),
 
+        _ => {}
+    }
+}
+
+// ─── Diff tab ─────────────────────────────────────────────────────────────────
+
+fn handle_diff(app: &mut App, key: KeyEvent) {
+    if global_tab_switch(app, &key) { return; }
+
+    match key.code {
+        KeyCode::Tab => app.next_tab(),
+        KeyCode::Down | KeyCode::Char('j') => { app.diff_scroll = app.diff_scroll.saturating_add(1); }
+        KeyCode::Up   | KeyCode::Char('k') => { app.diff_scroll = app.diff_scroll.saturating_sub(1); }
+        KeyCode::Char('g') => { app.diff_scroll = 0; }
+        KeyCode::Char('d') => { app.diff_compute(); }
+        KeyCode::Char('X') => {
+            app.diff_engine.clear();
+            app.diff_baseline.clear();
+            app.diff_scroll = 0;
+            app.set_status("Diff cleared".to_string());
+        }
+        KeyCode::Char('h') => { app.show_help = true; }
         _ => {}
     }
 }

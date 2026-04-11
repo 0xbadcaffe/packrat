@@ -172,6 +172,7 @@ fn draw_workspace(f: &mut Frame, app: &App, area: Rect) {
         Tab::Rules       => tabs::rules::draw(f, app, area),
         Tab::Workbench     => tabs::workbench::draw(f, app, area),
         Tab::OperatorGraph => tabs::operator_graph::draw(f, app, area),
+        Tab::Diff          => tabs::diff::draw(f, app, area),
     }
 }
 
