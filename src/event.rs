@@ -59,6 +59,12 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             return false;
         }
 
+        // Export case bundle with 'X' from any tab
+        if key.code == KeyCode::Char('X') {
+            app.export_case_bundle();
+            return false;
+        }
+
         match app.active_tab {
             Tab::Craft         => handle_craft(app, key),
             Tab::Traceroute    => handle_traceroute(app, key),
