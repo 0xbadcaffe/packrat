@@ -13,6 +13,7 @@ use crate::ui::theme::*;
 mod helpers;
 mod help;
 mod iface_picker;
+mod search_overlay;
 mod tabs;
 pub mod theme;
 
@@ -44,6 +45,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if let Some((title, segments)) = &app.stream_overlay {
         draw_stream_overlay(f, title, segments);
+    }
+
+    if app.search_open {
+        search_overlay::draw(f, app);
     }
 }
 
