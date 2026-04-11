@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod craft;
+pub mod diff;
 pub mod dynamic;
 pub mod flows;
 pub mod hosts;
