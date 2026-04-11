@@ -65,6 +65,12 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             return false;
         }
 
+        // Reload IOC feeds with 'I' from any tab
+        if key.code == KeyCode::Char('I') {
+            app.reload_ioc_feeds();
+            return false;
+        }
+
         match app.active_tab {
             Tab::Craft         => handle_craft(app, key),
             Tab::Traceroute    => handle_traceroute(app, key),

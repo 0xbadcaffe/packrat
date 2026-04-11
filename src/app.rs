@@ -252,8 +252,16 @@ impl App {
             streams:          StreamAssembler::default(),
             timeline:         ProtocolTimelines::default(),
             tls_tracker:      TlsTracker::default(),
-            ioc_engine:       IocEngine::default(),
-            rule_engine:      RuleEngine::default(),
+            ioc_engine:       {
+                let mut e = IocEngine::default();
+                e.load_from_dir();
+                e
+            },
+            rule_engine:      {
+                let mut e = RuleEngine::default();
+                e.load_from_dir();
+                e
+            },
             carver:           Carver::default(),
             carved_objects:   Vec::new(),
             workbench:        ProtocolWorkbench::default(),
@@ -284,6 +292,29 @@ impl App {
             autopsy_state:    None,
             status_msg:       None,
             status_msg_ticks: 0,
+        }
+    }
+
+    /// Reload JSON rules from ~/.config/packrat/rules/ and show status.
+    pub fn reload_rules(&mut self) {
+        self.rule_engine.rules.clear();
+        let errs = self.rule_engine.load_from_dir();
+        let count = self.rule_engine.rules.len();
+        if errs.is_empty() {
+            self.set_status(format!("Rules: {count} rules loaded"));
+        } else {
+            self.set_status(format!("Rules: {count} rules, {} error(s)", errs.len()));
+        }
+    }
+
+    /// Load IOC feeds from ~/.config/packrat/ioc/ and show status.
+    pub fn reload_ioc_feeds(&mut self) {
+        let errs = self.ioc_engine.load_from_dir();
+        let count = self.ioc_engine.ioc_count();
+        if errs.is_empty() {
+            self.set_status(format!("IOC: {count} indicators loaded"));
+        } else {
+            self.set_status(format!("IOC: {count} indicators, {} error(s)", errs.len()));
         }
     }
 
