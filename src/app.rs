@@ -3,6 +3,7 @@ use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 
 use crate::analysis::carving::{Carver, CarvedObject};
+use crate::analysis::yara::YaraEngine;
 use crate::analysis::diff::DiffEngine;
 use crate::analysis::display_filter::DisplayFilter;
 use crate::analysis::ioc::IocEngine;
@@ -49,6 +50,15 @@ pub enum SecuritySubTab {
     BruteForce,
     VulnHits,
     Replay,
+}
+
+/// Sub-panels within the Objects tab
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ObjectsSubTab {
+    #[default]
+    Objects,
+    YaraRules,
+    YaraMatches,
 }
 
 fn list_interfaces() -> Vec<String> {
@@ -138,7 +148,14 @@ pub struct App {
     // TLS UI state
     pub tls_scroll:      usize,
     // Objects UI state
-    pub objects_scroll:  usize,
+    pub objects_scroll:       usize,
+    pub objects_subtab:       ObjectsSubTab,
+    pub yara_rules_scroll:    usize,
+    pub yara_matches_scroll:  usize,
+    // YARA engine
+    pub yara_engine:          YaraEngine,
+    /// High-water mark: next carved object index to scan.
+    pub yara_scan_cursor:         usize,
     // Rules UI state
     pub rules_scroll:    usize,
     // ─── Operator graph ────────────────────────────────────────────────────────
@@ -223,12 +240,83 @@ impl App {
             hosts_scroll:     0,
             hosts_search:     String::new(),
             hosts_searching:  false,
-            tls_scroll:       0,
-            objects_scroll:   0,
-            rules_scroll:     0,
+            tls_scroll:            0,
+            objects_scroll:        0,
+            objects_subtab:        ObjectsSubTab::Objects,
+            yara_rules_scroll:     0,
+            yara_matches_scroll:   0,
+            yara_engine:           YaraEngine::new(),
+            yara_scan_cursor:      0,
+            rules_scroll:          0,
             operator_graph:   OperatorGraphEngine::default(),
             graph_ui:         GraphUiState::default(),
             graph_tick_counter: 0,
+        }
+    }
+
+    /// Reload YARA rules from ~/.config/packrat/yara/ and clear existing results.
+    pub fn reload_yara_rules(&mut self) {
+        self.yara_engine.reload();
+        self.yara_engine.clear_results();
+        self.yara_scan_cursor = 0;
+    }
+
+    /// Force a full re-scan of all carved objects with current rules.
+    pub fn yara_force_rescan(&mut self) {
+        self.yara_engine.clear_results();
+        self.yara_scan_cursor = 0;
+        self.yara_scan_new_objects();
+    }
+
+    /// Incrementally scan carved objects that haven't been scanned yet.
+    /// Called from tick() to spread work across frames.  Scans at most 4
+    /// objects per tick so the UI never blocks.
+    pub fn yara_scan_new_objects(&mut self) {
+        if self.yara_engine.rules.is_empty() { return; }
+        let start = self.yara_scan_cursor;
+        let end = (start + 4).min(self.carved_objects.len());
+        if start >= end { return; }
+
+        // Collect the minimum data needed before any mutable borrow of self.
+        const SCAN_CAP: usize = 1_048_576;
+        let batch: Vec<(u64, String, Vec<u8>)> = self.carved_objects[start..end]
+            .iter()
+            .map(|obj| {
+                let cap = obj.data.len().min(SCAN_CAP);
+                (obj.id, obj.kind.clone(), obj.data[..cap].to_vec())
+            })
+            .collect();
+
+        for (rel_idx, (id, kind, data)) in batch.into_iter().enumerate() {
+            let result = self.yara_engine.scan_target(
+                &data, id, "object", &format!("#{} {}", id, kind),
+            );
+            if !result.matches.is_empty() {
+                let rule_names = result.rule_names();
+                self.carved_objects[start + rel_idx].yara_hits = rule_names;
+                self.yara_engine.results.push(result);
+            }
+        }
+        self.yara_scan_cursor = end;
+    }
+
+    /// Carve embedded files from all reassembled TCP streams.
+    pub fn carve_from_streams(&mut self) {
+        let streams: Vec<(String, Vec<u8>, Vec<u8>)> = self.streams.all()
+            .iter()
+            .map(|s| (s.key.id(), s.client_data.clone(), s.server_data.clone()))
+            .collect();
+
+        for (id, client_data, server_data) in streams {
+            let source = id.clone();
+            if !client_data.is_empty() {
+                let new_objs = self.carver.carve(&client_data, &format!("{source}→"));
+                self.carved_objects.extend(new_objs);
+            }
+            if !server_data.is_empty() {
+                let new_objs = self.carver.carve(&server_data, &format!("{source}←"));
+                self.carved_objects.extend(new_objs);
+            }
         }
     }
 
@@ -507,6 +595,7 @@ impl App {
             self.rate_this_sec = 0;
         }
 
+        self.yara_scan_new_objects();
         self.graph_tick();
     }
 
@@ -627,6 +716,8 @@ impl App {
         self.ioc_engine.clear_hits();
         self.rule_engine.clear_hits();
         self.carved_objects.clear();
+        self.yara_engine.clear_results();
+        self.yara_scan_cursor = 0;
         self.operator_graph.clear();
         self.graph_ui = GraphUiState::default();
         self.graph_tick_counter = 0;
