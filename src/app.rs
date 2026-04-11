@@ -4,6 +4,7 @@ use tokio::task::JoinHandle;
 
 use crate::analysis::carving::{Carver, CarvedObject};
 use crate::analysis::yara::YaraEngine;
+use crate::ui::autopsy_overlay::AutopsyState;
 use crate::analysis::diff::DiffEngine;
 use crate::analysis::display_filter::DisplayFilter;
 use crate::analysis::ioc::IocEngine;
@@ -183,6 +184,8 @@ pub struct App {
     pub search_query:    String,
     pub search_results:  Vec<SearchResult>,
     pub search_selected: usize,
+    // ─── Protocol Autopsy overlay ──────────────────────────────────────────────
+    pub autopsy_state:   Option<AutopsyState>,
 }
 
 impl App {
@@ -275,7 +278,47 @@ impl App {
             search_query:    String::new(),
             search_results:  Vec::new(),
             search_selected: 0,
+            autopsy_state:   None,
         }
+    }
+
+    /// Open the Protocol Autopsy overlay for the currently selected packet.
+    pub fn open_autopsy(&mut self) {
+        let pkt = match self.selected_packet() {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        let tree = self.dissect_packet(&pkt);
+
+        // Build stream preview from reassembled data for this flow
+        let stream_key = crate::analysis::stream::StreamKey::from_packet(&pkt);
+        let stream_preview = if let Some(key) = stream_key {
+            match self.streams.get(&key.id()) {
+                Some(stream) => {
+                    let mut lines: Vec<(bool, String)> = Vec::new();
+                    // Client data
+                    for chunk in stream.client_data.chunks(72) {
+                        lines.push((true, printable_line(chunk)));
+                    }
+                    // Server data
+                    for chunk in stream.server_data.chunks(72) {
+                        lines.push((false, printable_line(chunk)));
+                    }
+                    lines
+                }
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
+        self.autopsy_state = Some(AutopsyState::new(tree, stream_preview));
+    }
+
+    /// Close the Protocol Autopsy overlay.
+    pub fn close_autopsy(&mut self) {
+        self.autopsy_state = None;
     }
 
     /// Reload YARA rules from ~/.config/packrat/yara/ and clear existing results.
@@ -1076,4 +1119,11 @@ impl App {
             SecuritySubTab::Replay        => SecuritySubTab::VulnHits,
         };
     }
+}
+
+/// Convert a byte slice to a printable ASCII line (non-printable → '.').
+fn printable_line(data: &[u8]) -> String {
+    data.iter().map(|&b| {
+        if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }
+    }).collect()
 }

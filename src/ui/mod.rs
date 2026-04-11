@@ -10,6 +10,7 @@ use crate::app::App;
 use crate::tabs::Tab;
 use crate::ui::theme::*;
 
+pub mod autopsy_overlay;
 mod helpers;
 mod help;
 mod iface_picker;
@@ -49,6 +50,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.search_open {
         search_overlay::draw(f, app);
+    }
+
+    if app.autopsy_state.is_some() {
+        autopsy_overlay::draw(f, app);
     }
 }
 
