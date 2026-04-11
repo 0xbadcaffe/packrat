@@ -70,6 +70,11 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
         0 => {
             let dur = app.packets.back().map(|p| p.timestamp).unwrap_or(0.0);
             let avg = if app.packets.is_empty() { 0 } else { app.total_bytes as usize / app.packets.len() };
+            let ioc_hits = app.ioc_engine.hit_count();
+            let ioc_loaded = app.ioc_engine.ioc_count();
+            let rule_hits = app.rule_engine.hits.len();
+            let rule_loaded = app.rule_engine.rules.len();
+            let yara_hits = app.yara_engine.total_matches();
             let rows: Vec<(&str, String)> = vec![
                 ("Total Packets",    app.packets.len().to_string()),
                 ("Total Bytes",      fmt_bytes(app.total_bytes)),
@@ -77,9 +82,13 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 ("Avg Packet Size",  format!("{} bytes", avg)),
                 ("Packets/sec",      app.current_rate().to_string()),
                 ("Interface",        app.selected_iface.clone()),
-                ("Snaplen",          "65535".into()),
-                ("Link Type",        "Ethernet".into()),
+                ("Hosts Seen",       app.hosts.len().to_string()),
+                ("TLS Sessions",     app.tls_tracker.len().to_string()),
+                ("Flows",            app.flow_tracker.flows.len().to_string()),
                 ("Recording",        if app.recording { format!("yes → {}", app.pcap_path) } else { "no".into() }),
+                ("IOC Indicators",   format!("{} loaded, {} hits", ioc_loaded, ioc_hits)),
+                ("Rules",            format!("{} loaded, {} hits", rule_loaded, rule_hits)),
+                ("YARA",             format!("{} matches", yara_hits)),
             ];
             lines.push(Line::raw(""));
             for (k, v) in rows {
