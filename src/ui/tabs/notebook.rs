@@ -12,13 +12,41 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // input box
+            Constraint::Length(3), // input / search box
             Constraint::Min(0),    // notes list
             Constraint::Length(1), // status
         ])
         .split(area);
 
-    // Note input
+    draw_input_box(f, app, chunks[0]);
+    draw_notes_list(f, app, chunks[1]);
+    draw_status_bar(f, app, chunks[2]);
+}
+
+fn draw_input_box(f: &mut Frame, app: &App, area: Rect) {
+    if app.notebook_searching {
+        let display = format!("{}▌", app.notebook_search);
+        let count = app.notebook.search(&app.notebook_search).len();
+        let hit_str = if app.notebook_search.is_empty() {
+            String::new()
+        } else {
+            format!("  {} hit{}", count, if count == 1 { "" } else { "s" })
+        };
+        let p = Paragraph::new(Line::from(vec![
+            Span::styled(display, Style::default().fg(C_CYAN)),
+            Span::styled(hit_str, Style::default().fg(C_GREEN)),
+        ]))
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(C_CYAN))
+            .title(Span::styled(
+                " Search Notes  [Enter] confirm  [Esc] clear ",
+                Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD),
+            )));
+        f.render_widget(p, area);
+        return;
+    }
+
     let input_display = if app.notebook_editing {
         format!("{}_", app.notebook_input)
     } else {
@@ -35,12 +63,20 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 " Analyst Notebook ",
                 Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
             )));
-    f.render_widget(input_box, chunks[0]);
+    f.render_widget(input_box, area);
+}
 
-    // Notes list
-    let notes = app.notebook.all();
+fn draw_notes_list(f: &mut Frame, app: &App, area: Rect) {
+    // Decide which notes to show — unify to Vec<&Note>
+    let notes: Vec<&crate::analysis::notebook::Note> =
+        if !app.notebook_search.is_empty() || app.notebook_searching {
+            app.notebook.search(&app.notebook_search)
+        } else {
+            app.notebook.all().iter().collect()
+        };
+
     let scroll = app.notebook_scroll;
-    let items: Vec<ListItem> = notes.iter().skip(scroll).map(|note| {
+    let items: Vec<ListItem> = notes.iter().enumerate().skip(scroll).map(|(i, note)| {
         let ts = format_ts(note.timestamp);
         let tags = if note.tags.is_empty() {
             String::new()
@@ -50,6 +86,8 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         let ev = note.evidence.as_ref()
             .map(|e| format!(" @ {e}"))
             .unwrap_or_default();
+        let selected = i == scroll;
+        let text_color = if selected { C_FG } else { C_FG2 };
         ListItem::new(vec![
             Line::from(vec![
                 Span::styled(ts, Style::default().fg(C_FG3)),
@@ -58,29 +96,35 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             ]),
             Line::from(vec![
                 Span::styled("  ", Style::default()),
-                Span::styled(note.text.clone(), Style::default().fg(C_FG)),
+                Span::styled(note.text.clone(), Style::default().fg(text_color)),
             ]),
         ])
     }).collect();
+
+    let total = app.notebook.len();
+    let shown = notes.len();
+    let title = if !app.notebook_search.is_empty() || app.notebook_searching {
+        format!(" {shown} / {total} notes ")
+    } else {
+        format!(" {total} notes ")
+    };
 
     let list = List::new(items)
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(
-                format!(" {} notes ", notes.len()),
-                Style::default().fg(C_FG3),
-            )));
-    f.render_widget(list, chunks[1]);
+            .title(Span::styled(title, Style::default().fg(C_FG3))));
+    f.render_widget(list, area);
+}
 
-    // Status
+fn draw_status_bar(f: &mut Frame, _app: &App, area: Rect) {
     let status = Paragraph::new(Line::from(vec![
         Span::styled(
-            " [n] add note  [d] delete  [/] search  [j/k] scroll  [Esc] cancel",
+            " [n] add note  [d] delete  [/] search  [j/k] scroll  [g/G] top/bottom  [Esc] cancel",
             Style::default().fg(C_FG3),
         ),
     ])).style(Style::default().bg(C_BG2));
-    f.render_widget(status, chunks[2]);
+    f.render_widget(status, area);
 }
 
 fn format_ts(ts: f64) -> String {
