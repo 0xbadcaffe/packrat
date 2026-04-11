@@ -18,6 +18,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.scan_editing
         || app.traceroute.editing
         || app.notebook_editing
+        || app.notebook_searching
         || app.hosts_searching
         || app.hosts_tagging
         || app.graph_ui.searching
@@ -518,19 +519,54 @@ fn handle_notebook(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    if app.notebook_searching {
+        match key.code {
+            KeyCode::Esc => {
+                app.notebook_searching = false;
+                app.notebook_search.clear();
+                app.notebook_scroll = 0;
+            }
+            KeyCode::Enter => {
+                app.notebook_searching = false;
+            }
+            KeyCode::Backspace => { app.notebook_search.pop(); }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let count = app.notebook.search(&app.notebook_search).len();
+                if count > 0 {
+                    app.notebook_scroll = (app.notebook_scroll + 1).min(count - 1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.notebook_scroll = app.notebook_scroll.saturating_sub(1);
+            }
+            KeyCode::Char(c) => { app.notebook_search.push(c); app.notebook_scroll = 0; }
+            _ => {}
+        }
+        return;
+    }
+
     if global_tab_switch(app, &key) { return; }
 
     match key.code {
         KeyCode::Char('n')   => { app.notebook_editing = true; }
-        KeyCode::Down | KeyCode::Char('j') => { app.notebook_scroll = app.notebook_scroll.saturating_add(1); }
+        KeyCode::Char('/')   => { app.notebook_searching = true; app.notebook_search.clear(); app.notebook_scroll = 0; }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = app.notebook.len().saturating_sub(1);
+            app.notebook_scroll = (app.notebook_scroll + 1).min(max);
+        }
         KeyCode::Up   | KeyCode::Char('k') => { app.notebook_scroll = app.notebook_scroll.saturating_sub(1); }
         KeyCode::Char('g')   => { app.notebook_scroll = 0; }
+        KeyCode::Char('G')   => { app.notebook_scroll = app.notebook.len().saturating_sub(1); }
         KeyCode::Char('d')   => {
             // Delete the note at scroll position
-            let notes = app.notebook.all();
-            if let Some(note) = notes.get(app.notebook_scroll) {
-                let id = note.id;
+            let notes = if app.notebook_search.is_empty() {
+                app.notebook.all().iter().map(|n| n.id).collect::<Vec<_>>()
+            } else {
+                app.notebook.search(&app.notebook_search.clone()).iter().map(|n| n.id).collect::<Vec<_>>()
+            };
+            if let Some(&id) = notes.get(app.notebook_scroll) {
                 app.notebook.delete(id);
+                app.notebook_scroll = app.notebook_scroll.saturating_sub(1);
             }
         }
         KeyCode::Char('h')   => { app.show_help = true; }
