@@ -1,6 +1,6 @@
 # 🐀 packrat
 
-> A Wireshark-style network packet analyzer, **reverse engineering**, and **security research** TUI built with **Rust + Ratatui**.
+> A terminal-first network reversing and traffic forensics workbench for researchers, red teamers, and embedded/IoT analysts.
 
 > Crates.io package: `packrat-tui`  
 > Installed binary: `packrat`
@@ -44,6 +44,223 @@ packrat
 | **Traceroute** | `8` | Hop-by-hop path tracer (real `traceroute`/`tracert` under `--features real-capture`) |
 | **Security**   | `9` | Passive IDS, credential extraction, OS fingerprinting, ARP watch, DNS tunnel detection, HTTP analytics, TLS weakness, brute-force detection, vuln patterns, PCAP replay |
 | **Scanner**    | `0` | Port scanner — TCP Connect, SYN, UDP modes with service fingerprinting |
+| **Hosts**      | `H` | Host inventory: IP/MAC/OS/hostname tracking, per-host protocol breakdown |
+| **Notebook**   | `N` | Analyst notes — timestamped, searchable, tied to the current session |
+| **TLS**        | `T` | TLS session table: SNI, cipher suite, JA3/JA3S fingerprints, certificate info, alert detection |
+| **Objects**    | `O` | Carved file objects extracted from traffic — MIME type, SHA-256, size, YARA hits |
+| **Rules**      | `R` | User-defined detection rules (field conditions → alert/tag/log actions), live hit counter |
+| **Workbench**  | `W` | Hex-level protocol workbench — load any packet, cursor navigation, byte selection |
+| **Graph**      | `G` | **Operator Graph** — live engagement map linking all artifacts into a navigable correlation graph |
+
+---
+
+## Operator Graph (Tab G)
+
+The Operator Graph is the flagship analysis engine. It builds a live, time-aware engagement graph by connecting all analysis artifacts — hosts, flows, credentials, certificates, tokens, files, IOCs, alerts — into a navigable operational picture.
+
+### Graph model
+
+**Node kinds (15):** Host · Service · Flow · Stream · Identity · Credential · Token · Certificate · FileObject · Alert · IOC · RuleHit · ProtocolArtifact · FirmwareArtifact · CampaignCluster
+
+**Edge kinds (20):** CommunicatesWith · UsesService · BelongsToHost · AuthenticatedWith · PresentsCertificate · ExtractedFrom · MatchesIoc · TriggersAlert · ResolvesTo · IsAssociatedWith · CorrelatedWith · SameIdentity · LateralMovement · ExfiltratedTo · CommandAndControl · Tunnels · Encapsulates · ReusedIn · SignedBy · LinkedBy
+
+Every node and edge carries **provenance** (evidence refs back to packets, flows, alerts, IOC hits, YARA hits, notes), **timestamps** (first seen / last seen), and **hit counts**.
+
+### Modes
+
+Navigate with **`Tab`** to cycle, or jump directly:
+
+| Mode | Key | Description |
+|------|-----|-------------|
+| **Neighborhood** | (default) | Selected node + all outgoing and incoming edges, rendered as an ASCII tree |
+| **Adjacency** | `A` | Sortable table of all edges connected to the selected node |
+| **Paths** | `P` | Heuristic attack paths — credential reuse, cert reuse, IOC clusters, beacon chains, alert chains |
+| **Clusters** | `C` | Auto-discovered node clusters — cert reuse groups, IOC groups, alerted hosts, beacon pairs |
+| **Evidence** | `E` | Raw evidence refs for the selected node (packet numbers, alert IDs, IOC hits, YARA hits) |
+
+### Risk scoring
+
+Every node receives an **explainable risk score** (0–1) computed from observable signals:
+
+| Kind | Signals |
+|------|---------|
+| Host | IOC hits (+0.35), alert count (+0.25), high-severity alert (+0.15), credentials seen (+0.15), beacon-like repetition (+0.10) |
+| Credential | Cleartext (+0.40), seen from multiple sources (+0.30) |
+| Certificate | Self-signed (+0.25), reused across flows (+0.20) |
+| IOC | Base 0.50 + 0.10 per matching host |
+| Alert | CRITICAL=0.95, HIGH=0.80, MEDIUM=0.55, LOW=0.30 |
+| FileObject | YARA hits (+0.40), executable MIME (+0.25) |
+
+Scores are shown as star ratings (`★★★☆☆`) with a color-coded risk label (Critical / High / Medium / Low / Minimal) and a human-readable explanation in the detail panel.
+
+### Attack path reconstruction
+
+Packrat automatically finds suspicious multi-hop patterns:
+
+| Pattern | Description |
+|---------|-------------|
+| **Credential reuse** | Same credential authenticated from 2+ distinct hosts |
+| **Certificate reuse** | Same TLS certificate presented across 2+ flows |
+| **IOC cluster** | Host(s) matching a known-bad indicator |
+| **Alert chain** | Host with risk >0.5 that has overlapping alert + IOC, alert + credential, or IOC + credential signals |
+| **Beacon** | CommunicatesWith edge with ≥20 hits, duration ≥60 s, rate 0.05–20 pkt/s |
+
+### Pivot engine
+
+Select any node and press **`p`** to compute ranked pivot suggestions — neighbors, reuse targets, kind-specific correlation pivots — scored and displayed in the pivot bar.
+
+### Export
+
+Press **`x`** to export the current graph:
+
+```
+packrat_graph_<timestamp>.json   # full graph — nodes, edges, evidence refs
+```
+
+Export functions also available programmatically:
+
+```
+export_json(engine, path)           # full structured export
+export_csv_nodes(engine, path)      # node table for spreadsheets
+export_csv_edges(engine, path)      # edge table
+export_markdown(engine, paths, clusters, path)  # human-readable report
+```
+
+### Keyboard
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Cycle through modes |
+| `A` | Jump to Adjacency mode |
+| `P` | Jump to Paths mode |
+| `C` | Jump to Clusters mode |
+| `E` | Jump to Evidence mode |
+| `j / k` | Navigate node list / scroll paths / scroll clusters |
+| `Enter` | Select node / jump to first node of path or cluster |
+| `Backspace` | Navigate back (pivot history) |
+| `p` | Compute pivot suggestions for selected node |
+| `/` | Search node list |
+| `x` | Export graph to JSON |
+| `G` | Open Graph tab from anywhere |
+
+---
+
+## Protocol Workbench (Tab W)
+
+A hex-level byte inspector for a single packet. Load any packet from the Packets tab by pressing **`Enter`** on it.
+
+| Key | Action |
+|-----|--------|
+| `Enter` (on Packets tab) | Load selected packet into Workbench |
+| `h / j / k / l` `← ↑ ↓ →` | Move cursor byte by byte |
+| `Space` | Toggle byte selection / extend range |
+| `Esc` | Clear selection |
+| `p` | Return to Packets tab |
+
+The hex and ASCII panes scroll in sync with the cursor. Selected bytes are highlighted for copy-out or comparison.
+
+---
+
+## Hosts Tab (Tab H)
+
+Passively builds a host inventory from all observed traffic.
+
+| Column | Description |
+|--------|-------------|
+| IP | IPv4/IPv6 address |
+| MAC | Hardware address (Ethernet only) |
+| OS guess | Passive TTL + window-size fingerprint |
+| Hostname | Reverse-DNS or NBNS name if seen |
+| Packets / Bytes | Traffic volume |
+| Protocols | Protocol set seen from this host |
+| First / Last seen | Session timestamps |
+
+| Key | Action |
+|-----|--------|
+| `j / k` | Scroll |
+| `/ or s` | Search by IP or hostname |
+| `g` | Jump to top |
+| `c` | Clear host table |
+| `C` | Clear search |
+
+---
+
+## Notebook (Tab N)
+
+A plain-text analyst notebook for timestamped observations. Notes are stored in-session.
+
+| Key | Action |
+|-----|--------|
+| `n` | New note (opens inline editor) |
+| `Enter` | Save note |
+| `Esc` | Cancel |
+| `j / k` | Scroll notes |
+| `d` | Delete note at cursor |
+
+---
+
+## TLS Analysis (Tab T)
+
+Real-time TLS session tracking built from passive handshake analysis.
+
+| Column | Description |
+|--------|-------------|
+| Flow | Source → destination endpoint pair |
+| SNI | Server Name Indication (target hostname) |
+| Version | Negotiated TLS version |
+| Cipher | Selected cipher suite name |
+| JA3 | Client fingerprint hash |
+| JA3S | Server fingerprint hash |
+| Issues | Self-signed cert, expired cert, weak cipher, TLS alert |
+
+Weak cipher suites (RC4, NULL, 3DES, CBC-SHA1) are flagged in red. TLS alerts (fatal/warning) are shown with level and description codes.
+
+---
+
+## Objects (Tab O)
+
+Carved file objects extracted from reassembled TCP streams.
+
+| Column | Description |
+|--------|-------------|
+| ID | Sequential carve ID |
+| Kind | Detected MIME type (e.g., `image/png`, `application/pdf`, `application/elf`) |
+| Name | Auto-generated label with source flow |
+| Size | Byte count |
+| SHA-256 | Hex hash (computed on carve) |
+| Source | Flow or stream identifier |
+| YARA | Matching YARA rule names (if any) |
+
+Object bytes are visible in the detail view. Large objects are truncated for display.
+
+---
+
+## Rules (Tab R)
+
+User-defined detection rules evaluated per-packet. Rules use a simple condition language over packet fields.
+
+### Condition types
+
+| Condition | Example |
+|-----------|---------|
+| Protocol exists | `tcp` |
+| Field contains | `ip.src contains "192.168"` |
+| Field equals | `tcp.dstport == 22` |
+| Numeric compare | `frame.len > 1400` |
+| Boolean AND/OR/NOT | `tcp and ip.dst == 10.0.0.1` |
+
+### Actions
+
+- **Alert** — emit a named alert with severity (INFO / LOW / MEDIUM / HIGH / CRITICAL)  
+- **Tag** — attach a tag string to matching packets  
+- **Log** — write a message to the rules hit log
+
+### Controls
+
+| Key | Action |
+|-----|--------|
+| `j / k` | Scroll rule / hit list |
+| `Enter` | Toggle rule enabled/disabled |
 
 ---
 
@@ -90,49 +307,6 @@ Press **`f`** to start sending packets continuously at the configured rate. Adju
 1 pps → 10 pps → 100 pps → 1000 pps → 10 000 pps
 ```
 
-The status bar shows the live sent count:
-
-```
-● FLOODING  1000pps  sent:4823  [f] stop  [</>] rate  [C] reset
-```
-
-### Example: SYN flood simulation
-
-```
-Protocol   TCP
-Src IP     192.168.1.50
-Dst IP     10.0.0.1
-Dst Port   80
-TTL        64
-IP Flags   DF
-L4 Flags   SYN
-```
-Press `f`, then `>` to ramp up rate. Switch to the Packets tab (key `1`) to watch packets arrive.
-
-### Example: ICMP echo (ping) burst
-
-```
-Protocol   ICMP
-Src IP     10.1.2.3
-Dst IP     8.8.8.8
-TTL        128
-L4 Flags   echo-request
-Payload    48656c6c6f
-```
-Press `Space` for a single ping or `f` to ping flood.
-
-### Example: custom TCP payload
-
-```
-Protocol   TCP
-Src IP     192.168.0.10
-Dst IP     192.168.0.20
-Src Port   5555
-Dst Port   9999
-L4 Flags   PSH+ACK
-Payload    474554202f20485454502f312e310d0a
-```
-
 ---
 
 ## Security Tab (Tab 9)
@@ -163,26 +337,9 @@ Passive real-time security analysis across 10 sub-panels. Navigate with `[` / `]
 | MEDIUM | yellow | SQL injection, XSS, NOP sled |
 | LOW | green | LLMNR/NBNS probe, directory traversal |
 
-### Security tab keyboard
-
-| Key | Action |
-|-----|--------|
-| `[ / ]` or `Tab / Shift-Tab` | Cycle sub-panels |
-| `a c o w d u t b v p` | Jump directly to a sub-panel |
-| `j / k` | Scroll rows |
-| `g / G` | Top / bottom |
-| `C` | Clear all security data |
-
 ### PCAP Replay (sub-panel `p`)
 
 Load a `.pcap` file and replay it at adjustable speed into the live packet stream:
-
-```
-File:    /path/to/capture.pcap     [e] to edit
-Speed:   4x                        [<] slower  [>] faster
-Status:  ● playing  1234/5678 pkts
-[████████░░░░░░░░░░] 42%
-```
 
 | Key | Action |
 |-----|--------|
@@ -197,21 +354,11 @@ Speed steps: `0.125x → 0.25x → 0.5x → 1x → 2x → 4x → 8x → 16x → 
 
 ## Port Scanner (Tab 0)
 
-Scan a host for open ports. Three scan modes:
-
 | Mode | Description |
 |------|-------------|
 | **TCP Connect** | Full TCP handshake — works as any user, cross-platform |
 | **SYN** | Half-open SYN scan (simulated in demo mode; real with `--features real-capture` + root) |
 | **UDP** | UDP probe with service fingerprinting |
-
-### Fields and controls
-
-| Field | Example |
-|-------|---------|
-| Target | `192.168.1.1` `scanme.nmap.org` |
-| Port range | `1` – `1024` |
-| Mode | Tab through: TCP Connect → SYN → UDP |
 
 | Key | Action |
 |-----|--------|
@@ -223,26 +370,6 @@ Scan a host for open ports. Three scan modes:
 | `PgDn / PgUp` | Scroll results |
 | `C` | Clear results |
 
-### Result columns
-
-```
-Port    State     Service            Banner
-22      open      SSH                OpenSSH 8.9p1 Ubuntu
-80      open      HTTP               Apache/2.4.54
-443     open      HTTPS
-8080    filtered  HTTP-Alt
-3306    closed    MySQL
-```
-
-### Example: scan a local host
-
-```
-Target     192.168.1.1
-Port range 1 – 65535
-Mode       TCP Connect
-```
-Press `Space` to start. Results populate in real time as ports are probed.
-
 ---
 
 ## Traceroute (Tab 8)
@@ -250,8 +377,6 @@ Press `Space` to start. Results populate in real time as ports are probed.
 Type a hostname or IP, press `Enter` to trace:
 
 ```
-Target: 8.8.8.8   [Enter] start  [Esc] clear  [j/k] scroll
-
 Hop  IP               RTT        Hostname
   1  192.168.1.1      1.2 ms     router.local
   2  10.0.0.1         4.8 ms     -
@@ -260,13 +385,11 @@ Hop  IP               RTT        Hostname
   5  8.8.8.8          11.3 ms    dns.google
 ```
 
-Under `--features real-capture` the system `traceroute` (Linux/macOS) or `tracert` (Windows) is used. Falls back to simulation automatically if the command is unavailable.
+Under `--features real-capture` the system `traceroute` (Linux/macOS) or `tracert` (Windows) is used. Falls back to simulation automatically if unavailable.
 
 ---
 
 ## Flows Tab (Tab 6)
-
-Tracks all bidirectional TCP/UDP flows and flags suspicious behavior automatically:
 
 | Badge | Meaning |
 |-------|---------|
@@ -280,15 +403,6 @@ Tracks all bidirectional TCP/UDP flows and flags suspicious behavior automatical
 | `b / p / t / s` | Sort by bytes / packets / time / beacon score |
 | `f` | Follow Stream overlay (TCP payload, both directions) |
 | `Enter` | Jump to filtered Packets view for this flow |
-
-### Follow Stream
-
-Shows the TCP conversation as printable ASCII, color-coded by direction (→ initiator, ← responder):
-
-```
-→ GET /secret HTTP/1.1..Host: 10.0.0.1..
-← HTTP/1.1 200 OK..Content-Type: text/plain..password=hunter2
-```
 
 ---
 
@@ -335,7 +449,7 @@ Shows the TCP conversation as printable ASCII, color-coded by direction (→ ini
 | SSDP / NBNS | 1900 / 137 | Discovery and NetBIOS |
 | OSPF / EIGRP / RIP | 89 / 88 / 520 | Routing protocols |
 | PIM / IGMP | — | Multicast |
-| TFTP / TFTP | 69 | Trivial file transfer |
+| TFTP | 69 | Trivial file transfer |
 
 ### OT / Industrial protocols
 
@@ -357,7 +471,7 @@ Shows the TCP conversation as printable ASCII, color-coded by direction (→ ini
 
 ## Dissectors
 
-packrat supports three levels of protocol dissection — from zero-config scripting to compiled-in built-ins.
+packrat supports three levels of protocol dissection.
 
 ### Lua dissectors (Wireshark-compatible, hot-reload)
 
@@ -498,8 +612,6 @@ display = "dec"
 
 Extracts printable ASCII runs from packet payloads and classifies them using a built-in RE/security dictionary.
 
-**Stats bar:** total strings · sensitive count (red) · average entropy · most common category
-
 **Entropy column:**
 - Low `0–3` — human-readable, good RE target
 - Medium `3–5` — mixed content
@@ -539,20 +651,9 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 
 ## PCAP Recording and Replay
 
-**Record:**
+**Record:** Press **`w`** at any time to start writing a `.pcap` file (named `packrat_<timestamp>.pcap` in the current directory). Press **`w`** again to flush and close.
 
-Press **`w`** at any time to start writing a `.pcap` file (named `packrat_<timestamp>.pcap` in the current directory). Press **`w`** again to flush and close.
-
-**Replay:**
-
-Go to Security tab → Replay sub-panel (`9` then `p`):
-
-1. Press `e`, type the path to a `.pcap` file, press `Enter`
-2. Press `Enter` again to load
-3. Press `Space` to start playback
-4. Adjust speed with `<` / `>`
-
-Replayed packets flow into the live packet list, trigger security analysis, and can be recorded to a new pcap.
+**Replay:** Go to Security tab → Replay sub-panel (`9` then `p`). Replayed packets flow into the live packet list, trigger all analysis engines (including the Operator Graph), and can be recorded to a new pcap.
 
 ---
 
@@ -562,11 +663,12 @@ Replayed packets flow into the live packet list, trigger security analysis, and 
 
 | Key | Action |
 |-----|--------|
-| `1`–`0` | Switch tabs |
+| `1`–`0` | Switch to tabs 1–10 |
+| `H` `N` `T` `O` `R` `W` `G` | Switch to Hosts / Notebook / TLS / Objects / Rules / Workbench / Graph |
 | `Space` | Start/stop capture |
 | `j / k` `↑ ↓` | Navigate |
 | `g / G` | Top / bottom |
-| `/` | Filter (or string search on Strings tab) |
+| `/` | Filter (or search within the active tab) |
 | `i` | Pick interface |
 | `w` | Toggle PCAP recording |
 | `r` | Hot-reload Lua plugins |
@@ -574,7 +676,20 @@ Replayed packets flow into the live packet list, trigger security analysis, and 
 | `C` | Clear |
 | `q` | Quit |
 
-### Craft tab (7)
+### Operator Graph (G)
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Cycle modes |
+| `A` `P` `C` `E` | Jump to Adjacency / Paths / Clusters / Evidence |
+| `j / k` | Navigate list / scroll |
+| `Enter` | Select node / follow path or cluster |
+| `Backspace` | Navigate back (pivot history) |
+| `p` | Compute pivots for selected node |
+| `/` | Search node list |
+| `x` | Export graph to JSON |
+
+### Craft (7)
 
 | Key | Action |
 |-----|--------|
@@ -585,7 +700,7 @@ Replayed packets flow into the live packet list, trigger security analysis, and 
 | `< / >` | Decrease / increase flood rate |
 | `C` | Stop flood, clear result |
 
-### Security tab (9)
+### Security (9)
 
 | Key | Action |
 |-----|--------|
@@ -595,7 +710,7 @@ Replayed packets flow into the live packet list, trigger security analysis, and 
 | `g / G` | Top / bottom |
 | `C` | Clear all |
 
-### Flows tab (6)
+### Flows (6)
 
 | Key | Action |
 |-----|--------|
@@ -609,9 +724,6 @@ Replayed packets flow into the live packet list, trigger security analysis, and 
 
 ```
 tcp                   # protocol name
-dns
-http
-
 ip.src==192.168.1.1   # source IP
 ip.dst==8.8.8.8       # destination IP
 tcp.port==443         # port (src or dst)
