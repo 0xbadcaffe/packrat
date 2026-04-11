@@ -724,6 +724,13 @@ impl App {
         // Host inventory
         self.hosts.update(&pkt);
 
+        // Sync OS guess from security engine → host inventory
+        if let Some(os) = self.security.os_guess_for(&pkt.src) {
+            if self.hosts.get(&pkt.src).and_then(|h| h.os_guess.as_deref()).is_none() {
+                self.hosts.set_os_guess(&pkt.src, os);
+            }
+        }
+
         // Stream reassembly
         self.streams.ingest(&pkt);
 
