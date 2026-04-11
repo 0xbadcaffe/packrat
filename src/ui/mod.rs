@@ -137,6 +137,7 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![Span::styled("R ", Style::default().fg(C_YELLOW)), Span::raw("Rules")]),
         Line::from(vec![Span::styled("W ", Style::default().fg(C_YELLOW)), Span::raw("Workbench")]),
         Line::from(vec![Span::styled("G ", Style::default().fg(C_YELLOW)), Span::raw("Graph")]),
+        Line::from(vec![Span::styled("D ", Style::default().fg(C_YELLOW)), Span::raw("Diff")]),
     ];
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
