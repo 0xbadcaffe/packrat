@@ -14,6 +14,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.filter.active
         || app.craft.editing
         || app.replay_editing
+        || app.pcap_import_editing
         || app.scan_editing
         || app.traceroute.editing
         || app.notebook_editing
@@ -49,6 +50,11 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
+    if app.pcap_import_editing {
+        handle_pcap_import(app, key);
+        return false;
+    }
+
     if app.picking_iface {
         handle_iface_picker(app, key);
     } else if app.strings_search_active {
@@ -75,6 +81,12 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         // Diff baseline snapshot with 'B' from any tab
         if key.code == KeyCode::Char('B') {
             app.diff_snapshot_baseline();
+            return false;
+        }
+
+        // PCAP instant import with 'L' from any tab
+        if key.code == KeyCode::Char('L') {
+            app.pcap_import_editing = true;
             return false;
         }
 
@@ -162,6 +174,24 @@ fn handle_search_palette(app: &mut App, key: KeyEvent) {
             app.run_search();
         }
 
+        _ => {}
+    }
+}
+
+fn handle_pcap_import(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.pcap_import_editing = false;
+            app.pcap_import_path.clear();
+        }
+        KeyCode::Enter => {
+            let path = app.pcap_import_path.clone();
+            app.pcap_import_editing = false;
+            app.pcap_import_path.clear();
+            app.load_pcap_instant(&path);
+        }
+        KeyCode::Backspace => { app.pcap_import_path.pop(); }
+        KeyCode::Char(c)   => { app.pcap_import_path.push(c); }
         _ => {}
     }
 }

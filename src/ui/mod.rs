@@ -55,6 +55,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     if app.autopsy_state.is_some() {
         autopsy_overlay::draw(f, app);
     }
+
+    if app.pcap_import_editing {
+        draw_pcap_import_overlay(f, app);
+    }
 }
 
 fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
@@ -289,4 +293,44 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         hints,
     ]);
     f.render_widget(Paragraph::new(line).style(Style::default().bg(C_BG2)), area);
+}
+
+fn draw_pcap_import_overlay(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let popup = Rect {
+        x: area.width / 6,
+        y: area.height / 2 - 2,
+        width: area.width * 2 / 3,
+        height: 5,
+    };
+
+    f.render_widget(Clear, popup);
+
+    let content = Paragraph::new(vec![
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("  Path: ", Style::default().fg(C_FG2)),
+            Span::styled(
+                format!("{}_", app.pcap_import_path),
+                Style::default().fg(C_CYAN),
+            ),
+        ]),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled(
+                "  [Enter] load   [Esc] cancel",
+                Style::default().fg(C_FG3),
+            ),
+        ]),
+    ])
+    .block(Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(C_YELLOW))
+        .title(Span::styled(
+            " Load PCAP File (instant import) ",
+            Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
+        )))
+    .style(Style::default().bg(C_BG2));
+    f.render_widget(content, popup);
 }

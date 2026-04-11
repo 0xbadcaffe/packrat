@@ -137,7 +137,10 @@ pub struct App {
     pub security_tab: SecuritySubTab,
     pub security_scroll: usize,
     pub scanner_scroll: usize,
-    pub replay_editing: bool,
+    pub replay_editing:       bool,
+    /// Whether the PCAP instant-import path input is active.
+    pub pcap_import_editing:  bool,
+    pub pcap_import_path:     String,
     pub scan_editing: bool,
     // ─── Phase 1–4 analysis state ──────────────────────────────────────────────
     pub hosts:           HostInventory,
@@ -251,7 +254,9 @@ impl App {
             security_tab: SecuritySubTab::Ids,
             security_scroll: 0,
             scanner_scroll: 0,
-            replay_editing: false,
+            replay_editing:      false,
+            pcap_import_editing: false,
+            pcap_import_path:    String::new(),
             scan_editing: false,
             hosts:            HostInventory::default(),
             tag_store:        TagStore::default(),
@@ -327,6 +332,24 @@ impl App {
             self.set_status(format!("IOC: {count} indicators loaded"));
         } else {
             self.set_status(format!("IOC: {count} indicators, {} error(s)", errs.len()));
+        }
+    }
+
+    /// Load a PCAP file and ingest all packets instantly into the live capture pipeline.
+    /// This is suitable for offline analysis; does not affect replay state.
+    pub fn load_pcap_instant(&mut self, path: &str) {
+        let path_buf = std::path::PathBuf::from(path.trim());
+        match crate::pcap_replay::read_pcap(&path_buf) {
+            Ok(packets) => {
+                let count = packets.len();
+                for pkt in packets {
+                    self.ingest_packet_inner(pkt);
+                }
+                self.set_status(format!("Loaded {} packets from {}", count, path_buf.file_name().and_then(|n| n.to_str()).unwrap_or(path)));
+            }
+            Err(e) => {
+                self.set_status(format!("PCAP load error: {e}"));
+            }
         }
     }
 
