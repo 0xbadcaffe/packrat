@@ -1,5 +1,6 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crate::app::{App, SecuritySubTab};
+use crate::analysis::operator_graph::GraphUiModeState;
 use crate::scan::{ScanField, ScanMode};
 use crate::tabs::Tab;
 
@@ -15,7 +16,8 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.scan_editing
         || app.traceroute.editing
         || app.notebook_editing
-        || app.hosts_searching;
+        || app.hosts_searching
+        || app.graph_ui.searching;
 
     if !in_text_mode && is_quit(&key) { return true; }
 
@@ -39,14 +41,15 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         handle_strings_search(app, key);
     } else {
         match app.active_tab {
-            Tab::Craft      => handle_craft(app, key),
-            Tab::Traceroute => handle_traceroute(app, key),
-            Tab::Security   => handle_security(app, key),
-            Tab::Scanner    => handle_scanner(app, key),
-            Tab::Hosts      => handle_hosts(app, key),
-            Tab::Notebook   => handle_notebook(app, key),
-            Tab::Workbench  => handle_workbench(app, key),
-            _               => handle_main(app, key),
+            Tab::Craft         => handle_craft(app, key),
+            Tab::Traceroute    => handle_traceroute(app, key),
+            Tab::Security      => handle_security(app, key),
+            Tab::Scanner       => handle_scanner(app, key),
+            Tab::Hosts         => handle_hosts(app, key),
+            Tab::Notebook      => handle_notebook(app, key),
+            Tab::Workbench     => handle_workbench(app, key),
+            Tab::OperatorGraph => handle_graph(app, key),
+            _                  => handle_main(app, key),
         }
     }
     false
@@ -74,7 +77,8 @@ fn global_tab_switch(app: &mut App, key: &KeyEvent) -> bool {
         KeyCode::Char('T') => { app.active_tab = Tab::TlsAnalysis; true }
         KeyCode::Char('O') => { app.active_tab = Tab::Objects;     true }
         KeyCode::Char('R') => { app.active_tab = Tab::Rules;       true }
-        KeyCode::Char('W') => { app.active_tab = Tab::Workbench;   true }
+        KeyCode::Char('W') => { app.active_tab = Tab::Workbench;       true }
+        KeyCode::Char('G') => { app.active_tab = Tab::OperatorGraph;   true }
         _ => false,
     }
 }
@@ -417,17 +421,161 @@ fn handle_workbench(app: &mut App, key: KeyEvent) {
         KeyCode::Char('k') | KeyCode::Up    => app.workbench.cursor_up(HEX_COLS),
         KeyCode::Char('j') | KeyCode::Down  => app.workbench.cursor_down(HEX_COLS),
         KeyCode::Char(' ')                  => app.workbench.toggle_selection(),
-        KeyCode::Enter => {
-            // Load selected packet into workbench
-            if let Some(pkt) = app.selected_packet() {
-                let pkt = pkt.clone();
-                app.workbench.load_packet(&pkt);
-                app.active_tab = Tab::Workbench;
+        KeyCode::Esc                        => { app.workbench.sel_start = None; }
+        // Go back to Packets tab to pick a different packet
+        KeyCode::Char('p')                  => { app.active_tab = Tab::Packets; }
+        _ => {}
+    }
+}
+
+// ─── Operator Graph tab ───────────────────────────────────────────────────────
+
+fn handle_graph(app: &mut App, key: KeyEvent) {
+    // Search input mode
+    if app.graph_ui.searching {
+        match key.code {
+            KeyCode::Esc   => { app.graph_ui.searching = false; }
+            KeyCode::Enter => { app.graph_ui.searching = false; }
+            KeyCode::Backspace => { app.graph_ui.search.pop(); }
+            KeyCode::Char(c)   => { app.graph_ui.search.push(c); }
+            _ => {}
+        }
+        return;
+    }
+
+    if global_tab_switch(app, &key) { return; }
+
+    match key.code {
+        // Mode cycling
+        KeyCode::Tab => {
+            app.graph_ui.mode = app.graph_ui.mode.next();
+        }
+
+        // Node list navigation
+        KeyCode::Down | KeyCode::Char('j') => {
+            match app.graph_ui.mode {
+                GraphUiModeState::Neighborhood | GraphUiModeState::Adjacency => {
+                    app.graph_ui.list_scroll = app.graph_ui.list_scroll.saturating_add(1);
+                }
+                GraphUiModeState::Paths => {
+                    let max = app.operator_graph.paths.len().saturating_sub(1);
+                    if app.graph_ui.path_selected < max {
+                        app.graph_ui.path_selected += 1;
+                    }
+                }
+                GraphUiModeState::Clusters => {
+                    let max = app.operator_graph.clusters.len().saturating_sub(1);
+                    if app.graph_ui.cluster_selected < max {
+                        app.graph_ui.cluster_selected += 1;
+                    }
+                }
+                GraphUiModeState::Evidence => {
+                    app.graph_ui.evidence_scroll = app.graph_ui.evidence_scroll.saturating_add(1);
+                }
             }
         }
-        KeyCode::Esc => {
-            app.workbench.sel_start = None;
+        KeyCode::Up | KeyCode::Char('k') => {
+            match app.graph_ui.mode {
+                GraphUiModeState::Neighborhood | GraphUiModeState::Adjacency => {
+                    app.graph_ui.list_scroll = app.graph_ui.list_scroll.saturating_sub(1);
+                }
+                GraphUiModeState::Paths => {
+                    app.graph_ui.path_selected = app.graph_ui.path_selected.saturating_sub(1);
+                }
+                GraphUiModeState::Clusters => {
+                    app.graph_ui.cluster_selected = app.graph_ui.cluster_selected.saturating_sub(1);
+                }
+                GraphUiModeState::Evidence => {
+                    app.graph_ui.evidence_scroll = app.graph_ui.evidence_scroll.saturating_sub(1);
+                }
+            }
         }
+
+        // Select node
+        KeyCode::Enter => {
+            match app.graph_ui.mode {
+                GraphUiModeState::Neighborhood | GraphUiModeState::Adjacency => {
+                    // Select the highlighted node in the list
+                    let filter = app.graph_ui.filter.clone();
+                    let search = app.graph_ui.search.clone();
+                    let snapshot = app.operator_graph.filtered_snapshot(&filter);
+                    let visible: Vec<_> = {
+                        let q = search.to_lowercase();
+                        snapshot.node_ids.iter().filter_map(|&id| {
+                            app.operator_graph.get_node(id)
+                        }).filter(|n| {
+                            q.is_empty() || n.label.to_lowercase().contains(&q)
+                        }).collect()
+                    };
+                    let scroll = app.graph_ui.list_scroll;
+                    if let Some(node) = visible.get(scroll) {
+                        let id = node.id;
+                        if let Some(prev) = app.graph_ui.selected_node {
+                            app.graph_ui.pivot_history.push(prev);
+                        }
+                        app.graph_ui.selected_node = Some(id);
+                        app.graph_ui.neighbor_scroll = 0;
+                        app.graph_ui.detail_scroll = 0;
+                    }
+                }
+                GraphUiModeState::Paths => {
+                    // Jump to first node of selected path
+                    if let Some(path) = app.operator_graph.paths.get(app.graph_ui.path_selected) {
+                        if let Some(&node_id) = path.nodes.first() {
+                            app.graph_ui.selected_node = Some(node_id);
+                            app.graph_ui.mode = GraphUiModeState::Neighborhood;
+                        }
+                    }
+                }
+                GraphUiModeState::Clusters => {
+                    // Jump to first member of selected cluster
+                    if let Some(cluster) = app.operator_graph.clusters.get(app.graph_ui.cluster_selected) {
+                        if let Some(&node_id) = cluster.members.first() {
+                            app.graph_ui.selected_node = Some(node_id);
+                            app.graph_ui.mode = GraphUiModeState::Neighborhood;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Navigate back (pivot history)
+        KeyCode::Backspace => {
+            if let Some(prev) = app.graph_ui.pivot_history.pop() {
+                app.graph_ui.selected_node = Some(prev);
+            }
+        }
+
+        // Jump to paths/clusters mode
+        KeyCode::Char('A') => { app.graph_ui.mode = GraphUiModeState::Adjacency; }
+        KeyCode::Char('P') | KeyCode::Char('a') => { app.graph_ui.mode = GraphUiModeState::Paths; }
+        KeyCode::Char('C') => { app.graph_ui.mode = GraphUiModeState::Clusters; }
+        KeyCode::Char('E') => { app.graph_ui.mode = GraphUiModeState::Evidence; }
+
+        // Compute pivots for selected node
+        KeyCode::Char('p') => {
+            if let Some(node_id) = app.graph_ui.selected_node {
+                app.operator_graph.recompute_pivots(node_id);
+            }
+        }
+
+        // Search
+        KeyCode::Char('/') => {
+            app.graph_ui.searching = true;
+        }
+
+        // Export
+        KeyCode::Char('x') => {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default().as_secs();
+            let path = format!("packrat_graph_{}.json", ts);
+            let _ = crate::storage::graph_store::export_json(&app.operator_graph, &path);
+        }
+
+        KeyCode::Char('h') => { app.show_help = true; }
+
         _ => {}
     }
 }
@@ -474,6 +622,13 @@ fn handle_main(app: &mut App, key: KeyEvent) {
                 app.strings_select();
             } else if matches!(app.active_tab, Tab::Flows) {
                 app.flows_jump_to_packets();
+            } else if matches!(app.active_tab, Tab::Packets) {
+                // Open selected packet in the protocol workbench
+                if let Some(pkt) = app.selected_packet() {
+                    let pkt = pkt.clone();
+                    app.workbench.load_packet(&pkt);
+                    app.active_tab = Tab::Workbench;
+                }
             }
         }
         KeyCode::Esc => {

@@ -9,3 +9,8 @@ pub mod carving;
 pub mod protocol_workbench;
 pub mod diff;
 pub mod jobs;
+pub mod operator_graph;
+pub mod pivot;
+pub mod path_reconstruction;
+pub mod graph_scoring;
+pub mod graph_cluster;

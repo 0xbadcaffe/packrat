@@ -126,6 +126,7 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![Span::styled("O ", Style::default().fg(C_YELLOW)), Span::raw("Objects")]),
         Line::from(vec![Span::styled("R ", Style::default().fg(C_YELLOW)), Span::raw("Rules")]),
         Line::from(vec![Span::styled("W ", Style::default().fg(C_YELLOW)), Span::raw("Workbench")]),
+        Line::from(vec![Span::styled("G ", Style::default().fg(C_YELLOW)), Span::raw("Graph")]),
     ];
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
@@ -159,7 +160,8 @@ fn draw_workspace(f: &mut Frame, app: &App, area: Rect) {
         Tab::TlsAnalysis => tabs::tls_tab::draw(f, app, area),
         Tab::Objects     => tabs::objects::draw(f, app, area),
         Tab::Rules       => tabs::rules::draw(f, app, area),
-        Tab::Workbench   => tabs::workbench::draw(f, app, area),
+        Tab::Workbench     => tabs::workbench::draw(f, app, area),
+        Tab::OperatorGraph => tabs::operator_graph::draw(f, app, area),
     }
 }
 
@@ -240,7 +242,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         sec_span,
         Span::styled("│ ", Style::default().fg(C_FG3)),
         Span::styled(
-            "j/k:nav  Space:cap  /:filter  r:reload-lua  1-0:tabs  q:quit",
+            "j/k:nav  Enter:workbench  Space:cap  /:filter  r:reload-lua  1-0/H-W:tabs  q:quit",
             Style::default().fg(C_FG3),
         ),
     ]);

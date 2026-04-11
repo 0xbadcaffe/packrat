@@ -8,6 +8,7 @@ use crate::analysis::display_filter::DisplayFilter;
 use crate::analysis::ioc::IocEngine;
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::notebook::Notebook;
+use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
 use crate::analysis::protocol_workbench::ProtocolWorkbench;
 use crate::analysis::rules::RuleEngine;
 use crate::analysis::stream::StreamAssembler;
@@ -140,6 +141,11 @@ pub struct App {
     pub objects_scroll:  usize,
     // Rules UI state
     pub rules_scroll:    usize,
+    // ─── Operator graph ────────────────────────────────────────────────────────
+    pub operator_graph:  OperatorGraphEngine,
+    pub graph_ui:        GraphUiState,
+    /// Tick counter used to throttle graph recomputation.
+    graph_tick_counter:  u32,
 }
 
 impl App {
@@ -220,6 +226,9 @@ impl App {
             tls_scroll:       0,
             objects_scroll:   0,
             rules_scroll:     0,
+            operator_graph:   OperatorGraphEngine::default(),
+            graph_ui:         GraphUiState::default(),
+            graph_tick_counter: 0,
         }
     }
 
@@ -388,6 +397,19 @@ impl App {
         self.rate_this_sec += 1;
         self.flow_tracker.update(&pkt);
 
+        // Graph ingestion — extract before pkt is moved
+        {
+            let src   = pkt.src.clone();
+            let dst   = pkt.dst.clone();
+            let proto = pkt.protocol.clone();
+            let sport = pkt.src_port;
+            let dport = pkt.dst_port;
+            let ts    = pkt.timestamp;
+            let bytes = pkt.length as u64;
+            let no    = pkt.no;
+            self.operator_graph.on_packet(&src, &dst, &proto, sport, dport, ts, bytes, no);
+        }
+
         // Security analysis
         self.security.update(&pkt);
 
@@ -484,6 +506,104 @@ impl App {
             self.rate_history.remove(0);
             self.rate_this_sec = 0;
         }
+
+        self.graph_tick();
+    }
+
+    /// Incrementally sync all analysis subsystems into the operator graph,
+    /// then recompute scores / paths / clusters on a throttled schedule.
+    fn graph_tick(&mut self) {
+        self.graph_tick_counter = self.graph_tick_counter.wrapping_add(1);
+
+        // ── Sync IDS alerts ──────────────────────────────────────────────────
+        let new_alerts = self.security.ids_alerts.len();
+        if new_alerts > self.graph_ui.synced_alerts {
+            for alert in &self.security.ids_alerts[self.graph_ui.synced_alerts..new_alerts] {
+                self.operator_graph.on_ids_alert(
+                    alert.signature,
+                    &alert.severity.to_string(),
+                    "",   // IdsAlert doesn't carry src/dst IP here — use empty
+                    "",
+                    alert.pkt_no,
+                    0.0,  // no timestamp on IdsAlert
+                );
+            }
+            self.graph_ui.synced_alerts = new_alerts;
+        }
+
+        // ── Sync IOC hits ────────────────────────────────────────────────────
+        let new_ioc = self.ioc_engine.hits.len();
+        if new_ioc > self.graph_ui.synced_ioc_hits {
+            for hit in &self.ioc_engine.hits[self.graph_ui.synced_ioc_hits..new_ioc] {
+                self.operator_graph.on_ioc_hit(
+                    &hit.ioc.value,
+                    &hit.ioc.kind.to_string(),
+                    &hit.context,
+                    hit.pkt_no,
+                    hit.ts,
+                    "",
+                );
+            }
+            self.graph_ui.synced_ioc_hits = new_ioc;
+        }
+
+        // ── Sync credentials ─────────────────────────────────────────────────
+        let new_creds = self.credentials.len();
+        if new_creds > self.graph_ui.synced_creds {
+            for cred in &self.credentials[self.graph_ui.synced_creds..new_creds] {
+                // CredentialHit: proto, kind, value, pkt_no — no IP fields
+                self.operator_graph.on_credential(
+                    Some(cred.kind),
+                    &cred.proto,
+                    true,
+                    "",
+                    "",
+                    0.0,
+                    cred.pkt_no,
+                );
+            }
+            self.graph_ui.synced_creds = new_creds;
+        }
+
+        // ── Sync rule hits ───────────────────────────────────────────────────
+        let new_rules = self.rule_engine.hits.len();
+        if new_rules > self.graph_ui.synced_rule_hits {
+            for hit in &self.rule_engine.hits[self.graph_ui.synced_rule_hits..new_rules] {
+                self.operator_graph.on_rule_hit(
+                    &hit.rule_id,
+                    &hit.rule_name,
+                    &hit.message,
+                    hit.pkt_no,
+                    hit.ts,
+                );
+            }
+            self.graph_ui.synced_rule_hits = new_rules;
+        }
+
+        // ── Sync carved objects ──────────────────────────────────────────────
+        let new_objects = self.carved_objects.len();
+        if new_objects > self.graph_ui.synced_objects {
+            for obj in &self.carved_objects[self.graph_ui.synced_objects..new_objects] {
+                self.operator_graph.on_carved_object(
+                    obj.id,
+                    &obj.kind,
+                    &obj.sha256,
+                    &obj.source,
+                    obj.data.len(),
+                    0.0,
+                );
+            }
+            self.graph_ui.synced_objects = new_objects;
+        }
+
+        // ── Periodic recomputation (every 30 ticks ≈ 3s at 10Hz) ─────────────
+        if self.graph_tick_counter % 30 == 0 {
+            self.operator_graph.recompute_scores();
+        }
+        if self.graph_tick_counter % 60 == 0 {
+            self.operator_graph.recompute_paths();
+            self.operator_graph.recompute_clusters();
+        }
     }
 
     pub fn toggle_capture(&mut self) { self.capturing = !self.capturing; }
@@ -507,6 +627,9 @@ impl App {
         self.ioc_engine.clear_hits();
         self.rule_engine.clear_hits();
         self.carved_objects.clear();
+        self.operator_graph.clear();
+        self.graph_ui = GraphUiState::default();
+        self.graph_tick_counter = 0;
     }
 
     pub fn toggle_recording(&mut self) {

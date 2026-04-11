@@ -13,7 +13,6 @@
 //!   tag == "suspicious"
 //!   marked == true
 
-use std::collections::VecDeque;
 use crate::net::packet::Packet;
 
 // ─── AST ──────────────────────────────────────────────────────────────────────
