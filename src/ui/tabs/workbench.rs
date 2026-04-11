@@ -42,11 +42,13 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     draw_annotations(f, app, content_chunks[1]);
 
     // Status
+    let status_text = if app.workbench.is_empty() {
+        " Go to  1 Packets  tab, select a packet, press  Enter  to open it here"
+    } else {
+        " [hjkl] cursor  [Space] select range  [Esc] clear sel  [p] back to packets"
+    };
     let status = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " [Enter] load selected pkt  [hjkl] cursor  [Space] select  [a] annotate  [x] edit byte",
-            Style::default().fg(C_FG3),
-        ),
+        Span::styled(status_text, Style::default().fg(C_FG3)),
     ])).style(Style::default().bg(C_BG2));
     f.render_widget(status, chunks[2]);
 }

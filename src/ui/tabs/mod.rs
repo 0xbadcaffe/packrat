@@ -14,3 +14,5 @@ pub mod tls_tab;
 pub mod traceroute;
 pub mod visualize;
 pub mod workbench;
+pub mod operator_graph;
+pub mod graph_panels;
