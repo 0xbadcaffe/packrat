@@ -27,6 +27,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         SecuritySubTab::TlsWeakness  => draw_tls(f, app, chunks[1]),
         SecuritySubTab::BruteForce   => draw_brute(f, app, chunks[1]),
         SecuritySubTab::VulnHits     => draw_vuln(f, app, chunks[1]),
+        SecuritySubTab::IocHits      => draw_ioc_hits(f, app, chunks[1]),
         SecuritySubTab::Replay       => draw_replay(f, app, chunks[1]),
     }
 }
@@ -34,7 +35,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
     let labels = [
         "IDS", "Credentials", "OS Fingerprint", "ARP Watch",
-        "DNS Tunnel", "HTTP", "TLS", "Brute Force", "Vulns", "Replay",
+        "DNS Tunnel", "HTTP", "TLS", "Brute Force", "Vulns", "IOC Hits", "Replay",
     ];
     let idx = match app.security_tab {
         SecuritySubTab::Ids           => 0,
@@ -46,7 +47,8 @@ fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
         SecuritySubTab::TlsWeakness   => 6,
         SecuritySubTab::BruteForce    => 7,
         SecuritySubTab::VulnHits      => 8,
-        SecuritySubTab::Replay        => 9,
+        SecuritySubTab::IocHits       => 9,
+        SecuritySubTab::Replay        => 10,
     };
     let titles: Vec<Line> = labels.iter().map(|l| Line::from(*l)).collect();
     let tabs = Tabs::new(titles)
@@ -475,4 +477,49 @@ fn render_hint(f: &mut Frame, area: Rect, hint: &str) {
         Paragraph::new(Span::styled(hint, Style::default().fg(C_FG3))),
         hint_area,
     );
+}
+
+// ─── IOC Hits ─────────────────────────────────────────────────────────────────
+
+fn draw_ioc_hits(f: &mut Frame, app: &App, area: Rect) {
+    let hits = &app.ioc_engine.hits;
+    let scroll = app.security_scroll;
+
+    let header = Row::new(vec![
+        cell_hdr("Pkt#"), cell_hdr("Kind"), cell_hdr("IOC Value"), cell_hdr("Context"), cell_hdr("Description"),
+    ]).height(1);
+
+    let rows: Vec<Row> = hits.iter().skip(scroll)
+        .take(area.height.saturating_sub(4) as usize)
+        .map(|h| {
+            let kind_style = Style::default().fg(match h.ioc.kind {
+                crate::analysis::ioc::IocKind::Ip     => C_RED,
+                crate::analysis::ioc::IocKind::Domain => C_ORANGE,
+                crate::analysis::ioc::IocKind::Hash   => C_YELLOW,
+                crate::analysis::ioc::IocKind::Url    => C_CYAN,
+                crate::analysis::ioc::IocKind::Email  => C_FG2,
+            }).add_modifier(Modifier::BOLD);
+            Row::new(vec![
+                Cell::from(format!("#{}", h.pkt_no)).style(Style::default().fg(C_FG3)),
+                Cell::from(h.ioc.kind.to_string()).style(kind_style),
+                Cell::from(h.ioc.value.clone()).style(Style::default().fg(C_RED)),
+                Cell::from(h.context.clone()).style(Style::default().fg(C_CYAN)),
+                Cell::from(h.ioc.description.clone()).style(Style::default().fg(C_FG2)),
+            ])
+        }).collect();
+
+    let title = format!(" IOC Hits — {} hits  {} indicators loaded ", hits.len(), app.ioc_engine.ioc_count());
+    let table = Table::new(rows, [
+        Constraint::Length(8),
+        Constraint::Length(8),
+        Constraint::Length(22),
+        Constraint::Length(16),
+        Constraint::Min(20),
+    ])
+    .header(header)
+    .block(block_titled(&title))
+    .style(Style::default().bg(C_BG));
+    f.render_widget(table, area);
+
+    render_hint(f, area, "[j/k] scroll  [I] reload IOC feeds  [C] clear");
 }

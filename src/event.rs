@@ -291,6 +291,7 @@ fn handle_security(app: &mut App, key: KeyEvent) {
         KeyCode::Char('t') => app.security_tab = SecuritySubTab::TlsWeakness,
         KeyCode::Char('b') => app.security_tab = SecuritySubTab::BruteForce,
         KeyCode::Char('v') => app.security_tab = SecuritySubTab::VulnHits,
+        KeyCode::Char('i') => app.security_tab = SecuritySubTab::IocHits,
         KeyCode::Char('p') => app.security_tab = SecuritySubTab::Replay,
         // Navigation
         KeyCode::Down | KeyCode::Char('j') => {

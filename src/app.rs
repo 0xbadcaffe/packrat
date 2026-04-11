@@ -50,6 +50,7 @@ pub enum SecuritySubTab {
     TlsWeakness,
     BruteForce,
     VulnHits,
+    IocHits,
     Replay,
 }
 
@@ -1224,7 +1225,8 @@ impl App {
             SecuritySubTab::HttpAnalytics => SecuritySubTab::TlsWeakness,
             SecuritySubTab::TlsWeakness   => SecuritySubTab::BruteForce,
             SecuritySubTab::BruteForce    => SecuritySubTab::VulnHits,
-            SecuritySubTab::VulnHits      => SecuritySubTab::Replay,
+            SecuritySubTab::VulnHits      => SecuritySubTab::IocHits,
+            SecuritySubTab::IocHits       => SecuritySubTab::Replay,
             SecuritySubTab::Replay        => SecuritySubTab::Ids,
         };
     }
@@ -1240,7 +1242,8 @@ impl App {
             SecuritySubTab::TlsWeakness   => SecuritySubTab::HttpAnalytics,
             SecuritySubTab::BruteForce    => SecuritySubTab::TlsWeakness,
             SecuritySubTab::VulnHits      => SecuritySubTab::BruteForce,
-            SecuritySubTab::Replay        => SecuritySubTab::VulnHits,
+            SecuritySubTab::IocHits       => SecuritySubTab::VulnHits,
+            SecuritySubTab::Replay        => SecuritySubTab::IocHits,
         };
     }
 }
