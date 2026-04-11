@@ -80,6 +80,28 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
         Span::raw("")
     };
 
+    // IOC hit badge
+    let ioc_hits = app.ioc_engine.hit_count();
+    let ioc_span = if ioc_hits > 0 {
+        Span::styled(
+            format!("  ☢ {} IOC", ioc_hits),
+            Style::default().fg(C_ORANGE).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("")
+    };
+
+    // Rule hit badge
+    let rule_hits = app.rule_engine.hits.len();
+    let rule_span = if rule_hits > 0 {
+        Span::styled(
+            format!("  ⚡ {} rules", rule_hits),
+            Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("")
+    };
+
     let line = Line::from(vec![
         Span::styled(" packrat ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
         Span::styled("─ packet analyzer  ", Style::default().fg(C_FG3)),
@@ -91,6 +113,8 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
         ),
         rec_span,
         sec_span,
+        ioc_span,
+        rule_span,
     ]);
     f.render_widget(Paragraph::new(line).style(Style::default().bg(C_BG2)), area);
 }
