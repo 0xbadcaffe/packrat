@@ -17,9 +17,16 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.traceroute.editing
         || app.notebook_editing
         || app.hosts_searching
-        || app.graph_ui.searching;
+        || app.graph_ui.searching
+        || app.search_open;
 
     if !in_text_mode && is_quit(&key) { return true; }
+
+    // ── Global command palette ────────────────────────────────────────────────
+    if app.search_open {
+        handle_search_palette(app, key);
+        return false;
+    }
 
     if app.show_help {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q')) {
@@ -40,6 +47,12 @@ pub fn handle(app: &mut App, event: Event) -> bool {
     } else if app.strings_search_active {
         handle_strings_search(app, key);
     } else {
+        // Open global search palette with '?'
+        if key.code == KeyCode::Char('?') {
+            app.open_search();
+            return false;
+        }
+
         match app.active_tab {
             Tab::Craft         => handle_craft(app, key),
             Tab::Traceroute    => handle_traceroute(app, key),
@@ -90,6 +103,36 @@ fn handle_strings_search(app: &mut App, key: KeyEvent) {
         KeyCode::Enter     => { app.strings_search_active = false; }
         KeyCode::Backspace => { app.strings_filter.pop(); }
         KeyCode::Char(c)   => { app.strings_filter.push(c); }
+        _ => {}
+    }
+}
+
+// ─── Global command palette ───────────────────────────────────────────────────
+
+fn handle_search_palette(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => { app.close_search(); }
+        KeyCode::Enter => { app.search_jump(); }
+
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = app.search_results.len().saturating_sub(1);
+            if app.search_selected < max { app.search_selected += 1; }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.search_selected = app.search_selected.saturating_sub(1);
+        }
+
+        KeyCode::Backspace => {
+            app.search_query.pop();
+            app.search_selected = 0;
+            app.run_search();
+        }
+        KeyCode::Char(c) => {
+            app.search_query.push(c);
+            app.search_selected = 0;
+            app.run_search();
+        }
+
         _ => {}
     }
 }

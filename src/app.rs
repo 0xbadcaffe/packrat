@@ -52,6 +52,21 @@ pub enum SecuritySubTab {
     Replay,
 }
 
+/// A single result from the global command palette search.
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    /// Short category label (e.g., "Packet", "Host", "IOC Hit", "Rule").
+    pub source:   &'static str,
+    /// Primary display label shown in the list.
+    pub label:    String,
+    /// Secondary detail shown alongside the label.
+    pub detail:   String,
+    /// Tab to switch to when this result is selected.
+    pub jump_tab: Tab,
+    /// Optional scroll position to apply after tab switch.
+    pub scroll:   usize,
+}
+
 /// Sub-panels within the Objects tab
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ObjectsSubTab {
@@ -163,6 +178,11 @@ pub struct App {
     pub graph_ui:        GraphUiState,
     /// Tick counter used to throttle graph recomputation.
     graph_tick_counter:  u32,
+    // ─── Global command palette ────────────────────────────────────────────────
+    pub search_open:     bool,
+    pub search_query:    String,
+    pub search_results:  Vec<SearchResult>,
+    pub search_selected: usize,
 }
 
 impl App {
@@ -251,6 +271,10 @@ impl App {
             operator_graph:   OperatorGraphEngine::default(),
             graph_ui:         GraphUiState::default(),
             graph_tick_counter: 0,
+            search_open:     false,
+            search_query:    String::new(),
+            search_results:  Vec::new(),
+            search_selected: 0,
         }
     }
 
@@ -318,6 +342,140 @@ impl App {
                 self.carved_objects.extend(new_objs);
             }
         }
+    }
+
+    /// Open the command palette and run an initial empty search.
+    pub fn open_search(&mut self) {
+        self.search_open = true;
+        self.search_query.clear();
+        self.search_selected = 0;
+        self.run_search();
+    }
+
+    /// Close the command palette without navigating.
+    pub fn close_search(&mut self) {
+        self.search_open = false;
+    }
+
+    /// Execute search across all data sources and populate `search_results`.
+    /// Called on every keystroke while the palette is open.
+    pub fn run_search(&mut self) {
+        let q = self.search_query.to_lowercase();
+        let mut results: Vec<SearchResult> = Vec::new();
+
+        // ── Packets ──────────────────────────────────────────────────────────
+        for (idx, pkt) in self.packets.iter().enumerate().take(500) {
+            let label = format!("#{} {} → {} [{}]", pkt.no, pkt.src, pkt.dst, pkt.protocol);
+            let detail = pkt.info.clone();
+            let haystack = format!("{} {} {} {}", label, detail,
+                pkt.src_port.map_or_else(String::new, |p| p.to_string()),
+                pkt.dst_port.map_or_else(String::new, |p| p.to_string()))
+                .to_lowercase();
+            if q.is_empty() || haystack.contains(&q) {
+                results.push(SearchResult {
+                    source: "Packet", label, detail,
+                    jump_tab: Tab::Packets, scroll: idx,
+                });
+                if results.len() >= 20 { break; }
+            }
+        }
+
+        // ── Hosts ─────────────────────────────────────────────────────────────
+        let host_list: Vec<_> = self.hosts.all().into_iter().enumerate().collect();
+        for (idx, host) in host_list {
+            let label = host.ip.clone();
+            let detail = format!("pkts:{} bytes:{}", host.pkts_out + host.pkts_in,
+                host.bytes_out + host.bytes_in);
+            let haystack = format!("{} {}", label, detail).to_lowercase();
+            if q.is_empty() || haystack.contains(&q) {
+                results.push(SearchResult {
+                    source: "Host", label, detail,
+                    jump_tab: Tab::Hosts, scroll: idx,
+                });
+                if results.iter().filter(|r| r.source == "Host").count() >= 10 { break; }
+            }
+        }
+
+        // ── IOC hits ──────────────────────────────────────────────────────────
+        for (idx, hit) in self.ioc_engine.hits.iter().enumerate() {
+            let label = format!("{} {}", hit.ioc.kind, hit.ioc.value);
+            let detail = hit.context.clone();
+            let haystack = format!("{} {}", label, detail).to_lowercase();
+            if q.is_empty() || haystack.contains(&q) {
+                results.push(SearchResult {
+                    source: "IOC Hit", label, detail,
+                    jump_tab: Tab::Security, scroll: idx,
+                });
+                if results.iter().filter(|r| r.source == "IOC Hit").count() >= 10 { break; }
+            }
+        }
+
+        // ── Rule hits ─────────────────────────────────────────────────────────
+        for (idx, hit) in self.rule_engine.hits.iter().enumerate() {
+            let label = hit.rule_name.clone();
+            let detail = hit.message.clone();
+            let haystack = format!("{} {}", label, detail).to_lowercase();
+            if q.is_empty() || haystack.contains(&q) {
+                results.push(SearchResult {
+                    source: "Rule Hit", label, detail,
+                    jump_tab: Tab::Rules, scroll: idx,
+                });
+                if results.iter().filter(|r| r.source == "Rule Hit").count() >= 10 { break; }
+            }
+        }
+
+        // ── YARA matches ──────────────────────────────────────────────────────
+        for (idx, result) in self.yara_engine.results.iter().enumerate() {
+            let label = result.target_label.clone();
+            let detail = result.rule_names().join(", ");
+            let haystack = format!("{} {}", label, detail).to_lowercase();
+            if q.is_empty() || haystack.contains(&q) {
+                results.push(SearchResult {
+                    source: "YARA",
+                    label,
+                    detail,
+                    jump_tab: Tab::Objects,
+                    scroll: idx,
+                });
+                if results.iter().filter(|r| r.source == "YARA").count() >= 10 { break; }
+            }
+        }
+
+        // ── Carved objects ────────────────────────────────────────────────────
+        for (idx, obj) in self.carved_objects.iter().enumerate() {
+            let label = format!("#{} {}", obj.id, obj.kind);
+            let detail = obj.source.clone();
+            let haystack = format!("{} {} {}", label, detail, obj.sha256).to_lowercase();
+            if q.is_empty() || haystack.contains(&q) {
+                results.push(SearchResult {
+                    source: "Object", label, detail,
+                    jump_tab: Tab::Objects, scroll: idx,
+                });
+                if results.iter().filter(|r| r.source == "Object").count() >= 10 { break; }
+            }
+        }
+
+        self.search_results = results;
+        self.search_selected = self.search_selected.min(
+            self.search_results.len().saturating_sub(1)
+        );
+    }
+
+    /// Apply the currently selected search result (navigate to it).
+    pub fn search_jump(&mut self) {
+        if let Some(result) = self.search_results.get(self.search_selected).cloned() {
+            self.active_tab = result.jump_tab.clone();
+            // Apply scroll hints depending on destination
+            match result.jump_tab {
+                Tab::Packets  => { self.selected = Some(result.scroll); }
+                Tab::Hosts    => { self.hosts_scroll = result.scroll; }
+                Tab::Rules    => { self.rules_scroll = result.scroll; }
+                Tab::Objects  => { self.objects_scroll = result.scroll; }
+                Tab::Security => { self.security_scroll = result.scroll; }
+                _ => {}
+            }
+        }
+        self.close_search();
     }
 
     /// Hot-reload all Lua plugins from ~/.config/packrat/plugins/
