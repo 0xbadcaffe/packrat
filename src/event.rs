@@ -18,6 +18,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.traceroute.editing
         || app.notebook_editing
         || app.hosts_searching
+        || app.hosts_tagging
         || app.graph_ui.searching
         || app.search_open;
 
@@ -404,6 +405,25 @@ fn handle_scanner(app: &mut App, key: KeyEvent) {
 // ─── Hosts tab ────────────────────────────────────────────────────────────────
 
 fn handle_hosts(app: &mut App, key: KeyEvent) {
+    // Tag input mode
+    if app.hosts_tagging {
+        match key.code {
+            KeyCode::Esc => {
+                app.hosts_tagging = false;
+                app.hosts_tag_input.clear();
+            }
+            KeyCode::Enter => {
+                app.apply_host_tag();
+                app.hosts_tagging = false;
+                app.hosts_tag_input.clear();
+            }
+            KeyCode::Backspace => { app.hosts_tag_input.pop(); }
+            KeyCode::Char(c)   => { app.hosts_tag_input.push(c); }
+            _ => {}
+        }
+        return;
+    }
+
     if app.hosts_searching {
         match key.code {
             KeyCode::Esc | KeyCode::Enter => { app.hosts_searching = false; }
@@ -418,11 +438,17 @@ fn handle_hosts(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Char('s') | KeyCode::Char('/') => { app.hosts_searching = true; }
-        KeyCode::Down | KeyCode::Char('j') => { app.hosts_scroll = app.hosts_scroll.saturating_add(1); }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = app.hosts.len().saturating_sub(1);
+            if app.hosts_scroll < max { app.hosts_scroll += 1; }
+        }
         KeyCode::Up   | KeyCode::Char('k') => { app.hosts_scroll = app.hosts_scroll.saturating_sub(1); }
         KeyCode::Char('g') => { app.hosts_scroll = 0; }
+        KeyCode::Char('G') => { app.hosts_scroll = app.hosts.len().saturating_sub(1); }
         KeyCode::Char('C') => { app.hosts_search.clear(); app.hosts_scroll = 0; }
         KeyCode::Char('c') => { app.hosts.clear(); }
+        KeyCode::Char('t') => { app.hosts_tagging = true; app.hosts_tag_input.clear(); }
+        KeyCode::Char('T') => { app.remove_host_tag(); }
         KeyCode::Char('h') => { app.show_help = true; }
         _ => {}
     }

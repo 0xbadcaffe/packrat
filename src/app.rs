@@ -161,6 +161,8 @@ pub struct App {
     pub hosts_scroll:    usize,
     pub hosts_search:    String,
     pub hosts_searching: bool,
+    pub hosts_tagging:   bool,
+    pub hosts_tag_input: String,
     // TLS UI state
     pub tls_scroll:      usize,
     // Objects UI state
@@ -274,6 +276,8 @@ impl App {
             hosts_scroll:     0,
             hosts_search:     String::new(),
             hosts_searching:  false,
+            hosts_tagging:    false,
+            hosts_tag_input:  String::new(),
             tls_scroll:            0,
             objects_scroll:        0,
             objects_subtab:        ObjectsSubTab::Objects,
@@ -315,6 +319,33 @@ impl App {
             self.set_status(format!("IOC: {count} indicators loaded"));
         } else {
             self.set_status(format!("IOC: {count} indicators, {} error(s)", errs.len()));
+        }
+    }
+
+    /// Apply the current `hosts_tag_input` as a tag to the host at `hosts_scroll`.
+    pub fn apply_host_tag(&mut self) {
+        let tag = self.hosts_tag_input.trim().to_string();
+        if tag.is_empty() { return; }
+        let hosts = self.hosts.all();
+        if let Some(h) = hosts.get(self.hosts_scroll) {
+            let ip = h.ip.clone();
+            if let Some(host) = self.hosts.get_mut(&ip) {
+                host.tags.insert(tag.clone());
+            }
+            self.set_status(format!("Tagged {ip} as \"{tag}\""));
+        }
+    }
+
+    /// Remove a tag from the host at `hosts_scroll` (removes the first tag, alphabetically).
+    pub fn remove_host_tag(&mut self) {
+        let hosts = self.hosts.all();
+        if let Some(h) = hosts.get(self.hosts_scroll) {
+            let ip = h.ip.clone();
+            let tag = h.tags.iter().min().cloned();
+            if let (Some(host), Some(t)) = (self.hosts.get_mut(&ip), tag) {
+                host.tags.remove(&t);
+                self.set_status(format!("Removed tag \"{t}\" from {ip}"));
+            }
         }
     }
 
