@@ -80,6 +80,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             Tab::Notebook      => handle_notebook(app, key),
             Tab::Workbench     => handle_workbench(app, key),
             Tab::Objects       => handle_objects(app, key),
+            Tab::Rules         => handle_rules(app, key),
             Tab::OperatorGraph => handle_graph(app, key),
             _                  => handle_main(app, key),
         }
@@ -824,6 +825,42 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::Char('s') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_beacon(),
         KeyCode::Char('f') if matches!(app.active_tab, Tab::Flows) => app.flows_open_stream(),
 
+        _ => {}
+    }
+}
+
+// ─── Rules tab ────────────────────────────────────────────────────────────────
+
+fn handle_rules(app: &mut App, key: KeyEvent) {
+    if global_tab_switch(app, &key) { return; }
+
+    match key.code {
+        KeyCode::Tab => app.next_tab(),
+
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = app.rule_engine.rules.len().saturating_sub(1);
+            if app.rules_scroll < max { app.rules_scroll += 1; }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.rules_scroll = app.rules_scroll.saturating_sub(1);
+        }
+        KeyCode::Char('g') => { app.rules_scroll = 0; }
+        KeyCode::Char('G') => {
+            app.rules_scroll = app.rule_engine.rules.len().saturating_sub(1);
+        }
+
+        KeyCode::Char('t') => {
+            // Toggle the rule at the current scroll position
+            if let Some(rule) = app.rule_engine.rules.get(app.rules_scroll) {
+                let id = rule.id.clone();
+                app.rule_engine.toggle(&id);
+            }
+        }
+
+        KeyCode::Char('r') => { app.reload_rules(); }
+        KeyCode::Char('C') => { app.rule_engine.clear_hits(); }
+
+        KeyCode::Char('h') => app.show_help = true,
         _ => {}
     }
 }
