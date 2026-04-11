@@ -139,7 +139,7 @@ fn draw_filterbar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" Display filter: ", Style::default().fg(C_FG2)),
         Span::styled(filter_display, Style::default().fg(filter_color)),
         Span::styled(
-            "  [Space] cap  [C] clear  [/] filter  [i] iface  [w] record  [h] help  [q] quit",
+            "  [Space] cap  [C] clear  [/] filter  [L] load pcap  [B] baseline  [?] search  [h] help  [q] quit",
             Style::default().fg(C_FG3),
         ),
     ]);
@@ -273,7 +273,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!("│ {} ", msg), Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))
     } else {
         Span::styled(
-            "j/k:nav  a:autopsy  ?:search  X:export  Space:cap  /:filter  r:lua  1-0/H-G:tabs  q:quit",
+            "j/k:nav  ?:search  X:export  L:load  B:baseline  a:autopsy  Space:cap  h:help  q:quit",
             Style::default().fg(C_FG3),
         )
     };
