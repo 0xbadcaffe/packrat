@@ -1,4 +1,5 @@
 pub mod display_filter;
+pub mod geo;
 pub mod notebook;
 pub mod stream;
 pub mod timeline;

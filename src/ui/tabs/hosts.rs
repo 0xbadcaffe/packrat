@@ -42,6 +42,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
     let header = Row::new(vec![
         Cell::from("IP / Hostname").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+        Cell::from("Geo").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
         Cell::from("MAC").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
         Cell::from("Protocols").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
         Cell::from("Ports").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
@@ -77,8 +78,19 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         } else {
             Style::default().fg(C_FG2)
         };
+        let geo = h.geo.as_deref().unwrap_or("??");
+        let geo_color = match geo {
+            "LAN" | "LOOP" | "LINK" => C_FG3,
+            "US"   => C_CYAN,
+            "EU"   => C_GREEN,
+            "CN"   => C_RED,
+            "AWS" | "GCP" | "AZURE" | "CDN" => C_ORANGE,
+            "??"   => C_FG3,
+            _      => C_YELLOW,
+        };
         Row::new(vec![
             Cell::from(name).style(Style::default().fg(C_CYAN)),
+            Cell::from(geo.to_string()).style(Style::default().fg(geo_color).add_modifier(Modifier::BOLD)),
             Cell::from(mac).style(Style::default().fg(C_FG2)),
             Cell::from(protos).style(Style::default().fg(C_GREEN)),
             Cell::from(ports_str).style(Style::default().fg(C_FG2)),
@@ -92,6 +104,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
     let table = Table::new(rows, [
         Constraint::Length(28),
+        Constraint::Length(7),
         Constraint::Length(18),
         Constraint::Length(20),
         Constraint::Length(22),

@@ -1,6 +1,7 @@
 //! Host-centric network inventory — tracks every observed endpoint.
 
 use std::collections::{HashMap, HashSet};
+use crate::analysis::geo;
 use crate::net::packet::Packet;
 
 /// Everything observed about a single IP address.
@@ -126,7 +127,11 @@ impl HostInventory {
     fn touch(&mut self, ip: &str, ts: f64, f: impl FnOnce(&mut Host)) {
         if ip.is_empty() || ip == "0.0.0.0" { return; }
         let host = self.hosts.entry(ip.to_string())
-            .or_insert_with(|| Host::new(ip, ts));
+            .or_insert_with(|| {
+                let mut h = Host::new(ip, ts);
+                h.geo = Some(geo::classify(ip).to_string());
+                h
+            });
         host.last_seen = ts.max(host.last_seen);
         if ts < host.first_seen { host.first_seen = ts; }
         f(host);
