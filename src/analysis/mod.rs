@@ -6,6 +6,7 @@ pub mod tls;
 pub mod ioc;
 pub mod rules;
 pub mod carving;
+pub mod yara;
 pub mod protocol_workbench;
 pub mod diff;
 pub mod jobs;
