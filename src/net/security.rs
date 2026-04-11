@@ -218,6 +218,11 @@ impl SecurityEngine {
         self.cred_hit_count = 0;
     }
 
+    /// Look up the OS guess for a given IP (if fingerprinted).
+    pub fn os_guess_for(&self, ip: &str) -> Option<&'static str> {
+        self.os_by_ip.get(ip).copied()
+    }
+
     pub fn alert_count(&self) -> usize {
         self.ids_alerts.len()
             + self.arp_anomalies.len()
