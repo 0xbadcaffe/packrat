@@ -115,7 +115,7 @@ impl ReplayState {
 
 /// Minimal pcap reader — handles pcap (not pcapng) little-endian format.
 /// Returns packets as Packet structs with simulated metadata derived from bytes.
-fn read_pcap(path: &std::path::Path) -> Result<Vec<Packet>, String> {
+pub fn read_pcap(path: &std::path::Path) -> Result<Vec<Packet>, String> {
     use std::io::Read;
     let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
