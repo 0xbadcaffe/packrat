@@ -186,6 +186,9 @@ pub struct App {
     pub search_selected: usize,
     // ─── Protocol Autopsy overlay ──────────────────────────────────────────────
     pub autopsy_state:   Option<AutopsyState>,
+    // ─── Status / feedback message (transient, cleared after a few ticks) ─────
+    pub status_msg:      Option<String>,
+    status_msg_ticks:    u8,
 }
 
 impl App {
@@ -278,7 +281,23 @@ impl App {
             search_query:    String::new(),
             search_results:  Vec::new(),
             search_selected: 0,
-            autopsy_state:   None,
+            autopsy_state:    None,
+            status_msg:       None,
+            status_msg_ticks: 0,
+        }
+    }
+
+    /// Set a transient status message shown in the status bar for ~3 seconds.
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        self.status_msg = Some(msg.into());
+        self.status_msg_ticks = 30; // 30 ticks ≈ 3s at 10Hz
+    }
+
+    /// Export a full case bundle JSON to a timestamped file and set a status message.
+    pub fn export_case_bundle(&mut self) {
+        match crate::analysis::case_export::export_auto(self) {
+            Ok(path) => self.set_status(format!("Case bundle written: {path}")),
+            Err(e)   => self.set_status(format!("Export failed: {e}")),
         }
     }
 
@@ -794,6 +813,12 @@ impl App {
             self.rate_history.push(self.rate_this_sec);
             self.rate_history.remove(0);
             self.rate_this_sec = 0;
+        }
+
+        // Expire transient status message
+        if self.status_msg_ticks > 0 {
+            self.status_msg_ticks -= 1;
+            if self.status_msg_ticks == 0 { self.status_msg = None; }
         }
 
         self.yara_scan_new_objects();

@@ -239,6 +239,15 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         Span::raw("")
     };
 
+    let hints = if let Some(ref msg) = app.status_msg {
+        Span::styled(format!("│ {} ", msg), Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))
+    } else {
+        Span::styled(
+            "j/k:nav  a:autopsy  ?:search  X:export  Space:cap  /:filter  r:lua  1-0/H-G:tabs  q:quit",
+            Style::default().fg(C_FG3),
+        )
+    };
+
     let line = Line::from(vec![
         Span::styled(" ", Style::default()),
         cap_indicator,
@@ -251,10 +260,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         lua_span,
         sec_span,
         Span::styled("│ ", Style::default().fg(C_FG3)),
-        Span::styled(
-            "j/k:nav  Enter:workbench  Space:cap  /:filter  r:reload-lua  1-0/H-W:tabs  q:quit",
-            Style::default().fg(C_FG3),
-        ),
+        hints,
     ]);
     f.render_widget(Paragraph::new(line).style(Style::default().bg(C_BG2)), area);
 }
