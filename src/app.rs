@@ -1101,8 +1101,22 @@ impl App {
     }
 
     pub fn rebuild_filtered(&mut self) {
+        // Sync the AST-based display filter from the input text
+        self.display_filter.set(self.filter.input.clone());
+
         self.filtered = self.packets.iter().enumerate()
-            .filter(|(_, p)| self.filter.matches(p))
+            .filter(|(_, p)| {
+                if self.display_filter.is_active() {
+                    // Use the advanced AST evaluator (Wireshark-style expressions)
+                    self.display_filter.matches(p, false, &[])
+                } else if self.display_filter.has_error() {
+                    // Parse error: fall back to simple text match
+                    crate::analysis::display_filter::DisplayFilter::matches_simple(
+                        &self.filter.input, p)
+                } else {
+                    true
+                }
+            })
             .map(|(i, _)| i)
             .collect();
         if let Some(sel) = self.selected {
