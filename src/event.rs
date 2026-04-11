@@ -1,6 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crate::app::{App, ObjectsSubTab, SecuritySubTab};
 use crate::analysis::operator_graph::GraphUiModeState;
+use crate::ui::autopsy_overlay::AutopsyPane;
 use crate::scan::{ScanField, ScanMode};
 use crate::tabs::Tab;
 
@@ -39,6 +40,11 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
             app.stream_overlay = None;
         }
+        return false;
+    }
+
+    if app.autopsy_state.is_some() {
+        handle_autopsy(app, key);
         return false;
     }
 
@@ -472,6 +478,51 @@ fn handle_workbench(app: &mut App, key: KeyEvent) {
     }
 }
 
+// ─── Protocol Autopsy overlay ────────────────────────────────────────────────
+
+fn handle_autopsy(app: &mut App, key: KeyEvent) {
+    let Some(state) = app.autopsy_state.as_mut() else { return };
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => { app.autopsy_state = None; }
+        KeyCode::Tab => {
+            let state = app.autopsy_state.as_mut().unwrap();
+            state.active_pane = match state.active_pane {
+                AutopsyPane::Tree   => AutopsyPane::Stream,
+                AutopsyPane::Stream => AutopsyPane::Tree,
+            };
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            match state.active_pane {
+                AutopsyPane::Tree   => { state.tree_scroll = state.tree_scroll.saturating_add(1); }
+                AutopsyPane::Stream => { state.stream_scroll = state.stream_scroll.saturating_add(1); }
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            match state.active_pane {
+                AutopsyPane::Tree   => { state.tree_scroll = state.tree_scroll.saturating_sub(1); }
+                AutopsyPane::Stream => { state.stream_scroll = state.stream_scroll.saturating_sub(1); }
+            }
+        }
+        KeyCode::PageDown => {
+            match state.active_pane {
+                AutopsyPane::Tree   => { state.tree_scroll = state.tree_scroll.saturating_add(10); }
+                AutopsyPane::Stream => { state.stream_scroll = state.stream_scroll.saturating_add(10); }
+            }
+        }
+        KeyCode::PageUp => {
+            match state.active_pane {
+                AutopsyPane::Tree   => { state.tree_scroll = state.tree_scroll.saturating_sub(10); }
+                AutopsyPane::Stream => { state.stream_scroll = state.stream_scroll.saturating_sub(10); }
+            }
+        }
+        KeyCode::Char('g') => {
+            state.tree_scroll = 0;
+            state.stream_scroll = 0;
+        }
+        _ => {}
+    }
+}
+
 // ─── Objects tab ─────────────────────────────────────────────────────────────
 
 fn handle_objects(app: &mut App, key: KeyEvent) {
@@ -753,6 +804,7 @@ fn handle_main(app: &mut App, key: KeyEvent) {
 
         KeyCode::Char('h') => app.show_help = true,
         KeyCode::Char('r') => app.reload_lua_plugins(),
+        KeyCode::Char('a') if matches!(app.active_tab, Tab::Packets) => app.open_autopsy(),
 
         KeyCode::Char('b') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_bytes(),
         KeyCode::Char('p') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_packets(),
