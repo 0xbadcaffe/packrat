@@ -89,6 +89,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             Tab::Objects       => handle_objects(app, key),
             Tab::Rules         => handle_rules(app, key),
             Tab::Diff          => handle_diff(app, key),
+            Tab::TlsAnalysis   => handle_tls(app, key),
             Tab::OperatorGraph => handle_graph(app, key),
             _                  => handle_main(app, key),
         }
@@ -859,6 +860,33 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::Char('s') if matches!(app.active_tab, Tab::Flows) => app.flows_sort_beacon(),
         KeyCode::Char('f') if matches!(app.active_tab, Tab::Flows) => app.flows_open_stream(),
 
+        _ => {}
+    }
+}
+
+// ─── TLS tab ──────────────────────────────────────────────────────────────────
+
+fn handle_tls(app: &mut App, key: KeyEvent) {
+    if global_tab_switch(app, &key) { return; }
+
+    match key.code {
+        KeyCode::Tab => app.next_tab(),
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = app.tls_tracker.len().saturating_sub(1);
+            if app.tls_selected < max { app.tls_selected += 1; }
+            app.tls_scroll = app.tls_selected;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.tls_selected = app.tls_selected.saturating_sub(1);
+            app.tls_scroll = app.tls_selected;
+        }
+        KeyCode::Char('g') => { app.tls_selected = 0; app.tls_scroll = 0; }
+        KeyCode::Char('G') => {
+            app.tls_selected = app.tls_tracker.len().saturating_sub(1);
+            app.tls_scroll = app.tls_selected;
+        }
+        KeyCode::Char('c') => { app.tls_tracker.clear(); app.tls_selected = 0; app.tls_scroll = 0; }
+        KeyCode::Char('h') => { app.show_help = true; }
         _ => {}
     }
 }

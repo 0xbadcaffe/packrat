@@ -168,6 +168,7 @@ pub struct App {
     pub hosts_tag_input: String,
     // TLS UI state
     pub tls_scroll:      usize,
+    pub tls_selected:    usize,
     // Objects UI state
     pub objects_scroll:       usize,
     pub objects_subtab:       ObjectsSubTab,
@@ -284,6 +285,7 @@ impl App {
             hosts_tagging:    false,
             hosts_tag_input:  String::new(),
             tls_scroll:            0,
+            tls_selected:          0,
             objects_scroll:        0,
             objects_subtab:        ObjectsSubTab::Objects,
             yara_rules_scroll:     0,
