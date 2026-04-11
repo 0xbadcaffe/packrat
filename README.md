@@ -35,22 +35,23 @@ packrat
 | Tab | Key | Description |
 |-----|-----|-------------|
 | **Packets**    | `1` | Live packet list, protocol detail tree, hex dump, follow-stream overlay |
-| **Analysis**   | `2` | Protocol stats, top talkers, conversations, port summary, magic bytes, XOR, anomalies |
+| **Analysis**   | `2` | Protocol stats, top talkers, conversations, port summary, magic bytes, XOR, anomalies, host/TLS/flow/IOC/rules/YARA counts |
 | **Strings**    | `3` | Extracted ASCII strings with entropy scoring, RE dictionary, live search |
 | **Dynamic**    | `4` | Live syscall / signal / network event log |
 | **Visualize**  | `5` | Protocol sparkline, traffic bars, top IPs, geo endpoints |
 | **Flows**      | `6` | Bidirectional flow tracker — beacon/scan/encrypted/large detection, follow stream |
 | **Craft**      | `7` | Form-based packet builder with hex preview, inject, and **flood mode** |
 | **Traceroute** | `8` | Hop-by-hop path tracer (real `traceroute`/`tracert` under `--features real-capture`) |
-| **Security**   | `9` | Passive IDS, credential extraction, OS fingerprinting, ARP watch, DNS tunnel detection, HTTP analytics, TLS weakness, brute-force detection, vuln patterns, PCAP replay |
+| **Security**   | `9` | Passive IDS, credentials, OS fingerprint, ARP watch, DNS tunnel, HTTP analytics, TLS weakness, brute-force, vuln patterns, **IOC hits**, PCAP replay |
 | **Scanner**    | `0` | Port scanner — TCP Connect, SYN, UDP modes with service fingerprinting |
-| **Hosts**      | `H` | Host inventory: IP/MAC/OS/hostname tracking, per-host protocol breakdown |
-| **Notebook**   | `N` | Analyst notes — timestamped, searchable, tied to the current session |
-| **TLS**        | `T` | TLS session table: SNI, cipher suite, JA3/JA3S fingerprints, certificate info, alert detection |
+| **Hosts**      | `H` | Host inventory: IP/MAC/OS/hostname tracking, per-host protocol breakdown, **free-form tagging** |
+| **Notebook**   | `N` | Analyst notes — timestamped, tag-attached, **searchable** with live filtering |
+| **TLS**        | `T` | TLS session table: SNI, cipher suite, JA3/JA3S fingerprints, **cert CN/issuer/SANs/expiry**, alert detection |
 | **Objects**    | `O` | Carved file objects extracted from traffic — MIME type, SHA-256, size, YARA hits |
-| **Rules**      | `R` | User-defined detection rules (field conditions → alert/tag/log actions), live hit counter |
+| **Rules**      | `R` | User-defined detection rules (field conditions → alert/tag/log actions), live hit counter, description column |
 | **Workbench**  | `W` | Hex-level protocol workbench — load any packet, cursor navigation, byte selection |
 | **Graph**      | `G` | **Operator Graph** — live engagement map linking all artifacts into a navigable correlation graph |
+| **Diff**       | `D` | **Differential PCAP analysis** — baseline snapshot vs. current traffic: protocol Δ, host Δ, port Δ |
 
 ---
 
@@ -163,7 +164,7 @@ The hex and ASCII panes scroll in sync with the cursor. Selected bytes are highl
 
 ## Hosts Tab (Tab H)
 
-Passively builds a host inventory from all observed traffic.
+Passively builds a host inventory from all observed traffic. Supports free-form tagging for analyst annotations.
 
 | Column | Description |
 |--------|-------------|
@@ -173,12 +174,15 @@ Passively builds a host inventory from all observed traffic.
 | Hostname | Reverse-DNS or NBNS name if seen |
 | Packets / Bytes | Traffic volume |
 | Protocols | Protocol set seen from this host |
+| Tags | Free-form analyst tags (shown in orange) |
 | First / Last seen | Session timestamps |
 
 | Key | Action |
 |-----|--------|
 | `j / k` | Scroll |
 | `/ or s` | Search by IP or hostname |
+| `t` | Add tag to selected host (opens inline tag editor) |
+| `T` | Remove oldest tag from selected host |
 | `g` | Jump to top |
 | `c` | Clear host table |
 | `C` | Clear search |
@@ -187,15 +191,19 @@ Passively builds a host inventory from all observed traffic.
 
 ## Notebook (Tab N)
 
-A plain-text analyst notebook for timestamped observations. Notes are stored in-session.
+A plain-text analyst notebook for timestamped observations. Notes are stored in-session and support tag attachment and live search.
 
 | Key | Action |
 |-----|--------|
 | `n` | New note (opens inline editor) |
 | `Enter` | Save note |
-| `Esc` | Cancel |
+| `Esc` | Cancel edit or clear search |
 | `j / k` | Scroll notes |
-| `d` | Delete note at cursor |
+| `g / G` | Jump to top / bottom |
+| `/` | Open search bar — live-filters notes as you type |
+| `d` | Delete note at cursor (works within search results) |
+
+When search is active the title shows `N / total notes` and navigating with `j/k` moves within the filtered subset.
 
 ---
 
@@ -213,7 +221,17 @@ Real-time TLS session tracking built from passive handshake analysis.
 | JA3S | Server fingerprint hash |
 | Issues | Self-signed cert, expired cert, weak cipher, TLS alert |
 
+**Detail panel** — select a row with `j/k` to open a two-column detail view showing:
+
+- **Left column:** Flow, SNI, TLS version, cipher suite, JA3 hash, JA3S hash, status (WEAK flagged in red)
+- **Right column:** Cert CN, cert issuer, cert expiry, SANs (Subject Alternative Names), TLS alert
+
 Weak cipher suites (RC4, NULL, 3DES, CBC-SHA1) are flagged in red. TLS alerts (fatal/warning) are shown with level and description codes.
+
+| Key | Action |
+|-----|--------|
+| `j / k` | Select session and scroll detail panel |
+| `g / G` | Jump to top / bottom |
 
 ---
 
@@ -239,6 +257,8 @@ Object bytes are visible in the detail view. Large objects are truncated for dis
 
 User-defined detection rules evaluated per-packet. Rules use a simple condition language over packet fields.
 
+Rules are loaded from `~/.config/packrat/rules/` (`.toml` files). The status bar shows the rules directory path.
+
 ### Condition types
 
 | Condition | Example |
@@ -259,8 +279,12 @@ User-defined detection rules evaluated per-packet. Rules use a simple condition 
 
 | Key | Action |
 |-----|--------|
-| `j / k` | Scroll rule / hit list |
-| `Enter` | Toggle rule enabled/disabled |
+| `j / k` | Scroll rule list |
+| `t` | Toggle rule enabled / disabled |
+| `r` | Reload rules from disk |
+| `C` | Clear all hit counters |
+
+When a rule fires, the title bar shows a `⚡ N rules` badge (yellow).
 
 ---
 
@@ -309,9 +333,34 @@ Press **`f`** to start sending packets continuously at the configured rate. Adju
 
 ---
 
+## Differential PCAP Analysis (Tab D)
+
+Compare two states of traffic to find what changed. Workflow:
+
+1. Press **`B`** (anywhere) to snapshot the current packet list as the baseline.
+2. Continue capturing or load more traffic.
+3. Press **`D`** to compute the diff and jump to the Diff tab.
+
+The Diff tab shows three side-by-side delta columns:
+
+| Column | What changed |
+|--------|-------------|
+| **Protocol Δ** | Protocols that appeared or disappeared; packet count change (+green / -red) |
+| **Host Δ** | New or missing IP endpoints; traffic volume change |
+| **Port Δ** | Ports that opened or closed; hit count change |
+
+| Key | Action |
+|-----|--------|
+| `B` | Set baseline snapshot (global, works from any tab) |
+| `D` | Compute diff and open Diff tab (global) |
+| `j / k` | Scroll delta lists |
+| `X` | Clear baseline |
+
+---
+
 ## Security Tab (Tab 9)
 
-Passive real-time security analysis across 10 sub-panels. Navigate with `[` / `]` or the letter shortcuts below.
+Passive real-time security analysis across 11 sub-panels. Navigate with `[` / `]` or the letter shortcuts below.
 
 ### Sub-panels
 
@@ -326,7 +375,10 @@ Passive real-time security analysis across 10 sub-panels. Navigate with `[` / `]
 | `t` | **TLS Weakness** | TLS 1.0, SSL 3.0, RC4 cipher suites (0x0005/0x000a), SHA-1 OID in certificates |
 | `b` | **Brute Force** | 30-second sliding window per (src, dst, port); threshold 5 attempts — covers SSH/FTP/HTTP 401/SMB |
 | `v` | **Vuln Patterns** | Cleartext sensitive HTTP paths (`/admin`, `/passwd`), weak Telnet, anonymous FTP, WMI over network |
+| `i` | **IOC Hits** | Matches against loaded IOC lists (IPs, domains, hashes, keywords); shows hit kind, matched value, context |
 | `p` | **PCAP Replay** | Load and replay any `.pcap` file at variable speed |
+
+When IOC hits exist, the title bar shows a `☢ N IOC` badge (orange).
 
 ### IDS alert severities
 
@@ -649,9 +701,11 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 
 ---
 
-## PCAP Recording and Replay
+## PCAP Recording, Import, and Replay
 
 **Record:** Press **`w`** at any time to start writing a `.pcap` file (named `packrat_<timestamp>.pcap` in the current directory). Press **`w`** again to flush and close.
+
+**Instant import:** Press **`L`** from anywhere to open a path dialog. Enter a `.pcap` file path and press Enter — all packets are loaded immediately into the live packet list and all analysis engines without replacing the active session.
 
 **Replay:** Go to Security tab → Replay sub-panel (`9` then `p`). Replayed packets flow into the live packet list, trigger all analysis engines (including the Operator Graph), and can be recorded to a new pcap.
 
@@ -664,15 +718,20 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 | Key | Action |
 |-----|--------|
 | `1`–`0` | Switch to tabs 1–10 |
-| `H` `N` `T` `O` `R` `W` `G` | Switch to Hosts / Notebook / TLS / Objects / Rules / Workbench / Graph |
+| `H` `N` `T` `O` `R` `W` `G` `D` | Switch to Hosts / Notebook / TLS / Objects / Rules / Workbench / Graph / Diff |
 | `Space` | Start/stop capture |
 | `j / k` `↑ ↓` | Navigate |
 | `g / G` | Top / bottom |
-| `/` | Filter (or search within the active tab) |
-| `i` | Pick interface |
+| `/` | Filter bar (Wireshark-style AST filter) |
+| `?` | Command palette (search across all tabs/actions) |
+| `B` | Snapshot baseline for differential analysis |
+| `L` | Load PCAP file instantly (overlay path dialog) |
+| `i` | Pick capture interface |
 | `w` | Toggle PCAP recording |
 | `r` | Hot-reload Lua plugins |
 | `h` | Help overlay |
+| `a` | Autopsy overlay (deep analysis of selected packet) |
+| `X` | Export case bundle |
 | `C` | Clear |
 | `q` | Quit |
 
@@ -722,15 +781,34 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 
 ## Filter Syntax
 
+Press **`/`** to open the filter bar. Filters are evaluated by a Wireshark-compatible AST engine and update the packet list live.
+
 ```
-tcp                   # protocol name
-ip.src==192.168.1.1   # source IP
-ip.dst==8.8.8.8       # destination IP
-tcp.port==443         # port (src or dst)
-udp.port==53
+tcp                         # protocol name (bare)
+udp
+dns
+
+ip.src == 192.168.1.1       # field comparison (==, !=, <, <=, >, >=)
+ip.dst == 8.8.8.8
+tcp.port == 443             # matches src OR dst port
+udp.port == 53
+frame.len > 1400
+
+ip.src contains "192.168"   # substring match
+dns contains "evil"
+
+tcp and ip.dst == 10.0.0.1  # boolean AND
+tcp or udp                  # boolean OR
+not tcp                     # boolean NOT
 ```
 
-Filters update the packet list in real time as you type.
+The filter bar shows:
+- `✓ N matched` in green — filter is valid and matched N packets
+- `✗ <error>` in red — parse error (falls back to simple text match so nothing disappears)
+
+### Supported field names
+
+`ip.src` `ip.dst` `tcp.port` `tcp.srcport` `tcp.dstport` `udp.port` `udp.srcport` `udp.dstport` `frame.len` `frame.number` plus any protocol name as a bare keyword (`tcp`, `udp`, `dns`, `http`, `tls`, `arp`, `icmp`, etc.).
 
 ---
 
