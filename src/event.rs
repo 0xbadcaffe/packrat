@@ -946,7 +946,10 @@ fn handle_main(app: &mut App, key: KeyEvent) {
         KeyCode::PageUp     => app.page_up(),
 
         KeyCode::Char(' ') => app.toggle_capture(),
-        KeyCode::Char('C') => app.clear_packets(),
+        KeyCode::Char('C') | KeyCode::Char('c')
+            if matches!(app.active_tab, Tab::Packets | Tab::Analysis
+                | Tab::Strings | Tab::Dynamic | Tab::Visualize | Tab::Flows) =>
+            app.clear_packets(),
         KeyCode::Char('w') => app.toggle_recording(),
 
         KeyCode::Char('/') => {
