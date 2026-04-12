@@ -441,6 +441,71 @@ impl App {
         self.status_msg_ticks = 30; // 30 ticks ≈ 3s at 10Hz
     }
 
+    // ─── Scenario seeding (simulated mode) ────────────────────────────────────
+
+    /// Seed the app with the correlated investigation scenario so all tabs
+    /// have meaningful content immediately in simulated/demo mode.
+    pub fn seed_scenario(&mut self) {
+        use crate::sim::scenario;
+
+        // Ingest all scenario packets
+        for pkt in scenario::build() {
+            self.ingest_packet_inner(pkt);
+        }
+
+        // Seed IOC hits for the C2 IP
+        for ip in scenario::ioc_ips() {
+            self.ioc_engine.load_ioc(crate::analysis::ioc::Ioc {
+                kind:        crate::analysis::ioc::IocKind::Ip,
+                value:       ip.into(),
+                description: "Operation Quiet Beacon C2 infrastructure".into(),
+                source:      "scenario".into(),
+            });
+        }
+        // Re-scan packets against IOCs now that they're loaded
+        let pkts: Vec<_> = self.packets.iter().cloned().collect();
+        for pkt in &pkts {
+            self.ioc_engine.check_packet(pkt);
+        }
+
+        // Seed notebook notes
+        for (text, ev_str) in scenario::notebook_notes() {
+            let ev = ev_str.map(|s| crate::model::evidence::EvidenceRef::Packet(
+                crate::model::evidence::PacketRef(
+                    s.trim_start_matches("pkt#").parse().unwrap_or(0)
+                )
+            ));
+            self.notebook.add(text, ev);
+        }
+
+        // Seed host tags
+        for (ip, tags) in scenario::host_tags() {
+            for tag in tags {
+                self.hosts.seed_tags(ip, std::iter::once(tag.to_string()));
+            }
+        }
+
+        self.set_status("Scenario loaded: Operation Quiet Beacon (correlated demo data)");
+    }
+
+    // ─── Test helpers ────────────────────────────────────────────────────────
+
+    /// Construct an App pre-configured for tests (no terminal, no capture).
+    pub fn new_for_test() -> App {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1024);
+        let mut app = App::new(tx);
+        app.picking_iface = false;
+        app.selected_iface = "simulated".to_string();
+        app
+    }
+
+    /// Construct an App seeded with the full correlated scenario dataset.
+    pub fn new_with_scenario() -> App {
+        let mut app = Self::new_for_test();
+        app.seed_scenario();
+        app
+    }
+
     // ─── Theme ────────────────────────────────────────────────────────────────
 
     /// Apply a theme by name, set it as current, and persist the choice.
@@ -926,6 +991,7 @@ impl App {
         self.abort_capture();
 
         if self.selected_iface == "simulated" {
+            self.seed_scenario();
             self.capture_handle = Some(SimulatedCapture.run(self.packet_tx.clone()));
             self.capturing = true;
         } else {

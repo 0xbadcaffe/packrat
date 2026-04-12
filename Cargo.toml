@@ -22,6 +22,10 @@ include = [
     ".cargo/config.toml.example",
 ]
 
+[lib]
+name = "packrat_tui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "packrat"
 path = "src/main.rs"
@@ -45,6 +49,10 @@ mlua       = { version = "0.10", features = ["lua54", "vendored"] }
 [features]
 default        = []
 real-capture   = ["dep:pcap"]
+
+[dev-dependencies]
+insta   = { version = "1", features = ["yaml"] }
+rstest  = "0.22"
 
 [profile.release]
 opt-level = 3

@@ -13,7 +13,8 @@ use crate::tabs::Tab;
 pub fn handle(app: &mut App, event: Event) -> bool {
     let Event::Key(key) = event else { return false; };
 
-    // Only quit when not in a text-entry mode — otherwise 'q' is a valid character.
+    // Only quit when not in a text-entry or modal mode — otherwise 'q' is a
+    // valid character or should close the overlay rather than quitting the app.
     let in_text_mode = app.strings_search_active
         || app.filter.active
         || app.craft.editing
@@ -27,6 +28,9 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.hosts_tagging
         || app.graph_ui.searching
         || app.search_open
+        || app.show_help
+        || app.stream_overlay.is_some()
+        || app.autopsy_state.is_some()
         || (app.project_manager_open && app.project_manager.is_text_editing());
 
     if !in_text_mode && is_quit(&key) { return true; }
