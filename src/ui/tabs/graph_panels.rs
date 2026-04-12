@@ -33,11 +33,11 @@ pub fn draw_node_list(f: &mut Frame, app: &App, area: Rect) {
             let label = truncate(&node.label, label_max);
 
             let node_style = node_kind_style(node.kind());
-            let bg = if is_sel { Style::default().bg(C_SEL_BG).fg(C_FG) } else { Style::default() };
+            let bg = if is_sel { Style::default().bg(C_SEL_BG()).fg(C_FG()) } else { Style::default() };
 
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{kind_tag} "), node_style.patch(bg)),
-                Span::styled(label, bg.fg(if is_sel { C_FG } else { C_FG2 }).add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() })),
+                Span::styled(label, bg.fg(if is_sel { C_FG() } else { C_FG2() }).add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() })),
                 Span::styled(format!(" {score_bar}"), bg.fg(score_color(node.score))),
             ]))
         })
@@ -47,8 +47,8 @@ pub fn draw_node_list(f: &mut Frame, app: &App, area: Rect) {
     let list = List::new(items)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(title, Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))));
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(title, Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))));
     f.render_widget(list, area);
 }
 
@@ -65,7 +65,7 @@ pub fn draw_neighborhood(f: &mut Frame, app: &App, area: Rect) {
             // Root node
             lines.push(Line::from(vec![
                 Span::styled(format!("◉ [{}] ", node.kind().tag()), node_kind_style(node.kind()).add_modifier(Modifier::BOLD)),
-                Span::styled(node.label.clone(), Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),
+                Span::styled(node.label.clone(), Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("  {} {}", node.stars(), node.risk_label()), Style::default().fg(score_color(node.score))),
             ]));
             lines.push(Line::raw(""));
@@ -73,7 +73,7 @@ pub fn draw_neighborhood(f: &mut Frame, app: &App, area: Rect) {
             // Outgoing neighbors
             let out_eids = engine.out_edges(node_id);
             if !out_eids.is_empty() {
-                lines.push(Line::from(Span::styled(" ─ outgoing ─", Style::default().fg(C_FG3))));
+                lines.push(Line::from(Span::styled(" ─ outgoing ─", Style::default().fg(C_FG3()))));
                 let scroll = app.graph_ui.neighbor_scroll;
                 let visible: Vec<_> = out_eids.iter()
                     .skip(scroll)
@@ -87,19 +87,19 @@ pub fn draw_neighborhood(f: &mut Frame, app: &App, area: Rect) {
 
                 for (edge, neighbor) in &visible {
                     lines.push(Line::from(vec![
-                        Span::styled("  ├─", Style::default().fg(C_FG3)),
-                        Span::styled(format!(" {} ", edge.kind), Style::default().fg(C_YELLOW)),
-                        Span::styled("──► ", Style::default().fg(C_FG3)),
+                        Span::styled("  ├─", Style::default().fg(C_FG3())),
+                        Span::styled(format!(" {} ", edge.kind), Style::default().fg(C_YELLOW())),
+                        Span::styled("──► ", Style::default().fg(C_FG3())),
                         Span::styled(format!("[{}] ", neighbor.kind().tag()), node_kind_style(neighbor.kind())),
-                        Span::styled(truncate(&neighbor.label, 24), Style::default().fg(C_FG2)),
-                        Span::styled(format!(" #{}", edge.hit_count), Style::default().fg(C_FG3)),
+                        Span::styled(truncate(&neighbor.label, 24), Style::default().fg(C_FG2())),
+                        Span::styled(format!(" #{}", edge.hit_count), Style::default().fg(C_FG3())),
                     ]));
                 }
 
                 if out_eids.len() > visible.len() {
                     lines.push(Line::from(Span::styled(
                         format!("  └─ +{} more…", out_eids.len() - visible.len()),
-                        Style::default().fg(C_FG3),
+                        Style::default().fg(C_FG3()),
                     )));
                 }
             }
@@ -108,15 +108,15 @@ pub fn draw_neighborhood(f: &mut Frame, app: &App, area: Rect) {
             let in_eids = engine.in_edges(node_id);
             if !in_eids.is_empty() {
                 lines.push(Line::raw(""));
-                lines.push(Line::from(Span::styled(" ─ incoming ─", Style::default().fg(C_FG3))));
+                lines.push(Line::from(Span::styled(" ─ incoming ─", Style::default().fg(C_FG3()))));
                 for &eid in in_eids.iter().take(8) {
                     if let (Some(edge), Some(neighbor)) = (engine.get_edge(eid), engine.get_node(engine.get_edge(eid).map(|e| e.src).unwrap_or(0))) {
                         lines.push(Line::from(vec![
-                            Span::styled("  ◄── ", Style::default().fg(C_FG3)),
-                            Span::styled(format!(" {} ", edge.kind), Style::default().fg(C_YELLOW)),
-                            Span::styled(" ── ", Style::default().fg(C_FG3)),
+                            Span::styled("  ◄── ", Style::default().fg(C_FG3())),
+                            Span::styled(format!(" {} ", edge.kind), Style::default().fg(C_YELLOW())),
+                            Span::styled(" ── ", Style::default().fg(C_FG3())),
                             Span::styled(format!("[{}] ", neighbor.kind().tag()), node_kind_style(neighbor.kind())),
-                            Span::styled(truncate(&neighbor.label, 24), Style::default().fg(C_FG2)),
+                            Span::styled(truncate(&neighbor.label, 24), Style::default().fg(C_FG2())),
                         ]));
                     }
                 }
@@ -126,13 +126,13 @@ pub fn draw_neighborhood(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             "  Select a node from the list to explore relationships.",
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         )));
         if app.operator_graph.node_count() == 0 {
             lines.push(Line::raw(""));
             lines.push(Line::from(Span::styled(
                 "  Start capture or load a PCAP — the graph builds automatically.",
-                Style::default().fg(C_FG3),
+                Style::default().fg(C_FG3()),
             )));
         }
     }
@@ -140,9 +140,9 @@ pub fn draw_neighborhood(f: &mut Frame, app: &App, area: Rect) {
     let panel = Paragraph::new(lines)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Neighborhood ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))))
-        .style(Style::default().bg(C_BG))
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Neighborhood ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))))
+        .style(Style::default().bg(C_BG()))
         .wrap(Wrap { trim: false });
     f.render_widget(panel, area);
 }
@@ -154,13 +154,13 @@ pub fn draw_adjacency(f: &mut Frame, app: &App, area: Rect) {
     let selected = app.graph_ui.selected_node;
 
     let header = Row::new(vec![
-        Cell::from("Dir").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Edge").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Node").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Hits").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Score").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Last").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-    ]).style(Style::default().bg(C_BG2)).height(1);
+        Cell::from("Dir").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Edge").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Node").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Hits").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Score").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Last").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+    ]).style(Style::default().bg(C_BG2())).height(1);
 
     let rows: Vec<Row> = if let Some(node_id) = selected {
         let scroll = app.graph_ui.neighbor_scroll;
@@ -185,12 +185,12 @@ pub fn draw_adjacency(f: &mut Frame, app: &App, area: Rect) {
             .take(area.height.saturating_sub(3) as usize)
             .map(|(dir, edge, nb)| {
                 Row::new(vec![
-                    Cell::from(*dir).style(Style::default().fg(if *dir == "→" { C_GREEN } else { C_CYAN })),
-                    Cell::from(truncate(&edge.kind.to_string(), 20)).style(Style::default().fg(C_YELLOW)),
+                    Cell::from(*dir).style(Style::default().fg(if *dir == "→" { C_GREEN() } else { C_CYAN() })),
+                    Cell::from(truncate(&edge.kind.to_string(), 20)).style(Style::default().fg(C_YELLOW())),
                     Cell::from(truncate(&nb.label, 24)).style(node_kind_style(nb.kind())),
-                    Cell::from(edge.hit_count.to_string()).style(Style::default().fg(C_FG2)),
+                    Cell::from(edge.hit_count.to_string()).style(Style::default().fg(C_FG2())),
                     Cell::from(format!("{:.2}", nb.score)).style(Style::default().fg(score_color(nb.score))),
-                    Cell::from(format_ts(edge.last_seen)).style(Style::default().fg(C_FG3)),
+                    Cell::from(format_ts(edge.last_seen)).style(Style::default().fg(C_FG3())),
                 ])
             })
             .collect()
@@ -214,9 +214,9 @@ pub fn draw_adjacency(f: &mut Frame, app: &App, area: Rect) {
     .header(header)
     .block(Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(C_BORDER))
-        .title(Span::styled(title, Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))))
-    .style(Style::default().bg(C_BG));
+        .border_style(Style::default().fg(C_BORDER()))
+        .title(Span::styled(title, Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))))
+    .style(Style::default().bg(C_BG()));
     f.render_widget(table, area);
 }
 
@@ -231,20 +231,20 @@ pub fn draw_paths(f: &mut Frame, app: &App, area: Rect) {
         .enumerate()
         .map(|(i, path)| {
             let is_sel = app.graph_ui.path_selected == i + scroll;
-            let bg = if is_sel { Style::default().bg(C_SEL_BG) } else { Style::default() };
+            let bg = if is_sel { Style::default().bg(C_SEL_BG()) } else { Style::default() };
             ListItem::new(vec![
                 Line::from(vec![
-                    Span::styled(format!("{} ", path.kind), Style::default().fg(C_CYAN).patch(bg).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("{} ", path.kind), Style::default().fg(C_CYAN()).patch(bg).add_modifier(Modifier::BOLD)),
                     Span::styled(format!("score:{:.2}  {}n {}e", path.score, path.nodes.len(), path.edges.len()),
                         Style::default().fg(score_color(path.score)).patch(bg)),
                 ]),
                 Line::from(vec![
                     Span::styled(format!("  {}", truncate(&path.summary, (area.width as usize).saturating_sub(4))),
-                        Style::default().fg(C_FG2).patch(bg)),
+                        Style::default().fg(C_FG2()).patch(bg)),
                 ]),
                 Line::from(vec![
                     Span::styled(format!("  ↳ {}", truncate(&path.why, (area.width as usize).saturating_sub(6))),
-                        Style::default().fg(C_FG3).patch(bg)),
+                        Style::default().fg(C_FG3()).patch(bg)),
                 ]),
             ])
         })
@@ -253,10 +253,10 @@ pub fn draw_paths(f: &mut Frame, app: &App, area: Rect) {
     let list = List::new(items)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
+            .border_style(Style::default().fg(C_BORDER()))
             .title(Span::styled(
                 format!(" {} Attack Paths ", paths.len()),
-                Style::default().fg(C_RED).add_modifier(Modifier::BOLD),
+                Style::default().fg(C_RED()).add_modifier(Modifier::BOLD),
             )));
     f.render_widget(list, area);
 }
@@ -272,16 +272,16 @@ pub fn draw_clusters(f: &mut Frame, app: &App, area: Rect) {
         .enumerate()
         .map(|(i, c)| {
             let is_sel = app.graph_ui.cluster_selected == i + scroll;
-            let bg = if is_sel { Style::default().bg(C_SEL_BG) } else { Style::default() };
+            let bg = if is_sel { Style::default().bg(C_SEL_BG()) } else { Style::default() };
             ListItem::new(vec![
                 Line::from(vec![
-                    Span::styled(format!("[{}] ", c.kind), Style::default().fg(C_YELLOW).patch(bg).add_modifier(Modifier::BOLD)),
-                    Span::styled(truncate(&c.label, 28), Style::default().fg(C_CYAN).patch(bg)),
+                    Span::styled(format!("[{}] ", c.kind), Style::default().fg(C_YELLOW()).patch(bg).add_modifier(Modifier::BOLD)),
+                    Span::styled(truncate(&c.label, 28), Style::default().fg(C_CYAN()).patch(bg)),
                     Span::styled(format!("  {:.2}", c.score), Style::default().fg(score_color(c.score)).patch(bg)),
                 ]),
                 Line::from(Span::styled(
                     format!("  {} ({} members)", truncate(&c.summary, 50), c.members.len()),
-                    Style::default().fg(C_FG2).patch(bg),
+                    Style::default().fg(C_FG2()).patch(bg),
                 )),
             ])
         })
@@ -290,10 +290,10 @@ pub fn draw_clusters(f: &mut Frame, app: &App, area: Rect) {
     let list = List::new(items)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
+            .border_style(Style::default().fg(C_BORDER()))
             .title(Span::styled(
                 format!(" {} Clusters ", clusters.len()),
-                Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
+                Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
             )));
     f.render_widget(list, area);
 }
@@ -307,36 +307,36 @@ pub fn draw_evidence(f: &mut Frame, app: &App, area: Rect) {
     if let Some(node_id) = app.graph_ui.selected_node {
         if let Some(node) = engine.get_node(node_id) {
             lines.push(Line::from(vec![
-                Span::styled("Node: ", Style::default().fg(C_FG3)),
-                Span::styled(node.label.clone(), Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),
+                Span::styled("Node: ", Style::default().fg(C_FG3())),
+                Span::styled(node.label.clone(), Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)),
             ]));
             lines.push(Line::from(Span::styled(
                 format!("{} evidence refs", node.evidence.len()),
-                Style::default().fg(C_FG3),
+                Style::default().fg(C_FG3()),
             )));
             lines.push(Line::raw(""));
 
             let scroll = app.graph_ui.evidence_scroll;
             for ev in node.evidence.iter().skip(scroll).take(area.height.saturating_sub(6) as usize) {
                 lines.push(Line::from(vec![
-                    Span::styled("  • ", Style::default().fg(C_YELLOW)),
-                    Span::styled(ev.to_string(), Style::default().fg(C_FG2)),
+                    Span::styled("  • ", Style::default().fg(C_YELLOW())),
+                    Span::styled(ev.to_string(), Style::default().fg(C_FG2())),
                 ]));
             }
         }
     } else {
         lines.push(Line::from(Span::styled(
             "  Select a node to view its evidence refs.",
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         )));
     }
 
     let panel = Paragraph::new(lines)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Evidence ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))))
-        .style(Style::default().bg(C_BG))
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Evidence ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))))
+        .style(Style::default().bg(C_BG()))
         .wrap(Wrap { trim: false });
     f.render_widget(panel, area);
 }
@@ -353,17 +353,17 @@ pub fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
 
             lines.push(Line::from(vec![
                 Span::styled(format!("[{}]", kind.tag()), node_kind_style(kind.clone()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!(" {}", kind), Style::default().fg(C_FG3)),
+                Span::styled(format!(" {}", kind), Style::default().fg(C_FG3())),
             ]));
             lines.push(Line::raw(""));
 
             lines.push(Line::from(vec![
-                Span::styled("Label:  ", Style::default().fg(C_FG3)),
-                Span::styled(node.label.clone(), Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),
+                Span::styled("Label:  ", Style::default().fg(C_FG3())),
+                Span::styled(node.label.clone(), Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)),
             ]));
 
             lines.push(Line::from(vec![
-                Span::styled("Risk:   ", Style::default().fg(C_FG3)),
+                Span::styled("Risk:   ", Style::default().fg(C_FG3())),
                 Span::styled(
                     format!("{:.2}  {} {}", node.score, node.stars(), node.risk_label()),
                     Style::default().fg(score_color(node.score)).add_modifier(Modifier::BOLD),
@@ -373,25 +373,25 @@ pub fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
 
             // Why
             if !node.score_why.is_empty() {
-                lines.push(Line::from(Span::styled("Why:", Style::default().fg(C_FG3))));
+                lines.push(Line::from(Span::styled("Why:", Style::default().fg(C_FG3()))));
                 for chunk in wrap_text(&node.score_why, area.width.saturating_sub(4) as usize) {
-                    lines.push(Line::from(Span::styled(format!("  {chunk}"), Style::default().fg(C_FG2))));
+                    lines.push(Line::from(Span::styled(format!("  {chunk}"), Style::default().fg(C_FG2()))));
                 }
                 lines.push(Line::raw(""));
             }
 
             // Timestamps
             lines.push(Line::from(vec![
-                Span::styled("First:  ", Style::default().fg(C_FG3)),
-                Span::styled(format_ts(node.first_seen), Style::default().fg(C_FG2)),
+                Span::styled("First:  ", Style::default().fg(C_FG3())),
+                Span::styled(format_ts(node.first_seen), Style::default().fg(C_FG2())),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("Last:   ", Style::default().fg(C_FG3)),
-                Span::styled(format_ts(node.last_seen), Style::default().fg(C_FG2)),
+                Span::styled("Last:   ", Style::default().fg(C_FG3())),
+                Span::styled(format_ts(node.last_seen), Style::default().fg(C_FG2())),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("Hits:   ", Style::default().fg(C_FG3)),
-                Span::styled(node.hit_count.to_string(), Style::default().fg(C_FG2)),
+                Span::styled("Hits:   ", Style::default().fg(C_FG3())),
+                Span::styled(node.hit_count.to_string(), Style::default().fg(C_FG2())),
             ]));
             lines.push(Line::raw(""));
 
@@ -399,8 +399,8 @@ pub fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
             if !node.tags.is_empty() {
                 let tags: Vec<String> = node.tags.iter().cloned().collect();
                 lines.push(Line::from(vec![
-                    Span::styled("Tags:   ", Style::default().fg(C_FG3)),
-                    Span::styled(tags.join(", "), Style::default().fg(C_YELLOW)),
+                    Span::styled("Tags:   ", Style::default().fg(C_FG3())),
+                    Span::styled(tags.join(", "), Style::default().fg(C_YELLOW())),
                 ]));
                 lines.push(Line::raw(""));
             }
@@ -409,21 +409,21 @@ pub fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
             let out_n = engine.out_edges(node_id).len();
             let in_n  = engine.in_edges(node_id).len();
             lines.push(Line::from(vec![
-                Span::styled("Degree: ", Style::default().fg(C_FG3)),
-                Span::styled(format!("→{out_n} ←{in_n}"), Style::default().fg(C_FG2)),
+                Span::styled("Degree: ", Style::default().fg(C_FG3())),
+                Span::styled(format!("→{out_n} ←{in_n}"), Style::default().fg(C_FG2())),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("Evid:   ", Style::default().fg(C_FG3)),
-                Span::styled(format!("{} refs", node.evidence.len()), Style::default().fg(C_FG2)),
+                Span::styled("Evid:   ", Style::default().fg(C_FG3())),
+                Span::styled(format!("{} refs", node.evidence.len()), Style::default().fg(C_FG2())),
             ]));
 
             // Kind-specific payload summary
             lines.push(Line::raw(""));
-            lines.push(Line::from(Span::styled("─ payload ─", Style::default().fg(C_FG3))));
+            lines.push(Line::from(Span::styled("─ payload ─", Style::default().fg(C_FG3()))));
             for kv in node_payload_summary(&node.data) {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {:8}", kv.0), Style::default().fg(C_FG3)),
-                    Span::styled(truncate(&kv.1, area.width.saturating_sub(12) as usize), Style::default().fg(C_FG2)),
+                    Span::styled(format!("  {:8}", kv.0), Style::default().fg(C_FG3())),
+                    Span::styled(truncate(&kv.1, area.width.saturating_sub(12) as usize), Style::default().fg(C_FG2())),
                 ]));
             }
         }
@@ -431,7 +431,7 @@ pub fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             "  Select a node to view details.",
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         )));
     }
 
@@ -439,9 +439,9 @@ pub fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
     let panel = Paragraph::new(lines)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Detail ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))))
-        .style(Style::default().bg(C_BG))
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Detail ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))))
+        .style(Style::default().bg(C_BG()))
         .scroll((detail_scroll as u16, 0))
         .wrap(Wrap { trim: false });
     f.render_widget(panel, area);
@@ -451,23 +451,23 @@ pub fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
 
 fn node_kind_style(kind: GraphNodeKind) -> Style {
     match kind {
-        GraphNodeKind::Host        => Style::default().fg(C_CYAN),
-        GraphNodeKind::Service     => Style::default().fg(C_GREEN),
+        GraphNodeKind::Host        => Style::default().fg(C_CYAN()),
+        GraphNodeKind::Service     => Style::default().fg(C_GREEN()),
         GraphNodeKind::Flow        => Style::default().fg(ratatui::style::Color::Blue),
-        GraphNodeKind::Credential  => Style::default().fg(C_RED).add_modifier(Modifier::BOLD),
-        GraphNodeKind::Certificate => Style::default().fg(C_YELLOW),
-        GraphNodeKind::IOC         => Style::default().fg(C_RED),
-        GraphNodeKind::Alert       => Style::default().fg(C_RED).add_modifier(Modifier::BOLD),
+        GraphNodeKind::Credential  => Style::default().fg(C_RED()).add_modifier(Modifier::BOLD),
+        GraphNodeKind::Certificate => Style::default().fg(C_YELLOW()),
+        GraphNodeKind::IOC         => Style::default().fg(C_RED()),
+        GraphNodeKind::Alert       => Style::default().fg(C_RED()).add_modifier(Modifier::BOLD),
         GraphNodeKind::FileObject  => Style::default().fg(ratatui::style::Color::Magenta),
-        GraphNodeKind::RuleHit     => Style::default().fg(C_RED),
-        _                          => Style::default().fg(C_FG2),
+        GraphNodeKind::RuleHit     => Style::default().fg(C_RED()),
+        _                          => Style::default().fg(C_FG2()),
     }
 }
 
 fn score_color(score: f32) -> ratatui::style::Color {
-    if score >= 0.75 { C_RED }
+    if score >= 0.75 { C_RED() }
     else if score >= 0.45 { ratatui::style::Color::Yellow }
-    else { C_GREEN }
+    else { C_GREEN() }
 }
 
 fn score_to_bar(score: f32) -> &'static str {

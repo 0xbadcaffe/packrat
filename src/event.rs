@@ -3,6 +3,7 @@ use crate::app::{App, ObjectsSubTab, SecuritySubTab};
 use crate::ui::project_manager::{PmField, PmTab};
 use crate::model::project::ProjectSaveMode;
 use crate::storage::project_store;
+use crate::ui::theme::THEME_NAMES;
 use crate::analysis::operator_graph::GraphUiModeState;
 use crate::ui::autopsy_overlay::AutopsyPane;
 use crate::scan::{ScanField, ScanMode};
@@ -65,6 +66,11 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
+    if app.theme_picker_open {
+        handle_theme_picker(app, key);
+        return false;
+    }
+
     if app.picking_iface {
         handle_iface_picker(app, key);
     } else if app.strings_search_active {
@@ -85,6 +91,15 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         // Quick-save project with Ctrl+S
         if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
             app.quick_save_project();
+            return false;
+        }
+
+        // Theme picker with backslash
+        if key.code == KeyCode::Char('\\') {
+            app.theme_picker_open = true;
+            // Position cursor on the currently selected theme
+            let cur = app.selected_theme_name.clone();
+            app.theme_picker_cursor = THEME_NAMES.iter().position(|&n| n == cur).unwrap_or(0);
             return false;
         }
 
@@ -1169,6 +1184,29 @@ fn handle_project_manager(app: &mut App, key: KeyEvent) {
                 if app.project_manager.recent_cursor > 0 {
                     app.project_manager.recent_cursor -= 1;
                 }
+            }
+        }
+        _ => {}
+    }
+}
+
+// ─── Theme picker overlay ─────────────────────────────────────────────────────
+
+fn handle_theme_picker(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('\\') => {
+            app.theme_picker_open = false;
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = THEME_NAMES.len().saturating_sub(1);
+            app.theme_picker_cursor = (app.theme_picker_cursor + 1).min(max);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.theme_picker_cursor = app.theme_picker_cursor.saturating_sub(1);
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            if let Some(&name) = THEME_NAMES.get(app.theme_picker_cursor) {
+                app.apply_theme(name);
             }
         }
         _ => {}

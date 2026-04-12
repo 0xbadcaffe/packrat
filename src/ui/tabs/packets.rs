@@ -34,40 +34,40 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
                 Line::raw(""),
                 Line::from(vec![Span::styled(
                     format!("  Real capture on '{}' is not available.", app.selected_iface),
-                    Style::default().fg(C_RED).add_modifier(Modifier::BOLD),
+                    Style::default().fg(C_RED()).add_modifier(Modifier::BOLD),
                 )]),
                 Line::raw(""),
                 Line::from(vec![Span::styled(
                     "  Rebuild with: cargo build --release --features real-capture",
-                    Style::default().fg(C_YELLOW),
+                    Style::default().fg(C_YELLOW()),
                 )]),
                 Line::raw(""),
                 Line::from(vec![
-                    Span::styled("  Press ", Style::default().fg(C_FG2)),
-                    Span::styled("i", Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),
-                    Span::styled(" to choose a different interface.", Style::default().fg(C_FG2)),
+                    Span::styled("  Press ", Style::default().fg(C_FG2())),
+                    Span::styled("i", Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)),
+                    Span::styled(" to choose a different interface.", Style::default().fg(C_FG2())),
                 ]),
             ]
         } else {
             vec![
                 Line::raw(""),
-                Line::from(vec![Span::styled("  waiting for packets…", Style::default().fg(C_FG3))]),
+                Line::from(vec![Span::styled("  waiting for packets…", Style::default().fg(C_FG3()))]),
             ]
         };
-        f.render_widget(Paragraph::new(msg).style(Style::default().bg(C_BG)), area);
+        f.render_widget(Paragraph::new(msg).style(Style::default().bg(C_BG())), area);
         return;
     }
 
     let header = Row::new(vec![
-        Cell::from("No.").style(Style::default().fg(C_FG2)),
-        Cell::from("Time").style(Style::default().fg(C_FG2)),
-        Cell::from("dT ms").style(Style::default().fg(C_FG2)),
-        Cell::from("Source").style(Style::default().fg(C_FG2)),
-        Cell::from("Destination").style(Style::default().fg(C_FG2)),
-        Cell::from("Protocol").style(Style::default().fg(C_FG2)),
-        Cell::from("Len").style(Style::default().fg(C_FG2)),
-        Cell::from("Info").style(Style::default().fg(C_FG2)),
-    ]).style(Style::default().bg(C_BG3)).height(1);
+        Cell::from("No.").style(Style::default().fg(C_FG2())),
+        Cell::from("Time").style(Style::default().fg(C_FG2())),
+        Cell::from("dT ms").style(Style::default().fg(C_FG2())),
+        Cell::from("Source").style(Style::default().fg(C_FG2())),
+        Cell::from("Destination").style(Style::default().fg(C_FG2())),
+        Cell::from("Protocol").style(Style::default().fg(C_FG2())),
+        Cell::from("Len").style(Style::default().fg(C_FG2())),
+        Cell::from("Info").style(Style::default().fg(C_FG2())),
+    ]).style(Style::default().bg(C_BG3())).height(1);
 
     let visible_h = area.height.saturating_sub(3) as usize;
     let sel = app.selected.unwrap_or(0);
@@ -84,18 +84,18 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
         };
         prev_ts = Some(p.timestamp);
         let selected = app.selected == Some(fi);
-        let bg = if selected { C_SEL_BG } else { C_BG };
-        let fg = if selected { Color::White } else { C_FG };
+        let bg = if selected { C_SEL_BG() } else { C_BG() };
+        let fg = if selected { Color::White } else { C_FG() };
         let proto_fg = if selected { Color::White } else { proto_color(&p.protocol) };
         rows.push(Row::new(vec![
-            Cell::from(p.no.to_string()).style(Style::default().fg(C_FG3).bg(bg)),
-            Cell::from(format!("{:.4}", p.timestamp)).style(Style::default().fg(C_FG2).bg(bg)),
-            Cell::from(delta_ms).style(Style::default().fg(C_FG3).bg(bg)),
+            Cell::from(p.no.to_string()).style(Style::default().fg(C_FG3()).bg(bg)),
+            Cell::from(format!("{:.4}", p.timestamp)).style(Style::default().fg(C_FG2()).bg(bg)),
+            Cell::from(delta_ms).style(Style::default().fg(C_FG3()).bg(bg)),
             Cell::from(p.src.clone()).style(Style::default().fg(fg).bg(bg)),
             Cell::from(p.dst.clone()).style(Style::default().fg(fg).bg(bg)),
             Cell::from(p.protocol.clone()).style(Style::default().fg(proto_fg).bg(bg).add_modifier(Modifier::BOLD)),
-            Cell::from(p.length.to_string()).style(Style::default().fg(C_FG2).bg(bg)),
-            Cell::from(truncate(&p.info, 55)).style(Style::default().fg(C_FG2).bg(bg)),
+            Cell::from(p.length.to_string()).style(Style::default().fg(C_FG2()).bg(bg)),
+            Cell::from(truncate(&p.info, 55)).style(Style::default().fg(C_FG2()).bg(bg)),
         ]));
     }
 
@@ -115,12 +115,12 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
         .block(Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::default().fg(C_BORDER))
+            .border_style(Style::default().fg(C_BORDER()))
             .title(Span::styled(
                 format!(" Packets [{}/{}] ", app.filtered.len(), app.packets.len()),
-                Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD),
+                Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
             )))
-        .style(Style::default().bg(C_BG));
+        .style(Style::default().bg(C_BG()));
 
     f.render_widget(table, area);
 }
@@ -141,10 +141,10 @@ fn draw_protocol_tree(f: &mut Frame, app: &App, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Protocol Tree ", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)));
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Protocol Tree ", Style::default().fg(C_GREEN()).add_modifier(Modifier::BOLD)));
         let p = Paragraph::new("No packet selected.\n\nPress Space to start capture,\nthen j/k to navigate.")
-            .style(Style::default().fg(C_FG3))
+            .style(Style::default().fg(C_FG3()))
             .block(block);
         f.render_widget(p, area);
         return;
@@ -161,19 +161,19 @@ fn draw_protocol_tree_for(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(C_BORDER))
+        .border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(
             format!(" Protocol Tree  pkt #{} ", pkt.no),
-            Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD),
+            Style::default().fg(C_GREEN()).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(C_BG));
+        .style(Style::default().bg(C_BG()));
 
     let sections = app.dissect_packet(pkt);
     let mut items: Vec<ListItem> = Vec::new();
 
     for sec in &sections {
         items.push(ListItem::new(Line::from(vec![
-            Span::styled("▼ ", Style::default().fg(C_YELLOW)),
+            Span::styled("▼ ", Style::default().fg(C_YELLOW())),
             Span::styled(
                 truncate(&sec.title, (area.width as usize).saturating_sub(6)),
                 Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
@@ -185,7 +185,7 @@ fn draw_protocol_tree_for(
                 let key = pad_right(&field.key, 20);
                 items.push(ListItem::new(Line::from(vec![
                     Span::styled("  ", Style::default()),
-                    Span::styled(key, Style::default().fg(C_FG2)),
+                    Span::styled(key, Style::default().fg(C_FG2())),
                     Span::styled(" ", Style::default()),
                     Span::styled(field.val.clone(), Style::default().fg(crate::ui::theme::field_color(&field.color))),
                 ])));
@@ -193,7 +193,7 @@ fn draw_protocol_tree_for(
         }
     }
 
-    let list = List::new(items).block(block).style(Style::default().bg(C_BG));
+    let list = List::new(items).block(block).style(Style::default().bg(C_BG()));
     f.render_widget(list, area);
 }
 
@@ -202,10 +202,10 @@ fn draw_hex_dump(f: &mut Frame, app: &App, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Hex Dump ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)));
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Hex Dump ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)));
         let p = Paragraph::new("No packet selected.")
-            .style(Style::default().fg(C_FG3))
+            .style(Style::default().fg(C_FG3()))
             .block(block)
             .wrap(Wrap { trim: false });
         f.render_widget(p, area);
@@ -218,12 +218,12 @@ fn draw_hex_dump_for(f: &mut Frame, pkt: &crate::net::packet::Packet, area: Rect
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(C_BORDER))
+        .border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(
             format!(" Hex Dump  {} bytes ", pkt.length),
-            Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
+            Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(C_BG));
+        .style(Style::default().bg(C_BG()));
 
     let bytes = &pkt.bytes;
     let bytes_per_row = 16usize;
@@ -233,10 +233,10 @@ fn draw_hex_dump_for(f: &mut Frame, pkt: &crate::net::packet::Packet, area: Rect
         let offset = row_i * bytes_per_row;
         let mut spans: Vec<Span> = Vec::new();
 
-        spans.push(Span::styled(format!("{:04x}  ", offset), Style::default().fg(C_FG3)));
+        spans.push(Span::styled(format!("{:04x}  ", offset), Style::default().fg(C_FG3())));
 
         for (i, &b) in chunk.iter().enumerate() {
-            let color = if b == 0 { C_FG3 } else if b >= 32 && b < 127 { C_GREEN } else { C_CYAN };
+            let color = if b == 0 { C_FG3() } else if b >= 32 && b < 127 { C_GREEN() } else { C_CYAN() };
             spans.push(Span::styled(format!("{:02x}", b), Style::default().fg(color)));
             spans.push(Span::raw(" "));
             if i == 7 { spans.push(Span::raw(" ")); }
@@ -248,7 +248,7 @@ fn draw_hex_dump_for(f: &mut Frame, pkt: &crate::net::packet::Packet, area: Rect
         spans.push(Span::raw(" │ "));
 
         for &b in chunk.iter() {
-            let (ch, color) = if b >= 32 && b < 127 { (b as char, C_GREEN) } else { ('.', C_FG3) };
+            let (ch, color) = if b >= 32 && b < 127 { (b as char, C_GREEN()) } else { ('.', C_FG3()) };
             spans.push(Span::styled(ch.to_string(), Style::default().fg(color)));
         }
         lines.push(Line::from(spans));
@@ -257,12 +257,12 @@ fn draw_hex_dump_for(f: &mut Frame, pkt: &crate::net::packet::Packet, area: Rect
     let mut all_lines = vec![
         Line::from(vec![Span::styled(
             format!(" pkt #{} │ {} bytes │ {} rows ", pkt.no, pkt.length, lines.len()),
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         )]),
         Line::raw(""),
     ];
     all_lines.extend(lines);
 
-    let p = Paragraph::new(all_lines).block(block).style(Style::default().bg(C_BG));
+    let p = Paragraph::new(all_lines).block(block).style(Style::default().bg(C_BG()));
     f.render_widget(p, area);
 }

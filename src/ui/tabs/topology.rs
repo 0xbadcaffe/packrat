@@ -105,10 +105,10 @@ fn draw_graph(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(C_BORDER))
+        .border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(
             format!(" Graph [{} nodes · {} flows] ", app.topology.nodes.len(), app.topology.edges.len()),
-            Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD),
+            Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
         ));
 
     let inner = block.inner(area);
@@ -119,8 +119,8 @@ fn draw_graph(f: &mut Frame, app: &App, area: Rect) {
 
     if top_nodes.is_empty() {
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled("  No traffic observed yet.", Style::default().fg(C_FG3))))
-                .style(Style::default().bg(C_BG)),
+            Paragraph::new(Line::from(Span::styled("  No traffic observed yet.", Style::default().fg(C_FG3()))))
+                .style(Style::default().bg(C_BG())),
             inner,
         );
         return;
@@ -174,7 +174,7 @@ fn draw_graph(f: &mut Frame, app: &App, area: Rect) {
             let gy = ((1.0 - ny) * (h.saturating_sub(1)) as f64).round() as i32;
             let label = format!("[{}]", node_label(ip));
             let lx = gx - label.len() as i32 / 2;
-            write_label(&mut grid, lx, gy, &label, C_CYAN);
+            write_label(&mut grid, lx, gy, &label, C_CYAN());
         }
     }
 
@@ -184,12 +184,12 @@ fn draw_graph(f: &mut Frame, app: &App, area: Rect) {
         let mut buf = String::new();
         let mut cur: Option<ratatui::style::Color> = None;
         for cell in row {
-            let (ch, col) = cell.unwrap_or((' ', C_BG));
+            let (ch, col) = cell.unwrap_or((' ', C_BG()));
             if Some(col) == cur {
                 buf.push(ch);
             } else {
                 if !buf.is_empty() {
-                    spans.push(Span::styled(buf.clone(), Style::default().fg(cur.unwrap_or(C_BG))));
+                    spans.push(Span::styled(buf.clone(), Style::default().fg(cur.unwrap_or(C_BG()))));
                     buf.clear();
                 }
                 buf.push(ch);
@@ -197,12 +197,12 @@ fn draw_graph(f: &mut Frame, app: &App, area: Rect) {
             }
         }
         if !buf.is_empty() {
-            spans.push(Span::styled(buf, Style::default().fg(cur.unwrap_or(C_BG))));
+            spans.push(Span::styled(buf, Style::default().fg(cur.unwrap_or(C_BG()))));
         }
         Line::from(spans)
     }).collect();
 
-    f.render_widget(Paragraph::new(lines).style(Style::default().bg(C_BG)), inner);
+    f.render_widget(Paragraph::new(lines).style(Style::default().bg(C_BG())), inner);
 }
 
 // ─── node list ────────────────────────────────────────────────────────────────
@@ -211,29 +211,29 @@ fn draw_nodes(f: &mut Frame, app: &App, area: Rect) {
     let top_nodes = app.topology.top_nodes(50);
     let mut items: Vec<ListItem> = Vec::new();
     if top_nodes.is_empty() {
-        items.push(ListItem::new(Line::from(Span::styled("  No traffic observed yet.", Style::default().fg(C_FG3)))));
+        items.push(ListItem::new(Line::from(Span::styled("  No traffic observed yet.", Style::default().fg(C_FG3())))));
     }
     for (ip, info) in &top_nodes {
         let total_pkts = info.tx_packets + info.rx_packets;
         let total_bytes = info.tx_bytes + info.rx_bytes;
         items.push(ListItem::new(Line::from(vec![
-            Span::styled(format!(" {:<18}", ip), Style::default().fg(C_CYAN)),
-            Span::styled(format!("{:<7}", total_pkts), Style::default().fg(C_FG2)),
-            Span::styled(fmt_bytes(total_bytes), Style::default().fg(C_GREEN)),
+            Span::styled(format!(" {:<18}", ip), Style::default().fg(C_CYAN())),
+            Span::styled(format!("{:<7}", total_pkts), Style::default().fg(C_FG2())),
+            Span::styled(fmt_bytes(total_bytes), Style::default().fg(C_GREEN())),
         ])));
         items.push(ListItem::new(Line::from(Span::styled(
             format!("   tx:{:<6} rx:{:<6}", info.tx_packets, info.rx_packets),
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         ))));
     }
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(C_BORDER))
+        .border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(
             format!(" Nodes [{}] ", app.topology.nodes.len()),
-            Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD),
+            Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
         ));
 
     let inner = Layout::default()
@@ -244,16 +244,16 @@ fn draw_nodes(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
             format!(" {:<18} {:<7} {}", "IP Address", "Pkts", "Bytes"),
-            Style::default().fg(C_FG2),
-        ))).block(block.clone()).style(Style::default().bg(C_BG)),
+            Style::default().fg(C_FG2()),
+        ))).block(block.clone()).style(Style::default().bg(C_BG())),
         inner[0],
     );
     f.render_widget(
         List::new(items)
             .block(Block::default()
                 .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
-                .border_style(Style::default().fg(C_BORDER)))
-            .style(Style::default().bg(C_BG)),
+                .border_style(Style::default().fg(C_BORDER())))
+            .style(Style::default().bg(C_BG())),
         inner[1],
     );
 }
@@ -264,17 +264,17 @@ fn draw_edges(f: &mut Frame, app: &App, area: Rect) {
     let top_edges = app.topology.top_edges(30);
     let mut items: Vec<ListItem> = Vec::new();
     if top_edges.is_empty() {
-        items.push(ListItem::new(Line::from(Span::styled("  No flows observed yet.", Style::default().fg(C_FG3)))));
+        items.push(ListItem::new(Line::from(Span::styled("  No flows observed yet.", Style::default().fg(C_FG3())))));
     }
     for (src, dst, info) in &top_edges {
         items.push(ListItem::new(Line::from(vec![
-            Span::styled(format!(" {}", src), Style::default().fg(C_CYAN)),
-            Span::styled(" → ", Style::default().fg(C_FG3)),
-            Span::styled(dst.to_string(), Style::default().fg(C_GREEN)),
+            Span::styled(format!(" {}", src), Style::default().fg(C_CYAN())),
+            Span::styled(" → ", Style::default().fg(C_FG3())),
+            Span::styled(dst.to_string(), Style::default().fg(C_GREEN())),
         ])));
         items.push(ListItem::new(Line::from(Span::styled(
             format!("   [{:<6}] {:>6} pkts  {}", info.protocol, info.packets, fmt_bytes(info.bytes)),
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         ))));
     }
     f.render_widget(
@@ -282,12 +282,12 @@ fn draw_edges(f: &mut Frame, app: &App, area: Rect) {
             .block(Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Plain)
-                .border_style(Style::default().fg(C_BORDER))
+                .border_style(Style::default().fg(C_BORDER()))
                 .title(Span::styled(
                     format!(" Flows [{}] ", app.topology.edges.len()),
-                    Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD),
+                    Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
                 )))
-            .style(Style::default().bg(C_BG)),
+            .style(Style::default().bg(C_BG())),
         area,
     );
 }

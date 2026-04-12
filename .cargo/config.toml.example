@@ -1,0 +1,21 @@
+# Copy this file to `.cargo/config.toml` and uncomment the targets you use.
+# The crate itself is portable Rust; these linker settings are only examples for
+# common cross-compilation environments.
+
+# [target.aarch64-unknown-linux-gnu]
+# linker = "aarch64-linux-gnu-gcc"
+
+# [target.armv7-unknown-linux-gnueabihf]
+# linker = "arm-linux-gnueabihf-gcc"
+
+# [target.powerpc64le-unknown-linux-gnu]
+# linker = "powerpc64le-linux-gnu-gcc"
+
+# [target.i686-unknown-linux-gnu]
+# linker = "i686-linux-gnu-gcc"
+
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+
+# Windows MSVC targets normally use the Visual Studio Build Tools environment.
+# No repo-wide linker override is recommended here.

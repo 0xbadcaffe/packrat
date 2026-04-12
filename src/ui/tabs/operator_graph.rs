@@ -59,17 +59,17 @@ fn draw_mode_bar(f: &mut Frame, app: &App, area: Rect) {
     let current = app.graph_ui.mode.label();
 
     let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::styled(" Graph: ", Style::default().fg(C_FG3)));
+    spans.push(Span::styled(" Graph: ", Style::default().fg(C_FG3())));
 
     for m in &modes {
         let selected = *m == current;
         let style = if selected {
-            Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
-            Style::default().fg(C_FG2)
+            Style::default().fg(C_FG2())
         };
         spans.push(Span::styled(format!(" {m} "), style));
-        spans.push(Span::styled("│", Style::default().fg(C_BORDER)));
+        spans.push(Span::styled("│", Style::default().fg(C_BORDER())));
     }
 
     let search = if app.graph_ui.searching {
@@ -79,10 +79,10 @@ fn draw_mode_bar(f: &mut Frame, app: &App, area: Rect) {
     } else {
         format!("  {} nodes  {} edges", app.operator_graph.node_count(), app.operator_graph.edge_count())
     };
-    spans.push(Span::styled(search, Style::default().fg(C_YELLOW)));
+    spans.push(Span::styled(search, Style::default().fg(C_YELLOW())));
 
     f.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::default().bg(C_BG2)),
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(C_BG2())),
         area,
     );
 }
@@ -109,7 +109,7 @@ fn draw_pivot_bar(f: &mut Frame, app: &App, area: Rect) {
         " Select a node to see pivots".into()
     };
     f.render_widget(
-        Paragraph::new(pivot_line).style(Style::default().fg(C_CYAN).bg(C_BG2)),
+        Paragraph::new(pivot_line).style(Style::default().fg(C_CYAN()).bg(C_BG2())),
         chunks[0],
     );
 
@@ -122,7 +122,7 @@ fn draw_pivot_bar(f: &mut Frame, app: &App, area: Rect) {
         GraphUiModeState::Evidence     => " [j/k] scroll  [Tab] mode  [q] quit",
     };
     f.render_widget(
-        Paragraph::new(controls).style(Style::default().fg(C_FG3).bg(C_BG2)),
+        Paragraph::new(controls).style(Style::default().fg(C_FG3()).bg(C_BG2())),
         chunks[1],
     );
 }

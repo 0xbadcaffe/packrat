@@ -107,16 +107,16 @@ pub fn draw(f: &mut Frame, app: &App) {
     let tab_spans: Vec<Span> = tab_labels.iter().map(|&label| {
         let is_active = label.contains('[');
         if is_active {
-            Span::styled(label, Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD))
+            Span::styled(label, Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD))
         } else {
-            Span::styled(label, Style::default().fg(C_FG3))
+            Span::styled(label, Style::default().fg(C_FG3()))
         }
     }).collect();
 
     let title_line = Line::from({
         let mut spans = vec![
-            Span::styled(" Project Manager ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-            Span::styled("  │  ", Style::default().fg(C_BORDER)),
+            Span::styled(" Project Manager ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+            Span::styled("  │  ", Style::default().fg(C_BORDER())),
         ];
         spans.extend(tab_spans);
         spans
@@ -126,7 +126,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         .block(Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(C_YELLOW)));
+            .border_style(Style::default().fg(C_YELLOW())));
     f.render_widget(header, chunks[0]);
 
     // ── Body ──────────────────────────────────────────────────────────────────
@@ -138,25 +138,25 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     // ── Status bar ────────────────────────────────────────────────────────────
     let hint = if let Some(ref msg) = pm.status {
-        Span::styled(format!(" {msg}"), Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))
+        Span::styled(format!(" {msg}"), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))
     } else {
         match pm.tab {
             PmTab::Recent => Span::styled(
                 " [Tab] switch panel  [j/k] scroll  [Enter] open  [Del] remove  [Esc] close",
-                Style::default().fg(C_FG3),
+                Style::default().fg(C_FG3()),
             ),
             PmTab::New => Span::styled(
                 " [Tab] next field  [Space] toggle mode  [Enter] create  [Esc] close",
-                Style::default().fg(C_FG3),
+                Style::default().fg(C_FG3()),
             ),
             PmTab::Open => Span::styled(
                 " [Enter] open  [Esc] close",
-                Style::default().fg(C_FG3),
+                Style::default().fg(C_FG3()),
             ),
         }
     };
     let status_line = Paragraph::new(Line::from(vec![hint]))
-        .style(Style::default().bg(C_BG2));
+        .style(Style::default().bg(C_BG2()));
     f.render_widget(status_line, chunks[2]);
 }
 
@@ -175,13 +175,13 @@ fn draw_recent(f: &mut Frame, app: &App, area: Rect) {
             Line::raw(""),
             Line::from(Span::styled(
                 "  No recent projects. Use [New] to create one.",
-                Style::default().fg(C_FG3),
+                Style::default().fg(C_FG3()),
             )),
         ])
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(project_label, Style::default().fg(C_FG3))));
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(project_label, Style::default().fg(C_FG3()))));
         f.render_widget(msg, area);
         return;
     }
@@ -192,30 +192,30 @@ fn draw_recent(f: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = pm.recent.iter().enumerate().skip(scroll).map(|(i, r)| {
         let selected = i == cursor;
         let name_style = if selected {
-            Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)
+            Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(C_FG)
+            Style::default().fg(C_FG())
         };
         let mode_color = match r.save_mode {
-            ProjectSaveMode::Lightweight => C_GREEN,
-            ProjectSaveMode::Portable    => C_YELLOW,
+            ProjectSaveMode::Lightweight => C_GREEN(),
+            ProjectSaveMode::Portable    => C_YELLOW(),
         };
         let desc = r.description.as_deref().unwrap_or("");
         ListItem::new(vec![
             Line::from(vec![
-                Span::styled(if selected { "▶ " } else { "  " }, Style::default().fg(C_CYAN)),
+                Span::styled(if selected { "▶ " } else { "  " }, Style::default().fg(C_CYAN())),
                 Span::styled(&r.name, name_style),
-                Span::styled(format!("  {}", r.last_opened_display()), Style::default().fg(C_FG3)),
+                Span::styled(format!("  {}", r.last_opened_display()), Style::default().fg(C_FG3())),
                 Span::styled(format!("  {}", r.save_mode), Style::default().fg(mode_color)),
             ]),
             Line::from(vec![
                 Span::raw("    "),
-                Span::styled(&r.path, Style::default().fg(C_FG3)),
+                Span::styled(&r.path, Style::default().fg(C_FG3())),
             ]),
             if !desc.is_empty() {
                 Line::from(vec![
                     Span::raw("    "),
-                    Span::styled(desc, Style::default().fg(C_FG2)),
+                    Span::styled(desc, Style::default().fg(C_FG2())),
                 ])
             } else {
                 Line::raw("")
@@ -226,8 +226,8 @@ fn draw_recent(f: &mut Frame, app: &App, area: Rect) {
     let list = List::new(items)
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(project_label, Style::default().fg(C_FG3))));
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(project_label, Style::default().fg(C_FG3()))));
     f.render_widget(list, area);
 }
 
@@ -236,8 +236,8 @@ fn draw_new(f: &mut Frame, app: &App, area: Rect) {
 
     let outer = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(C_BORDER))
-        .title(Span::styled(" New Project ", Style::default().fg(C_FG3)));
+        .border_style(Style::default().fg(C_BORDER()))
+        .title(Span::styled(" New Project ", Style::default().fg(C_FG3())));
     let inner = outer.inner(area);
     f.render_widget(outer, area);
 
@@ -262,7 +262,7 @@ fn draw_new(f: &mut Frame, app: &App, area: Rect) {
     draw_field(f, " Path ", &pm.new_path, path_active && pm.editing, path_active, fields[2]);
 
     // Mode selector
-    let mode_color = if mode_active { C_CYAN } else { C_FG2 };
+    let mode_color = if mode_active { C_CYAN() } else { C_FG2() };
     let mode_str = match pm.new_mode {
         ProjectSaveMode::Lightweight => "  ● Lightweight  ○ Portable  [Space to toggle]",
         ProjectSaveMode::Portable    => "  ○ Lightweight  ● Portable  [Space to toggle]",
@@ -271,21 +271,21 @@ fn draw_new(f: &mut Frame, app: &App, area: Rect) {
         .style(Style::default().fg(mode_color))
         .block(Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(if mode_active { C_CYAN } else { C_BORDER }))
-            .title(Span::styled(" Save Mode ", Style::default().fg(C_FG3))));
+            .border_style(Style::default().fg(if mode_active { C_CYAN() } else { C_BORDER() }))
+            .title(Span::styled(" Save Mode ", Style::default().fg(C_FG3()))));
     f.render_widget(mode_widget, fields[3]);
 }
 
 fn draw_field(f: &mut Frame, label: &str, value: &str, editing: bool, focused: bool, area: Rect) {
     let display = if editing { format!("{value}_") } else { value.to_string() };
-    let text_color = if editing { C_CYAN } else if focused { C_FG } else { C_FG2 };
-    let border_color = if focused { C_CYAN } else { C_BORDER };
+    let text_color = if editing { C_CYAN() } else if focused { C_FG() } else { C_FG2() };
+    let border_color = if focused { C_CYAN() } else { C_BORDER() };
     let widget = Paragraph::new(display)
         .style(Style::default().fg(text_color))
         .block(Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
-            .title(Span::styled(label, Style::default().fg(C_FG3))));
+            .title(Span::styled(label, Style::default().fg(C_FG3()))));
     f.render_widget(widget, area);
 }
 
@@ -294,8 +294,8 @@ fn draw_open(f: &mut Frame, app: &App, area: Rect) {
 
     let outer = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(C_BORDER))
-        .title(Span::styled(" Open Project File ", Style::default().fg(C_FG3)));
+        .border_style(Style::default().fg(C_BORDER()))
+        .title(Span::styled(" Open Project File ", Style::default().fg(C_FG3())));
     let inner = outer.inner(area);
     f.render_widget(outer, area);
 

@@ -6,6 +6,7 @@ use crate::analysis::carving::{Carver, CarvedObject};
 use crate::analysis::yara::YaraEngine;
 use crate::model::project::ProjectSaveMode;
 use crate::storage::project_store;
+use crate::storage::theme_store;
 use crate::ui::autopsy_overlay::AutopsyState;
 use crate::ui::project_manager::ProjectManagerState;
 use crate::analysis::diff::DiffEngine;
@@ -201,6 +202,12 @@ pub struct App {
     pub search_selected: usize,
     // ─── Protocol Autopsy overlay ──────────────────────────────────────────────
     pub autopsy_state:   Option<AutopsyState>,
+    // ─── Theme ────────────────────────────────────────────────────────────────
+    /// Name of the active built-in theme.
+    pub selected_theme_name:  String,
+    /// Whether the theme picker overlay is shown.
+    pub theme_picker_open:    bool,
+    pub theme_picker_cursor:  usize,
     // ─── Project management ────────────────────────────────────────────────────
     /// Name of the currently open project (None = ad-hoc workspace).
     pub current_project_name: Option<String>,
@@ -324,6 +331,9 @@ impl App {
             search_results:  Vec::new(),
             search_selected: 0,
             autopsy_state:    None,
+            selected_theme_name:  theme_store::load_theme_name(),
+            theme_picker_open:    false,
+            theme_picker_cursor:  0,
             current_project_name: None,
             current_project_path: None,
             project_dirty:        false,
@@ -429,6 +439,14 @@ impl App {
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_msg = Some(msg.into());
         self.status_msg_ticks = 30; // 30 ticks ≈ 3s at 10Hz
+    }
+
+    // ─── Theme ────────────────────────────────────────────────────────────────
+
+    /// Apply a theme by name, set it as current, and persist the choice.
+    pub fn apply_theme(&mut self, name: &str) {
+        self.selected_theme_name = name.to_string();
+        let _ = theme_store::save_theme_name(name);
     }
 
     // ─── Project save / load ──────────────────────────────────────────────────
