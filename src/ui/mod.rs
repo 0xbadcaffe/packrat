@@ -185,28 +185,79 @@ fn draw_filterbar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
-    let titles = vec![
-        Line::from(vec![Span::styled("1 ", Style::default().fg(C_YELLOW())), Span::raw("Packets")]),
-        Line::from(vec![Span::styled("2 ", Style::default().fg(C_YELLOW())), Span::raw("Analysis")]),
-        Line::from(vec![Span::styled("3 ", Style::default().fg(C_YELLOW())), Span::raw("Strings")]),
-        Line::from(vec![Span::styled("4 ", Style::default().fg(C_YELLOW())), Span::raw("Dynamic")]),
-        Line::from(vec![Span::styled("5 ", Style::default().fg(C_YELLOW())), Span::raw("Visualize")]),
-        Line::from(vec![Span::styled("6 ", Style::default().fg(C_YELLOW())), Span::raw("Flows")]),
-        Line::from(vec![Span::styled("7 ", Style::default().fg(C_YELLOW())), Span::raw("Craft")]),
-        Line::from(vec![Span::styled("8 ", Style::default().fg(C_YELLOW())), Span::raw("Trace")]),
-        Line::from(vec![Span::styled("9 ", Style::default().fg(C_YELLOW())), Span::raw("Security")]),
-        Line::from(vec![Span::styled("0 ", Style::default().fg(C_YELLOW())), Span::raw("Scanner")]),
-        Line::from(vec![Span::styled("H ", Style::default().fg(C_YELLOW())), Span::raw("Hosts")]),
-        Line::from(vec![Span::styled("N ", Style::default().fg(C_YELLOW())), Span::raw("Notebook")]),
-        Line::from(vec![Span::styled("T ", Style::default().fg(C_YELLOW())), Span::raw("TLS")]),
-        Line::from(vec![Span::styled("O ", Style::default().fg(C_YELLOW())), Span::raw("Objects")]),
-        Line::from(vec![Span::styled("R ", Style::default().fg(C_YELLOW())), Span::raw("Rules")]),
-        Line::from(vec![Span::styled("W ", Style::default().fg(C_YELLOW())), Span::raw("Workbench")]),
-        Line::from(vec![Span::styled("G ", Style::default().fg(C_YELLOW())), Span::raw("Graph")]),
-        Line::from(vec![Span::styled("D ", Style::default().fg(C_YELLOW())), Span::raw("Diff")]),
+    // All 18 tabs: (shortcut_key, label)
+    const ALL: &[(&str, &str)] = &[
+        ("1 ", "Packets"),  ("2 ", "Analysis"), ("3 ", "Strings"),
+        ("4 ", "Dynamic"),  ("5 ", "Visualize"),("6 ", "Flows"),
+        ("7 ", "Craft"),    ("8 ", "Trace"),    ("9 ", "Security"),
+        ("0 ", "Scanner"),  ("H ", "Hosts"),    ("N ", "Notebook"),
+        ("T ", "TLS"),      ("O ", "Objects"),  ("R ", "Rules"),
+        ("W ", "Workbench"),("G ", "Graph"),    ("D ", "Diff"),
     ];
-    let tabs = Tabs::new(titles)
-        .select(app.active_tab.index())
+
+    let active = app.active_tab.index();
+
+    // Each tab renders as " {key}{label} " (2 padding) plus "│" divider between tabs.
+    // Width = key.len + label.len + 2 (padding) + 1 (divider) — except the last has no divider.
+    let widths: Vec<u16> = ALL.iter().enumerate().map(|(i, (k, l))| {
+        let text = k.len() + l.len() + 2; // " key label "
+        (text + if i + 1 < ALL.len() { 1 } else { 0 }) as u16
+    }).collect();
+
+    let avail = area.width;
+
+    // Find the smallest `start` such that the active tab falls within the visible window.
+    // We prefer to show as many tabs as possible starting from `start`.
+    let mut start = 0usize;
+    loop {
+        // How many tabs fit from `start`?
+        let mut used = 0u16;
+        let mut end = start;
+        while end < ALL.len() {
+            let w = widths[end];
+            if used + w > avail { break; }
+            used += w;
+            end += 1;
+        }
+        if active < end || start >= active {
+            break; // active is visible
+        }
+        start += 1;
+    }
+
+    // Collect the visible slice and build Line items for the Tabs widget.
+    let mut visible: Vec<Line> = Vec::new();
+    let mut used = 0u16;
+    let mut end = start;
+    while end < ALL.len() {
+        if used + widths[end] > avail { break; }
+        used += widths[end];
+        let (key, label) = ALL[end];
+        visible.push(Line::from(vec![
+            Span::styled(key,   Style::default().fg(C_YELLOW())),
+            Span::raw(label),
+        ]));
+        end += 1;
+    }
+
+    // If we scrolled, show a left-overflow indicator in the first tab slot.
+    if start > 0 {
+        if let Some(first) = visible.first_mut() {
+            *first = Line::from(vec![
+                Span::styled("◀ ", Style::default().fg(C_FG3())),
+                Span::raw(ALL[start].1),
+            ]);
+        }
+    }
+    // If there are hidden tabs to the right, show a right-overflow indicator.
+    if end < ALL.len() {
+        if let Some(last) = visible.last_mut() {
+            *last = Line::from(Span::styled(" ▶", Style::default().fg(C_FG3())));
+        }
+    }
+
+    let tabs = Tabs::new(visible)
+        .select(active.saturating_sub(start))
         .style(Style::default().fg(C_FG2()).bg(C_BG2()))
         .highlight_style(Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD))
         .divider("│")
