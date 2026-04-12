@@ -4,7 +4,10 @@ use tokio::task::JoinHandle;
 
 use crate::analysis::carving::{Carver, CarvedObject};
 use crate::analysis::yara::YaraEngine;
+use crate::model::project::ProjectSaveMode;
+use crate::storage::project_store;
 use crate::ui::autopsy_overlay::AutopsyState;
+use crate::ui::project_manager::ProjectManagerState;
 use crate::analysis::diff::DiffEngine;
 use crate::analysis::display_filter::DisplayFilter;
 use crate::analysis::ioc::IocEngine;
@@ -198,6 +201,16 @@ pub struct App {
     pub search_selected: usize,
     // ─── Protocol Autopsy overlay ──────────────────────────────────────────────
     pub autopsy_state:   Option<AutopsyState>,
+    // ─── Project management ────────────────────────────────────────────────────
+    /// Name of the currently open project (None = ad-hoc workspace).
+    pub current_project_name: Option<String>,
+    /// Filesystem path of the currently open project file.
+    pub current_project_path: Option<String>,
+    /// True when there are unsaved changes since the last save.
+    pub project_dirty:        bool,
+    /// Whether the project manager overlay is shown.
+    pub project_manager_open: bool,
+    pub project_manager:      ProjectManagerState,
     // ─── Status / feedback message (transient, cleared after a few ticks) ─────
     pub status_msg:      Option<String>,
     status_msg_ticks:    u8,
@@ -311,6 +324,11 @@ impl App {
             search_results:  Vec::new(),
             search_selected: 0,
             autopsy_state:    None,
+            current_project_name: None,
+            current_project_path: None,
+            project_dirty:        false,
+            project_manager_open: false,
+            project_manager:      ProjectManagerState::default(),
             status_msg:       None,
             status_msg_ticks: 0,
         }
@@ -411,6 +429,112 @@ impl App {
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_msg = Some(msg.into());
         self.status_msg_ticks = 30; // 30 ticks ≈ 3s at 10Hz
+    }
+
+    // ─── Project save / load ──────────────────────────────────────────────────
+
+    /// Open the project manager overlay and refresh the recent list.
+    pub fn open_project_manager(&mut self) {
+        self.project_manager_open = true;
+        self.project_manager.recent = project_store::recent_projects();
+        self.project_manager.status = None;
+    }
+
+    /// Snapshot the current analysis state into a `ProjectState`.
+    fn snapshot_project(&self, name: &str, mode: ProjectSaveMode) -> crate::model::project::ProjectState {
+        use crate::model::project::ProjectState;
+        use crate::storage::case_bundle::ObjectEntry;
+        let mut state = ProjectState::new(name, mode);
+        // Clone notebook
+        state.notebook = self.notebook.clone();
+        // Clone tag store
+        state.tag_store = self.tag_store.clone();
+        // Active filter text
+        state.active_filter = self.filter.input.clone();
+        // Host tags: ip → sorted vec
+        for host in self.hosts.all() {
+            if !host.tags.is_empty() {
+                let mut tags: Vec<String> = host.tags.iter().cloned().collect();
+                tags.sort();
+                state.host_tags.insert(host.ip.clone(), tags);
+            }
+        }
+        // Carved object metadata
+        state.carved_objects = self.carved_objects.iter().map(ObjectEntry::from).collect();
+        state
+    }
+
+    /// Save the current project to `path`.  Marks the workspace clean.
+    pub fn save_project(&mut self, path: &str, name: &str, mode: ProjectSaveMode) {
+        let state = self.snapshot_project(name, mode.clone());
+        let p = std::path::Path::new(path);
+        match project_store::save(&state, p) {
+            Ok(()) => {
+                let _ = project_store::add_to_recent(
+                    name, p,
+                    state.metadata.description.as_deref(),
+                    mode,
+                );
+                self.current_project_name = Some(name.to_string());
+                self.current_project_path = Some(path.to_string());
+                self.project_dirty = false;
+                self.set_status(format!("Project saved: {name}"));
+            }
+            Err(e) => {
+                self.set_status(format!("Save failed: {e}"));
+            }
+        }
+    }
+
+    /// Load a project from `path`, restoring notebook, tags, filter, host tags.
+    pub fn load_project(&mut self, path: &str) {
+        match project_store::load(std::path::Path::new(path)) {
+            Ok(state) => {
+                let name = state.metadata.name.clone();
+                let mode = state.metadata.save_mode.clone();
+                // Restore notebook
+                self.notebook = state.notebook;
+                // Restore tag store
+                self.tag_store = state.tag_store;
+                // Restore active filter
+                if !state.active_filter.is_empty() {
+                    self.filter.input = state.active_filter;
+                    self.rebuild_filtered();
+                }
+                // Restore host tags (seeds entries; traffic will fill the rest)
+                for (ip, tags) in state.host_tags {
+                    self.hosts.seed_tags(&ip, tags);
+                }
+                // Update project tracking state
+                let _ = project_store::add_to_recent(
+                    &name, std::path::Path::new(path),
+                    state.metadata.description.as_deref(),
+                    mode,
+                );
+                self.current_project_name = Some(name.clone());
+                self.current_project_path = Some(path.to_string());
+                self.project_dirty = false;
+                self.project_manager_open = false;
+                self.set_status(format!("Project loaded: {name}"));
+            }
+            Err(e) => {
+                self.project_manager.status = Some(format!("Load failed: {e}"));
+            }
+        }
+    }
+
+    /// Quick-save the current project if one is open; otherwise open Save As dialog.
+    pub fn quick_save_project(&mut self) {
+        if let (Some(path), Some(name)) = (
+            self.current_project_path.clone(),
+            self.current_project_name.clone(),
+        ) {
+            self.save_project(&path, &name, ProjectSaveMode::Lightweight);
+        } else {
+            // No active project — open manager on New tab
+            self.open_project_manager();
+            self.project_manager.tab = crate::ui::project_manager::PmTab::New;
+        }
     }
 
     /// Export a full case bundle JSON to a timestamped file and set a status message.

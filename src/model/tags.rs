@@ -19,7 +19,7 @@ impl std::fmt::Display for Tag {
 }
 
 /// Tag registry — tracks which tags are applied to which evidence items.
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TagStore {
     /// evidence → set of tags
     items: HashMap<EvidenceRef, HashSet<String>>,

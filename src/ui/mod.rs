@@ -14,6 +14,7 @@ pub mod autopsy_overlay;
 mod helpers;
 mod help;
 mod iface_picker;
+pub mod project_manager;
 mod search_overlay;
 mod tabs;
 pub mod theme;
@@ -58,6 +59,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.pcap_import_editing {
         draw_pcap_import_overlay(f, app);
+    }
+
+    if app.project_manager_open {
+        project_manager::draw(f, app);
     }
 }
 
@@ -106,6 +111,17 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
         Span::raw("")
     };
 
+    // Project name badge
+    let project_span = if let Some(ref name) = app.current_project_name {
+        let dirty = if app.project_dirty { "*" } else { "" };
+        Span::styled(
+            format!("  [{dirty}{name}]"),
+            Style::default().fg(if app.project_dirty { C_ORANGE } else { C_CYAN }),
+        )
+    } else {
+        Span::raw("")
+    };
+
     let line = Line::from(vec![
         Span::styled(" packrat ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
         Span::styled("─ packet analyzer  ", Style::default().fg(C_FG3)),
@@ -116,6 +132,7 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(C_FG3),
         ),
         rec_span,
+        project_span,
         sec_span,
         ioc_span,
         rule_span,

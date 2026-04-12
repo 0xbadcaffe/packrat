@@ -165,6 +165,16 @@ impl HostInventory {
 
     pub fn clear(&mut self) { self.hosts.clear(); }
 
+    /// Pre-seed tags for a host IP, creating a placeholder entry if needed.
+    /// When real traffic arrives for this IP the host entry is updated in-place,
+    /// preserving the pre-seeded tags.
+    pub fn seed_tags(&mut self, ip: &str, tags: impl IntoIterator<Item = String>) {
+        if ip.is_empty() || ip == "0.0.0.0" { return; }
+        let h = self.hosts.entry(ip.to_string())
+            .or_insert_with(|| Host::new(ip, 0.0));
+        for t in tags { h.tags.insert(t); }
+    }
+
     /// Filter hosts by search string (IP, hostname, protocol, tag).
     pub fn search(&self, q: &str) -> Vec<&Host> {
         let q = q.to_lowercase();
