@@ -253,8 +253,6 @@ fn handle_craft(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Esc | KeyCode::Enter => app.craft.stop_edit(),
             KeyCode::Backspace            => app.craft.pop_char(),
-            KeyCode::Tab                  => { app.craft.stop_edit(); app.craft.focus_next(); }
-            KeyCode::BackTab              => { app.craft.stop_edit(); app.craft.focus_prev(); }
             KeyCode::Char(c)              => app.craft.push_char(c),
             _ => {}
         }
@@ -264,8 +262,8 @@ fn handle_craft(app: &mut App, key: KeyEvent) {
     if global_tab_switch(app, &key) { return; }
 
     match key.code {
-        KeyCode::Tab     => app.craft.focus_next(),
-        KeyCode::BackTab => app.craft.focus_prev(),
+        KeyCode::Tab     => { app.next_tab(); return; }
+        KeyCode::BackTab => { app.prev_tab(); return; }
         KeyCode::Down | KeyCode::Char('j') => app.craft.focus_next(),
         KeyCode::Up   | KeyCode::Char('k') => app.craft.focus_prev(),
         KeyCode::Enter | KeyCode::Char('e') => app.craft.start_edit(),
@@ -430,7 +428,9 @@ fn handle_scanner(app: &mut App, key: KeyEvent) {
     if global_tab_switch(app, &key) { return; }
 
     match key.code {
-        KeyCode::Tab | KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Tab     => { app.next_tab(); return; }
+        KeyCode::BackTab => { app.prev_tab(); return; }
+        KeyCode::Down | KeyCode::Char('j') => {
             app.scan.focused_field = match app.scan.focused_field {
                 ScanField::Target    => ScanField::PortStart,
                 ScanField::PortStart => ScanField::PortEnd,
@@ -438,7 +438,7 @@ fn handle_scanner(app: &mut App, key: KeyEvent) {
                 ScanField::Mode      => ScanField::Target,
             };
         }
-        KeyCode::BackTab | KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up | KeyCode::Char('k') => {
             app.scan.focused_field = match app.scan.focused_field {
                 ScanField::Target    => ScanField::Mode,
                 ScanField::PortStart => ScanField::Target,
