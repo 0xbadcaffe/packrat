@@ -173,6 +173,7 @@ pub fn build() -> Vec<Packet> {
     add!(INTRA_A, INTRA_B, "HTTP", Some(49600), Some(8080),
          "GET /metrics HTTP/1.1 Host: 192.168.1.30", 300);
 
+    let _ = (no, ts); // consumed by macro post-increment on last call
     pkts
 }
 
