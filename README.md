@@ -812,6 +812,39 @@ The filter bar shows:
 
 ---
 
+## Testing
+
+The test suite uses [`rstest`](https://github.com/la10736/rstest) for parametrized cases and [`insta`](https://insta.rs) for snapshot assertions.
+
+```bash
+# Run the full suite
+cargo test
+
+# Run a single test file
+cargo test --test filter_tests
+cargo test --test event_tests
+cargo test --test notebook_tests
+cargo test --test ioc_tests
+cargo test --test scenario_tests
+
+# Run tests matching a pattern
+cargo test notebook_search
+cargo test security_subtab
+
+# Show stdout for failing tests
+cargo test -- --nocapture
+```
+
+| Test file | Tests | What it covers |
+|-----------|------:|----------------|
+| `tests/filter_tests.rs`   |  32 | Display filter parser and evaluator — all operators, fields, compound expressions |
+| `tests/event_tests.rs`    | 107 | Key-event handler — every tab-switch key, per-tab actions, overlays, text-mode quit guard |
+| `tests/notebook_tests.rs` |  19 | Notebook CRUD, search (text + tag, case-insensitive), evidence linking, index cleanup on delete |
+| `tests/ioc_tests.rs`      |  11 | IOC engine — IP/domain load, packet checking, suffix matching, hit metadata |
+| `tests/scenario_tests.rs` |  25 | "Operation Quiet Beacon" scenario — packet volume, protocol presence, IOC seeds, host tags |
+
+---
+
 ## Platform Support
 
 | Platform | Status |
