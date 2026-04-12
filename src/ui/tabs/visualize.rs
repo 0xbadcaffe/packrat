@@ -42,14 +42,14 @@ fn draw_proto_bars(f: &mut Frame, app: &App, area: Rect) {
         let bar_w = (pct / 100.0 * 20.0) as usize;
         lines.push(Line::from(vec![
             Span::styled("█".repeat(bar_w), Style::default().fg(proto_color(proto))),
-            Span::styled(format!(" {:<7} {:.1}%", proto, pct), Style::default().fg(C_FG2)),
+            Span::styled(format!(" {:<7} {:.1}%", proto, pct), Style::default().fg(C_FG2())),
         ]));
     }
 
     let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Protocol Distribution ", Style::default().fg(C_CYAN))))
-        .style(Style::default().bg(C_BG));
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Protocol Distribution ", Style::default().fg(C_CYAN()))))
+        .style(Style::default().bg(C_BG()));
     f.render_widget(p, area);
 }
 
@@ -74,17 +74,17 @@ fn draw_sparkline(f: &mut Frame, app: &App, area: Rect) {
 
     let lines = vec![
         Line::raw(""),
-        Line::from(vec![Span::styled(format!(" max: {}/s", max), Style::default().fg(C_FG3))]),
+        Line::from(vec![Span::styled(format!(" max: {}/s", max), Style::default().fg(C_FG3()))]),
         Line::raw(""),
-        Line::from(vec![Span::styled(spark, Style::default().fg(C_CYAN))]),
+        Line::from(vec![Span::styled(spark, Style::default().fg(C_CYAN()))]),
         Line::raw(""),
-        Line::from(vec![Span::styled(format!(" current: {}/s", app.current_rate()), Style::default().fg(C_GREEN))]),
+        Line::from(vec![Span::styled(format!(" current: {}/s", app.current_rate()), Style::default().fg(C_GREEN()))]),
     ];
 
     let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Traffic Rate (pkts/s) ", Style::default().fg(C_CYAN))))
-        .style(Style::default().bg(C_BG));
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Traffic Rate (pkts/s) ", Style::default().fg(C_CYAN()))))
+        .style(Style::default().bg(C_BG()));
     f.render_widget(p, area);
 }
 
@@ -99,16 +99,16 @@ fn draw_top_ips(f: &mut Frame, app: &App, area: Rect) {
     for (ip, count) in sorted.iter().take(10) {
         let bar_w = (**count as f64 / max as f64 * 18.0) as usize;
         lines.push(Line::from(vec![
-            Span::styled(format!(" {:<16}", ip), Style::default().fg(C_CYAN)),
-            Span::styled("█".repeat(bar_w), Style::default().fg(C_GREEN)),
-            Span::styled(format!(" {}", count), Style::default().fg(C_FG3)),
+            Span::styled(format!(" {:<16}", ip), Style::default().fg(C_CYAN())),
+            Span::styled("█".repeat(bar_w), Style::default().fg(C_GREEN())),
+            Span::styled(format!(" {}", count), Style::default().fg(C_FG3())),
         ]));
     }
 
     let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Top Source IPs ", Style::default().fg(C_CYAN))))
-        .style(Style::default().bg(C_BG));
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Top Source IPs ", Style::default().fg(C_CYAN()))))
+        .style(Style::default().bg(C_BG()));
     f.render_widget(p, area);
 }
 
@@ -137,16 +137,16 @@ fn draw_size_histogram(f: &mut Frame, app: &App, area: Rect) {
     for (i, &(_, _, label)) in buckets.iter().enumerate() {
         let w = (counts[i] as f64 / max as f64 * bar_w as f64) as usize;
         lines.push(Line::from(vec![
-            Span::styled(format!(" {:<9}", label), Style::default().fg(C_FG2)),
-            Span::styled("\u{2588}".repeat(w), Style::default().fg(C_CYAN)),
-            Span::styled(format!(" {}", counts[i]), Style::default().fg(C_FG3)),
+            Span::styled(format!(" {:<9}", label), Style::default().fg(C_FG2())),
+            Span::styled("\u{2588}".repeat(w), Style::default().fg(C_CYAN())),
+            Span::styled(format!(" {}", counts[i]), Style::default().fg(C_FG3())),
         ]));
     }
 
     let p = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Packet Size Distribution (bytes) ", Style::default().fg(C_CYAN))))
-        .style(Style::default().bg(C_BG));
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Packet Size Distribution (bytes) ", Style::default().fg(C_CYAN()))))
+        .style(Style::default().bg(C_BG()));
     f.render_widget(p, area);
 }

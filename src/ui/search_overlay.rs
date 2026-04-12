@@ -52,24 +52,24 @@ pub fn draw(f: &mut Frame, app: &App) {
     // Outer block (border + title)
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(C_CYAN))
+        .border_style(Style::default().fg(C_CYAN()))
         .title(Span::styled(
             " Search  [Esc] close  [↑↓/jk] navigate  [Enter] jump ",
-            Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
+            Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
         ));
     f.render_widget(block, popup);
 
     // Input line
     let cursor = format!(" > {}█", app.search_query);
     let input = Paragraph::new(Line::from(
-        Span::styled(cursor, Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD))
-    )).style(Style::default().bg(C_BG2));
+        Span::styled(cursor, Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD))
+    )).style(Style::default().bg(C_BG2()));
     f.render_widget(input, input_rect);
 
     // Separator
     let sep_line = "─".repeat(inner_width as usize);
     let sep = Paragraph::new(Line::from(
-        Span::styled(sep_line, Style::default().fg(C_BORDER))
+        Span::styled(sep_line, Style::default().fg(C_BORDER()))
     ));
     f.render_widget(sep, sep_rect);
 
@@ -89,12 +89,12 @@ pub fn draw(f: &mut Frame, app: &App) {
             let is_sel = abs_idx == selected;
 
             let source_color = source_color(r.source);
-            let bg = if is_sel { C_SEL_BG } else { C_BG };
+            let bg = if is_sel { C_SEL_BG() } else { C_BG() };
 
             let label_style = if is_sel {
-                Style::default().fg(C_FG).bg(C_SEL_BG).add_modifier(Modifier::BOLD)
+                Style::default().fg(C_FG()).bg(C_SEL_BG()).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(C_FG2).bg(C_BG)
+                Style::default().fg(C_FG2()).bg(C_BG())
             };
 
             ListItem::new(Line::from(vec![
@@ -109,7 +109,7 @@ pub fn draw(f: &mut Frame, app: &App) {
                 ),
                 Span::styled(
                     truncate(&r.detail, (inner_width as usize).saturating_sub(50)),
-                    Style::default().fg(C_FG3).bg(bg),
+                    Style::default().fg(C_FG3()).bg(bg),
                 ),
             ]))
         })
@@ -127,20 +127,20 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     let list = List::new(items)
         .block(Block::default()
-            .title(Span::styled(count_hint, Style::default().fg(C_FG3))))
-        .style(Style::default().bg(C_BG));
+            .title(Span::styled(count_hint, Style::default().fg(C_FG3()))))
+        .style(Style::default().bg(C_BG()));
     f.render_widget(list, list_rect);
 }
 
 fn source_color(source: &str) -> ratatui::style::Color {
     match source {
-        "Packet"   => C_CYAN,
-        "Host"     => C_GREEN,
-        "IOC Hit"  => C_RED,
-        "Rule Hit" => C_ORANGE,
-        "YARA"     => C_RED,
-        "Object"   => C_MAGENTA,
-        _          => C_FG2,
+        "Packet"   => C_CYAN(),
+        "Host"     => C_GREEN(),
+        "IOC Hit"  => C_RED(),
+        "Rule Hit" => C_ORANGE(),
+        "YARA"     => C_RED(),
+        "Object"   => C_MAGENTA(),
+        _          => C_FG2(),
     }
 }
 

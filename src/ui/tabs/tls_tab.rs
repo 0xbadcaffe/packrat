@@ -27,14 +27,14 @@ fn draw_session_table(
     area: Rect,
 ) {
     let header = Row::new(vec![
-        Cell::from("Flow").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("SNI").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Version").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Cipher").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("JA3 (truncated)").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("JA3s").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Flags").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-    ]).style(Style::default().bg(C_BG2)).height(1);
+        Cell::from("Flow").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("SNI").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Version").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Cipher").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("JA3 (truncated)").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("JA3s").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Flags").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+    ]).style(Style::default().bg(C_BG2())).height(1);
 
     let visible_height = area.height.saturating_sub(3) as usize;
     let scroll_offset = if app.tls_selected < visible_height {
@@ -58,24 +58,24 @@ fn draw_session_table(
             .unwrap_or_else(|| "-".into());
         let flags = if s.is_weak() { "WEAK" } else { "ok" }.to_string();
         let flag_style = if s.is_weak() {
-            Style::default().fg(C_RED).add_modifier(Modifier::BOLD)
+            Style::default().fg(C_RED()).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(C_GREEN)
+            Style::default().fg(C_GREEN())
         };
 
         let row_style = if selected {
-            Style::default().bg(C_BG2).add_modifier(Modifier::BOLD)
+            Style::default().bg(C_BG2()).add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
 
         Row::new(vec![
-            Cell::from(s.flow_id.clone()).style(Style::default().fg(C_FG3)),
-            Cell::from(sni).style(Style::default().fg(C_CYAN)),
-            Cell::from(ver).style(Style::default().fg(C_FG2)),
-            Cell::from(cipher).style(Style::default().fg(C_FG2)),
-            Cell::from(ja3).style(Style::default().fg(C_FG3)),
-            Cell::from(ja3s).style(Style::default().fg(C_FG3)),
+            Cell::from(s.flow_id.clone()).style(Style::default().fg(C_FG3())),
+            Cell::from(sni).style(Style::default().fg(C_CYAN())),
+            Cell::from(ver).style(Style::default().fg(C_FG2())),
+            Cell::from(cipher).style(Style::default().fg(C_FG2())),
+            Cell::from(ja3).style(Style::default().fg(C_FG3())),
+            Cell::from(ja3s).style(Style::default().fg(C_FG3())),
             Cell::from(flags).style(flag_style),
         ]).style(row_style)
     }).collect();
@@ -92,12 +92,12 @@ fn draw_session_table(
     .header(header)
     .block(Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(C_BORDER))
+        .border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(
             format!(" TLS Intelligence — {} sessions ", sessions.len()),
-            Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
+            Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
         )))
-    .style(Style::default().bg(C_BG));
+    .style(Style::default().bg(C_BG()));
     f.render_widget(table, area);
 }
 
@@ -109,14 +109,14 @@ fn draw_detail_panel(
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(C_BORDER))
-        .title(Span::styled(" Session Detail ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)));
+        .border_style(Style::default().fg(C_BORDER()))
+        .title(Span::styled(" Session Detail ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)));
 
     let Some(s) = sessions.get(app.tls_selected) else {
         f.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" No session selected.", Style::default().fg(C_FG3)),
-            ])).block(block).style(Style::default().bg(C_BG)),
+                Span::styled(" No session selected.", Style::default().fg(C_FG3())),
+            ])).block(block).style(Style::default().bg(C_BG())),
             area,
         );
         return;
@@ -131,84 +131,84 @@ fn draw_detail_panel(
     // Left: connection info
     let left_items = vec![
         ListItem::new(Line::from(vec![
-            Span::styled("  Flow:    ", Style::default().fg(C_FG3)),
-            Span::styled(s.flow_id.clone(), Style::default().fg(C_CYAN)),
+            Span::styled("  Flow:    ", Style::default().fg(C_FG3())),
+            Span::styled(s.flow_id.clone(), Style::default().fg(C_CYAN())),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  SNI:     ", Style::default().fg(C_FG3)),
-            Span::styled(s.sni.as_deref().unwrap_or("-"), Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),
+            Span::styled("  SNI:     ", Style::default().fg(C_FG3())),
+            Span::styled(s.sni.as_deref().unwrap_or("-"), Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  Version: ", Style::default().fg(C_FG3)),
-            Span::styled(s.version_str(), Style::default().fg(C_FG2)),
+            Span::styled("  Version: ", Style::default().fg(C_FG3())),
+            Span::styled(s.version_str(), Style::default().fg(C_FG2())),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  Cipher:  ", Style::default().fg(C_FG3)),
+            Span::styled("  Cipher:  ", Style::default().fg(C_FG3())),
             Span::styled(
                 s.cipher_suite
                     .map(|cs| format!("{} (0x{cs:04x})", crate::analysis::tls::cipher_name(cs)))
                     .unwrap_or_else(|| "-".into()),
-                if s.is_weak() { Style::default().fg(C_RED).add_modifier(Modifier::BOLD) }
-                else { Style::default().fg(C_GREEN) },
+                if s.is_weak() { Style::default().fg(C_RED()).add_modifier(Modifier::BOLD) }
+                else { Style::default().fg(C_GREEN()) },
             ),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  JA3:     ", Style::default().fg(C_FG3)),
-            Span::styled(s.ja3.as_deref().unwrap_or("-"), Style::default().fg(C_FG2)),
+            Span::styled("  JA3:     ", Style::default().fg(C_FG3())),
+            Span::styled(s.ja3.as_deref().unwrap_or("-"), Style::default().fg(C_FG2())),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  JA3s:    ", Style::default().fg(C_FG3)),
-            Span::styled(s.ja3s.as_deref().unwrap_or("-"), Style::default().fg(C_FG2)),
+            Span::styled("  JA3s:    ", Style::default().fg(C_FG3())),
+            Span::styled(s.ja3s.as_deref().unwrap_or("-"), Style::default().fg(C_FG2())),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  Status:  ", Style::default().fg(C_FG3)),
+            Span::styled("  Status:  ", Style::default().fg(C_FG3())),
             Span::styled(
                 if s.is_weak() { "WEAK CIPHER" } else { "OK" },
-                if s.is_weak() { Style::default().fg(C_RED).add_modifier(Modifier::BOLD) }
-                else { Style::default().fg(C_GREEN) },
+                if s.is_weak() { Style::default().fg(C_RED()).add_modifier(Modifier::BOLD) }
+                else { Style::default().fg(C_GREEN()) },
             ),
         ])),
     ];
     f.render_widget(
-        List::new(left_items).style(Style::default().bg(C_BG)),
+        List::new(left_items).style(Style::default().bg(C_BG())),
         cols[0],
     );
 
     // Right: cert info
     let right_items = vec![
         ListItem::new(Line::from(vec![
-            Span::styled("  Cert CN:     ", Style::default().fg(C_FG3)),
-            Span::styled(s.cert_cn.as_deref().unwrap_or("-"), Style::default().fg(C_CYAN)),
+            Span::styled("  Cert CN:     ", Style::default().fg(C_FG3())),
+            Span::styled(s.cert_cn.as_deref().unwrap_or("-"), Style::default().fg(C_CYAN())),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  Cert Issuer: ", Style::default().fg(C_FG3)),
-            Span::styled(s.cert_issuer.as_deref().unwrap_or("-"), Style::default().fg(C_FG2)),
+            Span::styled("  Cert Issuer: ", Style::default().fg(C_FG3())),
+            Span::styled(s.cert_issuer.as_deref().unwrap_or("-"), Style::default().fg(C_FG2())),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  Cert Expiry: ", Style::default().fg(C_FG3)),
-            Span::styled(s.cert_not_after.as_deref().unwrap_or("-"), Style::default().fg(C_YELLOW)),
+            Span::styled("  Cert Expiry: ", Style::default().fg(C_FG3())),
+            Span::styled(s.cert_not_after.as_deref().unwrap_or("-"), Style::default().fg(C_YELLOW())),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  SANs:        ", Style::default().fg(C_FG3)),
+            Span::styled("  SANs:        ", Style::default().fg(C_FG3())),
             Span::styled(
                 if s.cert_san.is_empty() { "-".into() } else { s.cert_san.join(", ") },
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             ),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("  TLS Alert:   ", Style::default().fg(C_FG3)),
+            Span::styled("  TLS Alert:   ", Style::default().fg(C_FG3())),
             Span::styled(
                 match (s.alert_level, s.alert_desc) {
                     (Some(lvl), Some(desc)) => format!("level={lvl} desc={desc}"),
                     _ => "-".into(),
                 },
-                if s.alert_level == Some(2) { Style::default().fg(C_RED) }
-                else { Style::default().fg(C_FG3) },
+                if s.alert_level == Some(2) { Style::default().fg(C_RED()) }
+                else { Style::default().fg(C_FG3()) },
             ),
         ])),
     ];
     f.render_widget(
-        List::new(right_items).style(Style::default().bg(C_BG)),
+        List::new(right_items).style(Style::default().bg(C_BG())),
         cols[1],
     );
 }
@@ -225,8 +225,8 @@ fn draw_status_bar(
         Span::styled(
             format!(" {} sessions  {} with SNI  {} weak  [j/k] scroll  [c] clear",
                 sessions.len(), with_sni, weak),
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         ),
-    ])).style(Style::default().bg(C_BG2));
+    ])).style(Style::default().bg(C_BG2()));
     f.render_widget(bar, area);
 }

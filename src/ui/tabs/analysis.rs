@@ -25,12 +25,12 @@ fn draw_nav(f: &mut Frame, app: &App, area: Rect) {
     let icons = ["◈", "⬡", "⊞", "⊡", "◉", "≡", "◆", "⊗", "⚑", "§", "∑"];
     let items: Vec<ListItem> = sections.iter().enumerate().map(|(i, &name)| {
         let style = if i == app.analysis_section {
-            Style::default().fg(Color::White).bg(C_SEL_BG)
+            Style::default().fg(Color::White).bg(C_SEL_BG())
         } else {
-            Style::default().fg(C_FG2)
+            Style::default().fg(C_FG2())
         };
         ListItem::new(Line::from(vec![
-            Span::styled(format!(" {} ", icons[i]), Style::default().fg(C_YELLOW)),
+            Span::styled(format!(" {} ", icons[i]), Style::default().fg(C_YELLOW())),
             Span::styled(name, style),
         ]))
     }).collect();
@@ -39,9 +39,9 @@ fn draw_nav(f: &mut Frame, app: &App, area: Rect) {
         .block(Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Sections ", Style::default().fg(C_CYAN))))
-        .style(Style::default().bg(C_BG));
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Sections ", Style::default().fg(C_CYAN()))))
+        .style(Style::default().bg(C_BG()));
     f.render_widget(list, area);
 }
 
@@ -52,9 +52,9 @@ fn draw_content(f: &mut Frame, app: &App, area: Rect) {
         .block(Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(format!(" {} ", title), Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD))))
-        .style(Style::default().bg(C_BG))
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(format!(" {} ", title), Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD))))
+        .style(Style::default().bg(C_BG()))
         .wrap(Wrap { trim: false });
     f.render_widget(p, area);
 }
@@ -93,8 +93,8 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             for (k, v) in rows {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {:<22}", k), Style::default().fg(C_FG2)),
-                    Span::styled(v, Style::default().fg(C_CYAN)),
+                    Span::styled(format!("  {:<22}", k), Style::default().fg(C_FG2())),
+                    Span::styled(v, Style::default().fg(C_CYAN())),
                 ]));
             }
         }
@@ -108,7 +108,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             lines.push(Line::from(vec![Span::styled(
                 format!("  {:<10} {:<8} {:<7} {}", "Protocol", "Count", "%", "Distribution"),
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(60)));
             for (proto, count) in &sorted {
@@ -116,9 +116,9 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 let bar_w = (pct / 100.0 * 30.0) as usize;
                 lines.push(Line::from(vec![
                     Span::styled(format!("  {:<10}", proto), Style::default().fg(proto_color(proto))),
-                    Span::styled(format!("{:<8}", count), Style::default().fg(C_CYAN)),
-                    Span::styled(format!("{:<7.1}%", pct), Style::default().fg(C_FG2)),
-                    Span::styled("█".repeat(bar_w), Style::default().fg(C_CYAN)),
+                    Span::styled(format!("{:<8}", count), Style::default().fg(C_CYAN())),
+                    Span::styled(format!("{:<7.1}%", pct), Style::default().fg(C_FG2())),
+                    Span::styled("█".repeat(bar_w), Style::default().fg(C_CYAN())),
                 ]));
             }
         }
@@ -132,15 +132,15 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             lines.push(Line::from(vec![Span::styled(
                 format!("  {:<18} {:<8} {}", "Source IP", "Pkts", "Distribution"),
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(60)));
             for (ip, count) in sorted.iter().take(15) {
                 let bar_w = (**count as f64 / max as f64 * 25.0) as usize;
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {:<18}", ip), Style::default().fg(C_CYAN)),
-                    Span::styled(format!("{:<8}", count), Style::default().fg(C_FG2)),
-                    Span::styled("█".repeat(bar_w), Style::default().fg(C_GREEN)),
+                    Span::styled(format!("  {:<18}", ip), Style::default().fg(C_CYAN())),
+                    Span::styled(format!("{:<8}", count), Style::default().fg(C_FG2())),
+                    Span::styled("█".repeat(bar_w), Style::default().fg(C_GREEN())),
                 ]));
             }
         }
@@ -161,14 +161,14 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             lines.push(Line::from(vec![Span::styled(
                 format!("  {:<38} {:<8} {}", "Conversation", "Pkts", "Bytes"),
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(60)));
             for (conv, (pkts, bytes)) in sorted.iter().take(20) {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {:<38}", truncate(conv, 38)), Style::default().fg(C_FG)),
-                    Span::styled(format!("{:<8}", pkts), Style::default().fg(C_CYAN)),
-                    Span::styled(fmt_bytes(*bytes), Style::default().fg(C_GREEN)),
+                    Span::styled(format!("  {:<38}", truncate(conv, 38)), Style::default().fg(C_FG())),
+                    Span::styled(format!("{:<8}", pkts), Style::default().fg(C_CYAN())),
+                    Span::styled(fmt_bytes(*bytes), Style::default().fg(C_GREEN())),
                 ]));
             }
         }
@@ -186,14 +186,14 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             lines.push(Line::from(vec![Span::styled(
                 format!("  {:<18} {:<8} {}", "IP Address", "Pkts", "Bytes"),
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(40)));
             for (ip, (pkts, bytes)) in sorted.iter().take(20) {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {:<18}", ip), Style::default().fg(C_CYAN)),
-                    Span::styled(format!("{:<8}", pkts), Style::default().fg(C_FG2)),
-                    Span::styled(fmt_bytes(*bytes), Style::default().fg(C_GREEN)),
+                    Span::styled(format!("  {:<18}", ip), Style::default().fg(C_CYAN())),
+                    Span::styled(format!("{:<8}", pkts), Style::default().fg(C_FG2())),
+                    Span::styled(fmt_bytes(*bytes), Style::default().fg(C_GREEN())),
                 ]));
             }
         }
@@ -215,14 +215,14 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             lines.push(Line::from(vec![Span::styled(
                 format!("  {:<8} {:<16} {}", "Port", "Service", "Count"),
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(35)));
             for (port, count) in sorted.iter().take(20) {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {:<8}", port), Style::default().fg(C_YELLOW)),
-                    Span::styled(format!("{:<16}", port_name(**port)), Style::default().fg(C_FG2)),
-                    Span::styled(count.to_string(), Style::default().fg(C_CYAN)),
+                    Span::styled(format!("  {:<8}", port), Style::default().fg(C_YELLOW())),
+                    Span::styled(format!("{:<16}", port_name(**port)), Style::default().fg(C_FG2())),
+                    Span::styled(count.to_string(), Style::default().fg(C_CYAN())),
                 ]));
             }
         }
@@ -231,7 +231,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             lines.push(Line::from(vec![Span::styled(
                 format!("  {:<8} {:<12} {}", "Pkt#", "Magic", "Offset / Details"),
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(55)));
             let mut found = false;
@@ -240,12 +240,12 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 for m in &ind.magic {
                     found = true;
                     lines.push(Line::from(vec![
-                        Span::styled(format!("  {:<8}", pkt.no), Style::default().fg(C_FG3)),
-                        Span::styled(format!("{:<12}", m.name), Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+                        Span::styled(format!("  {:<8}", pkt.no), Style::default().fg(C_FG3())),
+                        Span::styled(format!("{:<12}", m.name), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
                         Span::styled(
                             format!("at byte offset {}  proto={}  {} bytes",
                                 m.offset, pkt.protocol, pkt.length),
-                            Style::default().fg(C_FG2),
+                            Style::default().fg(C_FG2()),
                         ),
                     ]));
                 }
@@ -254,7 +254,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 lines.push(Line::raw(""));
                 lines.push(Line::from(Span::styled(
                     "  No file magic signatures detected in captured packets.",
-                    Style::default().fg(C_FG3),
+                    Style::default().fg(C_FG3()),
                 )));
             }
         }
@@ -263,7 +263,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             lines.push(Line::from(vec![Span::styled(
                 "  Single-byte XOR obfuscation detection (score = printable bytes after XOR)",
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(55)));
             let mut found = false;
@@ -272,15 +272,15 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 if let Some(xor) = ind.xor {
                     found = true;
                     lines.push(Line::from(vec![
-                        Span::styled(format!("  pkt #{:<6}", pkt.no), Style::default().fg(C_FG3)),
+                        Span::styled(format!("  pkt #{:<6}", pkt.no), Style::default().fg(C_FG3())),
                         Span::styled(
                             format!("key=0x{:02x} ({:3})", xor.key, xor.key),
-                            Style::default().fg(C_ORANGE).add_modifier(Modifier::BOLD),
+                            Style::default().fg(C_ORANGE()).add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(
                             format!("  score={:.0}%  proto={}  len={}",
                                 xor.score * 100.0, pkt.protocol, pkt.length),
-                            Style::default().fg(C_FG3),
+                            Style::default().fg(C_FG3()),
                         ),
                     ]));
                 }
@@ -289,7 +289,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 lines.push(Line::raw(""));
                 lines.push(Line::from(Span::styled(
                     "  No XOR obfuscation candidates detected.",
-                    Style::default().fg(C_FG3),
+                    Style::default().fg(C_FG3()),
                 )));
             }
         }
@@ -298,7 +298,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             lines.push(Line::from(Span::styled(
                 "  ⚑ Anomaly Report — non-standard ports, tunneling, beacons, scans",
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(55)));
             let mut found = false;
@@ -308,8 +308,8 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 for anomaly in &ind.anomalies {
                     found = true;
                     lines.push(Line::from(vec![
-                        Span::styled(format!("  pkt #{:<6}", pkt.no), Style::default().fg(C_FG3)),
-                        Span::styled(format!("⚑ {}", anomaly), Style::default().fg(C_RED)),
+                        Span::styled(format!("  pkt #{:<6}", pkt.no), Style::default().fg(C_FG3())),
+                        Span::styled(format!("⚑ {}", anomaly), Style::default().fg(C_RED())),
                     ]));
                 }
             }
@@ -322,24 +322,24 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                         flow.intervals.iter().sum::<f64>() / n
                     } else { 0.0 };
                     lines.push(Line::from(vec![
-                        Span::styled("  ⚑ BEACON ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+                        Span::styled("  ⚑ BEACON ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
                         Span::styled(
                             format!("{}:{} ↔ {}:{}  ~{:.1}s interval  {} pkts",
                                 flow.key.ep1.0, flow.key.ep1.1,
                                 flow.key.ep2.0, flow.key.ep2.1,
                                 mean, flow.packets),
-                            Style::default().fg(C_FG2),
+                            Style::default().fg(C_FG2()),
                         ),
                     ]));
                 }
                 if flow.flags.scan {
                     found = true;
                     lines.push(Line::from(vec![
-                        Span::styled("  ⚑ SCAN   ", Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),
+                        Span::styled("  ⚑ SCAN   ", Style::default().fg(C_RED()).add_modifier(Modifier::BOLD)),
                         Span::styled(
                             format!("{}  → ≥5 distinct destinations",
                                 flow.key.ep1.0),
-                            Style::default().fg(C_FG2),
+                            Style::default().fg(C_FG2()),
                         ),
                     ]));
                 }
@@ -348,7 +348,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 lines.push(Line::raw(""));
                 lines.push(Line::from(Span::styled(
                     "  No anomalies detected.",
-                    Style::default().fg(C_FG3),
+                    Style::default().fg(C_FG3()),
                 )));
             }
         }
@@ -357,7 +357,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::raw(""));
             lines.push(Line::from(vec![Span::styled(
                 "  Cleartext credentials and encoded auth tokens detected in traffic",
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(60)));
             let mut found = false;
@@ -366,11 +366,11 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 for cred in creds {
                     found = true;
                     lines.push(Line::from(vec![
-                        Span::styled(format!("  pkt #{:<6}", cred.pkt_no), Style::default().fg(C_FG3)),
-                        Span::styled(format!("{:<14}", cred.kind), Style::default().fg(C_ORANGE).add_modifier(Modifier::BOLD)),
+                        Span::styled(format!("  pkt #{:<6}", cred.pkt_no), Style::default().fg(C_FG3())),
+                        Span::styled(format!("{:<14}", cred.kind), Style::default().fg(C_ORANGE()).add_modifier(Modifier::BOLD)),
                         Span::styled(
                             truncate(&cred.value, 60),
-                            Style::default().fg(C_RED),
+                            Style::default().fg(C_RED()),
                         ),
                     ]));
                 }
@@ -379,7 +379,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 lines.push(Line::raw(""));
                 lines.push(Line::from(Span::styled(
                     "  No cleartext credentials detected in captured packets.",
-                    Style::default().fg(C_FG3),
+                    Style::default().fg(C_FG3()),
                 )));
             }
         }
@@ -389,7 +389,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             lines.push(Line::from(vec![Span::styled(
                 format!("  {:<14} {:<12} {:<10} {:<12} {:<10} {:<8} {}",
                     "Flow", "Throughput", "Pkts", "Bytes", "Duration", "Score", "JA3/HASSH"),
-                Style::default().fg(C_FG2),
+                Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(80)));
             let sorted = app.flow_tracker.sorted_flows(&app.flows_sort);
@@ -405,15 +405,15 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 let tp = fmt_bytes(flow.throughput as u64);
                 let ep = format!("{}:{}", flow.key.ep1.0, flow.key.ep1.1);
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {:<14}", truncate(&ep, 14)), Style::default().fg(C_CYAN)),
-                    Span::styled(format!("{:<12}", format!("{}/s", tp)), Style::default().fg(C_FG2)),
-                    Span::styled(format!("{:<10}", flow.packets), Style::default().fg(C_FG2)),
-                    Span::styled(format!("{:<12}", fmt_bytes(flow.bytes)), Style::default().fg(C_GREEN)),
-                    Span::styled(format!("{:<10}", dur_str), Style::default().fg(C_FG3)),
+                    Span::styled(format!("  {:<14}", truncate(&ep, 14)), Style::default().fg(C_CYAN())),
+                    Span::styled(format!("{:<12}", format!("{}/s", tp)), Style::default().fg(C_FG2())),
+                    Span::styled(format!("{:<10}", flow.packets), Style::default().fg(C_FG2())),
+                    Span::styled(format!("{:<12}", fmt_bytes(flow.bytes)), Style::default().fg(C_GREEN())),
+                    Span::styled(format!("{:<10}", dur_str), Style::default().fg(C_FG3())),
                     Span::styled(format!("{:<8.2}", flow.beacon_score), Style::default().fg(
-                        if flow.beacon_score > 0.7 { C_RED } else if flow.beacon_score > 0.4 { C_YELLOW } else { C_FG3 }
+                        if flow.beacon_score > 0.7 { C_RED() } else if flow.beacon_score > 0.4 { C_YELLOW() } else { C_FG3() }
                     )),
-                    Span::styled(fp.to_string(), Style::default().fg(C_MAGENTA)),
+                    Span::styled(fp.to_string(), Style::default().fg(C_MAGENTA())),
                 ]));
             }
         }

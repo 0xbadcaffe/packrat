@@ -24,10 +24,10 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
     let scan = &app.scan;
 
     let focused_color = |field: ScanField| -> ratatui::style::Color {
-        if scan.focused_field == field { C_CYAN } else { C_FG2 }
+        if scan.focused_field == field { C_CYAN() } else { C_FG2() }
     };
     let val_color = |field: ScanField| -> ratatui::style::Color {
-        if scan.focused_field == field { C_YELLOW } else { C_FG }
+        if scan.focused_field == field { C_YELLOW() } else { C_FG() }
     };
 
     let mode_str = match scan.scan_mode {
@@ -54,27 +54,27 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
                          Style::default().fg(val_color(ScanField::Target))),
         ]),
         Line::from(vec![
-            Span::styled(" Port range:", Style::default().fg(C_FG2)),
+            Span::styled(" Port range:", Style::default().fg(C_FG2())),
             Span::styled(&scan.port_range_start, Style::default().fg(val_color(ScanField::PortStart))),
-            Span::styled(" – ", Style::default().fg(C_FG3)),
+            Span::styled(" – ", Style::default().fg(C_FG3())),
             Span::styled(&scan.port_range_end, Style::default().fg(val_color(ScanField::PortEnd))),
-            Span::styled("  [Tab] focus next field  [Enter/e] edit  [Space/x] start scan", Style::default().fg(C_FG3)),
+            Span::styled("  [Tab] focus next field  [Enter/e] edit  [Space/x] start scan", Style::default().fg(C_FG3())),
         ]),
         Line::from(vec![
             Span::styled(" Mode:      ", Style::default().fg(focused_color(ScanField::Mode))),
             Span::styled(mode_str, Style::default().fg(val_color(ScanField::Mode))),
-            Span::styled("  [m] cycle mode", Style::default().fg(C_FG3)),
+            Span::styled("  [m] cycle mode", Style::default().fg(C_FG3())),
         ]),
         Line::from(vec![
-            Span::styled(" Progress:  ", Style::default().fg(C_FG2)),
-            Span::styled(&progress, Style::default().fg(if scan.running { C_GREEN } else { C_FG2 })),
+            Span::styled(" Progress:  ", Style::default().fg(C_FG2())),
+            Span::styled(&progress, Style::default().fg(if scan.running { C_GREEN() } else { C_FG2() })),
         ]),
         if let Some(e) = &scan.error {
-            Line::from(Span::styled(format!(" Error: {}", e), Style::default().fg(C_RED)))
+            Line::from(Span::styled(format!(" Error: {}", e), Style::default().fg(C_RED())))
         } else {
             Line::from(Span::styled(
                 " [Tab] next field  [Enter/e] edit  [Space/x] start  [Esc] cancel  [C] clear",
-                Style::default().fg(C_FG3),
+                Style::default().fg(C_FG3()),
             ))
         },
     ];
@@ -83,12 +83,12 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(lines)
             .block(Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(C_BORDER))
+                .border_style(Style::default().fg(C_BORDER()))
                 .title(Span::styled(
                     " Port Scanner  (simulated — real with --features real-capture) ",
-                    Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD),
+                    Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
                 )))
-            .style(Style::default().bg(C_BG)),
+            .style(Style::default().bg(C_BG())),
         area,
     );
 }
@@ -99,10 +99,10 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
     let visible = area.height.saturating_sub(3) as usize;
 
     let header = Row::new(vec![
-        Cell::from(Span::styled("Port", Style::default().fg(C_FG3).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("State", Style::default().fg(C_FG3).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Service", Style::default().fg(C_FG3).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Banner", Style::default().fg(C_FG3).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled("Port", Style::default().fg(C_FG3()).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled("State", Style::default().fg(C_FG3()).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled("Service", Style::default().fg(C_FG3()).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled("Banner", Style::default().fg(C_FG3()).add_modifier(Modifier::BOLD))),
     ]).height(1);
 
     let rows: Vec<Row> = scan.results.iter()
@@ -111,22 +111,22 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
         .take(visible)
         .map(|(i, entry)| {
             let is_sel = i == scan.selected;
-            let bg = if is_sel { C_SEL_BG } else { C_BG };
+            let bg = if is_sel { C_SEL_BG() } else { C_BG() };
 
             let (state_str, state_color) = match entry.state {
-                PortState::Open     => ("open",     C_GREEN),
-                PortState::Closed   => ("closed",   C_FG3),
-                PortState::Filtered => ("filtered", C_YELLOW),
-                PortState::Unknown  => ("?",        C_FG3),
+                PortState::Open     => ("open",     C_GREEN()),
+                PortState::Closed   => ("closed",   C_FG3()),
+                PortState::Filtered => ("filtered", C_YELLOW()),
+                PortState::Unknown  => ("?",        C_FG3()),
             };
 
             Row::new(vec![
-                Cell::from(Span::styled(entry.port.to_string(), Style::default().fg(C_CYAN).bg(bg))),
+                Cell::from(Span::styled(entry.port.to_string(), Style::default().fg(C_CYAN()).bg(bg))),
                 Cell::from(Span::styled(state_str, Style::default().fg(state_color).bg(bg))),
-                Cell::from(Span::styled(entry.service, Style::default().fg(C_FG2).bg(bg))),
+                Cell::from(Span::styled(entry.service, Style::default().fg(C_FG2()).bg(bg))),
                 Cell::from(Span::styled(
                     entry.banner.as_deref().unwrap_or(""),
-                    Style::default().fg(C_FG3).bg(bg),
+                    Style::default().fg(C_FG3()).bg(bg),
                 )),
             ])
             .height(1)
@@ -144,9 +144,9 @@ fn draw_results(f: &mut Frame, app: &App, area: Rect) {
     )
     .block(Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(C_BORDER))
-        .title(Span::styled(title, Style::default().fg(C_FG2))))
-    .style(Style::default().bg(C_BG));
+        .border_style(Style::default().fg(C_BORDER()))
+        .title(Span::styled(title, Style::default().fg(C_FG2()))))
+    .style(Style::default().bg(C_BG()));
 
     f.render_widget(table, area);
 }

@@ -160,23 +160,23 @@ fn push_string(out: &mut Vec<ExtractedString>, pkt_no: u64, offset: usize, raw: 
 // ─── Colors ───────────────────────────────────────────────────────────────────
 
 pub fn entropy_color(e: f64) -> ratatui::style::Color {
-    if e < 2.5 { C_GREEN } else if e < 4.5 { C_YELLOW } else { C_RED }
+    if e < 2.5 { C_GREEN() } else if e < 4.5 { C_YELLOW() } else { C_RED() }
 }
 
 pub fn kind_color(kind: &str, sensitive: bool) -> ratatui::style::Color {
-    if sensitive { return C_RED; }
+    if sensitive { return C_RED(); }
     match kind {
-        "sensitive" | "key" | "shell"                      => C_RED,
-        "http" | "http-hdr"                                => C_ORANGE,
-        "sql"                                              => C_YELLOW,
-        "jwt" | "base64"                                   => C_MAGENTA,
+        "sensitive" | "key" | "shell"                      => C_RED(),
+        "http" | "http-hdr"                                => C_ORANGE(),
+        "sql"                                              => C_YELLOW(),
+        "jwt" | "base64"                                   => C_MAGENTA(),
         "ot-proto" | "ot-field" | "ot-sys"
-        | "ot-vendor" | "mqtt"                             => C_CYAN,
-        "path"                                             => C_FG2,
-        "domain" | "ip"                                    => C_GREEN,
-        "error"                                            => C_RED,
-        "version"                                          => C_FG2,
-        _                                                  => C_FG,
+        | "ot-vendor" | "mqtt"                             => C_CYAN(),
+        "path"                                             => C_FG2(),
+        "domain" | "ip"                                    => C_GREEN(),
+        "error"                                            => C_RED(),
+        "version"                                          => C_FG2(),
+        _                                                  => C_FG(),
     }
 }
 
@@ -207,11 +207,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let outer_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(C_BORDER))
+        .border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(
             format!(" Strings [{} found · {} sensitive · avg entropy {:.1} · top: {}] ",
                 filt.len(), sensitive_n, avg_entr, top_cat),
-            Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD),
+            Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
         ));
 
     let inner = outer_block.inner(area);
@@ -243,19 +243,19 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     } else { "" };
 
     let stats_line = Line::from(vec![
-        Span::styled(" strings: ", Style::default().fg(C_FG3)),
-        Span::styled(filt.len().to_string(), Style::default().fg(C_FG)),
-        Span::styled("  sensitive: ", Style::default().fg(C_FG3)),
+        Span::styled(" strings: ", Style::default().fg(C_FG3())),
+        Span::styled(filt.len().to_string(), Style::default().fg(C_FG())),
+        Span::styled("  sensitive: ", Style::default().fg(C_FG3())),
         Span::styled(sensitive_n.to_string(),
-            Style::default().fg(if sensitive_n > 0 { C_RED } else { C_FG })),
-        Span::styled("  avg entropy: ", Style::default().fg(C_FG3)),
+            Style::default().fg(if sensitive_n > 0 { C_RED() } else { C_FG() })),
+        Span::styled("  avg entropy: ", Style::default().fg(C_FG3())),
         Span::styled(format!("{:.1}", avg_entr), Style::default().fg(entropy_color(avg_entr))),
-        Span::styled("  top: ", Style::default().fg(C_FG3)),
+        Span::styled("  top: ", Style::default().fg(C_FG3())),
         Span::styled(top_cat, Style::default().fg(kind_color(top_cat, false))),
-        Span::styled(nav_hint, Style::default().fg(C_FG3)),
+        Span::styled(nav_hint, Style::default().fg(C_FG3())),
     ]);
     f.render_widget(
-        Paragraph::new(stats_line).style(Style::default().bg(C_BG2)),
+        Paragraph::new(stats_line).style(Style::default().bg(C_BG2())),
         vchunks[0],
     );
 
@@ -266,10 +266,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         } else {
             format!(" search: {}  [Esc to clear]", app.strings_filter)
         };
-        let search_color = if app.strings_search_active { C_CYAN } else { C_YELLOW };
+        let search_color = if app.strings_search_active { C_CYAN() } else { C_YELLOW() };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(search_text, Style::default().fg(search_color))))
-                .style(Style::default().bg(C_BG2)),
+                .style(Style::default().bg(C_BG2())),
             vchunks[1],
         );
     }
@@ -301,13 +301,13 @@ fn draw_string_list(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: R
     }.min(total.saturating_sub(visible));
 
     let header = Row::new(vec![
-        Cell::from("Pkt:Off").style(Style::default().fg(C_FG2)),
-        Cell::from("Len").style(Style::default().fg(C_FG2)),
-        Cell::from("Entr").style(Style::default().fg(C_FG2)),
-        Cell::from("Type").style(Style::default().fg(C_FG2)),
-        Cell::from("String").style(Style::default().fg(C_FG2)),
+        Cell::from("Pkt:Off").style(Style::default().fg(C_FG2())),
+        Cell::from("Len").style(Style::default().fg(C_FG2())),
+        Cell::from("Entr").style(Style::default().fg(C_FG2())),
+        Cell::from("Type").style(Style::default().fg(C_FG2())),
+        Cell::from("String").style(Style::default().fg(C_FG2())),
     ])
-    .style(Style::default().bg(C_BG3))
+    .style(Style::default().bg(C_BG3()))
     .height(1);
 
     let rows: Vec<Row> = filt.iter().enumerate()
@@ -315,18 +315,18 @@ fn draw_string_list(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: R
         .take(visible)
         .map(|(i, s)| {
             let selected = can_nav && app.strings_selected == Some(i);
-            let bg = if selected { C_SEL_BG } else { C_BG };
+            let bg = if selected { C_SEL_BG() } else { C_BG() };
             let kc = kind_color(s.kind, s.sensitive);
             let val_fg = if selected {
                 ratatui::style::Color::White
             } else if s.sensitive {
-                C_RED
+                C_RED()
             } else {
-                C_FG
+                C_FG()
             };
             Row::new(vec![
-                Cell::from(s.offset_label.clone()).style(Style::default().fg(C_FG3).bg(bg)),
-                Cell::from(s.length.to_string()).style(Style::default().fg(C_FG2).bg(bg)),
+                Cell::from(s.offset_label.clone()).style(Style::default().fg(C_FG3()).bg(bg)),
+                Cell::from(s.length.to_string()).style(Style::default().fg(C_FG2()).bg(bg)),
                 Cell::from(format!("{:.1}", s.entropy)).style(Style::default().fg(entropy_color(s.entropy)).bg(bg)),
                 Cell::from(s.kind).style(Style::default().fg(kc).bg(bg).add_modifier(
                     if s.sensitive { Modifier::BOLD } else { Modifier::empty() }
@@ -357,9 +357,9 @@ fn draw_string_list(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: R
         .block(Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(sel_label, Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD))))
-        .style(Style::default().bg(C_BG));
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(sel_label, Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD))))
+        .style(Style::default().bg(C_BG()));
 
     f.render_widget(table, area);
 }
@@ -380,7 +380,7 @@ fn draw_detail_panel(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: 
         None => {
             f.render_widget(
                 Paragraph::new("  Packet no longer in buffer.")
-                    .style(Style::default().fg(C_FG3).bg(C_BG)),
+                    .style(Style::default().fg(C_FG3()).bg(C_BG())),
                 area,
             );
             return;
@@ -399,16 +399,16 @@ fn draw_detail_panel(f: &mut Frame, app: &App, filt: &[&ExtractedString], area: 
         entry.value.clone()
     };
     let header_line = Line::from(vec![
-        Span::styled(" ↳ ", Style::default().fg(C_FG3)),
-        Span::styled(preview, Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+        Span::styled(" ↳ ", Style::default().fg(C_FG3())),
+        Span::styled(preview, Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
         Span::styled(
             format!("  ({} · {} · pkt #{})", entry.kind, entry.offset_label, pkt.no),
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         ),
-        Span::styled("  [Esc] close", Style::default().fg(C_FG3)),
+        Span::styled("  [Esc] close", Style::default().fg(C_FG3())),
     ]);
     f.render_widget(
-        Paragraph::new(header_line).style(Style::default().bg(C_BG2)),
+        Paragraph::new(header_line).style(Style::default().bg(C_BG2())),
         vchunks[0],
     );
 

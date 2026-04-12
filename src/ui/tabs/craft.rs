@@ -26,9 +26,9 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
         let is_editing = is_focused && app.craft.editing;
 
         let label_style = if is_focused {
-            Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)
+            Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(C_FG2)
+            Style::default().fg(C_FG2())
         };
 
         let value_str = if is_editing {
@@ -37,11 +37,11 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
             field.value.clone()
         };
         let value_style = if is_editing {
-            Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)
+            Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)
         } else if is_focused {
-            Style::default().fg(C_GREEN)
+            Style::default().fg(C_GREEN())
         } else {
-            Style::default().fg(C_FG)
+            Style::default().fg(C_FG())
         };
 
         let hint = if is_focused { field.hint } else { "" };
@@ -49,7 +49,7 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
         Row::new(vec![
             Cell::from(Span::styled(field.label, label_style)),
             Cell::from(Span::styled(value_str, value_style)),
-            Cell::from(Span::styled(hint, Style::default().fg(C_FG3))),
+            Cell::from(Span::styled(hint, Style::default().fg(C_FG3()))),
         ])
         .height(1)
     }).collect();
@@ -61,10 +61,10 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(C_BORDER))
-            .title(Span::styled(" Packet Crafter ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))),
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(" Packet Crafter ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))),
     )
-    .style(Style::default().bg(C_BG));
+    .style(Style::default().bg(C_BG()));
 
     f.render_widget(table, area);
 
@@ -81,12 +81,12 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
             "● FLOODING  {}pps  sent:{}  [f] stop  [</>] rate  [C] reset",
             app.craft.flood_rate, app.craft.flood_sent
         );
-        (flood_line.as_str(), C_RED)
+        (flood_line.as_str(), C_RED())
     } else {
         match &app.craft.result {
-            Some(Ok(msg))  => (msg.as_str(), C_GREEN),
-            Some(Err(msg)) => (msg.as_str(), C_RED),
-            None           => ("[Tab] next field  [Enter/e] edit  [Space/x] inject  [f] flood  [q] quit", C_FG3),
+            Some(Ok(msg))  => (msg.as_str(), C_GREEN()),
+            Some(Err(msg)) => (msg.as_str(), C_RED()),
+            None           => ("[Tab] next field  [Enter/e] edit  [Space/x] inject  [f] flood  [q] quit", C_FG3()),
         }
     };
     f.render_widget(
@@ -106,7 +106,7 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
     // ── Hex dump ────────────────────────────────────────────────────────────────
     let hex_lines: Vec<Line> = match &pkt_result {
         Ok(pkt) => pkt.bytes.chunks(16).enumerate().map(|(row, chunk)| {
-            let offset = Span::styled(format!("{:04x}  ", row * 16), Style::default().fg(C_FG3));
+            let offset = Span::styled(format!("{:04x}  ", row * 16), Style::default().fg(C_FG3()));
             let hex_part: String = chunk.iter().map(|b| format!("{:02x} ", b)).collect();
             let padding  = " ".repeat((16 - chunk.len()) * 3);
             let ascii: String = chunk.iter()
@@ -114,20 +114,20 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
                 .collect();
             Line::from(vec![
                 offset,
-                Span::styled(format!("{}{}", hex_part, padding), Style::default().fg(C_CYAN)),
-                Span::styled(format!(" │{}", ascii), Style::default().fg(C_FG2)),
+                Span::styled(format!("{}{}", hex_part, padding), Style::default().fg(C_CYAN())),
+                Span::styled(format!(" │{}", ascii), Style::default().fg(C_FG2())),
             ])
         }).collect(),
-        Err(e) => vec![Line::from(Span::styled(format!("  Error: {}", e), Style::default().fg(C_RED)))],
+        Err(e) => vec![Line::from(Span::styled(format!("  Error: {}", e), Style::default().fg(C_RED())))],
     };
 
     f.render_widget(
         Paragraph::new(hex_lines)
             .block(Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(C_BORDER))
-                .title(Span::styled(" Hex Preview ", Style::default().fg(C_FG2))))
-            .style(Style::default().bg(C_BG)),
+                .border_style(Style::default().fg(C_BORDER()))
+                .title(Span::styled(" Hex Preview ", Style::default().fg(C_FG2()))))
+            .style(Style::default().bg(C_BG())),
         chunks[0],
     );
 
@@ -147,87 +147,87 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
             let l4_line: Line = if is_tcp {
                 let fl = if pkt.bytes.len() > 47 { pkt.bytes[47] } else { parse_tcp_flags(l4_raw) };
                 Line::from(vec![
-                    Span::styled("  TCP Flags: ", Style::default().fg(C_FG2)),
+                    Span::styled("  TCP Flags: ", Style::default().fg(C_FG2())),
                     Span::styled(
                         format!("{} (0x{:02x})", fmt_tcp_flags(fl), fl),
-                        Style::default().fg(C_YELLOW),
+                        Style::default().fg(C_YELLOW()),
                     ),
                 ])
             } else if is_icmp {
                 let (t, c) = parse_icmp_type_code(l4_raw);
                 let name = icmp_name(t, c);
                 Line::from(vec![
-                    Span::styled("  ICMP:      ", Style::default().fg(C_FG2)),
+                    Span::styled("  ICMP:      ", Style::default().fg(C_FG2())),
                     Span::styled(
                         format!("type={} code={} ({})", t, c, name),
-                        Style::default().fg(C_YELLOW),
+                        Style::default().fg(C_YELLOW()),
                     ),
                 ])
             } else {
                 Line::from(vec![
-                    Span::styled("  L4 Flags:  ", Style::default().fg(C_FG2)),
-                    Span::styled("n/a", Style::default().fg(C_FG3)),
+                    Span::styled("  L4 Flags:  ", Style::default().fg(C_FG2())),
+                    Span::styled("n/a", Style::default().fg(C_FG3())),
                 ])
             };
 
             vec![
                 Line::from(vec![
-                    Span::styled("  Protocol:  ", Style::default().fg(C_FG2)),
-                    Span::styled(&pkt.protocol, Style::default().fg(C_CYAN)),
+                    Span::styled("  Protocol:  ", Style::default().fg(C_FG2())),
+                    Span::styled(&pkt.protocol, Style::default().fg(C_CYAN())),
                 ]),
                 Line::from(vec![
-                    Span::styled("  Src:       ", Style::default().fg(C_FG2)),
+                    Span::styled("  Src:       ", Style::default().fg(C_FG2())),
                     Span::styled(format!("{}{}", pkt.src,
                         pkt.src_port.map(|p| format!(":{}", p)).unwrap_or_default()),
-                        Style::default().fg(C_GREEN)),
+                        Style::default().fg(C_GREEN())),
                 ]),
                 Line::from(vec![
-                    Span::styled("  Dst:       ", Style::default().fg(C_FG2)),
+                    Span::styled("  Dst:       ", Style::default().fg(C_FG2())),
                     Span::styled(format!("{}{}", pkt.dst,
                         pkt.dst_port.map(|p| format!(":{}", p)).unwrap_or_default()),
-                        Style::default().fg(C_ORANGE)),
+                        Style::default().fg(C_ORANGE())),
                 ]),
                 Line::from(vec![
-                    Span::styled("  IP Flags:  ", Style::default().fg(C_FG2)),
+                    Span::styled("  IP Flags:  ", Style::default().fg(C_FG2())),
                     Span::styled(
                         format!("{} (0x{:02x})", ip_flags_str, ip_fl_byte),
-                        Style::default().fg(C_YELLOW),
+                        Style::default().fg(C_YELLOW()),
                     ),
                 ]),
                 l4_line,
                 Line::from(vec![
-                    Span::styled("  Length:    ", Style::default().fg(C_FG2)),
-                    Span::styled(format!("{} bytes", pkt.length), Style::default().fg(C_YELLOW)),
+                    Span::styled("  Length:    ", Style::default().fg(C_FG2())),
+                    Span::styled(format!("{} bytes", pkt.length), Style::default().fg(C_YELLOW())),
                 ]),
                 Line::from(vec![
-                    Span::styled("  Info:      ", Style::default().fg(C_FG2)),
-                    Span::styled(&pkt.info, Style::default().fg(C_FG)),
+                    Span::styled("  Info:      ", Style::default().fg(C_FG2())),
+                    Span::styled(&pkt.info, Style::default().fg(C_FG())),
                 ]),
                 Line::from(vec![
-                    Span::styled("  Flood:     ", Style::default().fg(C_FG2)),
+                    Span::styled("  Flood:     ", Style::default().fg(C_FG2())),
                     Span::styled(
                         if app.craft.flooding {
                             format!("● {}pps  sent: {}", app.craft.flood_rate, app.craft.flood_sent)
                         } else {
                             format!("off  ({}pps when active)", app.craft.flood_rate)
                         },
-                        if app.craft.flooding { Style::default().fg(C_RED).add_modifier(Modifier::BOLD) }
-                        else { Style::default().fg(C_FG3) },
+                        if app.craft.flooding { Style::default().fg(C_RED()).add_modifier(Modifier::BOLD) }
+                        else { Style::default().fg(C_FG3()) },
                     ),
                 ]),
             ]
         }
-        Err(e) => vec![Line::from(Span::styled(format!("  {}", e), Style::default().fg(C_RED)))],
+        Err(e) => vec![Line::from(Span::styled(format!("  {}", e), Style::default().fg(C_RED())))],
     };
 
     f.render_widget(
         Paragraph::new(summary_lines)
             .block(Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(C_BORDER))
-                .title(Span::styled(" Packet Summary ", Style::default().fg(C_FG2))))
+                .border_style(Style::default().fg(C_BORDER()))
+                .title(Span::styled(" Packet Summary ", Style::default().fg(C_FG2()))))
             .wrap(Wrap { trim: false })
-            .style(Style::default().bg(C_BG)),
+            .style(Style::default().bg(C_BG())),
         chunks[1],
     );
 }

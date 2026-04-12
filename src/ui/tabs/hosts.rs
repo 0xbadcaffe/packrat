@@ -33,15 +33,15 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 fn draw_top_bar(f: &mut Frame, app: &App, area: Rect) {
     if app.hosts_tagging {
         let bar = Paragraph::new(Line::from(vec![
-            Span::styled(" Tag: ", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)),
+            Span::styled(" Tag: ", Style::default().fg(C_GREEN()).add_modifier(Modifier::BOLD)),
             Span::styled(
                 format!("{}_", app.hosts_tag_input),
-                Style::default().fg(C_CYAN),
+                Style::default().fg(C_CYAN()),
             ),
-            Span::styled("  [Enter] apply  [Esc] cancel", Style::default().fg(C_FG3)),
+            Span::styled("  [Enter] apply  [Esc] cancel", Style::default().fg(C_FG3())),
         ])).block(Block::default().borders(Borders::ALL)
-            .border_style(Style::default().fg(C_GREEN))
-            .title(Span::styled(" Add Tag ", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD))));
+            .border_style(Style::default().fg(C_GREEN()))
+            .title(Span::styled(" Add Tag ", Style::default().fg(C_GREEN()).add_modifier(Modifier::BOLD))));
         f.render_widget(bar, area);
         return;
     }
@@ -53,32 +53,32 @@ fn draw_top_bar(f: &mut Frame, app: &App, area: Rect) {
     } else {
         app.hosts_search.clone()
     };
-    let search_color = if app.hosts_searching { C_CYAN }
-        else if app.hosts_search.is_empty() { C_FG3 }
-        else { C_YELLOW };
+    let search_color = if app.hosts_searching { C_CYAN() }
+        else if app.hosts_search.is_empty() { C_FG3() }
+        else { C_YELLOW() };
 
     let search_bar = Paragraph::new(Line::from(vec![
-        Span::styled(" Search: ", Style::default().fg(C_FG2)),
+        Span::styled(" Search: ", Style::default().fg(C_FG2())),
         Span::styled(search_display, Style::default().fg(search_color)),
-    ])).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER))
-        .title(Span::styled(" Hosts ", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD))));
+    ])).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER()))
+        .title(Span::styled(" Hosts ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))));
     f.render_widget(search_bar, area);
 }
 
 fn draw_host_table(f: &mut Frame, app: &App, hosts: &[&crate::model::hosts::Host], area: Rect) {
     let header = Row::new(vec![
-        Cell::from("IP / Hostname").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Geo").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("MAC").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Protocols").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Ports").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Bytes↑").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Bytes↓").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Pkts↑").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Alerts").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("OS Guess").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Cell::from("Tags").style(Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-    ]).style(Style::default().bg(C_BG2)).height(1);
+        Cell::from("IP / Hostname").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Geo").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("MAC").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Protocols").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Ports").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Bytes↑").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Bytes↓").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Pkts↑").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Alerts").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("OS Guess").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("Tags").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+    ]).style(Style::default().bg(C_BG2())).height(1);
 
     let scroll = app.hosts_scroll;
     let visible_height = area.height.saturating_sub(3) as usize;
@@ -105,46 +105,46 @@ fn draw_host_table(f: &mut Frame, app: &App, hosts: &[&crate::model::hosts::Host
             ports.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",")
         };
         let alert_style = if h.alert_count > 0 {
-            Style::default().fg(C_RED).add_modifier(Modifier::BOLD)
+            Style::default().fg(C_RED()).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(C_FG2)
+            Style::default().fg(C_FG2())
         };
         let geo = h.geo.as_deref().unwrap_or("??");
         let geo_color = match geo {
-            "LAN" | "LOOP" | "LINK" => C_FG3,
-            "US"   => C_CYAN,
-            "EU"   => C_GREEN,
-            "CN"   => C_RED,
-            "AWS" | "GCP" | "AZURE" | "CDN" => C_ORANGE,
-            "??"   => C_FG3,
-            _      => C_YELLOW,
+            "LAN" | "LOOP" | "LINK" => C_FG3(),
+            "US"   => C_CYAN(),
+            "EU"   => C_GREEN(),
+            "CN"   => C_RED(),
+            "AWS" | "GCP" | "AZURE" | "CDN" => C_ORANGE(),
+            "??"   => C_FG3(),
+            _      => C_YELLOW(),
         };
         let mut tags: Vec<&str> = h.tags.iter().map(|s| s.as_str()).collect();
         tags.sort();
         let tags_str = tags.join(",");
         let tags_style = if tags.is_empty() {
-            Style::default().fg(C_FG3)
+            Style::default().fg(C_FG3())
         } else {
-            Style::default().fg(C_ORANGE).add_modifier(Modifier::BOLD)
+            Style::default().fg(C_ORANGE()).add_modifier(Modifier::BOLD)
         };
 
         let row_style = if selected {
-            Style::default().bg(C_BG2).add_modifier(Modifier::BOLD)
+            Style::default().bg(C_BG2()).add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
 
         Row::new(vec![
-            Cell::from(name).style(Style::default().fg(C_CYAN)),
+            Cell::from(name).style(Style::default().fg(C_CYAN())),
             Cell::from(geo.to_string()).style(Style::default().fg(geo_color).add_modifier(Modifier::BOLD)),
-            Cell::from(mac).style(Style::default().fg(C_FG2)),
-            Cell::from(protos).style(Style::default().fg(C_GREEN)),
-            Cell::from(ports_str).style(Style::default().fg(C_FG2)),
-            Cell::from(crate::ui::fmt_bytes(h.bytes_out)).style(Style::default().fg(C_FG2)),
-            Cell::from(crate::ui::fmt_bytes(h.bytes_in)).style(Style::default().fg(C_FG2)),
-            Cell::from(h.pkts_out.to_string()).style(Style::default().fg(C_FG2)),
+            Cell::from(mac).style(Style::default().fg(C_FG2())),
+            Cell::from(protos).style(Style::default().fg(C_GREEN())),
+            Cell::from(ports_str).style(Style::default().fg(C_FG2())),
+            Cell::from(crate::ui::fmt_bytes(h.bytes_out)).style(Style::default().fg(C_FG2())),
+            Cell::from(crate::ui::fmt_bytes(h.bytes_in)).style(Style::default().fg(C_FG2())),
+            Cell::from(h.pkts_out.to_string()).style(Style::default().fg(C_FG2())),
             Cell::from(h.alert_count.to_string()).style(alert_style),
-            Cell::from(h.os_guess.as_deref().unwrap_or("-").to_string()).style(Style::default().fg(C_FG3)),
+            Cell::from(h.os_guess.as_deref().unwrap_or("-").to_string()).style(Style::default().fg(C_FG3())),
             Cell::from(if tags_str.is_empty() { "-".into() } else { tags_str }).style(tags_style),
         ]).style(row_style)
     }).collect();
@@ -163,8 +163,8 @@ fn draw_host_table(f: &mut Frame, app: &App, hosts: &[&crate::model::hosts::Host
         Constraint::Min(10),
     ])
     .header(header)
-    .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER)))
-    .style(Style::default().bg(C_BG));
+    .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER())))
+    .style(Style::default().bg(C_BG()));
     f.render_widget(table, area);
 }
 
@@ -173,8 +173,8 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             format!(" {} hosts  [s] search  [j/k] scroll  [t] tag  [T] untag  [c] clear host",
                 app.hosts.len()),
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         ),
-    ])).style(Style::default().bg(C_BG2));
+    ])).style(Style::default().bg(C_BG2()));
     f.render_widget(status, area);
 }

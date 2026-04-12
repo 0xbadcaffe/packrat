@@ -85,16 +85,16 @@ fn draw_banner(f: &mut Frame, area: Rect) {
             Span::styled("       ", Style::default().fg(Color::LightBlue).add_modifier(bold)),
         ]),
         Line::raw(""),
-        Line::from(vec![Span::styled("  packet analyzer  v0.2.0", Style::default().fg(C_FG3))]),
+        Line::from(vec![Span::styled("  packet analyzer  v0.2.0", Style::default().fg(C_FG3()))]),
     ];
-    f.render_widget(Paragraph::new(banner).style(Style::default().bg(C_BG)), area);
+    f.render_widget(Paragraph::new(banner).style(Style::default().bg(C_BG())), area);
 }
 
 fn draw_header(f: &mut Frame, area: Rect) {
     let header = Paragraph::new(Line::from(vec![
-        Span::styled("  Select network interface", Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),
-        Span::styled("  ─────────────────────────────────", Style::default().fg(C_BORDER)),
-    ])).style(Style::default().bg(C_BG));
+        Span::styled("  Select network interface", Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)),
+        Span::styled("  ─────────────────────────────────", Style::default().fg(C_BORDER())),
+    ])).style(Style::default().bg(C_BG()));
     f.render_widget(header, area);
 }
 
@@ -108,28 +108,28 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
         };
         if is_sel {
             ListItem::new(label)
-                .style(Style::default().fg(Color::Black).bg(C_CYAN).add_modifier(Modifier::BOLD))
+                .style(Style::default().fg(Color::Black).bg(C_CYAN()).add_modifier(Modifier::BOLD))
         } else {
-            ListItem::new(label).style(Style::default().fg(C_FG2).bg(C_BG))
+            ListItem::new(label).style(Style::default().fg(C_FG2()).bg(C_BG()))
         }
     }).collect();
 
     let list = List::new(items)
         .block(Block::default()
             .borders(Borders::LEFT)
-            .border_style(Style::default().fg(C_BORDER)))
-        .style(Style::default().bg(C_BG));
+            .border_style(Style::default().fg(C_BORDER())))
+        .style(Style::default().bg(C_BG()));
     f.render_widget(list, area);
 }
 
 fn draw_hint(f: &mut Frame, area: Rect) {
     let hint = Line::from(vec![
-        Span::styled("  j/k", Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
-        Span::styled(" navigate   ", Style::default().fg(C_FG3)),
-        Span::styled("Space/Enter", Style::default().fg(C_GREEN).add_modifier(Modifier::BOLD)),
-        Span::styled(" start capture   ", Style::default().fg(C_FG3)),
-        Span::styled("q", Style::default().fg(C_RED).add_modifier(Modifier::BOLD)),
-        Span::styled(" quit", Style::default().fg(C_FG3)),
+        Span::styled("  j/k", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Span::styled(" navigate   ", Style::default().fg(C_FG3())),
+        Span::styled("Space/Enter", Style::default().fg(C_GREEN()).add_modifier(Modifier::BOLD)),
+        Span::styled(" start capture   ", Style::default().fg(C_FG3())),
+        Span::styled("q", Style::default().fg(C_RED()).add_modifier(Modifier::BOLD)),
+        Span::styled(" quit", Style::default().fg(C_FG3())),
     ]);
-    f.render_widget(Paragraph::new(hint).style(Style::default().bg(C_BG2)), area);
+    f.render_widget(Paragraph::new(hint).style(Style::default().bg(C_BG2())), area);
 }

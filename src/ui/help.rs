@@ -79,13 +79,13 @@ pub fn draw(f: &mut Frame) {
     let mut lines: Vec<Line> = vec![Line::raw("")];
     for (title, entries) in sections {
         lines.push(Line::from(vec![
-            Span::styled(format!("  {}", title), Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("  {}", title), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
         ]));
         lines.push(Line::raw(format!("  {}", "─".repeat(46))));
         for (key, desc) in *entries {
             lines.push(Line::from(vec![
-                Span::styled(format!("    {:<26}", key), Style::default().fg(C_CYAN)),
-                Span::styled(*desc, Style::default().fg(C_FG2)),
+                Span::styled(format!("    {:<26}", key), Style::default().fg(C_CYAN())),
+                Span::styled(*desc, Style::default().fg(C_FG2())),
             ]));
         }
         lines.push(Line::raw(""));
@@ -95,14 +95,14 @@ pub fn draw(f: &mut Frame) {
         .block(Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(C_CYAN).bg(C_BG2))
-            .style(Style::default().bg(C_BG2))
+            .border_style(Style::default().fg(C_CYAN()).bg(C_BG2()))
+            .style(Style::default().bg(C_BG2()))
             .title(Span::styled(
                 " Keyboard Shortcuts — h / Esc to close ",
-                Style::default().fg(C_CYAN).bg(C_BG2).add_modifier(Modifier::BOLD),
+                Style::default().fg(C_CYAN()).bg(C_BG2()).add_modifier(Modifier::BOLD),
             ))
             .title_alignment(Alignment::Center))
-        .style(Style::default().bg(C_BG2));
+        .style(Style::default().bg(C_BG2()));
 
     f.render_widget(popup, area);
 }

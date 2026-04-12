@@ -31,9 +31,9 @@ pub fn draw(f: &mut Frame, app: &App) {
         None => {
             let msg = Paragraph::new("No packet selected.")
                 .block(Block::default().borders(Borders::ALL)
-                    .border_style(Style::default().fg(C_CYAN))
+                    .border_style(Style::default().fg(C_CYAN()))
                     .title(" Protocol Autopsy  [Esc] close "))
-                .style(Style::default().bg(C_BG));
+                .style(Style::default().bg(C_BG()));
             f.render_widget(msg, popup);
             return;
         }
@@ -46,8 +46,8 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     let outer_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(C_CYAN))
-        .title(Span::styled(title, Style::default().fg(C_YELLOW).add_modifier(Modifier::BOLD)));
+        .border_style(Style::default().fg(C_CYAN()))
+        .title(Span::styled(title, Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)));
     f.render_widget(outer_block, popup);
 
     // Inner area (inside border)
@@ -81,24 +81,24 @@ fn draw_tree_pane(f: &mut Frame, app: &App, area: Rect) {
     for section in &state.tree {
         // Section header
         items.push(ListItem::new(Line::from(vec![
-            Span::styled("▼ ", Style::default().fg(C_CYAN)),
+            Span::styled("▼ ", Style::default().fg(C_CYAN())),
             Span::styled(section.title.clone(),
-                Style::default().fg(C_CYAN).add_modifier(Modifier::BOLD)),
+                Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)),
         ])));
         // Fields
         for field in &section.fields {
             let color = match field.color {
-                crate::net::packet::FieldColor::Cyan    => C_CYAN,
-                crate::net::packet::FieldColor::Green   => C_GREEN,
-                crate::net::packet::FieldColor::Yellow  => C_YELLOW,
-                crate::net::packet::FieldColor::Red     => C_RED,
-                crate::net::packet::FieldColor::Magenta => C_MAGENTA,
-                crate::net::packet::FieldColor::Orange  => C_ORANGE,
-                crate::net::packet::FieldColor::Default => C_FG2,
+                crate::net::packet::FieldColor::Cyan    => C_CYAN(),
+                crate::net::packet::FieldColor::Green   => C_GREEN(),
+                crate::net::packet::FieldColor::Yellow  => C_YELLOW(),
+                crate::net::packet::FieldColor::Red     => C_RED(),
+                crate::net::packet::FieldColor::Magenta => C_MAGENTA(),
+                crate::net::packet::FieldColor::Orange  => C_ORANGE(),
+                crate::net::packet::FieldColor::Default => C_FG2(),
             };
             items.push(ListItem::new(Line::from(vec![
                 Span::styled("    ", Style::default()),
-                Span::styled(format!("{:<22}", field.key), Style::default().fg(C_FG2)),
+                Span::styled(format!("{:<22}", field.key), Style::default().fg(C_FG2())),
                 Span::styled(field.val.clone(), Style::default().fg(color)),
             ])));
         }
@@ -109,7 +109,7 @@ fn draw_tree_pane(f: &mut Frame, app: &App, area: Rect) {
     let visible: Vec<_> = items.into_iter().skip(scroll).collect();
 
     let is_active = state.active_pane == AutopsyPane::Tree;
-    let border_color = if is_active { C_CYAN } else { C_BORDER };
+    let border_color = if is_active { C_CYAN() } else { C_BORDER() };
 
     let list = List::new(visible)
         .block(Block::default()
@@ -117,10 +117,10 @@ fn draw_tree_pane(f: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(border_color))
             .title(Span::styled(
                 if is_active { " Protocol Tree [active] " } else { " Protocol Tree " },
-                Style::default().fg(if is_active { C_CYAN } else { C_FG3 })
+                Style::default().fg(if is_active { C_CYAN() } else { C_FG3() })
                     .add_modifier(Modifier::BOLD),
             )))
-        .style(Style::default().bg(C_BG));
+        .style(Style::default().bg(C_BG()));
     f.render_widget(list, area);
 }
 
@@ -133,26 +133,26 @@ fn draw_stream_pane(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let is_active = state.active_pane == AutopsyPane::Stream;
-    let border_color = if is_active { C_CYAN } else { C_BORDER };
+    let border_color = if is_active { C_CYAN() } else { C_BORDER() };
 
     let mut lines: Vec<Line> = Vec::new();
 
     if state.stream_preview.is_empty() {
         lines.push(Line::from(Span::styled(
             "  No stream data",
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         )));
         lines.push(Line::from(Span::styled(
             "  (TCP only, needs reassembly)",
-            Style::default().fg(C_FG3),
+            Style::default().fg(C_FG3()),
         )));
     } else {
         let scroll = state.stream_scroll;
         for (dir, text) in state.stream_preview.iter().skip(scroll).take(200) {
             let (arrow, color) = if *dir {
-                ("\u{2192}", C_CYAN)   // →
+                ("\u{2192}", C_CYAN())   // →
             } else {
-                ("\u{2190}", C_GREEN)  // ←
+                ("\u{2190}", C_GREEN())  // ←
             };
             lines.push(Line::from(vec![
                 Span::styled(format!("{} ", arrow), Style::default().fg(color)),
@@ -167,10 +167,10 @@ fn draw_stream_pane(f: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(border_color))
             .title(Span::styled(
                 if is_active { " Stream Context [active] " } else { " Stream Context " },
-                Style::default().fg(if is_active { C_CYAN } else { C_FG3 })
+                Style::default().fg(if is_active { C_CYAN() } else { C_FG3() })
                     .add_modifier(Modifier::BOLD),
             )))
-        .style(Style::default().bg(C_BG))
+        .style(Style::default().bg(C_BG()))
         .wrap(Wrap { trim: true });
     f.render_widget(p, area);
 }
