@@ -349,9 +349,11 @@ fn handle_security(app: &mut App, key: KeyEvent) {
     if global_tab_switch(app, &key) { return; }
 
     match key.code {
-        // Sub-tab cycling with [ / ]
-        KeyCode::Char('[') | KeyCode::BackTab => app.security_subtab_prev(),
-        KeyCode::Char(']') | KeyCode::Tab     => app.security_subtab_next(),
+        // Sub-tab cycling with [ / ]  (Tab/BackTab advance the main tab)
+        KeyCode::Tab    => app.next_tab(),
+        KeyCode::BackTab => app.prev_tab(),
+        KeyCode::Char('[') => app.security_subtab_prev(),
+        KeyCode::Char(']') => app.security_subtab_next(),
         // Direct sub-tab keys
         KeyCode::Char('a') => app.security_tab = SecuritySubTab::Ids,
         KeyCode::Char('c') => app.security_tab = SecuritySubTab::Credentials,
@@ -688,14 +690,16 @@ fn handle_objects(app: &mut App, key: KeyEvent) {
         KeyCode::Char('o') => { app.objects_subtab = ObjectsSubTab::Objects; }
         KeyCode::Char('y') => { app.objects_subtab = ObjectsSubTab::YaraRules; }
         KeyCode::Char('m') => { app.objects_subtab = ObjectsSubTab::YaraMatches; }
-        KeyCode::Char('[') | KeyCode::BackTab => {
+        KeyCode::Tab     => { app.next_tab(); return; }
+        KeyCode::BackTab => { app.prev_tab(); return; }
+        KeyCode::Char('[') => {
             app.objects_subtab = match app.objects_subtab {
                 ObjectsSubTab::Objects     => ObjectsSubTab::YaraMatches,
                 ObjectsSubTab::YaraRules   => ObjectsSubTab::Objects,
                 ObjectsSubTab::YaraMatches => ObjectsSubTab::YaraRules,
             };
         }
-        KeyCode::Char(']') | KeyCode::Tab => {
+        KeyCode::Char(']') => {
             app.objects_subtab = match app.objects_subtab {
                 ObjectsSubTab::Objects     => ObjectsSubTab::YaraRules,
                 ObjectsSubTab::YaraRules   => ObjectsSubTab::YaraMatches,
@@ -752,8 +756,11 @@ fn handle_graph(app: &mut App, key: KeyEvent) {
     if global_tab_switch(app, &key) { return; }
 
     match key.code {
-        // Mode cycling
-        KeyCode::Tab => {
+        // Main tab navigation
+        KeyCode::Tab     => { app.next_tab(); return; }
+        KeyCode::BackTab => { app.prev_tab(); return; }
+        // Mode cycling with m / M
+        KeyCode::Char('m') => {
             app.graph_ui.mode = app.graph_ui.mode.next();
         }
 

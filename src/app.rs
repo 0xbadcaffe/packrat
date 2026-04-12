@@ -1464,6 +1464,12 @@ impl App {
         self.active_tab = Tab::from_index(next);
     }
 
+    pub fn prev_tab(&mut self) {
+        let cur = self.active_tab.index();
+        let prev = if cur == 0 { Tab::COUNT - 1 } else { cur - 1 };
+        self.active_tab = Tab::from_index(prev);
+    }
+
     pub fn security_subtab_next(&mut self) {
         self.security_tab = match self.security_tab {
             SecuritySubTab::Ids           => SecuritySubTab::Credentials,
