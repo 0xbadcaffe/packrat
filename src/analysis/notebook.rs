@@ -18,7 +18,7 @@ pub struct Note {
 
 // ─── Notebook ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Notebook {
     notes:   Vec<Note>,
     next_id: u64,
