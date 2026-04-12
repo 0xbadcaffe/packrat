@@ -520,6 +520,8 @@ fn handle_hosts(app: &mut App, key: KeyEvent) {
     if global_tab_switch(app, &key) { return; }
 
     match key.code {
+        KeyCode::Tab     => { app.next_tab(); return; }
+        KeyCode::BackTab => { app.prev_tab(); return; }
         KeyCode::Char('s') | KeyCode::Char('/') => { app.hosts_searching = true; }
         KeyCode::Down | KeyCode::Char('j') => {
             let max = app.hosts.len().saturating_sub(1);
@@ -611,6 +613,8 @@ fn handle_notebook(app: &mut App, key: KeyEvent) {
                 app.notebook_scroll = app.notebook_scroll.saturating_sub(1);
             }
         }
+        KeyCode::Tab     => { app.next_tab(); }
+        KeyCode::BackTab => { app.prev_tab(); }
         KeyCode::Char('h')   => { app.show_help = true; }
         _ => {}
     }
@@ -623,6 +627,8 @@ fn handle_workbench(app: &mut App, key: KeyEvent) {
 
     const HEX_COLS: usize = 16;
     match key.code {
+        KeyCode::Tab     => { app.next_tab(); return; }
+        KeyCode::BackTab => { app.prev_tab(); return; }
         KeyCode::Char('h') | KeyCode::Left  => app.workbench.cursor_left(),
         KeyCode::Char('l') | KeyCode::Right => app.workbench.cursor_right(),
         KeyCode::Char('k') | KeyCode::Up    => app.workbench.cursor_up(HEX_COLS),
