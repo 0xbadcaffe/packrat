@@ -73,13 +73,7 @@ impl TracerouteState {
         self.next_hop_ttl = 1;
         self.pending_ticks = 0;
         self.target_ip = tgt.parse::<Ipv4Addr>().ok().or_else(|| {
-            let b: Vec<u8> = tgt.bytes().collect();
-            Some(Ipv4Addr::new(
-                8,
-                b.first().copied().unwrap_or(8).wrapping_add(1).max(1),
-                b.get(1).copied().unwrap_or(8).wrapping_add(1).max(1),
-                b.get(2).copied().unwrap_or(8).wrapping_add(1).max(1),
-            ))
+            Some(hostname_to_fake_ip(&tgt))
         });
 
         #[cfg(feature = "real-capture")]
@@ -281,6 +275,40 @@ fn parse_traceroute_line(line: &str) -> Option<TraceHop> {
 }
 
 // ─── Simulation ───────────────────────────────────────────────────────────────
+
+/// Hash a hostname to a deterministic, plausible-looking public IP address.
+/// Different hostnames always produce different IPs; same hostname always produces the same IP.
+fn hostname_to_fake_ip(host: &str) -> Ipv4Addr {
+    // FNV-1a hash of the full hostname
+    let mut h: u64 = 14_695_981_039_346_656_037;
+    for b in host.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(1_099_511_628_211);
+    }
+    // Map into realistic-looking public IP ranges (ASN prefixes)
+    let prefixes: &[(u8, u8)] = &[
+        (8,   8),   // Google Public DNS aesthetic
+        (1,   1),   // Cloudflare DNS aesthetic
+        (142, 250), // Google
+        (172, 217), // Google
+        (31,  13),  // Meta/Facebook
+        (157, 240), // Meta/Facebook
+        (13,  107), // Microsoft
+        (40,  76),  // Microsoft Azure
+        (104, 244), // Twitter/X
+        (199, 16),  // Twitter/X
+        (23,  185), // Fastly CDN
+        (151, 101), // Fastly CDN
+        (104, 16),  // Cloudflare
+        (172, 64),  // Cloudflare
+        (52,  0),   // AWS
+        (54,  0),   // AWS
+    ];
+    let (a, b) = prefixes[(h as usize) % prefixes.len()];
+    let c = ((h >> 16) & 0xFF) as u8;
+    let d = (((h >> 24) & 0xFE) as u8) | 1; // ensure non-zero
+    Ipv4Addr::new(a, b, c, d)
+}
 
 fn simulate_hop(ttl: u8, target: Ipv4Addr) -> TraceHop {
     let seed = (ttl as u64)
