@@ -4,9 +4,11 @@ use crate::net::packet::Packet;
 
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 pub struct FlowKey {
-    pub ep1: (String, u16),
-    pub ep2: (String, u16),
-    pub proto: String,
+    pub ep1:     (String, u16),
+    pub ep2:     (String, u16),
+    pub proto:   String,
+    /// VLAN scope: flows on different VLANs are distinct even if IP+port match.
+    pub vlan_id: Option<u16>,
 }
 
 impl FlowKey {
@@ -14,7 +16,7 @@ impl FlowKey {
         let a = (pkt.src.clone(), pkt.src_port.unwrap_or(0));
         let b = (pkt.dst.clone(), pkt.dst_port.unwrap_or(0));
         let (ep1, ep2) = if a <= b { (a, b) } else { (b, a) };
-        Self { ep1, ep2, proto: pkt.protocol.clone() }
+        Self { ep1, ep2, proto: pkt.protocol.clone(), vlan_id: pkt.vlan_id }
     }
 }
 

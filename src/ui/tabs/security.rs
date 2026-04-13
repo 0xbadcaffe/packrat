@@ -28,6 +28,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         SecuritySubTab::BruteForce   => draw_brute(f, app, chunks[1]),
         SecuritySubTab::VulnHits     => draw_vuln(f, app, chunks[1]),
         SecuritySubTab::IocHits      => draw_ioc_hits(f, app, chunks[1]),
+        SecuritySubTab::VlanIntel    => draw_vlan_intel(f, app, chunks[1]),
         SecuritySubTab::Replay       => draw_replay(f, app, chunks[1]),
     }
 }
@@ -35,7 +36,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
     let labels = [
         "IDS", "Credentials", "OS Fingerprint", "ARP Watch",
-        "DNS Tunnel", "HTTP", "TLS", "Brute Force", "Vulns", "IOC Hits", "Replay",
+        "DNS Tunnel", "HTTP", "TLS", "Brute Force", "Vulns", "IOC Hits", "VLAN Intel", "Replay",
     ];
     let idx = match app.security_tab {
         SecuritySubTab::Ids           => 0,
@@ -48,7 +49,8 @@ fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
         SecuritySubTab::BruteForce    => 7,
         SecuritySubTab::VulnHits      => 8,
         SecuritySubTab::IocHits       => 9,
-        SecuritySubTab::Replay        => 10,
+        SecuritySubTab::VlanIntel     => 10,
+        SecuritySubTab::Replay        => 11,
     };
     let titles: Vec<Line> = labels.iter().map(|l| Line::from(*l)).collect();
     let tabs = Tabs::new(titles)
@@ -375,6 +377,108 @@ fn draw_vuln(f: &mut Frame, app: &App, area: Rect) {
     .style(Style::default().bg(C_BG()));
     f.render_widget(table, area);
     render_hint(f, area, "CVE patterns, weak protocols, cleartext sensitive paths");
+}
+
+// ─── VLAN Intelligence ───────────────────────────────────────────────────────
+
+fn draw_vlan_intel(f: &mut Frame, app: &App, area: Rect) {
+    use crate::analysis::vlan::AlertSeverity;
+
+    let intel = &app.vlan_intel;
+    let scroll = app.security_scroll;
+
+    // Split area: top half stats table, bottom half alert table
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(area);
+
+    // ── Per-VLAN stats ───────────────────────────────────────────────────────
+    let stats_header = Row::new(vec![
+        cell_hdr("VLAN ID"), cell_hdr("Packets"), cell_hdr("Bytes"), cell_hdr("Hosts"), cell_hdr("First Seen"), cell_hdr("Last Seen"),
+    ]).height(1);
+
+    let stats_rows: Vec<Row> = intel.stats.values()
+        .skip(scroll).take(chunks[0].height.saturating_sub(4) as usize)
+        .map(|s| {
+            let vlan_color = if s.vlan_id == 1 { C_RED() } else { C_CYAN() };
+            Row::new(vec![
+                Cell::from(Span::styled(s.vlan_id.to_string(), Style::default().fg(vlan_color).add_modifier(Modifier::BOLD))),
+                Cell::from(Span::styled(s.packets.to_string(), Style::default().fg(C_FG()))),
+                Cell::from(Span::styled(format_bytes(s.bytes), Style::default().fg(C_GREEN()))),
+                Cell::from(Span::styled(s.hosts.len().to_string(), Style::default().fg(C_YELLOW()))),
+                Cell::from(Span::styled(fmt_ts(s.first_seen), Style::default().fg(C_FG3()))),
+                Cell::from(Span::styled(fmt_ts(s.last_seen), Style::default().fg(C_FG3()))),
+            ])
+        }).collect();
+
+    let stats_title = format!(" VLAN Stats — {} VLAN{} observed ", intel.vlan_count(),
+        if intel.vlan_count() == 1 { "" } else { "s" });
+    let stats_table = Table::new(
+        std::iter::once(stats_header).chain(stats_rows).collect::<Vec<_>>(),
+        [Constraint::Length(9), Constraint::Length(10), Constraint::Length(12),
+         Constraint::Length(8), Constraint::Length(14), Constraint::Length(14)],
+    )
+    .block(block_titled(&stats_title))
+    .style(Style::default().bg(C_BG()));
+    f.render_widget(stats_table, chunks[0]);
+
+    // ── VLAN Alerts ──────────────────────────────────────────────────────────
+    let alerts = intel.alerts_newest_first();
+    let alert_header = Row::new(vec![
+        cell_hdr("Pkt#"), cell_hdr("Sev"), cell_hdr("Category"), cell_hdr("Detail"),
+    ]).height(1);
+
+    let alert_rows: Vec<Row> = alerts.iter()
+        .take(chunks[1].height.saturating_sub(4) as usize)
+        .map(|a| {
+            let sev_color = match a.severity {
+                AlertSeverity::Critical => C_RED(),
+                AlertSeverity::Warning  => C_YELLOW(),
+                AlertSeverity::Info     => C_FG2(),
+            };
+            let cat_color = match a.category.as_str() {
+                "VLAN-Hop" | "DTP"      => C_RED(),
+                "MAC-VLAN-Cross"        => C_ORANGE(),
+                "PCP-Abuse"             => C_YELLOW(),
+                "Native-VLAN"           => C_CYAN(),
+                _                       => C_FG2(),
+            };
+            Row::new(vec![
+                Cell::from(Span::styled(format!("#{}", a.pkt_no), Style::default().fg(C_FG3()))),
+                Cell::from(Span::styled(a.severity.to_string(), Style::default().fg(sev_color).add_modifier(Modifier::BOLD))),
+                Cell::from(Span::styled(&a.category, Style::default().fg(cat_color))),
+                Cell::from(Span::styled(&a.detail, Style::default().fg(C_FG()))),
+            ])
+        }).collect();
+
+    let alert_title = format!(" VLAN Alerts — {} total ({} critical) ",
+        alerts.len(), intel.critical_alerts().len());
+    let alert_table = Table::new(
+        std::iter::once(alert_header).chain(alert_rows).collect::<Vec<_>>(),
+        [Constraint::Length(9), Constraint::Length(6), Constraint::Length(16), Constraint::Min(0)],
+    )
+    .block(block_titled(&alert_title))
+    .style(Style::default().bg(C_BG()));
+    f.render_widget(alert_table, chunks[1]);
+
+    render_hint(f, area, "[Tab/[/]] sub-tab  [j/k] scroll  [C] clear  Detects: double-tag, DTP, MAC-cross-VLAN, PCP-abuse, native-VLAN-1");
+}
+
+fn format_bytes(b: u64) -> String {
+    if b >= 1_000_000_000 { format!("{:.1}G", b as f64 / 1e9) }
+    else if b >= 1_000_000 { format!("{:.1}M", b as f64 / 1e6) }
+    else if b >= 1_000    { format!("{:.1}K", b as f64 / 1e3) }
+    else                  { format!("{}B", b) }
+}
+
+fn fmt_ts(ts: f64) -> String {
+    if ts == 0.0 { return "—".into(); }
+    let secs = ts as u64;
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
+    format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
 // ─── PCAP Replay ─────────────────────────────────────────────────────────────

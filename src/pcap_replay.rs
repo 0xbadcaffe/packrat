@@ -182,17 +182,42 @@ fn bytes_to_packet(raw: Vec<u8>, no: u64, timestamp: f64) -> Packet {
         u16::from_be_bytes([raw[12], raw[13]])
     } else { 0 };
 
-    // Handle 802.1Q VLAN (EtherType 0x8100)
-    let (vlan_id, ip_off) = if ethertype == 0x8100 && raw.len() >= 18 {
-        let vid = u16::from_be_bytes([raw[14], raw[15]]) & 0x0fff;
-        (Some(vid), 18usize)
-    } else {
-        (None, 14usize)
+    // Handle 802.1Q VLAN (0x8100) and QinQ/802.1ad (0x88a8)
+    let (vlan_id, vlan_pcp, vlan_dei, outer_vlan_id, ip_off) = {
+        let mut off = 14usize;
+        let mut outer: Option<u16> = None;
+        let mut inner: Option<u16> = None;
+        let mut pcp:   Option<u8>  = None;
+        let mut dei:   Option<u8>  = None;
+        let mut et = ethertype;
+        while (et == 0x8100 || et == 0x88a8) && raw.len() >= off + 4 {
+            let tci = u16::from_be_bytes([raw[off], raw[off + 1]]);
+            let vid = tci & 0x0fff;
+            let p   = ((tci >> 13) & 0x07) as u8;
+            let d   = ((tci >> 12) & 0x01) as u8;
+            et = u16::from_be_bytes([raw[off + 2], raw[off + 3]]);
+            off += 4;
+            if inner.is_some() {
+                // already have one tag — this is a second tag (shouldn't happen in well-formed frames)
+            } else if outer.is_some() {
+                inner = Some(vid); pcp = Some(p); dei = Some(d);
+            } else {
+                outer = Some(vid); pcp = Some(p); dei = Some(d);
+            }
+        }
+        // if only one tag: outer is the inner VLAN
+        let (vid, oid) = if inner.is_some() {
+            (inner, outer)
+        } else {
+            (outer, None)
+        };
+        (vid, pcp, dei, oid, off)
     };
 
     if raw.len() < ip_off + 20 {
         return Packet {
-            no, timestamp, length: len, bytes: raw, vlan_id,
+            no, timestamp, length: len, bytes: raw,
+            vlan_id, vlan_pcp, vlan_dei, outer_vlan_id,
             src: "?".into(), dst: "?".into(),
             protocol: "RAW".into(), info: "short frame".into(),
             src_port: None, dst_port: None,
@@ -236,7 +261,7 @@ fn bytes_to_packet(raw: Vec<u8>, no: u64, timestamp: f64) -> Packet {
 
     Packet {
         no, timestamp, src, dst, protocol, length: len, info,
-        src_port, dst_port, vlan_id, bytes: raw,
+        src_port, dst_port, vlan_id, vlan_pcp, vlan_dei, outer_vlan_id, bytes: raw,
     }
 }
 

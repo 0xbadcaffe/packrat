@@ -1,4 +1,5 @@
 pub mod case_export;
+pub mod vlan;
 pub mod display_filter;
 pub mod geo;
 pub mod notebook;

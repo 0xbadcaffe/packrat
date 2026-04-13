@@ -20,6 +20,7 @@ use crate::analysis::rules::RuleEngine;
 use crate::analysis::stream::StreamAssembler;
 use crate::analysis::timeline::ProtocolTimelines;
 use crate::analysis::tls::TlsTracker;
+use crate::analysis::vlan::VlanIntel;
 use crate::capture::CaptureSource;
 use crate::craft::CraftState;
 use crate::model::hosts::HostInventory;
@@ -55,6 +56,7 @@ pub enum SecuritySubTab {
     BruteForce,
     VulnHits,
     IocHits,
+    VlanIntel,
     Replay,
 }
 
@@ -153,6 +155,7 @@ pub struct App {
     pub streams:         StreamAssembler,
     pub timeline:        ProtocolTimelines,
     pub tls_tracker:     TlsTracker,
+    pub vlan_intel:      VlanIntel,
     pub ioc_engine:      IocEngine,
     pub rule_engine:     RuleEngine,
     pub carver:          Carver,
@@ -286,6 +289,7 @@ impl App {
             streams:          StreamAssembler::default(),
             timeline:         ProtocolTimelines::default(),
             tls_tracker:      TlsTracker::default(),
+            vlan_intel:       VlanIntel::default(),
             ioc_engine:       {
                 let mut e = IocEngine::default();
                 e.load_from_dir();
@@ -1107,6 +1111,9 @@ impl App {
         // TLS intelligence
         self.tls_tracker.ingest(&pkt);
 
+        // VLAN intelligence
+        self.vlan_intel.ingest(&pkt);
+
         // IOC matching
         self.ioc_engine.check_packet(&pkt);
 
@@ -1313,6 +1320,7 @@ impl App {
         self.streams.clear();
         self.timeline.clear();
         self.tls_tracker.clear();
+        self.vlan_intel.clear();
         self.ioc_engine.clear_hits();
         self.rule_engine.clear_hits();
         self.carved_objects.clear();
@@ -1520,7 +1528,8 @@ impl App {
             SecuritySubTab::TlsWeakness   => SecuritySubTab::BruteForce,
             SecuritySubTab::BruteForce    => SecuritySubTab::VulnHits,
             SecuritySubTab::VulnHits      => SecuritySubTab::IocHits,
-            SecuritySubTab::IocHits       => SecuritySubTab::Replay,
+            SecuritySubTab::IocHits       => SecuritySubTab::VlanIntel,
+            SecuritySubTab::VlanIntel     => SecuritySubTab::Replay,
             SecuritySubTab::Replay        => SecuritySubTab::Ids,
         };
     }
@@ -1537,7 +1546,8 @@ impl App {
             SecuritySubTab::BruteForce    => SecuritySubTab::TlsWeakness,
             SecuritySubTab::VulnHits      => SecuritySubTab::BruteForce,
             SecuritySubTab::IocHits       => SecuritySubTab::VulnHits,
-            SecuritySubTab::Replay        => SecuritySubTab::IocHits,
+            SecuritySubTab::VlanIntel     => SecuritySubTab::IocHits,
+            SecuritySubTab::Replay        => SecuritySubTab::VlanIntel,
         };
     }
 }
