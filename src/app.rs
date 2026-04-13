@@ -1008,7 +1008,7 @@ impl App {
     /// Build the protocol dissection tree for `pkt`, then apply any custom
     /// dissectors loaded from ~/.config/packrat/dissectors/.
     pub fn dissect_packet(&self, pkt: &Packet) -> Vec<TreeSection> {
-        let mut sections = crate::net::tree::build_tree(pkt);
+        let mut sections = crate::net::tree::build_tree(pkt, self.selected_iface == "simulated");
         crate::dissector::apply(&self.dissectors, pkt, &mut sections);
         self.lua_plugins.apply(pkt, &mut sections);
         sections
