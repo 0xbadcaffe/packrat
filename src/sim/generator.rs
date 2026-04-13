@@ -363,7 +363,10 @@ pub fn generate_packet(counter: u64) -> Packet {
         info,
         src_port,
         dst_port,
-        vlan_id: None,
+        vlan_id:       None,
+        vlan_pcp:      None,
+        vlan_dei:      None,
+        outer_vlan_id: None,
         bytes,
     }
 }

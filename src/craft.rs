@@ -234,7 +234,10 @@ impl CraftState {
             bytes,
             src_port: sport,
             dst_port: dport,
-            vlan_id:  None,
+            vlan_id:       None,
+            vlan_pcp:      None,
+            vlan_dei:      None,
+            outer_vlan_id: None,
         })
     }
 

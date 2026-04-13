@@ -38,8 +38,11 @@ fn pkt(no: u64, ts: f64, src: &str, dst: &str, proto: &str,
         info:     info.into(),
         src_port: sp,
         dst_port: dp,
-        vlan_id:  None,
-        bytes:    make_bytes(len, proto),
+        vlan_id:       None,
+        vlan_pcp:      None,
+        vlan_dei:      None,
+        outer_vlan_id: None,
+        bytes:         make_bytes(len, proto),
     }
 }
 

@@ -23,7 +23,11 @@ pub fn is_tcp_transport(proto: &str) -> bool {
 /// TCP data-offset field from the raw frame rather than assuming fixed headers.
 pub fn tcp_payload_offset(pkt: &Packet) -> usize {
     let raw = &pkt.bytes;
-    let eth_extra = if pkt.vlan_id.is_some() { 4 } else { 0 };
+    let eth_extra = match (pkt.outer_vlan_id.is_some(), pkt.vlan_id.is_some()) {
+        (true, _)      => 8, // QinQ: two 4-byte tags
+        (false, true)  => 4,
+        (false, false) => 0,
+    };
     let ip_off  = 14 + eth_extra;
     // IP header length from IHL nibble (lower 4 bits of first IP byte)
     let ihl = (raw.get(ip_off).copied().unwrap_or(0x45) & 0x0F) as usize * 4;
@@ -156,7 +160,11 @@ impl StreamAssembler {
 
         // Read TCP flags and sequence number from raw bytes
         let raw = &pkt.bytes;
-        let eth_extra = if pkt.vlan_id.is_some() { 4 } else { 0 };
+        let eth_extra = match (pkt.outer_vlan_id.is_some(), pkt.vlan_id.is_some()) {
+            (true, _)      => 8,
+            (false, true)  => 4,
+            (false, false) => 0,
+        };
         let ip_off  = 14 + eth_extra;
         let ihl     = (raw.get(ip_off).copied().unwrap_or(0x45) & 0x0F) as usize * 4;
         let tp_off  = ip_off + ihl.max(20);

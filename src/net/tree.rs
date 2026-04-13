@@ -76,7 +76,11 @@ fn app_payload_stub() -> TreeSection {
 
 pub fn build_tree(pkt: &Packet, is_simulated: bool) -> Vec<TreeSection> {
     let raw = &pkt.bytes;
-    let eth_extra = if pkt.vlan_id.is_some() { 4usize } else { 0usize };
+    let eth_extra = match (pkt.outer_vlan_id.is_some(), pkt.vlan_id.is_some()) {
+        (true, _)      => 8usize, // QinQ: two 4-byte tags
+        (false, true)  => 4usize, // single tag
+        (false, false) => 0usize,
+    };
     let ip_off    = 14 + eth_extra;
     let ihl       = (u8_at(raw, ip_off) & 0x0F) as usize * 4;
     let tp_off    = ip_off + ihl.max(20);
@@ -94,15 +98,34 @@ pub fn build_tree(pkt: &Packet, is_simulated: bool) -> Vec<TreeSection> {
         ],
     });
 
-    // VLAN tag (if present)
-    if let Some(vid) = pkt.vlan_id {
+    // VLAN tag(s) — outer S-TAG (QinQ) then inner C-TAG
+    if let Some(ovid) = pkt.outer_vlan_id {
         sections.push(TreeSection {
-            title: format!("802.1Q Virtual LAN, PRI: 0, DEI: 0, ID: {}", vid),
+            title: format!("802.1ad QinQ S-TAG, ID: {}", ovid),
+            expanded: true,
+            fields: vec![
+                tf("Outer VLAN ID:", &ovid.to_string(), FieldColor::Cyan),
+                tf("Tag Type:", "S-TAG (0x88a8, Provider)", FieldColor::Default),
+            ],
+        });
+    }
+    if let Some(vid) = pkt.vlan_id {
+        let pcp = pkt.vlan_pcp.unwrap_or(0);
+        let dei = pkt.vlan_dei.unwrap_or(0);
+        let pcp_name = match pcp {
+            0 => "Best Effort",  1 => "Background",
+            2 => "Spare",        3 => "Excellent Effort",
+            4 => "Controlled",   5 => "Video < 100ms",
+            6 => "Voice < 10ms", 7 => "Network Control",
+            _ => "Unknown",
+        };
+        sections.push(TreeSection {
+            title: format!("802.1Q Virtual LAN, PRI: {}, DEI: {}, ID: {}", pcp, dei, vid),
             expanded: true,
             fields: vec![
                 tf("VLAN ID:", &vid.to_string(), FieldColor::Cyan),
-                tf("Priority:", "0 (Best Effort)", FieldColor::Default),
-                tf("DEI:", "0", FieldColor::Default),
+                tf("Priority (PCP):", &format!("{} ({})", pcp, pcp_name), FieldColor::Default),
+                tf("DEI:", &dei.to_string(), FieldColor::Default),
             ],
         });
     }
