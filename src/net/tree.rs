@@ -63,12 +63,23 @@ fn fmt_tcp_flags(f: u8) -> String {
     s.trim_end().to_string()
 }
 
-pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
+/// Stub shown for application-layer protocols that are not decoded in live-capture mode.
+fn app_payload_stub() -> TreeSection {
+    TreeSection {
+        title: "Application Data".into(),
+        expanded: false,
+        fields: vec![
+            tf("Note:", "Protocol fields not decoded in live mode. Use simulated mode or a PCAP import to see decoded fields.", FieldColor::Default),
+        ],
+    }
+}
+
+pub fn build_tree(pkt: &Packet, is_simulated: bool) -> Vec<TreeSection> {
     let raw = &pkt.bytes;
     let eth_extra = if pkt.vlan_id.is_some() { 4usize } else { 0usize };
     let ip_off    = 14 + eth_extra;
     let ihl       = (u8_at(raw, ip_off) & 0x0F) as usize * 4;
-    let _tp_off   = ip_off + ihl.max(20);
+    let tp_off    = ip_off + ihl.max(20);
     let mut sections = Vec::new();
 
     // Frame section
@@ -125,9 +136,9 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         return sections;
     }
 
-    // IP layer
-    let ttl: u8 = ((48u64 + (pkt.no.wrapping_mul(8388617u64).wrapping_add(79u64) % 81u64)) as u8);
-    let id: u16 = (pkt.no.wrapping_mul(987654323u64).wrapping_add(49u64) as u16);
+    // IP layer — read TTL and ID from real bytes
+    let ttl: u8 = u8_at(raw, ip_off + 8);
+    let id: u16 = u16_be(raw, ip_off + 4);
     let proto_num = match pkt.protocol.as_str() {
         "TCP" | "HTTP" | "HTTPS" | "TLS" | "SSH" | "SMTP" | "MySQL" | "Redis"
         | "PostgreSQL" | "IMAP" | "IMAPS" | "POP3" | "MongoDB" | "Elasticsearch"
@@ -170,14 +181,25 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
     // Transport layer
     match pkt.protocol.as_str() {
         "ICMP" | "ICMPv6" => {
+            let icmp_type = u8_at(raw, tp_off);
+            let icmp_code = u8_at(raw, tp_off + 1);
+            let icmp_id   = u16_be(raw, tp_off + 4);
+            let icmp_seq  = u16_be(raw, tp_off + 6);
+            let type_str  = match icmp_type {
+                0  => "0 (Echo Reply)",
+                3  => "3 (Destination Unreachable)",
+                8  => "8 (Echo Request)",
+                11 => "11 (Time Exceeded)",
+                _  => "unknown",
+            };
             sections.push(TreeSection {
                 title: "Internet Control Message Protocol".into(),
                 expanded: true,
                 fields: vec![
-                    tf("Type:", "8 (Echo Request)", FieldColor::Yellow),
-                    tf("Code:", "0", FieldColor::Default),
-                    tf("Identifier:", &format!("0x{:04x}", (pkt.no.wrapping_mul(2654435761u64).wrapping_add(0u64) as u16)), FieldColor::Cyan),
-                    tf("Sequence Number:", &(0u16 + (pkt.no.wrapping_mul(2654435761u64).wrapping_add(80u64) % 101u64) as u16).to_string(), FieldColor::Default),
+                    tf("Type:", type_str, FieldColor::Yellow),
+                    tf("Code:", &icmp_code.to_string(), FieldColor::Default),
+                    tf("Identifier:", &format!("0x{:04x}", icmp_id), FieldColor::Cyan),
+                    tf("Sequence Number:", &icmp_seq.to_string(), FieldColor::Default),
                 ],
             });
         }
@@ -293,10 +315,12 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         proto if matches!(proto, "TCP" | "HTTP" | "HTTPS" | "TLS" | "SSH" | "MySQL" | "Redis" | "PostgreSQL") => {
             let sp = pkt.src_port.unwrap_or(12345);
             let dp = pkt.dst_port.unwrap_or(80);
-            let seq: u32 = (pkt.no.wrapping_mul(2147483647u64).wrapping_add(51u64) as u32);
-            let ack: u32 = (pkt.no.wrapping_mul(1073741827u64).wrapping_add(52u64) as u32);
-            let win: u16 = (1024u16 + (pkt.no.wrapping_mul(536870923u64).wrapping_add(93u64) % 64512u64) as u16);
-            let flags = ["ACK", "PSH, ACK", "SYN", "FIN, ACK", "RST, ACK"][stable(pkt.no, 5)];
+            // Read real TCP header fields from bytes
+            let seq: u32   = u32_be(raw, tp_off + 4);
+            let ack: u32   = u32_be(raw, tp_off + 8);
+            let flags_byte = u8_at(raw, tp_off + 13);
+            let win: u16   = u16_be(raw, tp_off + 14);
+            let flags_str  = fmt_tcp_flags(flags_byte);
             sections.push(TreeSection {
                 title: format!("Transmission Control Protocol, Src Port: {}, Dst Port: {}", sp, dp),
                 expanded: true,
@@ -305,7 +329,7 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
                     tf("Destination Port:", &dp.to_string(), FieldColor::Yellow),
                     tf("Sequence Number:", &seq.to_string(), FieldColor::Default),
                     tf("Acknowledgment:", &ack.to_string(), FieldColor::Default),
-                    tf("Flags:", &format!("0x{:03x} ({})", ((pkt.no.wrapping_mul(1145919239u64).wrapping_add(306u64) & 0xfffu64) as u16), flags), FieldColor::Magenta),
+                    tf("Flags:", &format!("0x{:02x} ({})", flags_byte, flags_str), FieldColor::Magenta),
                     tf("Window Size:", &win.to_string(), FieldColor::Default),
                 ],
             });
@@ -1779,6 +1803,29 @@ pub fn build_tree(pkt: &Packet) -> Vec<TreeSection> {
         }
 
         _ => {}
+    }
+
+    // ── Real-capture mode: strip fake application-layer sections ─────────────
+    // Only the base protocol layers (Ethernet, IP, TCP/UDP, ICMP) read from real
+    // bytes. Every application-layer section above that is synthesized from hash
+    // functions for simulation purposes and must not be shown on real traffic.
+    if !is_simulated {
+        // Titles that come from real-byte parsing and are safe to show.
+        const REAL_PREFIXES: &[&str] = &[
+            "Frame ",
+            "802.1Q",
+            "Ethernet",
+            "Address Resolution Protocol",
+            "Internet Protocol",
+            "Transmission Control Protocol",
+            "User Datagram Protocol",
+            "Internet Control Message Protocol",
+        ];
+        let before = sections.len();
+        sections.retain(|s| REAL_PREFIXES.iter().any(|p| s.title.starts_with(p)));
+        if sections.len() < before {
+            sections.push(app_payload_stub());
+        }
     }
 
     sections
