@@ -42,7 +42,7 @@ packrat
 | **Flows**      | `6` | Bidirectional flow tracker — beacon/scan/encrypted/large detection, follow stream |
 | **Craft**      | `7` | Form-based packet builder with hex preview, inject, and **flood mode** |
 | **Traceroute** | `8` | Hop-by-hop path tracer (real `traceroute`/`tracert` under `--features real-capture`) |
-| **Security**   | `9` | Passive IDS, credentials, OS fingerprint, ARP watch, DNS tunnel, HTTP analytics, TLS weakness, brute-force, vuln patterns, **IOC hits**, PCAP replay |
+| **Security**   | `9` | Passive IDS, credentials, OS fingerprint, ARP watch, DNS tunnel, HTTP analytics, TLS weakness, brute-force, vuln patterns, **IOC hits**, **VLAN intelligence**, PCAP replay |
 | **Scanner**    | `0` | Port scanner — TCP Connect, SYN, UDP modes with service fingerprinting |
 | **Hosts**      | `H` | Host inventory: IP/MAC/OS/hostname tracking, per-host protocol breakdown, **free-form tagging** |
 | **Notebook**   | `N` | Analyst notes — timestamped, tag-attached, **searchable** with live filtering |
@@ -360,7 +360,7 @@ The Diff tab shows three side-by-side delta columns:
 
 ## Security Tab (Tab 9)
 
-Passive real-time security analysis across 11 sub-panels. Navigate with `[` / `]` or the letter shortcuts below.
+Passive real-time security analysis across 12 sub-panels. Navigate with `[` / `]` or the letter shortcuts below.
 
 ### Sub-panels
 
@@ -376,6 +376,7 @@ Passive real-time security analysis across 11 sub-panels. Navigate with `[` / `]
 | `b` | **Brute Force** | 30-second sliding window per (src, dst, port); threshold 5 attempts — covers SSH/FTP/HTTP 401/SMB |
 | `v` | **Vuln Patterns** | Cleartext sensitive HTTP paths (`/admin`, `/passwd`), weak Telnet, anonymous FTP, WMI over network |
 | `i` | **IOC Hits** | Matches against loaded IOC lists (IPs, domains, hashes, keywords); shows hit kind, matched value, context |
+| —  | **[VLAN Intel](#vlan-intelligence-security-tab--vlan-intel)** | Per-VLAN stats + attack detection: double-tagging, DTP, MAC-VLAN crossing, PCP abuse, native VLAN 1 |
 | `p` | **PCAP Replay** | Load and replay any `.pcap` file at variable speed |
 
 When IOC hits exist, the title bar shows a `☢ N IOC` badge (orange).
@@ -401,6 +402,51 @@ Load a `.pcap` file and replay it at adjustable speed into the live packet strea
 | `< / >` | Halve / double speed (0.125x → 64x) |
 
 Speed steps: `0.125x → 0.25x → 0.5x → 1x → 2x → 4x → 8x → 16x → 32x → 64x`
+
+---
+
+## VLAN Intelligence (Security tab → VLAN Intel)
+
+Passive 802.1Q/802.1ad analysis built entirely from raw Ethernet frames — no SPAN configuration or VLAN-aware switch management required.
+
+### What packrat tracks
+
+| Metric | Description |
+|--------|-------------|
+| Per-VLAN packet / byte counts | Running totals per VLAN ID |
+| Host inventory per VLAN | Unique IP+MAC pairs seen on each VLAN |
+| MAC→VLAN mapping | Every MAC address and the set of VLANs it has appeared on |
+| QinQ tag metadata | Outer S-TAG (0x88a8) and inner C-TAG (0x8100) IDs both recorded |
+| PCP / DEI fields | 802.1p Priority Code Point (0–7) and Drop Eligible Indicator extracted per frame |
+
+### Attack detection
+
+| Alert | Severity | Trigger |
+|-------|----------|---------|
+| **QinQ double-tagging** | CRITICAL | Frame carries both an outer S-TAG and an inner C-TAG — classic VLAN-hopping attack that exploits access-port native VLAN handling |
+| **DTP negotiation** | CRITICAL | Ethernet frame destined to `01:00:0c:cc:cc:cc` — Cisco DTP frame that can trigger trunk negotiation (switch-spoofing precursor) |
+| **MAC on multiple VLANs** | WARNING | Same source MAC address observed on two or more distinct VLAN IDs — indicates VLAN hopping or a misconfigured trunk |
+| **PCP=7 abuse** | WARNING | A frame marked with 802.1p priority 7 (Network Control) from a non-router source — priority manipulation that can starve lower-priority traffic |
+| **Native VLAN 1** | WARNING | Any tagged traffic on VLAN 1 — violates CIS/NSA network hardening guidelines (VLAN 1 should carry no user traffic) |
+
+Alerts are deduplicated: after the first fire, the same condition must advance by ≥ 1 000 packets before it fires again to prevent alert flooding in high-rate environments.
+
+### Protocol tree enhancements
+
+- **802.1Q C-TAG section** shows real PCP (with priority name: Best Effort, Voice, Network Control, …) and DEI bit read directly from the raw frame
+- **802.1ad S-TAG section** added for QinQ frames (outer provider tag shown above inner customer tag)
+- Correct IP header offset is computed for both single-tagged (4-byte extra) and double-tagged (8-byte extra) frames throughout the dissector, stream reassembler, and flow tracker
+
+### VLAN-scoped flows
+
+The flow tracker keys flows by `(src IP, dst IP, src port, dst port, protocol, VLAN ID)`. Two hosts communicating on VLAN 10 and VLAN 20 are tracked as separate flows even if their IP addresses overlap — correct behaviour for routed or multi-tenant network captures.
+
+### UI layout
+
+The VLAN Intel sub-panel is split into two panes:
+
+- **Top 40% — per-VLAN stats table:** VLAN ID (red if VLAN 1), packet count, byte volume, unique host count, first / last seen timestamps
+- **Bottom 60% — alert table:** packet number, severity (color-coded), category, and full detail string, sorted newest-first
 
 ---
 
@@ -450,6 +496,17 @@ Under `--features real-capture` the system `traceroute` (Linux/macOS) or `tracer
 | `[ENCRYPTED]` | Payload entropy > 7.2 bits/byte — likely encrypted or compressed |
 | `[SCAN]` | Source IP seen on 5+ distinct destinations — port/host scan |
 
+Flows are keyed by `(src, dst, src port, dst port, protocol, VLAN ID)` — same IP/port pairs on different VLANs are tracked as separate flows.
+
+### TCP stream reassembly
+
+Pressing **`f`** on a TCP flow opens the Follow Stream overlay, which shows the bidirectional byte stream for any TCP-carried protocol (HTTP, HTTPS, TLS, SSH, SMB, MySQL, Redis, Kerberos, and 30+ others). The reassembler handles:
+
+- **Correct payload offset** — IP IHL and TCP data-offset fields are read from raw bytes; IP options and TCP options are both accounted for; VLAN and QinQ tags add 4 or 8 bytes correctly
+- **Retransmit suppression** — per-direction sequence number tracking skips already-seen bytes using wrapping i32 arithmetic; only new data is appended
+- **Gap tolerance** — out-of-order segments are appended immediately so the stream view remains useful even when segments arrive out of sequence
+- Up to 500 concurrent streams, 1 MB per direction
+
 | Key | Action |
 |-----|--------|
 | `b / p / t / s` | Sort by bytes / packets / time / beacon score |
@@ -461,7 +518,7 @@ Under `--features real-capture` the system `traceroute` (Linux/macOS) or `tracer
 ## Protocol Support
 
 ### Layer 2 / Encapsulation
-`Ethernet II` `IEEE 802.3` `VLAN (802.1Q/QinQ)` `MPLS` `PPPoE` `VXLAN` `GRE` `WireGuard`
+`Ethernet II` `IEEE 802.3` `VLAN 802.1Q (C-TAG)` `QinQ 802.1ad (S-TAG + C-TAG)` `802.1p PCP/DEI` `MPLS` `PPPoE` `VXLAN` `GRE` `WireGuard`
 
 ### Layer 3 / Network
 `IPv4` `IPv6` `ARP` `ICMP` `ICMPv6` `IGMP` `GRE` `VRRP` `IPSec ESP` `IPSec AH`
@@ -764,10 +821,12 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 | Key | Action |
 |-----|--------|
 | `[ / ]` | Previous / next sub-panel |
-| `a c o w d u t b v p` | Jump to sub-panel |
+| `a c o w d u t b v i p` | Jump to sub-panel by letter |
 | `j / k` | Scroll |
 | `g / G` | Top / bottom |
 | `C` | Clear all |
+
+Sub-panel letter map: `a`=IDS · `c`=Credentials · `o`=OS Fingerprint · `w`=ARP Watch · `d`=DNS Tunnel · `u`=HTTP · `t`=TLS · `b`=Brute Force · `v`=Vulns · `i`=IOC Hits · (VLAN Intel via `[/]`) · `p`=Replay
 
 ### Flows (6)
 
