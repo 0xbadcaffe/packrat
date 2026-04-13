@@ -1439,8 +1439,8 @@ impl App {
                     let pkt_key = FlowKey::from_packet(pkt);
                     if pkt_key == key {
                         let is_init = pkt.src == initiator;
-                        // Skip headers: try offset 54 (Eth14+IP20+TCP20)
-                        let payload = if pkt.bytes.len() > 54 { pkt.bytes[54..].to_vec() } else { Vec::new() };
+                        let offset = crate::analysis::stream::tcp_payload_offset(pkt);
+                        let payload = if pkt.bytes.len() > offset { pkt.bytes[offset..].to_vec() } else { Vec::new() };
                         if !payload.is_empty() {
                             segments.push((is_init, payload));
                         }
