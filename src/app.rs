@@ -1025,6 +1025,10 @@ impl App {
         self.picking_iface = false;
         self.abort_capture();
 
+        // Clear all analysis state so simulated data cannot bleed into real captures
+        // and vice-versa. clear_packets() sets capturing=false; we restore it below.
+        self.clear_packets();
+
         if self.selected_iface == "simulated" {
             self.seed_scenario();
             self.capture_handle = Some(SimulatedCapture.run(self.packet_tx.clone()));
