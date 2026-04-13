@@ -140,6 +140,13 @@ impl TlsTracker {
         }
     }
 
+    /// Directly insert a pre-built session (used for scenario/demo seeding).
+    pub fn insert(&mut self, session: TlsSession) {
+        if self.sessions.len() < MAX_SESSIONS {
+            self.sessions.insert(session.flow_id.clone(), session);
+        }
+    }
+
     pub fn get(&self, flow_id: &str) -> Option<&TlsSession> { self.sessions.get(flow_id) }
 
     pub fn all(&self) -> Vec<&TlsSession> {

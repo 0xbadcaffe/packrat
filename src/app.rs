@@ -485,7 +485,42 @@ impl App {
             }
         }
 
-        self.set_status("Scenario loaded: Operation Quiet Beacon (correlated demo data)");
+        // ── TLS Analysis tab ─────────────────────────────────────────────────
+        for session in scenario::tls_sessions() {
+            self.tls_tracker.insert(session);
+        }
+
+        // ── Security tab ─────────────────────────────────────────────────────
+        let sec = scenario::security_seed();
+        self.security.ids_alerts.extend(sec.ids_alerts);
+        self.security.arp_anomalies.extend(sec.arp_anomalies);
+        for g in sec.os_guesses {
+            self.security.os_guesses.push(g);
+        }
+        self.security.vuln_hits.extend(sec.vuln_hits);
+        self.security.brute_force.extend(sec.brute_force);
+        self.security.http_records.extend(sec.http_records);
+        self.security.tls_weaknesses.extend(sec.tls_weaknesses);
+        self.security.dns_suspects.extend(sec.dns_suspects);
+
+        // ── Credentials sub-tab ──────────────────────────────────────────────
+        self.credentials.extend(scenario::credentials());
+        self.security.cred_hit_count = self.credentials.len();
+
+        // ── Objects tab ──────────────────────────────────────────────────────
+        self.carved_objects.extend(scenario::carved_objects());
+
+        // ── Rules tab ────────────────────────────────────────────────────────
+        for (rule, _hits) in scenario::rules() {
+            self.rule_engine.add_rule(rule);
+        }
+        // Fire rules against the already-ingested packets so hit counts are live
+        let pkts2: Vec<_> = self.packets.iter().cloned().collect();
+        for pkt in &pkts2 {
+            self.rule_engine.evaluate(pkt);
+        }
+
+        self.set_status("Scenario loaded: Operation Quiet Beacon — all tabs populated");
     }
 
     // ─── Test helpers ────────────────────────────────────────────────────────
