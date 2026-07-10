@@ -1,6 +1,6 @@
 # 🐀 packrat
 
-> A terminal-first network reversing and traffic forensics workbench for researchers, red teamers, and embedded/IoT analysts.
+> A terminal-first network analyzer, deep packet inspection, and penetration detection workbench for researchers, red teamers, and embedded/IoT analysts.
 
 > Crates.io package: `packrat-tui`  
 > Installed binary: `packrat`
@@ -582,11 +582,11 @@ Pressing **`f`** on a TCP flow opens the Follow Stream overlay, which shows the 
 
 packrat supports three levels of protocol dissection.
 
-### Lua dissectors (Wireshark-compatible, hot-reload)
+### Lua dissectors (hot-reload)
 
 Drop a `.lua` file in `~/.config/packrat/plugins/` and press **`r`** to load or hot-reload without restarting.
 
-**Supported Wireshark API:**
+**Supported Lua dissector API:**
 
 | Object | Description |
 |--------|-------------|
@@ -779,7 +779,7 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 | `Space` | Start/stop capture |
 | `j / k` `↑ ↓` | Navigate |
 | `g / G` | Top / bottom |
-| `/` | Filter bar (Wireshark-style AST filter) |
+| `/` | Filter bar (packet inspection AST filter) |
 | `?` | Command palette (search across all tabs/actions) |
 | `B` | Snapshot baseline for differential analysis |
 | `L` | Load PCAP file instantly (overlay path dialog) |
@@ -840,7 +840,7 @@ Sub-panel letter map: `a`=IDS · `c`=Credentials · `o`=OS Fingerprint · `w`=AR
 
 ## Filter Syntax
 
-Press **`/`** to open the filter bar. Filters are evaluated by a Wireshark-compatible AST engine and update the packet list live.
+Press **`/`** to open the filter bar. Filters are evaluated by Packrat's packet inspection AST engine and update the packet list live.
 
 ```
 tcp                         # protocol name (bare)

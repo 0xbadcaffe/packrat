@@ -1437,7 +1437,7 @@ impl App {
         p: &Packet,
     ) -> bool {
         if display_filter.is_active() {
-            // Use the advanced AST evaluator (Wireshark-style expressions).
+            // Use the advanced packet inspection AST evaluator.
             display_filter.matches(p, false, &[])
         } else if display_filter.has_error() {
             // Parse error: fall back to simple text match.

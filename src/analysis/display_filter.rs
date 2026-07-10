@@ -1,4 +1,4 @@
-//! Display filter engine — Wireshark-style post-capture filter expressions.
+//! Display filter engine — packet inspection expressions.
 //!
 //! Supports:
 //!   tcp                          protocol existence

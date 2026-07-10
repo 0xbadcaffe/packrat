@@ -1,9 +1,9 @@
 /// Lua-based protocol dissector engine.
 ///
 /// Drop a .lua file into `~/.config/packrat/plugins/` to teach packrat
-/// a custom or proprietary protocol using a Wireshark-compatible Lua API.
+/// a custom or proprietary protocol using Packrat's Lua dissector API.
 ///
-/// The following Wireshark Lua objects are supported:
+/// The following Lua dissector objects are supported:
 ///   Proto, ProtoField, DissectorTable, base constants,
 ///   Tvb/TvbRange (buf), Pinfo (pinfo), TreeItem (tree).
 ///
@@ -127,7 +127,7 @@ impl LuaUserData for TreeItemUD {
             lua.create_userdata(TreeItemUD { indent: indent + 1 })
         });
 
-        // Wireshark compat no-ops
+        // Compatibility no-ops
         methods.add_method("add_expert_info", |lua, this, _: LuaMultiValue| {
             lua.create_userdata(TreeItemUD { indent: this.indent + 1 })
         });
