@@ -851,6 +851,11 @@ ip.src == 192.168.1.1       # field comparison (==, !=, <, <=, >, >=)
 ip.dst == 8.8.8.8
 tcp.port == 443             # matches src OR dst port
 udp.port == 53
+vlan.id == 20               # inner C-TAG VLAN ID
+vlan.pcp >= 6               # 802.1p priority
+vlan.dei == 1               # drop eligible indicator
+vlan.outer_id == 100        # outer S-TAG for QinQ
+vlan.qinq == true           # double-tagged frame
 frame.len > 1400
 
 ip.src contains "192.168"   # substring match
@@ -867,7 +872,7 @@ The filter bar shows:
 
 ### Supported field names
 
-`ip.src` `ip.dst` `tcp.port` `tcp.srcport` `tcp.dstport` `udp.port` `udp.srcport` `udp.dstport` `frame.len` `frame.number` plus any protocol name as a bare keyword (`tcp`, `udp`, `dns`, `http`, `tls`, `arp`, `icmp`, etc.).
+`ip.src` `ip.dst` `tcp.port` `tcp.srcport` `tcp.dstport` `udp.port` `udp.srcport` `udp.dstport` `vlan.id` `vlan.pcp` `vlan.dei` `vlan.outer_id` `vlan.qinq` `frame.len` `frame.number` plus any protocol name as a bare keyword (`tcp`, `udp`, `dns`, `http`, `tls`, `arp`, `icmp`, etc.).
 
 ---
 
