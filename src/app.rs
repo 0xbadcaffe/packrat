@@ -5,6 +5,7 @@ use tokio::task::JoinHandle;
 use crate::analysis::carving::{Carver, CarvedObject};
 use crate::analysis::yara::YaraEngine;
 use crate::model::project::ProjectSaveMode;
+use crate::model::evidence::Severity as EvidenceSeverity;
 use crate::storage::project_store;
 use crate::storage::theme_store;
 use crate::ui::autopsy_overlay::AutopsyState;
@@ -12,11 +13,13 @@ use crate::ui::project_manager::ProjectManagerState;
 use crate::analysis::diff::DiffEngine;
 use crate::analysis::display_filter::DisplayFilter;
 use crate::analysis::ioc::IocEngine;
+use crate::analysis::incident::{IncidentSource, IncidentStore};
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::notebook::Notebook;
 use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
 use crate::analysis::protocol_workbench::ProtocolWorkbench;
 use crate::analysis::rules::RuleEngine;
+use crate::analysis::rules::Action as RuleAction;
 use crate::analysis::stream::StreamAssembler;
 use crate::analysis::timeline::ProtocolTimelines;
 use crate::analysis::tls::TlsTracker;
@@ -42,6 +45,7 @@ use crate::tabs::Tab;
 use crate::traceroute::TracerouteState;
 
 const MAX_PACKETS: usize = 10_000;
+pub const INCIDENT_ANALYSIS_SECTION: usize = 11;
 
 /// Sub-sections within the Security tab
 #[derive(Debug, Clone, PartialEq)]
@@ -193,6 +197,9 @@ pub struct App {
     pub vlan_intel:      VlanIntel,
     pub ioc_engine:      IocEngine,
     pub rule_engine:     RuleEngine,
+    pub incidents:       IncidentStore,
+    /// Visible only while an unreviewed critical incident needs attention.
+    pub alert_overlay_open: bool,
     pub carver:          Carver,
     pub carved_objects:  Vec<CarvedObject>,
     pub workbench:       ProtocolWorkbench,
@@ -340,6 +347,8 @@ impl App {
                 e.load_from_dir();
                 e
             },
+            incidents:        IncidentStore::default(),
+            alert_overlay_open: false,
             carver:           Carver::default(),
             carved_objects:   Vec::new(),
             workbench:        ProtocolWorkbench::default(),
@@ -1142,8 +1151,15 @@ impl App {
             self.operator_graph.on_packet(&src, &dst, &proto, sport, dport, ts, bytes, no);
         }
 
-        // Security analysis
+        // Security analysis. Critical built-in signatures open an incident for
+        // explicit operator review; lower severities remain in the Security tab.
+        let ids_before = self.security.ids_alerts.len();
         self.security.update(&pkt);
+        let critical_ids: Vec<(String, String)> = self.security.ids_alerts[ids_before..]
+            .iter()
+            .filter(|alert| matches!(alert.severity, crate::net::security::Severity::Critical))
+            .map(|alert| (alert.signature.to_string(), alert.detail.clone()))
+            .collect();
 
         // Host inventory
         self.hosts.update(&pkt);
@@ -1170,8 +1186,22 @@ impl App {
         // IOC matching
         self.ioc_engine.check_packet(&pkt);
 
-        // Rule engine
+        // Critical alert actions in user rules share the same review workflow.
+        let rule_hits_before = self.rule_engine.hits.len();
         self.rule_engine.evaluate(&pkt);
+        let critical_rule_hits: Vec<(String, String, String)> = self.rule_engine.hits[rule_hits_before..]
+            .iter()
+            .filter(|hit| matches!(&hit.action, RuleAction::Alert { severity: EvidenceSeverity::Critical, .. }))
+            .map(|hit| (hit.rule_id.clone(), hit.rule_name.clone(), hit.message.clone()))
+            .collect();
+
+        for (signature, detail) in critical_ids {
+            self.open_industry_incident(&pkt, &signature, &detail);
+        }
+        for (rule_id, rule_name, message) in critical_rule_hits {
+            self.open_user_rule_incident(&pkt, &rule_id, &rule_name, &message);
+        }
+        self.incidents.retain_packet(&pkt);
 
         // Credential extraction
         let new_creds = crate::net::inspector::extract_credentials(&pkt);
@@ -1198,6 +1228,58 @@ impl App {
             self.packets.pop_front();
             self.rebuild_filtered();
         }
+    }
+
+    fn open_industry_incident(&mut self, packet: &Packet, signature: &str, detail: &str) {
+        let id = self.incidents.open_or_update(
+            IncidentSource::IndustrySignature,
+            signature,
+            detail,
+            EvidenceSeverity::Critical,
+            packet,
+            self.packets.iter().cloned(),
+        );
+        self.alert_overlay_open = true;
+        self.set_status(format!("Critical incident #{id}: {signature}"));
+    }
+
+    fn open_user_rule_incident(
+        &mut self,
+        packet: &Packet,
+        rule_id: &str,
+        rule_name: &str,
+        message: &str,
+    ) {
+        let id = self.incidents.open_or_update(
+            IncidentSource::UserRule,
+            rule_id,
+            format!("{rule_name}: {message}"),
+            EvidenceSeverity::Critical,
+            packet,
+            self.packets.iter().cloned(),
+        );
+        self.alert_overlay_open = true;
+        self.set_status(format!("Critical incident #{id}: {rule_name}"));
+    }
+
+    /// Open the retained incident packet history and record that it was reviewed.
+    pub fn open_active_incident_analysis(&mut self) -> bool {
+        if !self.incidents.mark_active_reviewed() {
+            return false;
+        }
+        self.active_tab = Tab::Analysis;
+        self.analysis_section = INCIDENT_ANALYSIS_SECTION;
+        self.alert_overlay_open = false;
+        self.set_status("Incident reviewed. Press C in Incident History to acknowledge the alert.");
+        true
+    }
+
+    /// Acknowledgement hides the active alert but preserves its history.
+    pub fn acknowledge_active_incident(&mut self) -> Result<(), &'static str> {
+        self.incidents.acknowledge_active()?;
+        self.alert_overlay_open = self.incidents.active().is_some();
+        self.set_status("Incident acknowledged; retained packet history remains available.");
+        Ok(())
     }
 
     /// Inject a crafted packet into the live packet list.
@@ -1380,6 +1462,8 @@ impl App {
         self.vlan_intel.clear();
         self.ioc_engine.clear_hits();
         self.rule_engine.clear_hits();
+        self.incidents.clear();
+        self.alert_overlay_open = false;
         self.carved_objects.clear();
         self.yara_engine.clear_results();
         self.yara_scan_cursor = 0;
