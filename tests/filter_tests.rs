@@ -214,6 +214,21 @@ fn eval_tcp_port_matches_source_port() {
 }
 
 #[test]
+fn eval_deep_vlan_fields() {
+    let mut p = pkt("TCP", "10.0.0.1", "10.0.0.2", Some(1234), Some(443), "", 100);
+    p.vlan_id = Some(20);
+    p.vlan_pcp = Some(7);
+    p.vlan_dei = Some(1);
+    p.outer_vlan_id = Some(100);
+
+    assert!(display_filter::eval(&display_filter::parse("vlan.id == 20").unwrap(), &ctx(&p)));
+    assert!(display_filter::eval(&display_filter::parse("vlan.pcp >= 6").unwrap(), &ctx(&p)));
+    assert!(display_filter::eval(&display_filter::parse("vlan.dei == 1").unwrap(), &ctx(&p)));
+    assert!(display_filter::eval(&display_filter::parse("vlan.outer_id == 100").unwrap(), &ctx(&p)));
+    assert!(display_filter::eval(&display_filter::parse("vlan.qinq == true").unwrap(), &ctx(&p)));
+}
+
+#[test]
 fn eval_port_not_in_set() {
     let p = pkt("TCP", "10.0.0.1", "10.0.0.2", Some(54321), Some(22), "", 100);
     let expr = display_filter::parse("tcp.dstport in [80,443,8080]").unwrap();

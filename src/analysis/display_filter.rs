@@ -373,6 +373,9 @@ fn get_field_num(pkt: &Packet, field: &str) -> Option<f64> {
                                       => pkt.dst_port.map(|p| p as f64),
         "ip.ttl"                      => Some(pkt.bytes.get(22).copied().unwrap_or(0) as f64),
         "vlan.id"                     => pkt.vlan_id.map(|v| v as f64),
+        "vlan.pcp"                    => pkt.vlan_pcp.map(|v| v as f64),
+        "vlan.dei"                    => pkt.vlan_dei.map(|v| v as f64),
+        "vlan.outer" | "vlan.outer_id" => pkt.outer_vlan_id.map(|v| v as f64),
         "frame.number"                => Some(pkt.no as f64),
         _                             => None,
     }
@@ -390,10 +393,11 @@ fn get_field_nums(pkt: &Packet, field: &str) -> Vec<f64> {
     }
 }
 
-fn get_field_bool(_pkt: &Packet, field: &str) -> bool {
+fn get_field_bool(pkt: &Packet, field: &str) -> bool {
     match field {
         // These would need the notebook context in a real implementation
         "marked" => false,
+        "vlan.qinq" => pkt.outer_vlan_id.is_some() && pkt.vlan_id.is_some(),
         _        => false,
     }
 }
