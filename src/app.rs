@@ -84,8 +84,43 @@ pub enum ObjectsSubTab {
     YaraMatches,
 }
 
-fn list_interfaces() -> Vec<String> {
-    let mut ifaces = vec!["simulated".to_string()];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupMode {
+    Capture,
+    Simulation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliAction {
+    Run(StartupMode),
+    Help,
+}
+
+pub fn usage() -> &'static str {
+    "Usage: packrat [--simulation]\n\nOptions:\n  -s, --simulation  run the built-in simulated traffic scenario\n  -h, --help        show this help"
+}
+
+pub fn parse_startup_args<I, S>(args: I) -> Result<CliAction, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut mode = StartupMode::Capture;
+    for arg in args {
+        match arg.as_ref() {
+            "-s" | "--simulation" => mode = StartupMode::Simulation,
+            "-h" | "--help" => return Ok(CliAction::Help),
+            unknown => return Err(format!("unknown argument: {unknown}")),
+        }
+    }
+    Ok(CliAction::Run(mode))
+}
+
+fn list_interfaces(include_simulated: bool) -> Vec<String> {
+    let mut ifaces = Vec::new();
+    if include_simulated {
+        ifaces.push("simulated".to_string());
+    }
     if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
         let mut sys: Vec<String> = entries
             .filter_map(|e| e.ok())
@@ -228,8 +263,13 @@ pub struct App {
 
 impl App {
     pub fn new(packet_tx: Sender<Packet>) -> Self {
-        let iface_list = list_interfaces();
-        Self {
+        Self::new_with_mode(packet_tx, StartupMode::Capture)
+    }
+
+    pub fn new_with_mode(packet_tx: Sender<Packet>, startup_mode: StartupMode) -> Self {
+        let iface_list = list_interfaces(startup_mode == StartupMode::Simulation);
+        let selected_iface = iface_list.first().cloned().unwrap_or_default();
+        let mut app = Self {
             active_tab: Tab::Packets,
             packets: VecDeque::new(),
             filtered: Vec::new(),
@@ -239,10 +279,10 @@ impl App {
             capturing: false,
             capture_handle: None,
             packet_tx,
-            picking_iface: true,
+            picking_iface: startup_mode != StartupMode::Simulation,
             iface_list,
             iface_sel: 0,
-            selected_iface: "simulated".to_string(),
+            selected_iface,
             filter: PacketFilter::default(),
             rate_history: vec![0u32; 60],
             rate_this_sec: 0,
@@ -345,7 +385,13 @@ impl App {
             project_manager:      ProjectManagerState::default(),
             status_msg:       None,
             status_msg_ticks: 0,
+        };
+
+        if startup_mode == StartupMode::Simulation {
+            app.confirm_iface();
         }
+
+        app
     }
 
     /// Reload JSON rules from ~/.config/packrat/rules/ and show status.
@@ -1025,6 +1071,13 @@ impl App {
     pub fn iface_up(&mut self) { self.iface_sel = self.iface_sel.saturating_sub(1); }
 
     pub fn confirm_iface(&mut self) {
+        if self.iface_list.is_empty() {
+            self.picking_iface = false;
+            self.capturing = false;
+            self.set_status("No capture interfaces found".to_string());
+            return;
+        }
+
         self.selected_iface = self.iface_list[self.iface_sel].clone();
         self.picking_iface = false;
         self.abort_capture();
@@ -1131,7 +1184,11 @@ impl App {
             if let Some(ref mut writer) = self.pcap_writer { let _ = writer.write_packet(&pkt); }
         }
 
-        if self.filter.matches(&pkt) {
+        if self.display_filter.input != self.filter.input {
+            self.display_filter.set(self.filter.input.clone());
+        }
+
+        if Self::packet_matches_filter(&self.display_filter, &self.filter.input, &pkt) {
             self.filtered.push(self.packets.len());
             if self.selected.is_none() { self.selected = Some(0); }
         }
@@ -1364,24 +1421,29 @@ impl App {
         self.display_filter.set(self.filter.input.clone());
 
         self.filtered = self.packets.iter().enumerate()
-            .filter(|(_, p)| {
-                if self.display_filter.is_active() {
-                    // Use the advanced AST evaluator (Wireshark-style expressions)
-                    self.display_filter.matches(p, false, &[])
-                } else if self.display_filter.has_error() {
-                    // Parse error: fall back to simple text match
-                    crate::analysis::display_filter::DisplayFilter::matches_simple(
-                        &self.filter.input, p)
-                } else {
-                    true
-                }
-            })
+            .filter(|(_, p)| Self::packet_matches_filter(&self.display_filter, &self.filter.input, p))
             .map(|(i, _)| i)
             .collect();
         if let Some(sel) = self.selected {
             if sel >= self.filtered.len() {
                 self.selected = if self.filtered.is_empty() { None } else { Some(self.filtered.len() - 1) };
             }
+        }
+    }
+
+    fn packet_matches_filter(
+        display_filter: &DisplayFilter,
+        input: &str,
+        p: &Packet,
+    ) -> bool {
+        if display_filter.is_active() {
+            // Use the advanced packet inspection AST evaluator.
+            display_filter.matches(p, false, &[])
+        } else if display_filter.has_error() {
+            // Parse error: fall back to simple text match.
+            crate::analysis::display_filter::DisplayFilter::matches_simple(input, p)
+        } else {
+            true
         }
     }
 

@@ -43,14 +43,14 @@ cargo --version
 
 ## Simulated Mode (no libpcap needed)
 
-This is the default. No extra dependencies — just build and run:
+Simulation is opt-in. No extra dependencies are required:
 
 ```bash
 cd packrat
-cargo run                    # dev build (fast compile, slower binary)
+cargo run -- --simulation    # dev build (fast compile, slower binary)
 cargo build --release        # optimised binary
-./target/release/packrat     # Linux / macOS
-.\target\release\packrat.exe # Windows
+./target/release/packrat --simulation     # Linux / macOS
+.\target\release\packrat.exe --simulation # Windows
 ```
 
 ---
@@ -77,7 +77,7 @@ sudo pacman -S libpcap
 # Build packrat with real capture
 cargo build --release --features real-capture
 
-# Run — requires root for raw socket access
+# Run default capture mode — requires root for raw socket access
 sudo ./target/release/packrat
 ```
 
@@ -152,8 +152,12 @@ Windows does not have libpcap built-in. You need **Npcap**:
 
 ## Selecting a Network Interface
 
-By default packrat uses the first available interface. To pick a specific one,
-set the `PACKRAT_IFACE` environment variable:
+By default packrat starts in capture mode and prompts you to choose a real
+network interface. To use generated demo traffic instead, run with
+`--simulation`.
+
+To pick a specific real interface outside the TUI, set the `PACKRAT_IFACE`
+environment variable:
 
 ```bash
 PACKRAT_IFACE=eth0 ./target/release/packrat         # Linux

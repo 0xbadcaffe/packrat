@@ -8,7 +8,7 @@
 //! every important per-tab action key.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use packrat_tui::app::App;
+use packrat_tui::app::{self, App, CliAction, StartupMode};
 use packrat_tui::event;
 use packrat_tui::tabs::Tab;
 use rstest::rstest;
@@ -34,6 +34,50 @@ async fn app_new_for_test_ok() {
     assert_eq!(app.active_tab, Tab::Packets);
     assert!(!app.capturing);
     assert!(!app.picking_iface);
+}
+
+#[test]
+fn parse_startup_args_defaults_to_capture() {
+    assert_eq!(
+        app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
+        CliAction::Run(StartupMode::Capture)
+    );
+}
+
+#[test]
+fn parse_startup_args_enables_simulation() {
+    assert_eq!(
+        app::parse_startup_args(["--simulation"]).unwrap(),
+        CliAction::Run(StartupMode::Simulation)
+    );
+    assert_eq!(
+        app::parse_startup_args(["-s"]).unwrap(),
+        CliAction::Run(StartupMode::Simulation)
+    );
+}
+
+#[test]
+fn parse_startup_args_rejects_unknown_flags() {
+    assert!(app::parse_startup_args(["--real-capture"]).is_err());
+}
+
+#[tokio::test]
+async fn app_new_defaults_to_real_interface_selection() {
+    let (tx, _rx) = tokio::sync::mpsc::channel(1024);
+    let app = App::new(tx);
+    assert!(app.picking_iface);
+    assert!(!app.capturing);
+    assert!(!app.iface_list.iter().any(|iface| iface == "simulated"));
+}
+
+#[tokio::test]
+async fn app_simulation_mode_starts_scenario_capture() {
+    let (tx, _rx) = tokio::sync::mpsc::channel(1024);
+    let app = App::new_with_mode(tx, StartupMode::Simulation);
+    assert!(!app.picking_iface);
+    assert!(app.capturing);
+    assert_eq!(app.selected_iface, "simulated");
+    assert!(!app.packets.is_empty());
 }
 
 // ─── Quit keys ────────────────────────────────────────────────────────────────
@@ -421,7 +465,6 @@ fn sec_app() -> App {
 #[case(KeyCode::Char('p'), "Replay")]
 #[tokio::test]
 async fn security_subtab_keys(#[case] code: KeyCode, #[case] expected_name: &str) {
-    use packrat_tui::app::SecuritySubTab;
     let mut app = sec_app();
     event::handle(&mut app, key(code));
     let got = format!("{:?}", app.security_tab);
@@ -464,6 +507,7 @@ async fn diff_b_snapshots_baseline() {
         src: "1.0.0.1".into(), dst: "2.0.0.2".into(),
         protocol: "TCP".into(), length: 60, info: "".into(),
         src_port: None, dst_port: None, vlan_id: None,
+        vlan_pcp: None, vlan_dei: None, outer_vlan_id: None,
         bytes: vec![0u8; 60],
     };
     app.inject_packet(p);
@@ -576,7 +620,6 @@ fn objects_app() -> App {
 #[case(KeyCode::Char('m'), "YaraMatches")]
 #[tokio::test]
 async fn objects_subtab_keys(#[case] code: KeyCode, #[case] expected: &str) {
-    use packrat_tui::app::ObjectsSubTab;
     let mut app = objects_app();
     event::handle(&mut app, key(code));
     let got = format!("{:?}", app.objects_subtab);

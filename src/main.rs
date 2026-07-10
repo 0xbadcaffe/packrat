@@ -29,11 +29,23 @@ mod tabs;
 mod traceroute;
 mod ui;
 
-use app::App;
+use app::{App, CliAction};
 use net::packet::Packet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let startup_mode = match app::parse_startup_args(std::env::args().skip(1)) {
+        Ok(CliAction::Run(mode)) => mode,
+        Ok(CliAction::Help) => {
+            println!("{}", app::usage());
+            return Ok(());
+        }
+        Err(e) => {
+            eprintln!("{e}\n\n{}", app::usage());
+            std::process::exit(2);
+        }
+    };
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -41,7 +53,7 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let (packet_tx, mut packet_rx) = tokio::sync::mpsc::channel::<Packet>(10_000);
-    let mut app = App::new(packet_tx);
+    let mut app = App::new_with_mode(packet_tx, startup_mode);
 
     let mut tick_interval = time::interval(Duration::from_millis(100));
     let mut event_reader = crossterm::event::EventStream::new();
