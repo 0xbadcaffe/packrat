@@ -1,6 +1,7 @@
 //! Tests for the display filter parser and evaluator.
 
 use packrat_tui::analysis::display_filter::{self, EvalCtx};
+use packrat_tui::app::App;
 use packrat_tui::net::packet::Packet;
 
 fn pkt(proto: &str, src: &str, dst: &str, sport: Option<u16>, dport: Option<u16>,
@@ -16,7 +17,10 @@ fn pkt(proto: &str, src: &str, dst: &str, sport: Option<u16>, dport: Option<u16>
         src_port: sport,
         dst_port: dport,
         vlan_id: None,
-        bytes: vec![],
+        vlan_pcp: None,
+        vlan_dei: None,
+        outer_vlan_id: None,
+        bytes: vec![0u8; len as usize],
     }
 }
 
@@ -30,6 +34,33 @@ fn ctx_tagged<'a>(p: &'a Packet, tags: &'a [String]) -> EvalCtx<'a> {
 
 fn ctx_marked<'a>(p: &'a Packet) -> EvalCtx<'a> {
     EvalCtx { pkt: p, marked: true, tags: &[] }
+}
+
+#[test]
+fn app_ingest_uses_advanced_display_filter_for_new_packets() {
+    let mut app = App::new_for_test();
+    app.filter.input = "tcp.dstport == 443".into();
+    app.rebuild_filtered();
+
+    app.inject_packet(pkt("TCP", "10.0.0.1", "10.0.0.2", Some(50000), Some(80), "", 60));
+    app.inject_packet(pkt("TCP", "10.0.0.1", "10.0.0.2", Some(50001), Some(443), "", 60));
+
+    assert_eq!(app.packets.len(), 2);
+    assert_eq!(app.filtered.len(), 1);
+    assert_eq!(app.selected_packet().and_then(|p| p.dst_port), Some(443));
+}
+
+#[test]
+fn app_rebuild_bare_ip_filter_matches_addresses() {
+    let mut app = App::new_for_test();
+    app.inject_packet(pkt("TCP", "192.168.1.50", "203.0.113.7", Some(50000), Some(4444), "", 60));
+    app.inject_packet(pkt("TCP", "192.168.1.50", "198.51.100.1", Some(50001), Some(443), "", 60));
+
+    app.filter.input = "203.0.113.7".into();
+    app.rebuild_filtered();
+
+    assert_eq!(app.filtered.len(), 1);
+    assert_eq!(app.selected_packet().map(|p| p.dst.as_str()), Some("203.0.113.7"));
 }
 
 // ── Parser: valid expressions ─────────────────────────────────────────────────
@@ -172,6 +203,13 @@ fn eval_dst_port_eq() {
 fn eval_port_in_set() {
     let p = pkt("TCP", "10.0.0.1", "10.0.0.2", Some(54321), Some(8080), "", 100);
     let expr = display_filter::parse("tcp.dstport in [80,443,8080]").unwrap();
+    assert!(display_filter::eval(&expr, &ctx(&p)));
+}
+
+#[test]
+fn eval_tcp_port_matches_source_port() {
+    let p = pkt("TCP", "10.0.0.1", "10.0.0.2", Some(8080), Some(22), "", 100);
+    let expr = display_filter::parse("tcp.port == 8080").unwrap();
     assert!(display_filter::eval(&expr, &ctx(&p)));
 }
 
