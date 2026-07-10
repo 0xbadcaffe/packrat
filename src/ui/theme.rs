@@ -128,6 +128,64 @@ impl ThemePalette {
             orange:  Color::Rgb(163, 21,  21),
         }
     }
+
+    /// Neutral dark background with a color-vision-friendly semantic palette.
+    pub fn accessible_dark() -> Self {
+        Self {
+            bg:      Color::Rgb(18, 18, 18),
+            bg2:     Color::Rgb(28, 28, 30),
+            bg3:     Color::Rgb(42, 42, 45),
+            border:  Color::Rgb(92, 92, 98),
+            sel_bg:  Color::Rgb(45, 65, 72),
+            fg:      Color::Rgb(238, 238, 238),
+            fg2:     Color::Rgb(188, 188, 192),
+            fg3:     Color::Rgb(120, 120, 126),
+            cyan:    Color::Rgb(86, 180, 233),
+            green:   Color::Rgb(0, 158, 115),
+            yellow:  Color::Rgb(240, 228, 66),
+            red:     Color::Rgb(213, 94, 0),
+            magenta: Color::Rgb(204, 121, 167),
+            orange:  Color::Rgb(230, 159, 0),
+        }
+    }
+
+    pub fn soft_light() -> Self {
+        Self {
+            bg:      Color::Rgb(252, 252, 253),
+            bg2:     Color::Rgb(241, 243, 245),
+            bg3:     Color::Rgb(226, 230, 234),
+            border:  Color::Rgb(164, 170, 178),
+            sel_bg:  Color::Rgb(198, 220, 232),
+            fg:      Color::Rgb(30, 34, 39),
+            fg2:     Color::Rgb(78, 84, 92),
+            fg3:     Color::Rgb(130, 136, 145),
+            cyan:    Color::Rgb(0, 103, 148),
+            green:   Color::Rgb(35, 120, 74),
+            yellow:  Color::Rgb(139, 100, 0),
+            red:     Color::Rgb(184, 44, 52),
+            magenta: Color::Rgb(128, 70, 160),
+            orange:  Color::Rgb(174, 82, 24),
+        }
+    }
+
+    pub fn high_contrast() -> Self {
+        Self {
+            bg:      Color::Rgb(0, 0, 0),
+            bg2:     Color::Rgb(12, 12, 12),
+            bg3:     Color::Rgb(28, 28, 28),
+            border:  Color::Rgb(210, 210, 210),
+            sel_bg:  Color::Rgb(70, 70, 70),
+            fg:      Color::Rgb(255, 255, 255),
+            fg2:     Color::Rgb(220, 220, 220),
+            fg3:     Color::Rgb(150, 150, 150),
+            cyan:    Color::Rgb(0, 220, 255),
+            green:   Color::Rgb(50, 255, 100),
+            yellow:  Color::Rgb(255, 235, 40),
+            red:     Color::Rgb(255, 70, 70),
+            magenta: Color::Rgb(255, 100, 235),
+            orange:  Color::Rgb(255, 165, 50),
+        }
+    }
 }
 
 // ─── Theme registry ───────────────────────────────────────────────────────────
@@ -138,6 +196,9 @@ pub const THEME_NAMES: &[&str] = &[
     "Matrix Green",
     "VSCode Dark",
     "VSCode Light",
+    "Accessible Dark",
+    "Soft Light",
+    "High Contrast",
 ];
 
 pub fn palette_by_name(name: &str) -> ThemePalette {
@@ -146,6 +207,9 @@ pub fn palette_by_name(name: &str) -> ThemePalette {
         "Matrix Green"  => ThemePalette::matrix_green(),
         "VSCode Dark"   => ThemePalette::vscode_dark(),
         "VSCode Light"  => ThemePalette::vscode_light(),
+        "Accessible Dark" => ThemePalette::accessible_dark(),
+        "Soft Light"      => ThemePalette::soft_light(),
+        "High Contrast"   => ThemePalette::high_contrast(),
         _               => ThemePalette::dark_pro(),   // default / "Dark Pro"
     }
 }

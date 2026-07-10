@@ -1,5 +1,5 @@
 /// Application tabs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Packets,
     Analysis,
@@ -19,6 +19,78 @@ pub enum Tab {
     Workbench,
     OperatorGraph,
     Diff,
+}
+
+/// Top-level investigation workspaces. Individual views remain lightweight
+/// enum values, but are presented through these five operator-focused groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Workspace {
+    Traffic,
+    Inspect,
+    Defense,
+    Actions,
+    Case,
+}
+
+const TRAFFIC_VIEWS: &[Tab] = &[Tab::Packets, Tab::Flows, Tab::Hosts, Tab::TlsAnalysis];
+const INSPECT_VIEWS: &[Tab] = &[
+    Tab::Analysis,
+    Tab::Strings,
+    Tab::Visualize,
+    Tab::Workbench,
+    Tab::Objects,
+    Tab::Diff,
+];
+const DEFENSE_VIEWS: &[Tab] = &[Tab::Security, Tab::Rules, Tab::OperatorGraph];
+const ACTION_VIEWS: &[Tab] = &[Tab::Scanner, Tab::Traceroute, Tab::Craft];
+const CASE_VIEWS: &[Tab] = &[Tab::Notebook, Tab::Dynamic];
+
+impl Workspace {
+    pub const COUNT: usize = 5;
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::Traffic => 0,
+            Self::Inspect => 1,
+            Self::Defense => 2,
+            Self::Actions => 3,
+            Self::Case => 4,
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Inspect,
+            2 => Self::Defense,
+            3 => Self::Actions,
+            4 => Self::Case,
+            _ => Self::Traffic,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Traffic => "Traffic",
+            Self::Inspect => "Inspect",
+            Self::Defense => "Defense",
+            Self::Actions => "Actions",
+            Self::Case => "Case",
+        }
+    }
+
+    pub fn home(self) -> Tab {
+        self.views()[0]
+    }
+
+    pub fn views(self) -> &'static [Tab] {
+        match self {
+            Self::Traffic => TRAFFIC_VIEWS,
+            Self::Inspect => INSPECT_VIEWS,
+            Self::Defense => DEFENSE_VIEWS,
+            Self::Actions => ACTION_VIEWS,
+            Self::Case => CASE_VIEWS,
+        }
+    }
 }
 
 impl Tab {
@@ -92,5 +164,24 @@ impl Tab {
             Tab::OperatorGraph => "Graph",
             Tab::Diff          => "Diff",
         }
+    }
+
+    pub fn workspace(self) -> Workspace {
+        match self {
+            Tab::Packets | Tab::Flows | Tab::Hosts | Tab::TlsAnalysis => Workspace::Traffic,
+            Tab::Analysis
+            | Tab::Strings
+            | Tab::Visualize
+            | Tab::Workbench
+            | Tab::Objects
+            | Tab::Diff => Workspace::Inspect,
+            Tab::Security | Tab::Rules | Tab::OperatorGraph => Workspace::Defense,
+            Tab::Scanner | Tab::Traceroute | Tab::Craft => Workspace::Actions,
+            Tab::Notebook | Tab::Dynamic => Workspace::Case,
+        }
+    }
+
+    pub fn is_workspace_home(self) -> bool {
+        self == self.workspace().home()
     }
 }

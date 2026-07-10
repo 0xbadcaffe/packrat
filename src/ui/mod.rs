@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::tabs::Tab;
+use crate::tabs::{Tab, Workspace};
 use crate::ui::theme::*;
 
 pub mod autopsy_overlay;
@@ -20,6 +20,7 @@ mod search_overlay;
 mod tabs;
 pub mod theme;
 mod theme_picker;
+mod view_menu;
 
 pub use helpers::fmt_bytes;
 
@@ -72,6 +73,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.theme_picker_open {
         theme_picker::draw(f, app);
+    }
+
+    if app.view_menu_open {
+        view_menu::draw(f, app);
     }
 
     if app.alert_overlay_open {
@@ -190,85 +195,26 @@ fn draw_filterbar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
-    // All 18 tabs: (shortcut_key, label)
-    const ALL: &[(&str, &str)] = &[
-        ("1 ", "Packets"),  ("2 ", "Analysis"), ("3 ", "Strings"),
-        ("4 ", "Dynamic"),  ("5 ", "Visualize"),("6 ", "Flows"),
-        ("7 ", "Craft"),    ("8 ", "Trace"),    ("9 ", "Security"),
-        ("0 ", "Scanner"),  ("H ", "Hosts"),    ("N ", "Notebook"),
-        ("T ", "TLS"),      ("O ", "Objects"),  ("R ", "Rules"),
-        ("W ", "Workbench"),("G ", "Graph"),    ("D ", "Diff"),
-    ];
-
-    let active = app.active_tab.index();
-
-    // Each tab renders as " {key}{label} " (2 padding) plus "│" divider between tabs.
-    // Width = key.len + label.len + 2 (padding) + 1 (divider) — except the last has no divider.
-    let widths: Vec<u16> = ALL.iter().enumerate().map(|(i, (k, l))| {
-        let text = k.len() + l.len() + 2; // " key label "
-        (text + if i + 1 < ALL.len() { 1 } else { 0 }) as u16
+    let workspace_tabs: Vec<Line> = (0..Workspace::COUNT).map(|index| {
+        let workspace = Workspace::from_index(index);
+        Line::from(vec![
+            Span::styled(format!("{} ", index + 1), Style::default().fg(C_YELLOW())),
+            Span::raw(workspace.label()),
+        ])
     }).collect();
-
-    let avail = area.width;
-
-    // Find the smallest `start` such that the active tab falls within the visible window.
-    // We prefer to show as many tabs as possible starting from `start`.
-    let mut start = 0usize;
-    loop {
-        // How many tabs fit from `start`?
-        let mut used = 0u16;
-        let mut end = start;
-        while end < ALL.len() {
-            let w = widths[end];
-            if used + w > avail { break; }
-            used += w;
-            end += 1;
-        }
-        if active < end || start >= active {
-            break; // active is visible
-        }
-        start += 1;
-    }
-
-    // Collect the visible slice and build Line items for the Tabs widget.
-    let mut visible: Vec<Line> = Vec::new();
-    let mut used = 0u16;
-    let mut end = start;
-    while end < ALL.len() {
-        if used + widths[end] > avail { break; }
-        used += widths[end];
-        let (key, label) = ALL[end];
-        visible.push(Line::from(vec![
-            Span::styled(key,   Style::default().fg(C_YELLOW())),
-            Span::raw(label),
-        ]));
-        end += 1;
-    }
-
-    // If we scrolled, show a left-overflow indicator in the first tab slot.
-    if start > 0 {
-        if let Some(first) = visible.first_mut() {
-            *first = Line::from(vec![
-                Span::styled("◀ ", Style::default().fg(C_FG3())),
-                Span::raw(ALL[start].1),
-            ]);
-        }
-    }
-    // If there are hidden tabs to the right, show a right-overflow indicator.
-    if end < ALL.len() {
-        if let Some(last) = visible.last_mut() {
-            *last = Line::from(Span::styled(" ▶", Style::default().fg(C_FG3())));
-        }
-    }
-
-    let tabs = Tabs::new(visible)
-        .select(active.saturating_sub(start))
+    let active_workspace = app.active_tab.workspace();
+    let tabs = Tabs::new(workspace_tabs)
+        .select(active_workspace.index())
         .style(Style::default().fg(C_FG2()).bg(C_BG2()))
         .highlight_style(Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD))
         .divider("│")
         .block(Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(C_BORDER())));
+            .border_style(Style::default().fg(C_BORDER()))
+            .title(Span::styled(
+                format!(" {}  [Tab/F2 views] ", app.active_tab.label()),
+                Style::default().fg(C_FG2()),
+            )));
     f.render_widget(tabs, area);
 }
 
