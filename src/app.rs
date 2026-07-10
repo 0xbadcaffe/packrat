@@ -84,8 +84,43 @@ pub enum ObjectsSubTab {
     YaraMatches,
 }
 
-fn list_interfaces() -> Vec<String> {
-    let mut ifaces = vec!["simulated".to_string()];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupMode {
+    Capture,
+    Simulation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliAction {
+    Run(StartupMode),
+    Help,
+}
+
+pub fn usage() -> &'static str {
+    "Usage: packrat [--simulation]\n\nOptions:\n  -s, --simulation  run the built-in simulated traffic scenario\n  -h, --help        show this help"
+}
+
+pub fn parse_startup_args<I, S>(args: I) -> Result<CliAction, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut mode = StartupMode::Capture;
+    for arg in args {
+        match arg.as_ref() {
+            "-s" | "--simulation" => mode = StartupMode::Simulation,
+            "-h" | "--help" => return Ok(CliAction::Help),
+            unknown => return Err(format!("unknown argument: {unknown}")),
+        }
+    }
+    Ok(CliAction::Run(mode))
+}
+
+fn list_interfaces(include_simulated: bool) -> Vec<String> {
+    let mut ifaces = Vec::new();
+    if include_simulated {
+        ifaces.push("simulated".to_string());
+    }
     if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
         let mut sys: Vec<String> = entries
             .filter_map(|e| e.ok())
@@ -228,8 +263,13 @@ pub struct App {
 
 impl App {
     pub fn new(packet_tx: Sender<Packet>) -> Self {
-        let iface_list = list_interfaces();
-        Self {
+        Self::new_with_mode(packet_tx, StartupMode::Capture)
+    }
+
+    pub fn new_with_mode(packet_tx: Sender<Packet>, startup_mode: StartupMode) -> Self {
+        let iface_list = list_interfaces(startup_mode == StartupMode::Simulation);
+        let selected_iface = iface_list.first().cloned().unwrap_or_default();
+        let mut app = Self {
             active_tab: Tab::Packets,
             packets: VecDeque::new(),
             filtered: Vec::new(),
@@ -239,10 +279,10 @@ impl App {
             capturing: false,
             capture_handle: None,
             packet_tx,
-            picking_iface: true,
+            picking_iface: startup_mode != StartupMode::Simulation,
             iface_list,
             iface_sel: 0,
-            selected_iface: "simulated".to_string(),
+            selected_iface,
             filter: PacketFilter::default(),
             rate_history: vec![0u32; 60],
             rate_this_sec: 0,
@@ -345,7 +385,13 @@ impl App {
             project_manager:      ProjectManagerState::default(),
             status_msg:       None,
             status_msg_ticks: 0,
+        };
+
+        if startup_mode == StartupMode::Simulation {
+            app.confirm_iface();
         }
+
+        app
     }
 
     /// Reload JSON rules from ~/.config/packrat/rules/ and show status.
@@ -1025,6 +1071,13 @@ impl App {
     pub fn iface_up(&mut self) { self.iface_sel = self.iface_sel.saturating_sub(1); }
 
     pub fn confirm_iface(&mut self) {
+        if self.iface_list.is_empty() {
+            self.picking_iface = false;
+            self.capturing = false;
+            self.set_status("No capture interfaces found".to_string());
+            return;
+        }
+
         self.selected_iface = self.iface_list[self.iface_sel].clone();
         self.picking_iface = false;
         self.abort_capture();
