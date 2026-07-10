@@ -1,4 +1,4 @@
-//! Protocol reverse-engineering workbench.
+//! Protocol inspection workbench.
 //!
 //! Provides hex/field editing of captured packet bytes and
 //! custom field annotation. Integrates with the dissector system.

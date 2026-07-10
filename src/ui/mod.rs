@@ -153,7 +153,7 @@ fn draw_filterbar(f: &mut Frame, app: &App, area: Rect) {
     let filter_display = if app.filter.active {
         format!("{}_", app.filter.input)
     } else if app.filter.input.is_empty() {
-        "<press / for Wireshark-style filter: tcp, ip.src==x, dns and port==53>".into()
+        "<press / for packet inspection filter: tcp, ip.src==x, dns and port==53>".into()
     } else {
         app.filter.input.clone()
     };
