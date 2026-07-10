@@ -1544,7 +1544,7 @@ impl App {
                     if sel + 1 < self.filtered.len() { self.selected = Some(sel + 1); }
                 } else if !self.filtered.is_empty() { self.selected = Some(0); }
             }
-            Tab::Analysis => { if self.analysis_section < 10 { self.analysis_section += 1; } }
+            Tab::Analysis => { if self.analysis_section < INCIDENT_ANALYSIS_SECTION { self.analysis_section += 1; } }
             // j = toward tail (decrease offset-from-end)
             Tab::Dynamic  => { self.dyn_scroll = self.dyn_scroll.saturating_sub(1); }
             Tab::Flows => {

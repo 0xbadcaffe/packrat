@@ -14,6 +14,7 @@ pub mod autopsy_overlay;
 mod helpers;
 mod help;
 mod iface_picker;
+mod incident_overlay;
 pub mod project_manager;
 mod search_overlay;
 mod tabs;
@@ -71,6 +72,10 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.theme_picker_open {
         theme_picker::draw(f, app);
+    }
+
+    if app.alert_overlay_open {
+        incident_overlay::draw(f, app);
     }
 }
 
