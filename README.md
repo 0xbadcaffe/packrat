@@ -21,13 +21,13 @@ ___________    ____ |  | ______________ _/  |_
 ## Install
 
 ```bash
-# Demo / simulated traffic (no libpcap required)
-cargo install packrat-tui
-packrat
-
 # Real interface capture + real traceroute
 cargo install packrat-tui --features real-capture
 packrat
+
+# Demo / simulated traffic (no libpcap required)
+cargo install packrat-tui
+packrat --simulation
 ```
 
 ## Feature Overview
