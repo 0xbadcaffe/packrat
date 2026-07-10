@@ -14,8 +14,9 @@ use crate::ui::theme::{self, ThemePalette, THEME_NAMES, C_BG2, C_CYAN, C_FG, C_F
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
     // Centered overlay — 40% width, 60% height, centered
-    let w = (area.width * 2 / 5).max(48);
-    let h = (THEME_NAMES.len() as u16 + 8).min(area.height - 4);
+    let w = (area.width * 2 / 5).max(48).min(area.width.saturating_sub(2));
+    let h = (THEME_NAMES.len() as u16 + 8).min(area.height.saturating_sub(4));
+    if w == 0 || h == 0 { return; }
     let x = area.x + (area.width - w) / 2;
     let y = area.y + (area.height - h) / 2;
     let popup = Rect { x, y, width: w, height: h };

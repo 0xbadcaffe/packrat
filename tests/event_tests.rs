@@ -10,7 +10,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use packrat_tui::app::{self, App, CliAction, StartupMode};
 use packrat_tui::event;
-use packrat_tui::tabs::Tab;
+use packrat_tui::tabs::{Tab, Workspace};
 use rstest::rstest;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -145,24 +145,39 @@ async fn critical_detection_requires_review_and_retains_evidence_after_acknowled
     assert_eq!(app.incidents.incidents[0].packet_history.len(), 1);
 }
 
-// ─── Global tab switch (numeric keys) ────────────────────────────────────────
+// ─── Workspace navigation ────────────────────────────────────────────────────
 
 #[rstest]
 #[case(KeyCode::Char('1'), Tab::Packets)]
 #[case(KeyCode::Char('2'), Tab::Analysis)]
-#[case(KeyCode::Char('3'), Tab::Strings)]
-#[case(KeyCode::Char('4'), Tab::Dynamic)]
-#[case(KeyCode::Char('5'), Tab::Visualize)]
-#[case(KeyCode::Char('6'), Tab::Flows)]
-#[case(KeyCode::Char('7'), Tab::Craft)]
-#[case(KeyCode::Char('8'), Tab::Traceroute)]
-#[case(KeyCode::Char('9'), Tab::Security)]
-#[case(KeyCode::Char('0'), Tab::Scanner)]
+#[case(KeyCode::Char('3'), Tab::Security)]
+#[case(KeyCode::Char('4'), Tab::Scanner)]
+#[case(KeyCode::Char('5'), Tab::Notebook)]
 #[tokio::test]
-async fn numeric_tab_switch(#[case] code: KeyCode, #[case] expected: Tab) {
+async fn numeric_workspace_switch(#[case] code: KeyCode, #[case] expected: Tab) {
     let mut app = App::new_for_test();
     event::handle(&mut app, key(code));
     assert_eq!(app.active_tab, expected);
+}
+
+#[tokio::test]
+async fn tab_opens_workspace_view_menu_and_enter_selects_view() {
+    let mut app = App::new_for_test();
+    event::handle(&mut app, key(KeyCode::Tab));
+    assert!(app.view_menu_open);
+
+    event::handle(&mut app, key(KeyCode::Down));
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert!(!app.view_menu_open);
+    assert_eq!(app.active_tab, Tab::Flows);
+}
+
+#[tokio::test]
+async fn escape_returns_to_workspace_home() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Objects;
+    event::handle(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.active_tab, Workspace::Inspect.home());
 }
 
 #[rstest]

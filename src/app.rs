@@ -41,7 +41,7 @@ use crate::net::lua_plugin::PluginManager;
 use crate::net::packet::Packet;
 use crate::dissector::DissectorDef;
 use crate::net::packet::TreeSection;
-use crate::tabs::Tab;
+use crate::tabs::{Tab, Workspace};
 use crate::traceroute::TracerouteState;
 
 const MAX_PACKETS: usize = 10_000;
@@ -253,6 +253,9 @@ pub struct App {
     /// Whether the theme picker overlay is shown.
     pub theme_picker_open:    bool,
     pub theme_picker_cursor:  usize,
+    /// Workspace-local view drawer state.
+    pub view_menu_open:       bool,
+    pub view_menu_cursor:     usize,
     // ─── Project management ────────────────────────────────────────────────────
     /// Name of the currently open project (None = ad-hoc workspace).
     pub current_project_name: Option<String>,
@@ -387,6 +390,8 @@ impl App {
             selected_theme_name:  theme_store::load_theme_name(),
             theme_picker_open:    false,
             theme_picker_cursor:  0,
+            view_menu_open:       false,
+            view_menu_cursor:     0,
             current_project_name: None,
             current_project_path: None,
             project_dirty:        false,
@@ -1653,14 +1658,52 @@ impl App {
     }
 
     pub fn next_tab(&mut self) {
-        let next = (self.active_tab.index() + 1) % Tab::COUNT;
-        self.active_tab = Tab::from_index(next);
+        let views = self.active_tab.workspace().views();
+        let current = views.iter().position(|view| *view == self.active_tab).unwrap_or(0);
+        self.active_tab = views[(current + 1) % views.len()];
     }
 
     pub fn prev_tab(&mut self) {
-        let cur = self.active_tab.index();
-        let prev = if cur == 0 { Tab::COUNT - 1 } else { cur - 1 };
-        self.active_tab = Tab::from_index(prev);
+        let views = self.active_tab.workspace().views();
+        let current = views.iter().position(|view| *view == self.active_tab).unwrap_or(0);
+        self.active_tab = views[if current == 0 { views.len() - 1 } else { current - 1 }];
+    }
+
+    pub fn select_workspace(&mut self, workspace: Workspace) {
+        self.active_tab = workspace.home();
+        self.view_menu_open = false;
+        self.view_menu_cursor = 0;
+    }
+
+    pub fn open_view_menu(&mut self) {
+        let views = self.active_tab.workspace().views();
+        self.view_menu_cursor = views.iter().position(|view| *view == self.active_tab).unwrap_or(0);
+        self.view_menu_open = true;
+    }
+
+    pub fn view_menu_next(&mut self) {
+        let max = self.active_tab.workspace().views().len().saturating_sub(1);
+        self.view_menu_cursor = (self.view_menu_cursor + 1).min(max);
+    }
+
+    pub fn view_menu_prev(&mut self) {
+        self.view_menu_cursor = self.view_menu_cursor.saturating_sub(1);
+    }
+
+    pub fn activate_view_menu_selection(&mut self) {
+        if let Some(view) = self.active_tab.workspace().views().get(self.view_menu_cursor) {
+            self.active_tab = *view;
+        }
+        self.view_menu_open = false;
+    }
+
+    /// Return from a detail view to the workspace's primary view.
+    pub fn return_to_workspace_home(&mut self) -> bool {
+        if self.active_tab.is_workspace_home() {
+            return false;
+        }
+        self.active_tab = self.active_tab.workspace().home();
+        true
     }
 
     pub fn security_subtab_next(&mut self) {
