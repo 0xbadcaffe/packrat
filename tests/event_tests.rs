@@ -421,7 +421,6 @@ fn sec_app() -> App {
 #[case(KeyCode::Char('p'), "Replay")]
 #[tokio::test]
 async fn security_subtab_keys(#[case] code: KeyCode, #[case] expected_name: &str) {
-    use packrat_tui::app::SecuritySubTab;
     let mut app = sec_app();
     event::handle(&mut app, key(code));
     let got = format!("{:?}", app.security_tab);
@@ -464,6 +463,7 @@ async fn diff_b_snapshots_baseline() {
         src: "1.0.0.1".into(), dst: "2.0.0.2".into(),
         protocol: "TCP".into(), length: 60, info: "".into(),
         src_port: None, dst_port: None, vlan_id: None,
+        vlan_pcp: None, vlan_dei: None, outer_vlan_id: None,
         bytes: vec![0u8; 60],
     };
     app.inject_packet(p);
@@ -576,7 +576,6 @@ fn objects_app() -> App {
 #[case(KeyCode::Char('m'), "YaraMatches")]
 #[tokio::test]
 async fn objects_subtab_keys(#[case] code: KeyCode, #[case] expected: &str) {
-    use packrat_tui::app::ObjectsSubTab;
     let mut app = objects_app();
     event::handle(&mut app, key(code));
     let got = format!("{:?}", app.objects_subtab);

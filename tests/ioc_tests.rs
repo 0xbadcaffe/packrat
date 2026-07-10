@@ -15,6 +15,9 @@ fn make_pkt(no: u64, src: &str, dst: &str, proto: &str, info: &str) -> Packet {
         src_port: None,
         dst_port: None,
         vlan_id: None,
+        vlan_pcp: None,
+        vlan_dei: None,
+        outer_vlan_id: None,
         bytes: vec![],
     }
 }

@@ -1131,7 +1131,11 @@ impl App {
             if let Some(ref mut writer) = self.pcap_writer { let _ = writer.write_packet(&pkt); }
         }
 
-        if self.filter.matches(&pkt) {
+        if self.display_filter.input != self.filter.input {
+            self.display_filter.set(self.filter.input.clone());
+        }
+
+        if Self::packet_matches_filter(&self.display_filter, &self.filter.input, &pkt) {
             self.filtered.push(self.packets.len());
             if self.selected.is_none() { self.selected = Some(0); }
         }
@@ -1364,24 +1368,29 @@ impl App {
         self.display_filter.set(self.filter.input.clone());
 
         self.filtered = self.packets.iter().enumerate()
-            .filter(|(_, p)| {
-                if self.display_filter.is_active() {
-                    // Use the advanced AST evaluator (Wireshark-style expressions)
-                    self.display_filter.matches(p, false, &[])
-                } else if self.display_filter.has_error() {
-                    // Parse error: fall back to simple text match
-                    crate::analysis::display_filter::DisplayFilter::matches_simple(
-                        &self.filter.input, p)
-                } else {
-                    true
-                }
-            })
+            .filter(|(_, p)| Self::packet_matches_filter(&self.display_filter, &self.filter.input, p))
             .map(|(i, _)| i)
             .collect();
         if let Some(sel) = self.selected {
             if sel >= self.filtered.len() {
                 self.selected = if self.filtered.is_empty() { None } else { Some(self.filtered.len() - 1) };
             }
+        }
+    }
+
+    fn packet_matches_filter(
+        display_filter: &DisplayFilter,
+        input: &str,
+        p: &Packet,
+    ) -> bool {
+        if display_filter.is_active() {
+            // Use the advanced AST evaluator (Wireshark-style expressions).
+            display_filter.matches(p, false, &[])
+        } else if display_filter.has_error() {
+            // Parse error: fall back to simple text match.
+            crate::analysis::display_filter::DisplayFilter::matches_simple(input, p)
+        } else {
+            true
         }
     }
 

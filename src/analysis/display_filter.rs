@@ -274,6 +274,8 @@ pub fn eval(expr: &Expr, ctx: &EvalCtx<'_>) -> bool {
         Expr::Proto(p) => {
             ctx.pkt.protocol.to_lowercase() == p.to_lowercase()
             || ctx.pkt.info.to_lowercase().contains(p.to_lowercase().as_str())
+            || ctx.pkt.src.contains(p)
+            || ctx.pkt.dst.contains(p)
         }
         Expr::Marked(v) => ctx.marked == *v,
         Expr::HasTag(t) => ctx.tags.iter().any(|tag| tag == t),
@@ -293,10 +295,10 @@ pub fn eval(expr: &Expr, ctx: &EvalCtx<'_>) -> bool {
 
         Expr::In { field, values } => {
             let fv_str = get_field_str(ctx.pkt, field);
-            let fv_num = get_field_num(ctx.pkt, field);
+            let fv_nums = get_field_nums(ctx.pkt, field);
             values.iter().any(|v| match v {
                 Value::Str(s) => fv_str.to_lowercase() == s.to_lowercase(),
-                Value::Num(n) => fv_num.map(|f| (f - n).abs() < 0.5).unwrap_or(false),
+                Value::Num(n) => fv_nums.iter().any(|f| (f - n).abs() < 0.5),
                 Value::Bool(_) => false,
             })
         }
@@ -308,11 +310,7 @@ pub fn eval(expr: &Expr, ctx: &EvalCtx<'_>) -> bool {
                     cmp_str(&fv, op, s)
                 }
                 Value::Num(n) => {
-                    if let Some(fv) = get_field_num(ctx.pkt, field) {
-                        cmp_num(fv, op, *n)
-                    } else {
-                        false
-                    }
+                    get_field_nums(ctx.pkt, field).iter().any(|fv| cmp_num(*fv, op, *n))
                 }
                 Value::Bool(b) => {
                     let fv = get_field_bool(ctx.pkt, field);
@@ -377,6 +375,18 @@ fn get_field_num(pkt: &Packet, field: &str) -> Option<f64> {
         "vlan.id"                     => pkt.vlan_id.map(|v| v as f64),
         "frame.number"                => Some(pkt.no as f64),
         _                             => None,
+    }
+}
+
+fn get_field_nums(pkt: &Packet, field: &str) -> Vec<f64> {
+    match field {
+        "tcp.port" | "udp.port" => {
+            let mut ports = Vec::new();
+            if let Some(p) = pkt.src_port { ports.push(p as f64); }
+            if let Some(p) = pkt.dst_port { ports.push(p as f64); }
+            ports
+        }
+        _ => get_field_num(pkt, field).into_iter().collect(),
     }
 }
 
@@ -495,6 +505,7 @@ mod tests {
             info: format!("{} → {}", src, dst),
             bytes: vec![0u8; len as usize],
             src_port: Some(sport), dst_port: Some(dport), vlan_id: None,
+            vlan_pcp: None, vlan_dei: None, outer_vlan_id: None,
         }
     }
 
