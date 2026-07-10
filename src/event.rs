@@ -13,6 +13,11 @@ use crate::tabs::Tab;
 pub fn handle(app: &mut App, event: Event) -> bool {
     let Event::Key(key) = event else { return false; };
 
+    if app.alert_overlay_open {
+        handle_critical_alert(app, key);
+        return false;
+    }
+
     // Only quit when not in a text-entry or modal mode — otherwise 'q' is a
     // valid character or should close the overlay rather than quitting the app.
     let in_text_mode = app.strings_search_active
@@ -72,6 +77,16 @@ pub fn handle(app: &mut App, event: Event) -> bool {
 
     if app.theme_picker_open {
         handle_theme_picker(app, key);
+        return false;
+    }
+
+    if app.active_tab == Tab::Analysis
+        && app.analysis_section == crate::app::INCIDENT_ANALYSIS_SECTION
+        && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+    {
+        if let Err(message) = app.acknowledge_active_incident() {
+            app.set_status(message);
+        }
         return false;
     }
 
@@ -148,6 +163,20 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         }
     }
     false
+}
+
+fn handle_critical_alert(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Enter | KeyCode::Char('a') | KeyCode::Char('A') => {
+            app.open_active_incident_analysis();
+        }
+        KeyCode::Char('c') | KeyCode::Char('C') => {
+            app.set_status("Open incident analysis before acknowledging this alert.");
+        }
+        _ => {
+            app.set_status("Critical alert requires review. Press Enter to open incident analysis.");
+        }
+    }
 }
 
 fn is_quit(key: &KeyEvent) -> bool {

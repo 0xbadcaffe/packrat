@@ -22,7 +22,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_nav(f: &mut Frame, app: &App, area: Rect) {
     let sections = nav_sections();
-    let icons = ["◈", "⬡", "⊞", "⊡", "◉", "≡", "◆", "⊗", "⚑", "§", "∑"];
+    let icons = ["◈", "⬡", "⊞", "⊡", "◉", "≡", "◆", "⊗", "⚑", "§", "∑", "!"];
     let items: Vec<ListItem> = sections.iter().enumerate().map(|(i, &name)| {
         let style = if i == app.analysis_section {
             Style::default().fg(Color::White).bg(C_SEL_BG())
@@ -59,9 +59,9 @@ fn draw_content(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(p, area);
 }
 
-fn nav_sections() -> [&'static str; 11] {
+fn nav_sections() -> [&'static str; 12] {
     ["General Info", "Protocol Stats", "Top Talkers", "Conversations", "IP Endpoints", "Port Summary",
-     "Magic Bytes", "XOR Analysis", "Anomaly Report", "Credentials", "Flow Stats"]
+     "Magic Bytes", "XOR Analysis", "Anomaly Report", "Credentials", "Flow Stats", "Incident History"]
 }
 
 fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
@@ -414,6 +414,57 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                         if flow.beacon_score > 0.7 { C_RED() } else if flow.beacon_score > 0.4 { C_YELLOW() } else { C_FG3() }
                     )),
                     Span::styled(fp.to_string(), Style::default().fg(C_MAGENTA())),
+                ]));
+            }
+        }
+        11 => {
+            lines.push(Line::raw(""));
+            let incident = app.incidents.active().or_else(|| app.incidents.incidents.last());
+            let Some(incident) = incident else {
+                lines.push(Line::from(Span::styled(
+                    "  No critical incidents have been retained in this capture session.",
+                    Style::default().fg(C_FG3()),
+                )));
+                return lines;
+            };
+
+            let rows = [
+                ("Incident", format!("#{}  {}", incident.id, incident.status)),
+                ("Detection source", incident.source.to_string()),
+                ("Detector", incident.detector.clone()),
+                ("Summary", incident.summary.clone()),
+                ("Attacker", incident.attacker.clone()),
+                ("Target", incident.target.clone()),
+                ("Packet window", format!("#{} - #{}", incident.first_packet, incident.last_packet)),
+                ("Retained packets", incident.packet_history.len().to_string()),
+            ];
+            for (label, value) in rows {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {label:<18}"), Style::default().fg(C_FG2())),
+                    Span::styled(value, Style::default().fg(C_CYAN())),
+                ]));
+            }
+            if incident.status == crate::analysis::incident::IncidentStatus::PendingReview {
+                lines.push(Line::from(Span::styled(
+                    "\n  Press C to acknowledge this reviewed alert. The retained evidence remains available.",
+                    Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
+                )));
+            }
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                "  Recent attacker conversation traffic",
+                Style::default().fg(C_FG2()).add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::raw("  Pkt      Time       Source                Target                Proto   Info"));
+            lines.push(Line::raw("  ".to_string() + &"─".repeat(82)));
+            for packet in incident.packet_history.iter().rev().take(25).rev() {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  #{:<7}", packet.no), Style::default().fg(C_FG3())),
+                    Span::styled(format!("{:<11.3}", packet.timestamp), Style::default().fg(C_FG3())),
+                    Span::styled(format!("{:<22}", truncate(&packet.src, 22)), Style::default().fg(C_RED())),
+                    Span::styled(format!("{:<22}", truncate(&packet.dst, 22)), Style::default().fg(C_CYAN())),
+                    Span::styled(format!("{:<8}", truncate(&packet.protocol, 8)), Style::default().fg(C_YELLOW())),
+                    Span::styled(truncate(&packet.info, 34), Style::default().fg(C_FG2())),
                 ]));
             }
         }
