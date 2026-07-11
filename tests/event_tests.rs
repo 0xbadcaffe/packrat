@@ -43,7 +43,7 @@ fn parse_startup_args_defaults_to_capture() {
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
         CliAction::Run(StartupOptions {
             mode: StartupMode::Capture, telemetry_listen: None, key_log_path: None,
-            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
+            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![], sandbox: false,
         })
     );
 }
@@ -54,14 +54,14 @@ fn parse_startup_args_enables_simulation() {
         app::parse_startup_args(["--simulation"]).unwrap(),
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None,
-            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
+            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![], sandbox: false,
         })
     );
     assert_eq!(
         app::parse_startup_args(["-s"]).unwrap(),
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None,
-            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
+            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![], sandbox: false,
         })
     );
 }
@@ -83,6 +83,7 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             latch_mode: LatchMode::Monitor,
             latch_expiry_seconds: 900,
             protected_addresses: vec![],
+            sandbox: false,
         })
     );
 }
@@ -99,6 +100,7 @@ fn parse_startup_args_accepts_key_log_path() {
             latch_mode: LatchMode::Monitor,
             latch_expiry_seconds: 900,
             protected_addresses: vec![],
+            sandbox: false,
         })
     );
 }
@@ -116,6 +118,14 @@ fn parse_startup_args_configures_traffic_latch_safely() {
         options.protected_addresses,
         vec!["192.0.2.1".parse::<std::net::IpAddr>().unwrap()]
     );
+}
+
+#[test]
+fn parse_startup_args_enables_landlock_sandbox() {
+    let CliAction::Run(options) = app::parse_startup_args(["--sandbox"]).unwrap() else {
+        panic!("expected run options");
+    };
+    assert!(options.sandbox);
 }
 
 #[tokio::test]
