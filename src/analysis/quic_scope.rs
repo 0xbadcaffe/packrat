@@ -11,6 +11,7 @@ pub struct QuicConnection {
     pub version: Option<u32>,
     pub destination_id: String,
     pub source_id: String,
+    pub ratq: String,
     pub packet_types: HashSet<String>,
     pub addresses: HashSet<String>,
     pub packets: u64,
@@ -47,6 +48,7 @@ impl QuicScope {
             version: header.version,
             destination_id: header.destination_id.clone(),
             source_id: header.source_id.clone(),
+            ratq: header.ratq.clone(),
             packet_types: HashSet::new(),
             addresses: HashSet::new(),
             packets: 0,
@@ -64,6 +66,7 @@ impl QuicScope {
         connection.fixed_bit_valid &= header.fixed_bit;
         if connection.version.is_none() { connection.version = header.version; }
         if connection.source_id.is_empty() { connection.source_id = header.source_id; }
+        if connection.ratq.is_empty() { connection.ratq = header.ratq; }
     }
 
     pub fn all(&self) -> Vec<&QuicConnection> {

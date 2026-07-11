@@ -202,6 +202,7 @@ pub struct QuicHeader {
     pub packet_type: &'static str,
     pub destination_id: String,
     pub source_id: String,
+    pub ratq: String,
 }
 
 pub fn parse_quic_header(raw: &[u8]) -> Option<QuicHeader> {
@@ -217,6 +218,7 @@ pub fn parse_quic_header(raw: &[u8]) -> Option<QuicHeader> {
             packet_type: "1-RTT",
             destination_id: String::new(),
             source_id: String::new(),
+            ratq: compute_ratq(None, "1-RTT", "", "", fixed_bit),
         });
     }
     let version = u32::from_be_bytes([
@@ -240,14 +242,38 @@ pub fn parse_quic_header(raw: &[u8]) -> Option<QuicHeader> {
             _ => "Retry",
         }
     };
+    let destination_id = hex(raw.get(destination_start..destination_end)?);
+    let source_id = hex(raw.get(source_start..source_end)?);
     Some(QuicHeader {
         long_header,
         fixed_bit,
         version: Some(version),
         packet_type,
-        destination_id: hex(raw.get(destination_start..destination_end)?),
-        source_id: hex(raw.get(source_start..source_end)?),
+        ratq: compute_ratq(Some(version), packet_type, &destination_id, &source_id, fixed_bit),
+        destination_id,
+        source_id,
     })
+}
+
+fn compute_ratq(
+    version: Option<u32>,
+    packet_type: &str,
+    destination_id: &str,
+    source_id: &str,
+    fixed_bit: bool,
+) -> String {
+    let version = version
+        .map(|value| format!("{value:08x}"))
+        .unwrap_or_else(|| "short".into());
+    let text = format!(
+        "{}|{}|{}|{}|{}",
+        version,
+        packet_type,
+        destination_id.len() / 2,
+        source_id.len() / 2,
+        u8::from(fixed_bit),
+    );
+    format!("ratq1_{}", sha12(&text))
 }
 
 fn find_quic_start(raw: &[u8]) -> Option<usize> {
@@ -292,5 +318,6 @@ mod tests {
         assert_eq!(header.version, Some(1));
         assert_eq!(header.packet_type, "Initial");
         assert_eq!(header.destination_id, "0102030405060708");
+        assert!(header.ratq.starts_with("ratq1_"));
     }
 }

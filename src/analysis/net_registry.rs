@@ -19,31 +19,66 @@ pub struct AddressIdentity {
     pub asn: Option<String>,
     pub organization: String,
     pub source: String,
+    pub reputation: Option<ReputationFinding>,
     pub updated_at: f64,
 }
 
 #[derive(Debug)]
 pub struct NetRegistry {
     pub map_path: Option<PathBuf>,
+    pub reputation_path: Option<PathBuf>,
     pub prefixes: Vec<PrefixIdentity>,
+    pub reputation: ReputationBook,
     pub observed: HashMap<IpAddr, AddressIdentity>,
     pub last_error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReputationFinding {
+    pub severity: String,
+    pub label: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone)]
+struct ReputationEntry {
+    target: ReputationTarget,
+    finding: ReputationFinding,
+}
+
+#[derive(Debug, Clone)]
+enum ReputationTarget {
+    Prefix { network: IpAddr, prefix: u8 },
+    Fingerprint(String),
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ReputationBook {
+    entries: Vec<ReputationEntry>,
+}
+
 impl Default for NetRegistry {
     fn default() -> Self {
-        let path = dirs_next::config_dir()
+        let config_dir = dirs_next::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("packrat")
-            .join("identity-map.csv");
+            .join("packrat");
+        let path = config_dir.join("identity-map.csv");
+        let reputation_path = config_dir.join("reputation-map.csv");
         let mut registry = Self {
             map_path: Some(path.clone()),
+            reputation_path: Some(reputation_path.clone()),
             prefixes: Vec::new(),
+            reputation: ReputationBook::default(),
             observed: HashMap::new(),
             last_error: None,
         };
         if path.exists() {
             if let Err(error) = registry.load_map(path) {
+                registry.last_error = Some(error);
+            }
+        }
+        if reputation_path.exists() {
+            if let Err(error) = registry.load_reputation(reputation_path) {
                 registry.last_error = Some(error);
             }
         }
@@ -81,6 +116,31 @@ impl NetRegistry {
         Ok(self.prefixes.len())
     }
 
+    /// CSV format: target,severity,label,source.
+    /// Target may be an IP/CIDR or a fingerprint such as ratq1_* / t13*.
+    pub fn load_reputation(&mut self, path: impl AsRef<Path>) -> Result<usize, String> {
+        let path = path.as_ref();
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("read reputation map {}: {error}", path.display()))?;
+        let mut book = ReputationBook::default();
+        for (line_no, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') { continue; }
+            let fields: Vec<_> = line.splitn(4, ',').map(str::trim).collect();
+            if fields.len() != 4 {
+                return Err(format!("reputation map line {} must have target,severity,label,source", line_no + 1));
+            }
+            book.add(fields[0], fields[1], fields[2], fields[3])
+                .map_err(|error| format!("reputation map line {}: {error}", line_no + 1))?;
+        }
+        let count = book.len();
+        self.reputation_path = Some(path.to_path_buf());
+        self.reputation = book;
+        self.refresh_reputation_marks();
+        self.last_error = None;
+        Ok(count)
+    }
+
     pub fn observe(&mut self, address: &str) {
         let Ok(address) = address.parse::<IpAddr>() else { return; };
         if self.observed.contains_key(&address) { return; }
@@ -90,6 +150,7 @@ impl NetRegistry {
                 asn: None,
                 organization: "Private network".into(),
                 source: "local classification".into(),
+                reputation: self.reputation.lookup_address(address),
                 updated_at: now(),
             }
         } else if let Some(prefix) = self.prefixes.iter().find(|prefix| contains(prefix, address)) {
@@ -98,6 +159,7 @@ impl NetRegistry {
                 asn: prefix.asn.clone(),
                 organization: prefix.organization.clone(),
                 source: "prefix map".into(),
+                reputation: self.reputation.lookup_address(address),
                 updated_at: now(),
             }
         } else {
@@ -106,6 +168,7 @@ impl NetRegistry {
                 asn: None,
                 organization: "Unresolved".into(),
                 source: "observed".into(),
+                reputation: self.reputation.lookup_address(address),
                 updated_at: now(),
             }
         };
@@ -138,6 +201,7 @@ impl NetRegistry {
             asn,
             organization,
             source: "whois".into(),
+            reputation: self.reputation.lookup_address(address),
             updated_at: now(),
         });
         Ok(self.observed.get(&address).unwrap())
@@ -145,6 +209,64 @@ impl NetRegistry {
 
     pub fn clear_session(&mut self) {
         self.observed.clear();
+    }
+
+    pub fn reputation_for_fingerprint(&self, fingerprint: &str) -> Option<ReputationFinding> {
+        self.reputation.lookup_fingerprint(fingerprint)
+    }
+
+    fn refresh_reputation_marks(&mut self) {
+        for identity in self.observed.values_mut() {
+            identity.reputation = self.reputation.lookup_address(identity.address);
+        }
+    }
+}
+
+impl ReputationBook {
+    pub fn add(&mut self, target: &str, severity: &str, label: &str, source: &str) -> Result<(), String> {
+        let target = if let Some((network, prefix)) = parse_cidr(target) {
+            ReputationTarget::Prefix { network, prefix }
+        } else if let Ok(address) = target.parse::<IpAddr>() {
+            ReputationTarget::Prefix {
+                network: address,
+                prefix: if address.is_ipv4() { 32 } else { 128 },
+            }
+        } else if !target.is_empty() {
+            ReputationTarget::Fingerprint(target.to_ascii_lowercase())
+        } else {
+            return Err("empty target".into());
+        };
+        self.entries.push(ReputationEntry {
+            target,
+            finding: ReputationFinding {
+                severity: severity.to_string(),
+                label: label.to_string(),
+                source: source.to_string(),
+            },
+        });
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize { self.entries.len() }
+
+    pub fn lookup_address(&self, address: IpAddr) -> Option<ReputationFinding> {
+        self.entries.iter()
+            .filter_map(|entry| match entry.target {
+                ReputationTarget::Prefix { network, prefix } if contains_prefix(network, prefix, address) => {
+                    Some((prefix, entry.finding.clone()))
+                }
+                _ => None,
+            })
+            .max_by_key(|(prefix, _)| *prefix)
+            .map(|(_, finding)| finding)
+    }
+
+    pub fn lookup_fingerprint(&self, fingerprint: &str) -> Option<ReputationFinding> {
+        let fingerprint = fingerprint.to_ascii_lowercase();
+        self.entries.iter().find_map(|entry| match &entry.target {
+            ReputationTarget::Fingerprint(value) if value == &fingerprint => Some(entry.finding.clone()),
+            _ => None,
+        })
     }
 }
 
@@ -160,13 +282,17 @@ fn parse_cidr(value: &str) -> Option<(IpAddr, u8)> {
 }
 
 fn contains(prefix: &PrefixIdentity, address: IpAddr) -> bool {
-    match (prefix.network, address) {
+    contains_prefix(prefix.network, prefix.prefix, address)
+}
+
+fn contains_prefix(network: IpAddr, prefix: u8, address: IpAddr) -> bool {
+    match (network, address) {
         (IpAddr::V4(network), IpAddr::V4(address)) => {
-            let mask = if prefix.prefix == 0 { 0 } else { u32::MAX << (32 - prefix.prefix) };
+            let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
             u32::from(network) & mask == u32::from(address) & mask
         }
         (IpAddr::V6(network), IpAddr::V6(address)) => {
-            let mask = if prefix.prefix == 0 { 0 } else { u128::MAX << (128 - prefix.prefix) };
+            let mask = if prefix == 0 { 0 } else { u128::MAX << (128 - prefix) };
             u128::from(network) & mask == u128::from(address) & mask
         }
         _ => false,
@@ -208,6 +334,25 @@ mod tests {
         let identity = registry.observed.get(&"203.0.113.9".parse().unwrap()).unwrap();
         assert_eq!(identity.asn.as_deref(), Some("AS64500"));
         assert_eq!(identity.organization, "Example Network");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reputation_map_marks_addresses_and_fingerprints() {
+        let path = std::env::temp_dir().join(format!("packrat-reputation-{}.csv", std::process::id()));
+        std::fs::write(
+            &path,
+            "203.0.113.0/24,high,test block,lab\nratq1_deadbeefcafe,medium,known quic shape,lab\n",
+        ).unwrap();
+        let mut registry = NetRegistry::default();
+        assert_eq!(registry.load_reputation(&path).unwrap(), 2);
+        registry.observe("203.0.113.9");
+        let identity = registry.observed.get(&"203.0.113.9".parse().unwrap()).unwrap();
+        assert_eq!(identity.reputation.as_ref().unwrap().label, "test block");
+        assert_eq!(
+            registry.reputation_for_fingerprint("RATQ1_DEADBEEFCAFE").unwrap().severity,
+            "medium",
+        );
         let _ = std::fs::remove_file(path);
     }
 }
