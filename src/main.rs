@@ -68,7 +68,10 @@ async fn main() -> Result<()> {
     app.traffic_latch.mode = options.latch_mode;
     app.traffic_latch.expires_seconds = options.latch_expiry_seconds;
     app.traffic_latch.protected_addresses = options.protected_addresses;
-    if let Some(path) = options.key_log_path {
+    if let Some(path) = options
+        .key_log_path
+        .or_else(|| std::env::var_os("SSLKEYLOGFILE").map(Into::into))
+    {
         app.load_key_log(path);
     }
     if let Some(listener) = telemetry_listener {
