@@ -39,7 +39,8 @@ Deployment placement still defines the enforcement boundary:
 - Eight terminal themes, including accessible and high-contrast choices.
 - SocketScope Linux PID/UID/process attribution and per-process traffic totals.
 - RouteLedger egress learning, persisted baselines, and drift detection.
-- TLS ClientHello metadata, JA4, ECH awareness, and key-log correlation.
+- TLS ClientHello metadata, JA4, ECH awareness, key-log correlation, and
+  helper-backed authenticated record decode.
 - QUIC invariant header, connection ID, packet-type, and migration inspection.
 - EvidenceVault freeze-on-critical PCAP, JSON, and NDJSON artifacts.
 - WirePulse passive DNS, TCP handshake, and gateway latency measurements.
@@ -59,8 +60,8 @@ that they are complete.
 - Add an optional eBPF event collector for sockets too short-lived for `/proc`
   polling. Packrat can now import external socket ownership CSV rows with
   `--socket-events`; a kernel collector and helper IPC are still separate work.
-- Perform authenticated TLS record decryption using legitimately supplied key
-  logs; current support parses and correlates secrets only.
+- Move helper-backed TLS record decode from per-record command execution to a
+  long-lived helper IPC channel for high-rate captures.
 - Decrypt protected QUIC packets and decode HTTP/3 frames. Current QUIC support
   includes invariant metadata and Packrat's RatQ fingerprint, not protected
   payload decoding.

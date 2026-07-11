@@ -214,8 +214,15 @@ fn draw_detail_panel(
         ListItem::new(Line::from(vec![
             Span::styled("  Key Material: ", Style::default().fg(C_FG3())),
             Span::styled(
-                if s.key_material { "available (record decoder required)" } else { "not available" },
+                if s.key_material { "available" } else { "not available" },
                 Style::default().fg(if s.key_material { C_GREEN() } else { C_FG3() }),
+            ),
+        ])),
+        ListItem::new(Line::from(vec![
+            Span::styled("  Decrypted:    ", Style::default().fg(C_FG3())),
+            Span::styled(
+                format!("{} authenticated records", s.decrypted_records.len()),
+                Style::default().fg(if s.decrypted_records.is_empty() { C_FG3() } else { C_GREEN() }),
             ),
         ])),
         ListItem::new(Line::from(vec![
@@ -246,8 +253,9 @@ fn draw_status_bar(
     let with_sni = sessions.iter().filter(|s| s.sni.is_some()).count();
     let bar = Paragraph::new(Line::from(vec![
         Span::styled(
-            format!(" TLS view  {} sessions  {} SNI  {} weak  {} keys  [[/]] TLS/QUIC  [j/k] scroll",
-                sessions.len(), with_sni, weak, _app.tls_tracker.key_shelf.secret_count()),
+            format!(" TLS view  {} sessions  {} SNI  {} weak  {} keys  {} decrypted  [[/]] TLS/QUIC  [j/k] scroll  [r] reputation",
+                sessions.len(), with_sni, weak, _app.tls_tracker.key_shelf.secret_count(),
+                sessions.iter().map(|session| session.decrypted_records.len()).sum::<usize>()),
             Style::default().fg(C_FG3()),
         ),
     ])).style(Style::default().bg(C_BG2()));
