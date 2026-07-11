@@ -163,24 +163,36 @@ fn draw_net_registry(f: &mut Frame, app: &App, area: Rect) {
     let entries = app.net_registry.sorted();
     let visible = area.height.saturating_sub(3) as usize;
     let header = Row::new(vec![
-        cell_hdr("Address"), cell_hdr("ASN"), cell_hdr("Organization"), cell_hdr("Source"),
+        cell_hdr("Address"), cell_hdr("ASN"), cell_hdr("Organization"),
+        cell_hdr("Reputation"), cell_hdr("Severity"), cell_hdr("Source"),
     ]);
     let rows = entries.iter().skip(app.security_scroll).take(visible).map(|identity| Row::new(vec![
         Cell::from(identity.address.to_string()).style(Style::default().fg(C_CYAN())),
         Cell::from(identity.asn.as_deref().unwrap_or("-")),
         Cell::from(identity.organization.as_str()),
+        Cell::from(identity.reputation.as_ref().map(|finding| finding.label.as_str()).unwrap_or("-"))
+            .style(Style::default().fg(if identity.reputation.is_some() { C_RED() } else { C_FG3() })),
+        Cell::from(identity.reputation.as_ref().map(|finding| finding.severity.as_str()).unwrap_or("-"))
+            .style(Style::default().fg(if identity.reputation.is_some() { C_ORANGE() } else { C_FG3() })),
         Cell::from(identity.source.as_str()).style(Style::default().fg(C_FG3())),
     ])).collect::<Vec<_>>();
     let title = format!(
-        " NetRegistry - {} observed addresses, {} local prefixes ",
-        entries.len(), app.net_registry.prefixes.len(),
+        " NetRegistry - {} observed addresses, {} prefixes, {} reputation entries ",
+        entries.len(), app.net_registry.prefixes.len(), app.net_registry.reputation.len(),
     );
     let table = Table::new(
         std::iter::once(header).chain(rows).collect::<Vec<_>>(),
-        [Constraint::Length(26), Constraint::Length(14), Constraint::Min(30), Constraint::Length(22)],
+        [
+            Constraint::Length(22),
+            Constraint::Length(12),
+            Constraint::Length(26),
+            Constraint::Length(20),
+            Constraint::Length(10),
+            Constraint::Min(14),
+        ],
     ).block(block_titled(&title)).style(Style::default().bg(C_BG()));
     f.render_widget(table, area);
-    render_hint(f, area, "Prefix map: ~/.config/packrat/identity-map.csv  [r] explicit WHOIS refresh  [j/k] select");
+    render_hint(f, area, "Maps: identity-map.csv + reputation-map.csv  [r] explicit WHOIS refresh  [j/k] select");
 }
 
 // ─── IDS Alerts ──────────────────────────────────────────────────────────────
