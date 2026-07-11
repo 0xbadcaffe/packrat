@@ -126,11 +126,6 @@ fn find_after(data: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn sha256_hex(data: &[u8]) -> String {
-    // Simple FNV-1a 64-bit hash as a stand-in (avoids pulling sha2 crate).
-    let mut h: u64 = 14_695_981_039_346_656_037;
-    for &b in data {
-        h ^= b as u64;
-        h = h.wrapping_mul(1_099_511_628_211);
-    }
-    format!("{h:016x}")
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(data))
 }
