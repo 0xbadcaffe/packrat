@@ -443,6 +443,9 @@ fn handle_security(app: &mut App, key: KeyEvent) {
         KeyCode::Char('y') if matches!(app.security_tab, SecuritySubTab::RoutePolicy) => {
             app.promote_observed_routes();
         }
+        KeyCode::Char('r') if matches!(app.security_tab, SecuritySubTab::NetRegistry) => {
+            app.refresh_selected_whois();
+        }
         // Replay sub-tab controls
         KeyCode::Char('e') if matches!(app.security_tab, SecuritySubTab::Replay) => {
             app.replay_editing = true;

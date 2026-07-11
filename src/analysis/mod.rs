@@ -27,3 +27,5 @@ pub mod key_shelf;
 pub mod encrypted_insight;
 pub mod quic_scope;
 pub mod traffic_latch;
+pub mod wire_pulse;
+pub mod net_registry;
