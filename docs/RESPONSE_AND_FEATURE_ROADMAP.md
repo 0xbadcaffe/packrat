@@ -1,105 +1,66 @@
-# Response Design and Feature Roadmap
+# Response Design and Feature Status
 
-This document records the Packrat-native plan for the next inspection and
-response features. It is based on a static comparison of capabilities, not on
-copied Netwatch code or UI. AI and LLM analysis are intentionally excluded.
+This document tracks Packrat's original, non-AI inspection and response design.
+It is a capability status record, not a plan to copy another project's code or
+interface. No AI or LLM analysis mode is planned.
 
-## Current Alert Design
+## Response Pipeline
 
 ```text
 packet -> built-in IDS / user rules -> critical incident -> red review alert
                                             |
-                                            v
-                              retained attacker conversation history
-                                            |
-                                            v
-                                 operator review -> acknowledgement
+                                            +-> EvidenceVault freeze
+                                            +-> TrafficLatch policy and audit
+                                            +-> retained conversation history
 ```
 
-The current implementation is passive. Critical built-in signatures and user
-rules with a `Critical` alert action create an incident. The incident preserves
-a bounded history of packets to or from the suspected attacker, including
-traffic that subsequently rolls out of the live packet list. The operator must
-open Incident History before acknowledging the alert.
+TrafficLatch is monitor-only by default. Preview records a proposed action,
+manual requires approval from reviewed Incident History, and automatic mode is
+an explicit startup choice. Linux enforcement uses validated IP addresses and
+expiring nftables sets; protected and unsafe address classes are rejected.
 
-## Future Auto-Containment Design
-
-“Stop all traffic” has different meaning depending on where Packrat runs:
+Deployment placement still defines the enforcement boundary:
 
 | Placement | What Packrat can contain |
 |---|---|
-| Endpoint | traffic to and from that endpoint only |
-| Gateway or bridge | forwarded traffic involving the suspicious host |
-| Passive mirror port | nothing directly; Packrat has no control plane there |
+| Endpoint | traffic to and from that endpoint |
+| Gateway or bridge | forwarded traffic involving the suspicious address |
+| Passive mirror port | nothing directly; there is no control plane |
 
-The future design therefore uses a pluggable enforcement backend instead of
-assuming that capture authority also grants blocking authority.
+## Implemented Capabilities
 
-```text
-critical incident -> policy evaluation -> dry-run audit record
-                                      -> approved enforcement backend
-                                      -> temporary firewall set entry
-                                      -> expiry / rollback / audit export
-```
+- Five operator workspaces with a view drawer and `Esc` return navigation.
+- Eight terminal themes, including accessible and high-contrast choices.
+- SocketScope Linux PID/UID/process attribution and per-process traffic totals.
+- RouteLedger egress learning, persisted baselines, and drift detection.
+- TLS ClientHello metadata, JA4, ECH awareness, and key-log correlation.
+- QUIC invariant header, connection ID, packet-type, and migration inspection.
+- EvidenceVault freeze-on-critical PCAP, JSON, and NDJSON artifacts.
+- WirePulse passive DNS, TCP handshake, and gateway latency measurements.
+- NetRegistry local prefix enrichment and operator-requested WHOIS refresh.
+- Local `/health` and OpenMetrics `/metrics` telemetry endpoints.
+- Expiring, audited nftables containment in preview, manual, and auto modes.
+- Optional Linux Landlock filesystem-write sandbox.
+- Replay regression fixtures for shipped penetration signature families.
 
-Proposed phases:
+## Remaining Engineering Work
 
-1. Monitor-only, the current default. It never changes traffic.
-2. Dry-run containment: display the exact nftables rule that would be applied
-   and append it to the case audit trail.
-3. Manual containment: an operator explicitly applies an expiring source,
-   destination, or bidirectional rule after reviewing the incident.
-4. Auto-containment: opt-in per policy, supported only by an installed backend
-   such as nftables on Linux.
+These gaps are intentionally stated precisely; the current UI does not claim
+that they are complete.
 
-Auto-containment must require all of the following:
+- Add an optional eBPF event collector for sockets too short-lived for `/proc`
+  polling, with a narrow privilege-separated IPC contract.
+- Perform authenticated TLS record decryption using legitimately supplied key
+  logs; current support parses and correlates secrets only.
+- Decrypt protected QUIC packets, decode HTTP/3 frames, and add JA4Q.
+- Separate capture and firewall privileges into a minimal helper, then drop
+  capabilities in the terminal process. Landlock currently limits filesystem
+  writes but is not a privilege boundary for packet capture.
+- Add a stronger automatic-containment policy gate, such as two independent
+  critical signals or a rule explicitly approved for automatic response.
+- Add attributable online fingerprint reputation data only as an explicit,
+  cached operator action; no silent external lookups.
+- Expand replay fixtures as each new detector and containment policy ships.
 
-- `auto_containment = false` by default.
-- An explicit scope, such as `source_only` or `bidirectional`; never an
-  ambiguous global outage action.
-- Allowlisted management, collector, and emergency addresses that cannot be
-  blocked by policy.
-- A dry-run period and an audit log showing detector, packet, policy, rule,
-  owner, and expiry.
-- A short automatic expiry with a refresh action, plus a tested rollback path.
-- A stricter trigger than the red alert, normally two independent critical
-  signals or a separately marked user rule approved for automatic action.
-
-For a gateway deployment, Packrat can eventually add the suspicious address to
-an nftables set referenced by an `input`, `output`, or `forward` rule. It should
-never shell out with interpolated packet fields; the backend must validate IP
-addresses and use structured rule construction. Other platforms need separate
-adapters and must report “unsupported” rather than silently pretending to
-enforce.
-
-## Non-AI Feature Backlog
-
-### Priority 1: high-value inspection
-
-- Process/PID attribution on Linux, starting with socket-table correlation and
-  adding eBPF only as an optional privileged collector.
-- Per-process bandwidth and connection views.
-- TLS key-log (`SSLKEYLOGFILE`) ingestion for TLS 1.2/1.3 decryption where keys
-  are legitimately available.
-- QUIC/HTTP3 parsing and key-log-assisted 1-RTT inspection.
-- JA4 and JA4Q fingerprints beside existing TLS fingerprints.
-- ECH-aware metadata handling and filters that clearly mark encrypted fields as
-  unavailable instead of guessing.
-
-### Priority 2: investigation durability and policy
-
-- Rolling flight recorder with freeze-on-critical-incident PCAP and case bundle.
-- Egress baseline and drift rules: process/host to SNI, ASN, IP, and port.
-- DNS and gateway RTT measurements, latency heatmaps, and health probes.
-- ASN/WHOIS enrichment with cached, attributable lookup data.
-- NDJSON evidence export and Prometheus metrics for a daemon mode.
-
-### Priority 3: deployment hardening
-
-- Linux capability dropping and an optional Landlock sandbox for the analyzer.
-- A privilege-separated capture/enforcement helper with narrow IPC.
-- Policy test fixtures and replay-based regression suites for every shipped
-  penetration signature and containment policy.
-
-Each item should be designed and tested in Packrat’s existing terminal-first
-style. No AI/LLM mode is planned.
+These remaining items require focused security design and should not be
+represented as simple parser or UI additions.

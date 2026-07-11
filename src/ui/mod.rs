@@ -313,7 +313,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!("│ {} ", msg), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))
     } else {
         Span::styled(
-            "j/k:nav  Space:cap  c:clear  a:autopsy  /:filter  ?:search  X:export  L:load  B:baseline  h:help  q:quit",
+            "Tab/F2:views  1-5:workspaces  j/k:nav  Space:cap  /:filter  ?:search  X:export  h:help  q:quit",
             Style::default().fg(C_FG3()),
         )
     };

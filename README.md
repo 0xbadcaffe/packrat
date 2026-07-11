@@ -32,30 +32,24 @@ packrat --simulation
 
 ## Feature Overview
 
-| Tab | Key | Description |
+Packrat groups its views into five workspaces. Press `1`-`5` for a workspace,
+then `Tab` or `F2` for its view drawer; `Esc` returns to the workspace home.
+
+| Workspace | Key | Views |
 |-----|-----|-------------|
-| **Packets**    | `1` | Live packet list, protocol detail tree, hex dump, follow-stream overlay |
-| **Analysis**   | `2` | Protocol stats, top talkers, conversations, port summary, magic bytes, XOR, anomalies, host/TLS/flow/IOC/rules/YARA counts |
-| **Strings**    | `3` | Extracted ASCII strings with entropy scoring, RE dictionary, live search |
-| **Dynamic**    | `4` | Live syscall / signal / network event log |
-| **Visualize**  | `5` | Protocol sparkline, traffic bars, top IPs, geo endpoints |
-| **Flows**      | `6` | Bidirectional flow tracker — beacon/scan/encrypted/large detection, follow stream |
-| **Craft**      | `7` | Form-based packet builder with hex preview, inject, and **flood mode** |
-| **Traceroute** | `8` | Hop-by-hop path tracer (real `traceroute`/`tracert` under `--features real-capture`) |
-| **Security**   | `9` | Passive IDS, credentials, OS fingerprint, ARP watch, DNS tunnel, HTTP analytics, TLS weakness, brute-force, vuln patterns, **IOC hits**, **VLAN intelligence**, PCAP replay |
-| **Scanner**    | `0` | Port scanner — TCP Connect, SYN, UDP modes with service fingerprinting |
-| **Hosts**      | `H` | Host inventory: IP/MAC/OS/hostname tracking, per-host protocol breakdown, **free-form tagging** |
-| **Notebook**   | `N` | Analyst notes — timestamped, tag-attached, **searchable** with live filtering |
-| **TLS**        | `T` | TLS session table: SNI, cipher suite, JA3/JA3S fingerprints, **cert CN/issuer/SANs/expiry**, alert detection |
-| **Objects**    | `O` | Carved file objects extracted from traffic — MIME type, SHA-256, size, YARA hits |
-| **Rules**      | `R` | User-defined detection rules (field conditions → alert/tag/log actions), live hit counter, description column |
-| **Workbench**  | `W` | Hex-level protocol workbench — load any packet, cursor navigation, byte selection |
-| **Graph**      | `G` | **Operator Graph** — live engagement map linking all artifacts into a navigable correlation graph |
-| **Diff**       | `D` | **Differential PCAP analysis** — baseline snapshot vs. current traffic: protocol Δ, host Δ, port Δ |
+| **Traffic** | `1` | Packets, Flows, Hosts, Encrypted |
+| **Inspect** | `2` | Analysis, Strings, Visualize, Workbench, Objects, Diff |
+| **Defense** | `3` | Security, Rules, Operator Graph |
+| **Actions** | `4` | Scanner, Traceroute, Craft |
+| **Case** | `5` | Notebook, Dynamic event log |
+
+Expert shortcuts `H`, `N`, `T`, `O`, `R`, `W`, `G`, and `D` remain available.
+See [the user manual](docs/USER_MANUAL.md) for investigation, encrypted-traffic,
+evidence, telemetry, and containment workflows.
 
 ---
 
-## Operator Graph (Tab G)
+## Operator Graph
 
 The Operator Graph is the flagship analysis engine. It builds a live, time-aware engagement graph by connecting all analysis artifacts — hosts, flows, credentials, certificates, tokens, files, IOCs, alerts — into a navigable operational picture.
 
@@ -288,7 +282,7 @@ When a rule fires, the title bar shows a `⚡ N rules` badge (yellow).
 
 ---
 
-## Packet Crafter (Tab 7)
+## Packet Crafter
 
 Build arbitrary packets from a field form, preview the raw bytes live, then inject or flood.
 
@@ -358,7 +352,7 @@ The Diff tab shows three side-by-side delta columns:
 
 ---
 
-## Security Tab (Tab 9)
+## Security Inspection
 
 Passive real-time security analysis across 12 sub-panels. Navigate with `[` / `]` or the letter shortcuts below.
 
@@ -405,7 +399,7 @@ Speed steps: `0.125x → 0.25x → 0.5x → 1x → 2x → 4x → 8x → 16x → 
 
 ---
 
-## VLAN Intelligence (Security tab → VLAN Intel)
+## VLAN Intelligence (Defense > Security > VLAN Intelligence)
 
 Passive 802.1Q/802.1ad analysis built entirely from raw Ethernet frames — no SPAN configuration or VLAN-aware switch management required.
 
@@ -450,7 +444,7 @@ The VLAN Intel sub-panel is split into two panes:
 
 ---
 
-## Port Scanner (Tab 0)
+## Port Scanner
 
 | Mode | Description |
 |------|-------------|
@@ -470,7 +464,7 @@ The VLAN Intel sub-panel is split into two panes:
 
 ---
 
-## Traceroute (Tab 8)
+## Traceroute
 
 Type a hostname or IP, press `Enter` to trace:
 
@@ -487,7 +481,7 @@ Under `--features real-capture` the system `traceroute` (Linux/macOS) or `tracer
 
 ---
 
-## Flows Tab (Tab 6)
+## Flows
 
 | Badge | Meaning |
 |-------|---------|
@@ -717,7 +711,7 @@ display = "dec"
 
 ---
 
-## Strings Tab (Tab 3)
+## Strings
 
 Extracts printable ASCII runs from packet payloads and classifies them using a built-in RE/security dictionary.
 
@@ -744,7 +738,7 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 
 ---
 
-## Analysis Tab (Tab 2)
+## Analysis
 
 | Section | Description |
 |---------|-------------|
@@ -764,7 +758,7 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 
 **Instant import:** Press **`L`** from anywhere to open a path dialog. Enter a `.pcap` file path and press Enter — all packets are loaded immediately into the live packet list and all analysis engines without replacing the active session.
 
-**Replay:** Go to Security tab → Replay sub-panel (`9` then `p`). Replayed packets flow into the live packet list, trigger all analysis engines (including the Operator Graph), and can be recorded to a new pcap.
+**Replay:** Open Defense > Security > PCAP Replay. Replayed packets flow into the live packet list, trigger all analysis engines (including the Operator Graph), and can be recorded to a new pcap.
 
 ---
 
@@ -805,7 +799,7 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 | `/` | Search node list |
 | `x` | Export graph to JSON |
 
-### Craft (7)
+### Craft
 
 | Key | Action |
 |-----|--------|
@@ -816,7 +810,7 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 | `< / >` | Decrease / increase flood rate |
 | `C` | Stop flood, clear result |
 
-### Security (9)
+### Security
 
 | Key | Action |
 |-----|--------|
@@ -828,7 +822,7 @@ Press **`/`** to search, **Enter** to keep filter, **Esc** to clear.
 
 Sub-panel letter map: `a`=IDS · `c`=Credentials · `o`=OS Fingerprint · `w`=ARP Watch · `d`=DNS Tunnel · `u`=HTTP · `t`=TLS · `b`=Brute Force · `v`=Vulns · `i`=IOC Hits · (VLAN Intel via `[/]`) · `p`=Replay
 
-### Flows (6)
+### Flows
 
 | Key | Action |
 |-----|--------|

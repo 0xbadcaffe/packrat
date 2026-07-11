@@ -20,9 +20,10 @@ pub fn draw(f: &mut Frame) {
             ("g",            "Jump to top"),
             ("G",            "Jump to bottom"),
             ("PgDn / PgUp",  "Page down / up"),
-            ("Tab",          "Next tab"),
-            ("1–0",          "Switch to tabs 1–10"),
-            ("H N T O R W G D",  "Hosts / Notebook / TLS / Objects / Rules / Workbench / Graph / Diff"),
+            ("Tab / F2",     "Open workspace view drawer"),
+            ("1–5",          "Traffic / Inspect / Defense / Actions / Case"),
+            ("Esc",          "Return from a detail view to workspace home"),
+            ("H N T O R W G D",  "Direct expert shortcuts remain available"),
         ]),
         ("Capture & Recording", &[
             ("Space",  "Toggle capture on/off"),
@@ -51,8 +52,15 @@ pub fn draw(f: &mut Frame) {
         ]),
         ("Security Tab", &[
             ("[/]",  "Previous / next sub-tab"),
-            ("a c o w d u t b v i p", "Jump to sub-tab directly"),
+            ("a c o w d u t b v i p", "Jump to common detector views"),
+            ("l / y", "RouteLedger mode / promote observed routes"),
+            ("r", "Refresh selected NetRegistry address with WHOIS"),
             ("C",    "Clear alerts and credentials"),
+        ]),
+        ("Encrypted View", &[
+            ("[/]", "Switch TLS / QUIC scope"),
+            ("j / k", "Select TLS session"),
+            ("c", "Clear current encrypted-traffic view"),
         ]),
         ("Objects Tab", &[
             ("o y m",   "Objects / YARA Rules / YARA Matches sub-tab"),
