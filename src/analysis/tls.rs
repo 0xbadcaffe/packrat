@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use crate::analysis::helper_process::spawn_stdin_stdout_helper;
 use crate::analysis::encrypted_insight::{parse_client_hello, parse_server_hello};
 use crate::analysis::key_shelf::KeyShelf;
 use crate::net::packet::Packet;
@@ -261,12 +261,7 @@ fn find_tls_record(raw: &[u8], record_type: u8) -> Option<&[u8]> {
 }
 
 fn run_tls_decrypt_helper(helper: &Path, request: &TlsDecryptRequest) -> Result<DecryptedTlsRecord, String> {
-    let mut child = Command::new(helper)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("start TLS decrypt helper {}: {error}", helper.display()))?;
+    let mut child = spawn_stdin_stdout_helper(helper, "TLS decrypt")?;
     let input = serde_json::to_vec(request)
         .map_err(|error| format!("encode TLS decrypt helper request: {error}"))?;
     child.stdin.as_mut().ok_or("TLS decrypt helper stdin unavailable")?
@@ -408,7 +403,7 @@ mod tests {
     fn helper_authenticated_tls_record_is_retained() {
         use std::os::unix::fs::PermissionsExt;
 
-        let path = std::env::temp_dir().join(format!("packrat-tls-helper-{}.sh", std::process::id()));
+        let path = std::env::temp_dir().join(format!("packrat-tls-helper-{}-{}.sh", std::process::id(), unique_test_suffix()));
         std::fs::write(
             &path,
             "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"content_type\":\"http\",\"plaintext_hex\":\"474554202f20485454502f312e31\",\"detail\":\"auth ok\"}'\n",
@@ -431,5 +426,13 @@ mod tests {
         assert_eq!(session.decrypted_records.len(), 1);
         assert_eq!(session.decrypted_records[0].plaintext, b"GET / HTTP/1.1");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    fn unique_test_suffix() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
     }
 }
