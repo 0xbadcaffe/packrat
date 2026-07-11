@@ -23,13 +23,13 @@ pub fn draw(f: &mut Frame) {
             ("Tab / F2",     "Open workspace view drawer"),
             ("1–5",          "Traffic / Inspect / Defense / Actions / Case"),
             ("Esc",          "Return from a detail view to workspace home"),
+            (",",            "Open settings window"),
             ("H N T O R W G D",  "Direct expert shortcuts remain available"),
         ]),
         ("Capture & Recording", &[
             ("Space",  "Toggle capture on/off"),
             ("C",      "Clear all packets"),
             ("i",      "Switch capture interface"),
-            ("w",      "Toggle PCAP recording"),
             ("B",      "Snapshot baseline for diff"),
         ]),
         ("Analysis & Export", &[
@@ -41,8 +41,17 @@ pub fn draw(f: &mut Frame) {
         ]),
         ("Packets Tab", &[
             ("/",     "Start display filter"),
-            ("Enter", "Load packet in Workbench"),
+            ("m",     "Add selected packet to worklist"),
+            ("w",     "Show packet worklist"),
+            ("Enter", "Open selected packet in Investigate"),
             ("a",     "Protocol autopsy overlay"),
+        ]),
+        ("Investigate View", &[
+            ("[/]",   "Previous / next packet screen"),
+            ("n / p", "Next / previous worklist packet"),
+            ("j / k", "Scroll current screen"),
+            ("d",     "Remove active packet from worklist"),
+            ("l",     "Return to live packet list"),
         ]),
         ("Hosts Tab", &[
             ("s / /",  "Search hosts"),

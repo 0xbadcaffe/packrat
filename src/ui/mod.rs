@@ -71,6 +71,10 @@ pub fn draw(f: &mut Frame, app: &App) {
         project_manager::draw(f, app);
     }
 
+    if app.settings_open {
+        draw_settings_overlay(f, app);
+    }
+
     if app.theme_picker_open {
         theme_picker::draw(f, app);
     }
@@ -225,6 +229,7 @@ fn draw_workspace(f: &mut Frame, app: &App, area: Rect) {
     }
     match app.active_tab {
         Tab::Packets     => tabs::packets::draw(f, app, area),
+        Tab::Investigate => tabs::investigate::draw(f, app, area),
         Tab::Analysis    => tabs::analysis::draw(f, app, area),
         Tab::Strings     => tabs::strings::draw(f, app, area),
         Tab::Dynamic     => tabs::dynamic::draw(f, app, area),
@@ -242,7 +247,23 @@ fn draw_workspace(f: &mut Frame, app: &App, area: Rect) {
         Tab::Workbench     => tabs::workbench::draw(f, app, area),
         Tab::OperatorGraph => tabs::operator_graph::draw(f, app, area),
         Tab::Diff          => tabs::diff::draw(f, app, area),
+        Tab::Settings      => tabs::settings::draw(f, app, area),
     }
+}
+
+fn draw_settings_overlay(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let width = area.width.saturating_sub(6).min(96);
+    let height = area.height.saturating_sub(4).min(26);
+    let popup = Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    if popup.width == 0 || popup.height == 0 { return; }
+    f.render_widget(Clear, popup);
+    tabs::settings::draw(f, app, popup);
 }
 
 fn draw_stream_overlay(f: &mut Frame, title: &str, segments: &[(bool, Vec<u8>)]) {
@@ -313,7 +334,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!("│ {} ", msg), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))
     } else {
         Span::styled(
-            "Tab/F2:views  1-5:workspaces  j/k:nav  Space:cap  /:filter  ?:search  X:export  h:help  q:quit",
+            "1-5:modes  Tab/F2:views  m:mark  Enter:investigate  [,]:screen  ,:settings  ?:search  h:help  q:quit",
             Style::default().fg(C_FG3()),
         )
     };
