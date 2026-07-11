@@ -25,6 +25,8 @@ struct CaseBundle<'a> {
     alerts:     Vec<AlertRecord>,
     creds:      Vec<CredRecord<'a>>,
     notebook:   Vec<NoteRecord>,
+    incidents:  Vec<IncidentRecord<'a>>,
+    evidence:   Vec<EvidenceRecord>,
     graph_meta: GraphMeta,
 }
 
@@ -95,6 +97,28 @@ struct NoteRecord {
     id:        u64,
     text:      String,
     timestamp: f64,
+}
+
+#[derive(serde::Serialize)]
+struct IncidentRecord<'a> {
+    id: u64,
+    source: String,
+    detector: &'a str,
+    summary: &'a str,
+    severity: String,
+    attacker: &'a str,
+    target: &'a str,
+    status: String,
+    retained_packets: usize,
+}
+
+#[derive(serde::Serialize)]
+struct EvidenceRecord {
+    incident_id: u64,
+    pcap: String,
+    metadata: String,
+    ndjson: String,
+    packets: usize,
 }
 
 #[derive(serde::Serialize)]
@@ -221,6 +245,26 @@ fn build(app: &App) -> CaseBundle<'_> {
         timestamp: n.timestamp,
     }).collect();
 
+    let incidents = app.incidents.incidents.iter().map(|incident| IncidentRecord {
+        id: incident.id,
+        source: incident.source.to_string(),
+        detector: &incident.detector,
+        summary: &incident.summary,
+        severity: incident.severity.to_string(),
+        attacker: &incident.attacker,
+        target: &incident.target,
+        status: incident.status.to_string(),
+        retained_packets: incident.packet_history.len(),
+    }).collect();
+
+    let evidence = app.evidence_vault.exports.iter().map(|export| EvidenceRecord {
+        incident_id: export.incident_id,
+        pcap: export.pcap_path.display().to_string(),
+        metadata: export.metadata_path.display().to_string(),
+        ndjson: export.ndjson_path.display().to_string(),
+        packets: export.packet_count,
+    }).collect();
+
     // Operator graph summary
     let graph = &app.operator_graph;
     let mut top: Vec<TopNode> = graph.all_nodes_sorted()
@@ -240,5 +284,5 @@ fn build(app: &App) -> CaseBundle<'_> {
         top_scored: top,
     };
 
-    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, creds, notebook, graph_meta }
+    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, creds, notebook, incidents, evidence, graph_meta }
 }
