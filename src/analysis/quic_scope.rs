@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
+use crate::analysis::helper_process::spawn_stdin_stdout_helper;
 use crate::analysis::encrypted_insight::parse_quic_header;
 use crate::net::packet::Packet;
 
@@ -139,12 +139,7 @@ fn run_quic_decode_helper(
     packet_no: u64,
     packet: &[u8],
 ) -> Result<Vec<QuicDecodedFrame>, String> {
-    let mut child = Command::new(helper)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("start QUIC decode helper {}: {error}", helper.display()))?;
+    let mut child = spawn_stdin_stdout_helper(helper, "QUIC decode")?;
     let request = QuicDecodeRequest {
         connection_id: connection_id.to_string(),
         packet_no,
@@ -207,7 +202,7 @@ mod tests {
     fn helper_authenticated_quic_frames_are_retained() {
         use std::os::unix::fs::PermissionsExt;
 
-        let path = std::env::temp_dir().join(format!("packrat-quic-helper-{}.sh", std::process::id()));
+        let path = std::env::temp_dir().join(format!("packrat-quic-helper-{}-{}.sh", std::process::id(), unique_test_suffix()));
         std::fs::write(
             &path,
             "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"frames\":[{\"frame_type\":\"headers\",\"detail\":\"GET /\"}],\"detail\":\"auth ok\"}'\n",
@@ -223,5 +218,13 @@ mod tests {
         assert_eq!(connection.decoded_frames[0].frame_type, "headers");
         assert_eq!(connection.decoded_frames[0].detail, "GET /");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    fn unique_test_suffix() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
     }
 }

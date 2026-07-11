@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
+
+use crate::analysis::helper_process::spawn_stdin_stdout_helper;
 
 #[derive(Debug, Clone)]
 pub struct PrefixIdentity {
@@ -271,12 +273,7 @@ impl NetRegistry {
 }
 
 fn run_reputation_helper(kind: &'static str, target: &str, helper: &Path) -> Result<ReputationFinding, String> {
-    let mut child = Command::new(helper)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("start reputation helper {}: {error}", helper.display()))?;
+    let mut child = spawn_stdin_stdout_helper(helper, "reputation")?;
     let request = serde_json::to_vec(&ReputationHelperRequest { kind, target: target.to_string() })
         .map_err(|error| format!("encode reputation helper request: {error}"))?;
     child.stdin.as_mut().ok_or("reputation helper stdin unavailable")?

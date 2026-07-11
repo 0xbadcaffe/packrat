@@ -5,6 +5,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::analysis::helper_process::spawn_stdin_stdout_helper;
 use crate::analysis::incident::Incident;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,12 +104,7 @@ impl CommandLatch {
 
 impl LatchBackend for CommandLatch {
     fn block(&self, request: &LatchRequest) -> Result<String, String> {
-        let mut child = Command::new(&self.program)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("start latch helper {}: {error}", self.program.display()))?;
+        let mut child = spawn_stdin_stdout_helper(&self.program, "latch")?;
         let input = serde_json::to_vec(request)
             .map_err(|error| format!("encode latch helper request: {error}"))?;
         child.stdin.as_mut().ok_or("latch helper stdin unavailable")?
@@ -364,7 +360,7 @@ mod tests {
     fn command_latch_uses_json_helper_contract() {
         use std::os::unix::fs::PermissionsExt;
 
-        let path = std::env::temp_dir().join(format!("packrat-latch-helper-{}.sh", std::process::id()));
+        let path = std::env::temp_dir().join(format!("packrat-latch-helper-{}-{}.sh", std::process::id(), unique_test_suffix()));
         std::fs::write(
             &path,
             "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"detail\":\"helper block accepted\"}'\n",
@@ -380,5 +376,13 @@ mod tests {
         }).unwrap();
         assert_eq!(detail, "helper block accepted");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    fn unique_test_suffix() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
     }
 }

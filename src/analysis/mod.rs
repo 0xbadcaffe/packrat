@@ -20,6 +20,7 @@ pub mod graph_scoring;
 pub mod graph_cluster;
 pub mod incident;
 pub mod evidence_vault;
+pub mod helper_process;
 pub mod telemetry;
 pub mod socket_scope;
 pub mod route_ledger;
