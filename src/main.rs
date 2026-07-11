@@ -32,7 +32,7 @@ mod ui;
 use app::{App, CliAction};
 use net::packet::Packet;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let options = match app::parse_startup_args(std::env::args().skip(1)) {
         Ok(CliAction::Run(options)) => options,
@@ -50,6 +50,12 @@ async fn main() -> Result<()> {
         Some(address) => Some(analysis::telemetry::bind(address).await?),
         None => None,
     };
+
+    if options.sandbox {
+        let paths = analysis::runtime_guard::default_write_paths()
+            .map_err(anyhow::Error::msg)?;
+        analysis::runtime_guard::apply(&paths).map_err(anyhow::Error::msg)?;
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

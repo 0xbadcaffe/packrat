@@ -127,10 +127,11 @@ pub struct StartupOptions {
     pub latch_mode: LatchMode,
     pub latch_expiry_seconds: u64,
     pub protected_addresses: Vec<std::net::IpAddr>,
+    pub sandbox: bool,
 }
 
 pub fn usage() -> &'static str {
-    "Usage: packrat [OPTIONS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n      --traffic-latch MODE   monitor, preview, manual, or auto (default: monitor)\n      --latch-seconds N      automatic firewall expiry (default: 900)\n      --protect-address IP   never contain this address; may be repeated\n  -h, --help                 show this help"
+    "Usage: packrat [OPTIONS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n      --traffic-latch MODE   monitor, preview, manual, or auto (default: monitor)\n      --latch-seconds N      automatic firewall expiry (default: 900)\n      --protect-address IP   never contain this address; may be repeated\n      --sandbox              restrict filesystem writes with Linux Landlock\n  -h, --help                 show this help"
 }
 
 pub fn parse_startup_args<I, S>(args: I) -> Result<CliAction, String>
@@ -146,6 +147,7 @@ where
         latch_mode: LatchMode::Monitor,
         latch_expiry_seconds: 900,
         protected_addresses: Vec::new(),
+        sandbox: false,
     };
     let mut index = 0;
     while index < args.len() {
@@ -182,6 +184,7 @@ where
                 options.protected_addresses.push(value.parse()
                     .map_err(|_| format!("invalid protected address: {value}"))?);
             }
+            "--sandbox" => options.sandbox = true,
             unknown => return Err(format!("unknown argument: {unknown}")),
         }
         index += 1;
