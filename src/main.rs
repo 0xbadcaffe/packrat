@@ -69,6 +69,7 @@ async fn main() -> Result<()> {
     app.traffic_latch.expires_seconds = options.latch_expiry_seconds;
     app.traffic_latch.protected_addresses = options.protected_addresses;
     app.latch_helper_path = options.latch_helper_path;
+    app.reputation_helper_path = options.reputation_helper_path;
     if let Some(path) = options
         .key_log_path
         .or_else(|| std::env::var_os("SSLKEYLOGFILE").map(Into::into))

@@ -41,6 +41,9 @@ cargo run --features real-capture -- --socket-events /secure/socket-events.csv
 # Delegate TrafficLatch firewall changes to a minimal helper command.
 cargo run --features real-capture -- --traffic-latch manual --latch-helper /usr/libexec/packrat-latch
 
+# Delegate explicit reputation refreshes to a local helper command.
+cargo run --features real-capture -- --reputation-helper /usr/libexec/packrat-reputation
+
 # Restrict filesystem writes with Linux Landlock.
 cargo run --features real-capture -- --sandbox
 ```
@@ -251,6 +254,27 @@ external reputation lookup runs during packet ingestion.
 198.51.100.0/24,medium,partner watch range,change ticket 1842
 ratq1_deadbeefcafe,medium,known QUIC client shape,malware lab
 ```
+
+For explicit online or API-backed reputation checks, start Packrat with
+`--reputation-helper PATH`, select an address in NetRegistry, and press `r`.
+The helper receives JSON on stdin and returns JSON on stdout:
+
+```json
+{ "kind": "address", "target": "203.0.113.9" }
+```
+
+```json
+{
+  "ok": true,
+  "severity": "high",
+  "label": "listed by partner feed",
+  "source": "partner-feed:2026-07-11"
+}
+```
+
+Packrat caches the returned finding in the current case. Without
+`--reputation-helper`, `r` keeps the older explicit WHOIS behavior for selected
+public addresses.
 
 Socket event imports use this CSV shape:
 
