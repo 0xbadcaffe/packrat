@@ -44,7 +44,8 @@ Deployment placement still defines the enforcement boundary:
 - EvidenceVault freeze-on-critical PCAP, JSON, and NDJSON artifacts.
 - WirePulse passive DNS, TCP handshake, and gateway latency measurements.
 - NetRegistry local prefix enrichment and operator-requested WHOIS refresh.
-- Explicit reputation refresh helper for selected addresses; no silent lookups.
+- Explicit reputation refresh helper for selected addresses, JA4, and RatQ; no
+  silent lookups.
 - Local `/health` and OpenMetrics `/metrics` telemetry endpoints.
 - Expiring, audited nftables containment in preview, manual, and auto modes.
 - Optional Linux Landlock filesystem-write sandbox.
@@ -67,9 +68,6 @@ that they are complete.
   capabilities in the terminal process. Firewall changes can already be
   delegated with `--latch-helper`; Landlock limits filesystem writes but is not
   a privilege boundary for packet capture.
-- Extend explicit reputation helper refreshes to selected JA4 and RatQ
-  fingerprints. Current helper refresh is address-scoped; offline CSV context
-  already covers addresses, CIDRs, JA4, and RatQ values.
 - Keep replay fixtures current as each new detector and containment policy ships.
 
 These remaining items require focused security design and should not be
