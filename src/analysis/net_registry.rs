@@ -245,6 +245,16 @@ impl NetRegistry {
         Ok(entry)
     }
 
+    pub fn refresh_fingerprint_reputation_with_helper(
+        &mut self,
+        fingerprint: &str,
+        helper: impl AsRef<Path>,
+    ) -> Result<ReputationFinding, String> {
+        let finding = run_reputation_helper("fingerprint", fingerprint, helper.as_ref())?;
+        self.reputation.add(fingerprint, &finding.severity, &finding.label, &finding.source)?;
+        Ok(finding)
+    }
+
     pub fn clear_session(&mut self) {
         self.observed.clear();
     }
@@ -443,6 +453,32 @@ mod tests {
         assert_eq!(finding.severity, "high");
         assert_eq!(finding.label, "helper listed");
         assert_eq!(finding.source, "unit helper");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn helper_refresh_caches_fingerprint_reputation() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!("packrat-fingerprint-helper-{}.sh", std::process::id()));
+        std::fs::write(
+            &path,
+            "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"severity\":\"medium\",\"label\":\"fingerprint listed\",\"source\":\"unit helper\"}'\n",
+        ).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+
+        let mut registry = NetRegistry::default();
+        let finding = registry
+            .refresh_fingerprint_reputation_with_helper("ratq1_deadbeefcafe", &path)
+            .unwrap();
+        assert_eq!(finding.label, "fingerprint listed");
+        assert_eq!(
+            registry.reputation_for_fingerprint("ratq1_deadbeefcafe").unwrap().severity,
+            "medium",
+        );
         let _ = std::fs::remove_file(path);
     }
 }

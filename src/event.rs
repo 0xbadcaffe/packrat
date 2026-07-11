@@ -1081,6 +1081,7 @@ fn handle_tls(app: &mut App, key: KeyEvent) {
             app.tls_scroll = app.tls_selected;
         }
         KeyCode::Char('g') => { app.tls_selected = 0; app.tls_scroll = 0; }
+        KeyCode::Char('r') => app.refresh_selected_encrypted_reputation(),
         KeyCode::Char('G') => {
             app.tls_selected = app.tls_tracker.len().saturating_sub(1);
             app.tls_scroll = app.tls_selected;

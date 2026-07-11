@@ -2014,6 +2014,32 @@ impl App {
             Err(error) => self.set_status(format!("WHOIS error: {error}")),
         }
     }
+
+    pub fn refresh_selected_encrypted_reputation(&mut self) {
+        let Some(path) = self.reputation_helper_path.clone() else {
+            self.set_status("Configure --reputation-helper to refresh JA4 or RatQ reputation");
+            return;
+        };
+        let fingerprint = match self.encrypted_view {
+            EncryptedView::Tls => self.tls_tracker.all()
+                .get(self.tls_selected)
+                .and_then(|session| session.ja4.clone()),
+            EncryptedView::Quic => self.quic_scope.all()
+                .get(self.tls_selected)
+                .map(|connection| connection.ratq.clone()),
+        };
+        let Some(fingerprint) = fingerprint.filter(|value| !value.is_empty()) else {
+            self.set_status("No selected encrypted fingerprint to refresh");
+            return;
+        };
+        match self.net_registry.refresh_fingerprint_reputation_with_helper(&fingerprint, path) {
+            Ok(finding) => self.set_status(format!(
+                "Reputation {fingerprint}: {} ({})",
+                finding.label, finding.severity,
+            )),
+            Err(error) => self.set_status(format!("Reputation error: {error}")),
+        }
+    }
 }
 
 /// Convert a byte slice to a printable ASCII line (non-printable → '.').

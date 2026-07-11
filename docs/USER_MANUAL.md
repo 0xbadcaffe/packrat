@@ -256,12 +256,16 @@ ratq1_deadbeefcafe,medium,known QUIC client shape,malware lab
 ```
 
 For explicit online or API-backed reputation checks, start Packrat with
-`--reputation-helper PATH`, select an address in NetRegistry, and press `r`.
-The helper receives JSON on stdin and returns JSON on stdout:
+`--reputation-helper PATH`. Select an address in NetRegistry and press `r`, or
+select a TLS JA4 / QUIC RatQ row in Traffic > Encrypted and press `r`. The
+helper receives JSON on stdin and returns JSON on stdout:
 
 ```json
 { "kind": "address", "target": "203.0.113.9" }
 ```
+
+Fingerprint refreshes use the same shape with `"kind": "fingerprint"` and the
+selected JA4 or RatQ value as `target`.
 
 ```json
 {
@@ -274,7 +278,7 @@ The helper receives JSON on stdin and returns JSON on stdout:
 
 Packrat caches the returned finding in the current case. Without
 `--reputation-helper`, `r` keeps the older explicit WHOIS behavior for selected
-public addresses.
+public addresses in NetRegistry.
 
 Socket event imports use this CSV shape:
 
@@ -289,7 +293,9 @@ Traffic > Encrypted switches between TLS and QUIC scope with `[`/`]`. TLS
 ClientHello inspection includes SNI, ALPN, supported versions, cipher and
 extension metadata, ECH-offered state, and JA4. QUIC scope reports invariant
 header fields, version, connection IDs, packet type, address migration signals,
-and a Packrat RatQ fingerprint built from visible invariant metadata.
+and a Packrat RatQ fingerprint built from visible invariant metadata. Press `r`
+with `--reputation-helper` configured to refresh the selected JA4 or RatQ
+reputation explicitly.
 
 `--key-log` or `SSLKEYLOGFILE` loads TLS 1.2, TLS 1.3, and QUIC secret labels
 and correlates available material by client random. Packrat does not yet decrypt
