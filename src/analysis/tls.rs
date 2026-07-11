@@ -1,7 +1,9 @@
 //! TLS intelligence — SNI extraction, cipher suite tracking, JA3 fingerprinting.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use crate::analysis::encrypted_insight::{parse_client_hello, parse_server_hello};
 use crate::analysis::key_shelf::KeyShelf;
 use crate::net::packet::Packet;
@@ -11,8 +13,17 @@ use crate::net::packet::Packet;
 const TLS_HANDSHAKE:     u8 = 0x16;
 const TLS_CLIENT_HELLO:  u8 = 0x01;
 const TLS_SERVER_HELLO:  u8 = 0x02;
+const TLS_APPLICATION_DATA: u8 = 0x17;
 
 // ─── TLS session ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Default)]
+pub struct DecryptedTlsRecord {
+    pub packet_no: u64,
+    pub content_type: String,
+    pub plaintext: Vec<u8>,
+    pub detail: String,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct TlsSession {
@@ -36,6 +47,7 @@ pub struct TlsSession {
     pub first_seen:      f64,
     pub alert_level:     Option<u8>,   // TLS alert level (1=warning, 2=fatal)
     pub alert_desc:      Option<u8>,   // TLS alert description
+    pub decrypted_records: Vec<DecryptedTlsRecord>,
 }
 
 impl TlsSession {
@@ -70,12 +82,29 @@ const MAX_SESSIONS: usize = 1000;
 pub struct TlsTracker {
     sessions: HashMap<String, TlsSession>,
     pub key_shelf: KeyShelf,
+    pub decrypt_helper_path: Option<PathBuf>,
 }
 
 impl Default for TlsTracker {
     fn default() -> Self {
-        Self { sessions: HashMap::new(), key_shelf: KeyShelf::default() }
+        Self { sessions: HashMap::new(), key_shelf: KeyShelf::default(), decrypt_helper_path: None }
     }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct TlsDecryptRequest {
+    flow_id: String,
+    packet_no: u64,
+    client_random: String,
+    record_hex: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TlsDecryptResponse {
+    ok: bool,
+    content_type: Option<String>,
+    plaintext_hex: Option<String>,
+    detail: Option<String>,
 }
 
 impl TlsTracker {
@@ -111,6 +140,15 @@ impl TlsTracker {
             });
             session.alert_level = pkt.bytes.get(position + 5).copied();
             session.alert_desc = pkt.bytes.get(position + 6).copied();
+        } else if let Some(record) = find_tls_record(&pkt.bytes, TLS_APPLICATION_DATA) {
+            if let Some(decoded) = self.decrypt_record_with_helper(&flow_id, pkt.no, record) {
+                if let Some(session) = self.sessions.get_mut(&flow_id) {
+                    session.decrypted_records.push(decoded);
+                    if session.decrypted_records.len() > 100 {
+                        session.decrypted_records.remove(0);
+                    }
+                }
+            }
         } else {
             return;
         }
@@ -171,6 +209,25 @@ impl TlsTracker {
                 .is_some_and(|random| self.key_shelf.has_client_random(random));
         }
     }
+
+    fn decrypt_record_with_helper(
+        &self,
+        flow_id: &str,
+        packet_no: u64,
+        record: &[u8],
+    ) -> Option<DecryptedTlsRecord> {
+        let session = self.sessions.get(flow_id)?;
+        if !session.key_material { return None; }
+        let client_random = session.client_random.clone()?;
+        let helper = self.decrypt_helper_path.as_ref()?;
+        let request = TlsDecryptRequest {
+            flow_id: flow_id.to_string(),
+            packet_no,
+            client_random,
+            record_hex: hex(record),
+        };
+        run_tls_decrypt_helper(helper, &request).ok()
+    }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -195,6 +252,41 @@ fn tls_version_str(major: u8, minor: u8) -> String {
 
 fn tls_version_code(version: u16) -> String {
     tls_version_str((version >> 8) as u8, version as u8)
+}
+
+fn find_tls_record(raw: &[u8], record_type: u8) -> Option<&[u8]> {
+    let start = raw.windows(5).position(|window| window[0] == record_type && window[1] == 0x03)?;
+    let len = u16::from_be_bytes([*raw.get(start + 3)?, *raw.get(start + 4)?]) as usize;
+    raw.get(start..start + 5 + len)
+}
+
+fn run_tls_decrypt_helper(helper: &Path, request: &TlsDecryptRequest) -> Result<DecryptedTlsRecord, String> {
+    let mut child = Command::new(helper)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("start TLS decrypt helper {}: {error}", helper.display()))?;
+    let input = serde_json::to_vec(request)
+        .map_err(|error| format!("encode TLS decrypt helper request: {error}"))?;
+    child.stdin.as_mut().ok_or("TLS decrypt helper stdin unavailable")?
+        .write_all(&input).map_err(|error| format!("write TLS decrypt helper request: {error}"))?;
+    let output = child.wait_with_output().map_err(|error| format!("wait for TLS decrypt helper: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("TLS decrypt helper failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let response: TlsDecryptResponse = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode TLS decrypt helper response: {error}"))?;
+    if !response.ok {
+        return Err(response.detail.unwrap_or_else(|| "TLS decrypt helper did not authenticate record".into()));
+    }
+    Ok(DecryptedTlsRecord {
+        packet_no: request.packet_no,
+        content_type: response.content_type.unwrap_or_else(|| "application_data".into()),
+        plaintext: decode_hex(&response.plaintext_hex.ok_or("TLS decrypt helper response missing plaintext_hex")?)
+            .ok_or("TLS decrypt helper returned invalid plaintext_hex")?,
+        detail: response.detail.unwrap_or_else(|| "authenticated by helper".into()),
+    })
 }
 
 
@@ -275,4 +367,69 @@ fn compute_ja3_simple(hello: &[u8]) -> String {
         h = h.wrapping_mul(1_099_511_628_211);
     }
     format!("{h:016x}")
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if value.len() % 2 != 0 { return None; }
+    (0..value.len()).step_by(2)
+        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).ok())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn packet(bytes: Vec<u8>) -> Packet {
+        Packet {
+            no: 9,
+            timestamp: 9.0,
+            src: "192.0.2.10".into(),
+            dst: "198.51.100.7".into(),
+            protocol: "TLS".into(),
+            length: bytes.len() as u16,
+            info: String::new(),
+            src_port: Some(50000),
+            dst_port: Some(443),
+            vlan_id: None,
+            vlan_pcp: None,
+            vlan_dei: None,
+            outer_vlan_id: None,
+            bytes,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn helper_authenticated_tls_record_is_retained() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!("packrat-tls-helper-{}.sh", std::process::id()));
+        std::fs::write(
+            &path,
+            "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"content_type\":\"http\",\"plaintext_hex\":\"474554202f20485454502f312e31\",\"detail\":\"auth ok\"}'\n",
+        ).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+
+        let mut tracker = TlsTracker::default();
+        tracker.decrypt_helper_path = Some(path.clone());
+        tracker.insert(TlsSession {
+            flow_id: "192.0.2.10:50000-198.51.100.7:443".into(),
+            client_random: Some("00".repeat(32)),
+            key_material: true,
+            first_seen: 1.0,
+            ..Default::default()
+        });
+        tracker.ingest(&packet(vec![0x17, 0x03, 0x03, 0x00, 0x04, 1, 2, 3, 4]));
+        let session = tracker.get("192.0.2.10:50000-198.51.100.7:443").unwrap();
+        assert_eq!(session.decrypted_records.len(), 1);
+        assert_eq!(session.decrypted_records[0].plaintext, b"GET / HTTP/1.1");
+        let _ = std::fs::remove_file(path);
+    }
 }

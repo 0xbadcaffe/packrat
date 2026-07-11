@@ -124,6 +124,7 @@ pub struct StartupOptions {
     pub mode: StartupMode,
     pub telemetry_listen: Option<std::net::SocketAddr>,
     pub key_log_path: Option<std::path::PathBuf>,
+    pub tls_decrypt_helper_path: Option<std::path::PathBuf>,
     pub latch_mode: LatchMode,
     pub latch_expiry_seconds: u64,
     pub protected_addresses: Vec<std::net::IpAddr>,
@@ -134,7 +135,7 @@ pub struct StartupOptions {
 }
 
 pub fn usage() -> &'static str {
-    "Usage: packrat [OPTIONS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --socket-events PATH   import socket ownership CSV from an external helper\n      --latch-helper PATH    delegate TrafficLatch blocks to a JSON helper command\n      --reputation-helper P  delegate explicit reputation refreshes to a helper\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n      --traffic-latch MODE   monitor, preview, manual, or auto (default: monitor)\n      --latch-seconds N      automatic firewall expiry (default: 900)\n      --protect-address IP   never contain this address; may be repeated\n      --sandbox              restrict filesystem writes with Linux Landlock\n  -h, --help                 show this help"
+    "Usage: packrat [OPTIONS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --tls-decrypt-helper P delegate authenticated TLS record decode to helper\n      --socket-events PATH   import socket ownership CSV from an external helper\n      --latch-helper PATH    delegate TrafficLatch blocks to a JSON helper command\n      --reputation-helper P  delegate explicit reputation refreshes to a helper\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n      --traffic-latch MODE   monitor, preview, manual, or auto (default: monitor)\n      --latch-seconds N      automatic firewall expiry (default: 900)\n      --protect-address IP   never contain this address; may be repeated\n      --sandbox              restrict filesystem writes with Linux Landlock\n  -h, --help                 show this help"
 }
 
 pub fn parse_startup_args<I, S>(args: I) -> Result<CliAction, String>
@@ -147,6 +148,7 @@ where
         mode: StartupMode::Capture,
         telemetry_listen: None,
         key_log_path: None,
+        tls_decrypt_helper_path: None,
         latch_mode: LatchMode::Monitor,
         latch_expiry_seconds: 900,
         protected_addresses: Vec::new(),
@@ -169,6 +171,11 @@ where
                 index += 1;
                 let value = args.get(index).ok_or("--key-log requires a path")?;
                 options.key_log_path = Some(value.into());
+            }
+            "--tls-decrypt-helper" => {
+                index += 1;
+                let value = args.get(index).ok_or("--tls-decrypt-helper requires a path")?;
+                options.tls_decrypt_helper_path = Some(value.into());
             }
             "--socket-events" => {
                 index += 1;

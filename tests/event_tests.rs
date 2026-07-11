@@ -42,7 +42,7 @@ fn parse_startup_args_defaults_to_capture() {
     assert_eq!(
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
         CliAction::Run(StartupOptions {
-            mode: StartupMode::Capture, telemetry_listen: None, key_log_path: None,
+            mode: StartupMode::Capture, telemetry_listen: None, key_log_path: None, tls_decrypt_helper_path: None,
             latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
             sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None,
         })
@@ -54,7 +54,7 @@ fn parse_startup_args_enables_simulation() {
     assert_eq!(
         app::parse_startup_args(["--simulation"]).unwrap(),
         CliAction::Run(StartupOptions {
-            mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None,
+            mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None, tls_decrypt_helper_path: None,
             latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
             sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None,
         })
@@ -62,7 +62,7 @@ fn parse_startup_args_enables_simulation() {
     assert_eq!(
         app::parse_startup_args(["-s"]).unwrap(),
         CliAction::Run(StartupOptions {
-            mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None,
+            mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None, tls_decrypt_helper_path: None,
             latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
             sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None,
         })
@@ -83,6 +83,7 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             mode: StartupMode::Capture,
             telemetry_listen: Some("127.0.0.1:9477".parse().unwrap()),
             key_log_path: None,
+            tls_decrypt_helper_path: None,
             latch_mode: LatchMode::Monitor,
             latch_expiry_seconds: 900,
             protected_addresses: vec![],
@@ -103,6 +104,7 @@ fn parse_startup_args_accepts_key_log_path() {
             mode: StartupMode::Capture,
             telemetry_listen: None,
             key_log_path: Some("/tmp/keys.log".into()),
+            tls_decrypt_helper_path: None,
             latch_mode: LatchMode::Monitor,
             latch_expiry_seconds: 900,
             protected_addresses: vec![],
@@ -112,6 +114,14 @@ fn parse_startup_args_accepts_key_log_path() {
             reputation_helper_path: None,
         })
     );
+}
+
+#[test]
+fn parse_startup_args_accepts_tls_decrypt_helper_path() {
+    let CliAction::Run(options) = app::parse_startup_args(["--tls-decrypt-helper", "/usr/libexec/packrat-tls-decrypt"]).unwrap() else {
+        panic!("expected run options");
+    };
+    assert_eq!(options.tls_decrypt_helper_path, Some("/usr/libexec/packrat-tls-decrypt".into()));
 }
 
 #[test]

@@ -35,6 +35,11 @@ cargo run --features real-capture -- --telemetry-listen 127.0.0.1:9477
 cargo run --features real-capture -- --key-log /secure/session-keys.log
 SSLKEYLOGFILE=/secure/session-keys.log cargo run --features real-capture
 
+# Delegate authenticated TLS record decode to a local helper.
+cargo run --features real-capture -- \
+  --key-log /secure/session-keys.log \
+  --tls-decrypt-helper /usr/libexec/packrat-tls-decrypt
+
 # Import socket ownership events captured by an external helper.
 cargo run --features real-capture -- --socket-events /secure/socket-events.csv
 
@@ -298,9 +303,31 @@ with `--reputation-helper` configured to refresh the selected JA4 or RatQ
 reputation explicitly.
 
 `--key-log` or `SSLKEYLOGFILE` loads TLS 1.2, TLS 1.3, and QUIC secret labels
-and correlates available material by client random. Packrat does not yet decrypt
-TLS records or protected QUIC/HTTP3 payloads; the UI marks that limitation
-instead of presenting encrypted bytes as decoded content.
+and correlates available material by client random. `--tls-decrypt-helper PATH`
+delegates authenticated TLS record decoding to a local helper. Packrat sends the
+flow id, packet number, client random, and TLS record bytes as JSON; it retains
+plaintext only when the helper returns `ok: true`.
+
+```json
+{
+  "flow_id": "192.0.2.10:50000-198.51.100.7:443",
+  "packet_no": 42,
+  "client_random": "001122...",
+  "record_hex": "170303..."
+}
+```
+
+```json
+{
+  "ok": true,
+  "content_type": "http",
+  "plaintext_hex": "474554202f20485454502f312e31",
+  "detail": "authenticated by helper"
+}
+```
+
+Packrat does not yet decode protected QUIC/HTTP3 payloads; the UI marks that
+limitation instead of presenting encrypted bytes as decoded content.
 
 ## PCAP, Evidence, and Telemetry
 
