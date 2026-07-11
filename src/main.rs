@@ -34,8 +34,8 @@ use net::packet::Packet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let startup_mode = match app::parse_startup_args(std::env::args().skip(1)) {
-        Ok(CliAction::Run(mode)) => mode,
+    let options = match app::parse_startup_args(std::env::args().skip(1)) {
+        Ok(CliAction::Run(options)) => options,
         Ok(CliAction::Help) => {
             println!("{}", app::usage());
             return Ok(());
@@ -46,6 +46,11 @@ async fn main() -> Result<()> {
         }
     };
 
+    let telemetry_listener = match options.telemetry_listen {
+        Some(address) => Some(analysis::telemetry::bind(address).await?),
+        None => None,
+    };
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -53,7 +58,10 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let (packet_tx, mut packet_rx) = tokio::sync::mpsc::channel::<Packet>(10_000);
-    let mut app = App::new_with_mode(packet_tx, startup_mode);
+    let mut app = App::new_with_mode(packet_tx, options.mode);
+    if let Some(listener) = telemetry_listener {
+        tokio::spawn(analysis::telemetry::serve(listener, app.telemetry.clone()));
+    }
 
     let mut tick_interval = time::interval(Duration::from_millis(100));
     let mut event_reader = crossterm::event::EventStream::new();

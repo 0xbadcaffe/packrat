@@ -8,7 +8,7 @@
 //! every important per-tab action key.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use packrat_tui::app::{self, App, CliAction, StartupMode};
+use packrat_tui::app::{self, App, CliAction, StartupMode, StartupOptions};
 use packrat_tui::event;
 use packrat_tui::tabs::{Tab, Workspace};
 use rstest::rstest;
@@ -40,7 +40,7 @@ async fn app_new_for_test_ok() {
 fn parse_startup_args_defaults_to_capture() {
     assert_eq!(
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
-        CliAction::Run(StartupMode::Capture)
+        CliAction::Run(StartupOptions { mode: StartupMode::Capture, telemetry_listen: None })
     );
 }
 
@@ -48,17 +48,29 @@ fn parse_startup_args_defaults_to_capture() {
 fn parse_startup_args_enables_simulation() {
     assert_eq!(
         app::parse_startup_args(["--simulation"]).unwrap(),
-        CliAction::Run(StartupMode::Simulation)
+        CliAction::Run(StartupOptions { mode: StartupMode::Simulation, telemetry_listen: None })
     );
     assert_eq!(
         app::parse_startup_args(["-s"]).unwrap(),
-        CliAction::Run(StartupMode::Simulation)
+        CliAction::Run(StartupOptions { mode: StartupMode::Simulation, telemetry_listen: None })
     );
 }
 
 #[test]
 fn parse_startup_args_rejects_unknown_flags() {
     assert!(app::parse_startup_args(["--real-capture"]).is_err());
+}
+
+#[test]
+fn parse_startup_args_accepts_local_telemetry_listener() {
+    let result = app::parse_startup_args(["--telemetry-listen", "127.0.0.1:9477"]).unwrap();
+    assert_eq!(
+        result,
+        CliAction::Run(StartupOptions {
+            mode: StartupMode::Capture,
+            telemetry_listen: Some("127.0.0.1:9477".parse().unwrap()),
+        })
+    );
 }
 
 #[tokio::test]

@@ -14,6 +14,8 @@ use crate::analysis::diff::DiffEngine;
 use crate::analysis::display_filter::DisplayFilter;
 use crate::analysis::ioc::IocEngine;
 use crate::analysis::incident::{IncidentSource, IncidentStore};
+use crate::analysis::evidence_vault::EvidenceVault;
+use crate::analysis::telemetry::{TelemetryHub, TelemetrySnapshot};
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::notebook::Notebook;
 use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
@@ -94,14 +96,20 @@ pub enum StartupMode {
     Simulation,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliAction {
-    Run(StartupMode),
+    Run(StartupOptions),
     Help,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupOptions {
+    pub mode: StartupMode,
+    pub telemetry_listen: Option<std::net::SocketAddr>,
+}
+
 pub fn usage() -> &'static str {
-    "Usage: packrat [--simulation]\n\nOptions:\n  -s, --simulation  run the built-in simulated traffic scenario\n  -h, --help        show this help"
+    "Usage: packrat [--simulation] [--telemetry-listen ADDRESS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n  -h, --help                 show this help"
 }
 
 pub fn parse_startup_args<I, S>(args: I) -> Result<CliAction, String>
@@ -109,15 +117,23 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let mut mode = StartupMode::Capture;
-    for arg in args {
-        match arg.as_ref() {
-            "-s" | "--simulation" => mode = StartupMode::Simulation,
+    let args: Vec<String> = args.into_iter().map(|arg| arg.as_ref().to_string()).collect();
+    let mut options = StartupOptions { mode: StartupMode::Capture, telemetry_listen: None };
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "-s" | "--simulation" => options.mode = StartupMode::Simulation,
             "-h" | "--help" => return Ok(CliAction::Help),
+            "--telemetry-listen" => {
+                index += 1;
+                let value = args.get(index).ok_or("--telemetry-listen requires an address")?;
+                options.telemetry_listen = Some(value.parse().map_err(|_| format!("invalid telemetry address: {value}"))?);
+            }
             unknown => return Err(format!("unknown argument: {unknown}")),
         }
+        index += 1;
     }
-    Ok(CliAction::Run(mode))
+    Ok(CliAction::Run(options))
 }
 
 fn list_interfaces(include_simulated: bool) -> Vec<String> {
@@ -198,6 +214,8 @@ pub struct App {
     pub ioc_engine:      IocEngine,
     pub rule_engine:     RuleEngine,
     pub incidents:       IncidentStore,
+    pub evidence_vault:  EvidenceVault,
+    pub telemetry:       TelemetryHub,
     /// Visible only while an unreviewed critical incident needs attention.
     pub alert_overlay_open: bool,
     pub carver:          Carver,
@@ -351,6 +369,8 @@ impl App {
                 e
             },
             incidents:        IncidentStore::default(),
+            evidence_vault:   EvidenceVault::default(),
+            telemetry:        TelemetryHub::default(),
             alert_overlay_open: false,
             carver:           Carver::default(),
             carved_objects:   Vec::new(),
@@ -1244,6 +1264,7 @@ impl App {
             packet,
             self.packets.iter().cloned(),
         );
+        self.freeze_incident_evidence(id);
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {signature}"));
     }
@@ -1263,8 +1284,19 @@ impl App {
             packet,
             self.packets.iter().cloned(),
         );
+        self.freeze_incident_evidence(id);
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {rule_name}"));
+    }
+
+    fn freeze_incident_evidence(&mut self, incident_id: u64) {
+        let incident = self.incidents.incidents.iter()
+            .find(|incident| incident.id == incident_id)
+            .cloned();
+        let Some(incident) = incident else { return; };
+        if let Err(error) = self.evidence_vault.freeze(&incident) {
+            self.set_status(format!("Incident #{incident_id} retained in memory; evidence export failed: {error}"));
+        }
     }
 
     /// Open the retained incident packet history and record that it was reviewed.
@@ -1348,6 +1380,26 @@ impl App {
 
         self.yara_scan_new_objects();
         self.graph_tick();
+        self.refresh_telemetry();
+    }
+
+    fn refresh_telemetry(&self) {
+        self.telemetry.publish(TelemetrySnapshot {
+            packets_total: self.packet_counter,
+            bytes_total: self.total_bytes,
+            visible_packets: self.filtered.len(),
+            flows: self.flow_tracker.flows.len(),
+            hosts: self.hosts.len(),
+            security_findings: self.security.alert_count(),
+            rule_hits: self.rule_engine.hits.len(),
+            ioc_hits: self.ioc_engine.hit_count(),
+            pending_incidents: self.incidents.incidents.iter()
+                .filter(|incident| incident.status == crate::analysis::incident::IncidentStatus::PendingReview)
+                .count(),
+            evidence_exports: self.evidence_vault.exports.len(),
+            packets_per_second: self.current_rate(),
+            capturing: self.capturing,
+        });
     }
 
     /// Incrementally sync all analysis subsystems into the operator graph,
@@ -1468,6 +1520,7 @@ impl App {
         self.ioc_engine.clear_hits();
         self.rule_engine.clear_hits();
         self.incidents.clear();
+        self.evidence_vault.clear_session();
         self.alert_overlay_open = false;
         self.carved_objects.clear();
         self.yara_engine.clear_results();

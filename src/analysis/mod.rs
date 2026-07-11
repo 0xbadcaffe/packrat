@@ -19,3 +19,5 @@ pub mod path_reconstruction;
 pub mod graph_scoring;
 pub mod graph_cluster;
 pub mod incident;
+pub mod evidence_vault;
+pub mod telemetry;
