@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone)]
 pub struct PrefixIdentity {
@@ -31,6 +32,21 @@ pub struct NetRegistry {
     pub reputation: ReputationBook,
     pub observed: HashMap<IpAddr, AddressIdentity>,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ReputationHelperRequest {
+    kind: &'static str,
+    target: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ReputationHelperResponse {
+    ok: bool,
+    severity: Option<String>,
+    label: Option<String>,
+    source: Option<String>,
+    detail: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,6 +223,28 @@ impl NetRegistry {
         Ok(self.observed.get(&address).unwrap())
     }
 
+    /// Explicit operator action. The helper owns any outbound reputation lookup
+    /// or API credentials; packet ingestion never invokes it automatically.
+    pub fn refresh_reputation_with_helper(
+        &mut self,
+        address: IpAddr,
+        helper: impl AsRef<Path>,
+    ) -> Result<&AddressIdentity, String> {
+        let finding = run_reputation_helper("address", &address.to_string(), helper.as_ref())?;
+        self.reputation.add(&address.to_string(), &finding.severity, &finding.label, &finding.source)?;
+        let entry = self.observed.entry(address).or_insert_with(|| AddressIdentity {
+            address,
+            asn: None,
+            organization: if is_private(address) { "Private network".into() } else { "Unresolved".into() },
+            source: "observed".into(),
+            reputation: None,
+            updated_at: now(),
+        });
+        entry.reputation = Some(finding);
+        entry.updated_at = now();
+        Ok(entry)
+    }
+
     pub fn clear_session(&mut self) {
         self.observed.clear();
     }
@@ -220,6 +258,33 @@ impl NetRegistry {
             identity.reputation = self.reputation.lookup_address(identity.address);
         }
     }
+}
+
+fn run_reputation_helper(kind: &'static str, target: &str, helper: &Path) -> Result<ReputationFinding, String> {
+    let mut child = Command::new(helper)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("start reputation helper {}: {error}", helper.display()))?;
+    let request = serde_json::to_vec(&ReputationHelperRequest { kind, target: target.to_string() })
+        .map_err(|error| format!("encode reputation helper request: {error}"))?;
+    child.stdin.as_mut().ok_or("reputation helper stdin unavailable")?
+        .write_all(&request).map_err(|error| format!("write reputation helper request: {error}"))?;
+    let output = child.wait_with_output().map_err(|error| format!("wait for reputation helper: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("reputation helper failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let response: ReputationHelperResponse = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode reputation helper response: {error}"))?;
+    if !response.ok {
+        return Err(response.detail.unwrap_or_else(|| "reputation helper returned no finding".into()));
+    }
+    Ok(ReputationFinding {
+        severity: response.severity.ok_or("reputation helper response missing severity")?,
+        label: response.label.ok_or("reputation helper response missing label")?,
+        source: response.source.unwrap_or_else(|| format!("helper:{}", helper.display())),
+    })
 }
 
 impl ReputationBook {
@@ -353,6 +418,31 @@ mod tests {
             registry.reputation_for_fingerprint("RATQ1_DEADBEEFCAFE").unwrap().severity,
             "medium",
         );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn helper_refresh_marks_selected_address_reputation() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!("packrat-reputation-helper-{}.sh", std::process::id()));
+        std::fs::write(
+            &path,
+            "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"severity\":\"high\",\"label\":\"helper listed\",\"source\":\"unit helper\"}'\n",
+        ).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+
+        let mut registry = NetRegistry::default();
+        let identity = registry
+            .refresh_reputation_with_helper("203.0.113.9".parse().unwrap(), &path)
+            .unwrap();
+        let finding = identity.reputation.as_ref().unwrap();
+        assert_eq!(finding.severity, "high");
+        assert_eq!(finding.label, "helper listed");
+        assert_eq!(finding.source, "unit helper");
         let _ = std::fs::remove_file(path);
     }
 }

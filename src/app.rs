@@ -130,10 +130,11 @@ pub struct StartupOptions {
     pub sandbox: bool,
     pub socket_events_path: Option<std::path::PathBuf>,
     pub latch_helper_path: Option<std::path::PathBuf>,
+    pub reputation_helper_path: Option<std::path::PathBuf>,
 }
 
 pub fn usage() -> &'static str {
-    "Usage: packrat [OPTIONS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --socket-events PATH   import socket ownership CSV from an external helper\n      --latch-helper PATH    delegate TrafficLatch blocks to a JSON helper command\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n      --traffic-latch MODE   monitor, preview, manual, or auto (default: monitor)\n      --latch-seconds N      automatic firewall expiry (default: 900)\n      --protect-address IP   never contain this address; may be repeated\n      --sandbox              restrict filesystem writes with Linux Landlock\n  -h, --help                 show this help"
+    "Usage: packrat [OPTIONS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --socket-events PATH   import socket ownership CSV from an external helper\n      --latch-helper PATH    delegate TrafficLatch blocks to a JSON helper command\n      --reputation-helper P  delegate explicit reputation refreshes to a helper\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n      --traffic-latch MODE   monitor, preview, manual, or auto (default: monitor)\n      --latch-seconds N      automatic firewall expiry (default: 900)\n      --protect-address IP   never contain this address; may be repeated\n      --sandbox              restrict filesystem writes with Linux Landlock\n  -h, --help                 show this help"
 }
 
 pub fn parse_startup_args<I, S>(args: I) -> Result<CliAction, String>
@@ -152,6 +153,7 @@ where
         sandbox: false,
         socket_events_path: None,
         latch_helper_path: None,
+        reputation_helper_path: None,
     };
     let mut index = 0;
     while index < args.len() {
@@ -177,6 +179,11 @@ where
                 index += 1;
                 let value = args.get(index).ok_or("--latch-helper requires a path")?;
                 options.latch_helper_path = Some(value.into());
+            }
+            "--reputation-helper" => {
+                index += 1;
+                let value = args.get(index).ok_or("--reputation-helper requires a path")?;
+                options.reputation_helper_path = Some(value.into());
             }
             "--traffic-latch" => {
                 index += 1;
@@ -293,6 +300,7 @@ pub struct App {
     pub latch_helper_path: Option<std::path::PathBuf>,
     pub wire_pulse:      WirePulse,
     pub net_registry:    NetRegistry,
+    pub reputation_helper_path: Option<std::path::PathBuf>,
     /// Visible only while an unreviewed critical incident needs attention.
     pub alert_overlay_open: bool,
     pub carver:          Carver,
@@ -456,6 +464,7 @@ impl App {
             latch_helper_path: None,
             wire_pulse:       WirePulse::default(),
             net_registry:     NetRegistry::default(),
+            reputation_helper_path: None,
             alert_overlay_open: false,
             carver:           Carver::default(),
             carved_objects:   Vec::new(),
@@ -1982,9 +1991,21 @@ impl App {
     pub fn refresh_selected_whois(&mut self) {
         let address = self.net_registry.sorted().get(self.security_scroll).map(|entry| entry.address);
         let Some(address) = address else {
-            self.set_status("No public address selected for WHOIS");
+            self.set_status("No address selected for refresh");
             return;
         };
+        if let Some(path) = self.reputation_helper_path.clone() {
+            match self.net_registry.refresh_reputation_with_helper(address, path) {
+                Ok(identity) => {
+                    let detail = identity.reputation.as_ref()
+                        .map(|finding| format!("{} ({})", finding.label, finding.severity))
+                        .unwrap_or_else(|| "no finding".into());
+                    self.set_status(format!("Reputation {address}: {detail}"));
+                }
+                Err(error) => self.set_status(format!("Reputation error: {error}")),
+            }
+            return;
+        }
         match self.net_registry.refresh_whois(address) {
             Ok(identity) => {
                 let organization = identity.organization.clone();
