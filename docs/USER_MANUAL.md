@@ -40,6 +40,9 @@ cargo run --features real-capture -- \
   --key-log /secure/session-keys.log \
   --tls-decrypt-helper /usr/libexec/packrat-tls-decrypt
 
+# Delegate protected QUIC/HTTP3 decode to a local helper.
+cargo run --features real-capture -- --quic-decode-helper /usr/libexec/packrat-quic-decode
+
 # Import socket ownership events captured by an external helper.
 cargo run --features real-capture -- --socket-events /secure/socket-events.csv
 
@@ -326,8 +329,28 @@ plaintext only when the helper returns `ok: true`.
 }
 ```
 
-Packrat does not yet decode protected QUIC/HTTP3 payloads; the UI marks that
-limitation instead of presenting encrypted bytes as decoded content.
+`--quic-decode-helper PATH` delegates protected QUIC/HTTP3 decode to a local
+helper. Packrat sends the connection id, packet number, and packet bytes as
+JSON and stores returned frame summaries only when the helper returns `ok:
+true`.
+
+```json
+{
+  "connection_id": "0102030405060708",
+  "packet_no": 42,
+  "packet_hex": "c000000001..."
+}
+```
+
+```json
+{
+  "ok": true,
+  "frames": [
+    { "frame_type": "headers", "detail": "GET /" }
+  ],
+  "detail": "authenticated by helper"
+}
+```
 
 ## PCAP, Evidence, and Telemetry
 
