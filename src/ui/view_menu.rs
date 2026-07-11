@@ -61,7 +61,7 @@ fn view_description(view: Tab) -> &'static str {
         Tab::Packets => "packet list and protocol decode",
         Tab::Flows => "conversations, volume, beacon scoring",
         Tab::Hosts => "host inventory and tags",
-        Tab::TlsAnalysis => "TLS sessions and fingerprints",
+        Tab::TlsAnalysis => "TLS, JA4, ECH, key logs, and QUIC",
         Tab::Analysis => "traffic and incident summaries",
         Tab::Strings => "searchable payload strings",
         Tab::Visualize => "traffic distribution views",

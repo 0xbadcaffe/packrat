@@ -59,6 +59,9 @@ async fn main() -> Result<()> {
 
     let (packet_tx, mut packet_rx) = tokio::sync::mpsc::channel::<Packet>(10_000);
     let mut app = App::new_with_mode(packet_tx, options.mode);
+    if let Some(path) = options.key_log_path {
+        app.load_key_log(path);
+    }
     if let Some(listener) = telemetry_listener {
         tokio::spawn(analysis::telemetry::serve(listener, app.telemetry.clone()));
     }

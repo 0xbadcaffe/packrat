@@ -5,10 +5,14 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table},
 };
-use crate::app::App;
+use crate::app::{App, EncryptedView};
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
+    if app.encrypted_view == EncryptedView::Quic {
+        draw_quic(f, app, area);
+        return;
+    }
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(10), Constraint::Length(1)])
@@ -31,8 +35,8 @@ fn draw_session_table(
         Cell::from("SNI").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
         Cell::from("Version").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
         Cell::from("Cipher").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
-        Cell::from("JA3 (truncated)").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
-        Cell::from("JA3s").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("JA4").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Cell::from("JA3").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
         Cell::from("Flags").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
     ]).style(Style::default().bg(C_BG2())).height(1);
 
@@ -50,13 +54,17 @@ fn draw_session_table(
         let cipher = s.cipher_suite
             .map(|cs| format!("{} (0x{cs:04x})", crate::analysis::tls::cipher_name(cs)))
             .unwrap_or_else(|| "-".into());
+        let ja4 = s.ja4.as_deref()
+            .map(|j| j[..j.len().min(16)].to_string())
+            .unwrap_or_else(|| "-".into());
         let ja3 = s.ja3.as_deref()
             .map(|j| j[..j.len().min(16)].to_string())
             .unwrap_or_else(|| "-".into());
-        let ja3s = s.ja3s.as_deref()
-            .map(|j| j[..j.len().min(16)].to_string())
-            .unwrap_or_else(|| "-".into());
-        let flags = if s.is_weak() { "WEAK" } else { "ok" }.to_string();
+        let mut flags = Vec::new();
+        if s.is_weak() { flags.push("WEAK"); }
+        if s.ech_offered { flags.push("ECH"); }
+        if s.key_material { flags.push("KEY"); }
+        let flags = if flags.is_empty() { "ok".into() } else { flags.join(",") };
         let flag_style = if s.is_weak() {
             Style::default().fg(C_RED()).add_modifier(Modifier::BOLD)
         } else {
@@ -74,8 +82,8 @@ fn draw_session_table(
             Cell::from(sni).style(Style::default().fg(C_CYAN())),
             Cell::from(ver).style(Style::default().fg(C_FG2())),
             Cell::from(cipher).style(Style::default().fg(C_FG2())),
+            Cell::from(ja4).style(Style::default().fg(C_MAGENTA())),
             Cell::from(ja3).style(Style::default().fg(C_FG3())),
-            Cell::from(ja3s).style(Style::default().fg(C_FG3())),
             Cell::from(flags).style(flag_style),
         ]).style(row_style)
     }).collect();
@@ -153,6 +161,10 @@ fn draw_detail_panel(
             ),
         ])),
         ListItem::new(Line::from(vec![
+            Span::styled("  JA4:     ", Style::default().fg(C_FG3())),
+            Span::styled(s.ja4.as_deref().unwrap_or("-"), Style::default().fg(C_MAGENTA())),
+        ])),
+        ListItem::new(Line::from(vec![
             Span::styled("  JA3:     ", Style::default().fg(C_FG3())),
             Span::styled(s.ja3.as_deref().unwrap_or("-"), Style::default().fg(C_FG2())),
         ])),
@@ -161,9 +173,13 @@ fn draw_detail_panel(
             Span::styled(s.ja3s.as_deref().unwrap_or("-"), Style::default().fg(C_FG2())),
         ])),
         ListItem::new(Line::from(vec![
+            Span::styled("  ALPN:    ", Style::default().fg(C_FG3())),
+            Span::styled(s.alpn.as_deref().unwrap_or("-"), Style::default().fg(C_CYAN())),
+        ])),
+        ListItem::new(Line::from(vec![
             Span::styled("  Status:  ", Style::default().fg(C_FG3())),
             Span::styled(
-                if s.is_weak() { "WEAK CIPHER" } else { "OK" },
+                if s.ech_offered { "ECH OFFERED" } else if s.is_weak() { "WEAK CIPHER" } else { "OK" },
                 if s.is_weak() { Style::default().fg(C_RED()).add_modifier(Modifier::BOLD) }
                 else { Style::default().fg(C_GREEN()) },
             ),
@@ -196,6 +212,13 @@ fn draw_detail_panel(
             ),
         ])),
         ListItem::new(Line::from(vec![
+            Span::styled("  Key Material: ", Style::default().fg(C_FG3())),
+            Span::styled(
+                if s.key_material { "available (record decoder required)" } else { "not available" },
+                Style::default().fg(if s.key_material { C_GREEN() } else { C_FG3() }),
+            ),
+        ])),
+        ListItem::new(Line::from(vec![
             Span::styled("  TLS Alert:   ", Style::default().fg(C_FG3())),
             Span::styled(
                 match (s.alert_level, s.alert_desc) {
@@ -223,10 +246,47 @@ fn draw_status_bar(
     let with_sni = sessions.iter().filter(|s| s.sni.is_some()).count();
     let bar = Paragraph::new(Line::from(vec![
         Span::styled(
-            format!(" {} sessions  {} with SNI  {} weak  [j/k] scroll  [c] clear",
-                sessions.len(), with_sni, weak),
+            format!(" TLS view  {} sessions  {} SNI  {} weak  {} keys  [[/]] TLS/QUIC  [j/k] scroll",
+                sessions.len(), with_sni, weak, _app.tls_tracker.key_shelf.secret_count()),
             Style::default().fg(C_FG3()),
         ),
     ])).style(Style::default().bg(C_BG2()));
     f.render_widget(bar, area);
+}
+
+fn draw_quic(f: &mut Frame, app: &App, area: Rect) {
+    let connections = app.quic_scope.all();
+    let header = Row::new(vec![
+        Cell::from("Connection ID"), Cell::from("Version"), Cell::from("Types"),
+        Cell::from("Packets"), Cell::from("Bytes"), Cell::from("Addresses"), Cell::from("Flags"),
+    ]).style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD));
+    let rows = connections.iter().map(|connection| {
+        let mut types: Vec<_> = connection.packet_types.iter().cloned().collect();
+        types.sort();
+        let flags = [
+            (!connection.fixed_bit_valid).then_some("INVALID-FIXED"),
+            connection.migration_observed().then_some("MIGRATION"),
+        ].into_iter().flatten().collect::<Vec<_>>().join(",");
+        Row::new(vec![
+            Cell::from(connection.id.clone()).style(Style::default().fg(C_CYAN())),
+            Cell::from(connection.version.map(|version| format!("0x{version:08x}")).unwrap_or_else(|| "short".into())),
+            Cell::from(types.join(",")),
+            Cell::from(connection.packets.to_string()),
+            Cell::from(crate::ui::fmt_bytes(connection.bytes)),
+            Cell::from(connection.addresses.len().to_string()),
+            Cell::from(flags).style(Style::default().fg(C_RED())),
+        ])
+    }).collect::<Vec<_>>();
+    let chunks = Layout::default().direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)]).split(area);
+    let table = Table::new(
+        std::iter::once(header).chain(rows).collect::<Vec<_>>(),
+        [Constraint::Length(24), Constraint::Length(12), Constraint::Length(24),
+         Constraint::Length(10), Constraint::Length(12), Constraint::Length(10), Constraint::Min(0)],
+    ).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER()))
+        .title(Span::styled(format!(" QUIC Scope - {} connections ", connections.len()), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))))
+        .style(Style::default().bg(C_BG()));
+    f.render_widget(table, chunks[0]);
+    f.render_widget(Paragraph::new(" QUIC invariant headers only; protected payload is never presented as decoded  [[/]] TLS/QUIC")
+        .style(Style::default().fg(C_FG3()).bg(C_BG2())), chunks[1]);
 }

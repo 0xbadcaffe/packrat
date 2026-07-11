@@ -18,6 +18,7 @@ use crate::analysis::evidence_vault::EvidenceVault;
 use crate::analysis::telemetry::{TelemetryHub, TelemetrySnapshot};
 use crate::analysis::socket_scope::SocketScope;
 use crate::analysis::route_ledger::RouteLedger;
+use crate::analysis::quic_scope::QuicScope;
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::notebook::Notebook;
 use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
@@ -94,6 +95,13 @@ pub enum ObjectsSubTab {
     YaraMatches,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EncryptedView {
+    #[default]
+    Tls,
+    Quic,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartupMode {
     Capture,
@@ -110,10 +118,11 @@ pub enum CliAction {
 pub struct StartupOptions {
     pub mode: StartupMode,
     pub telemetry_listen: Option<std::net::SocketAddr>,
+    pub key_log_path: Option<std::path::PathBuf>,
 }
 
 pub fn usage() -> &'static str {
-    "Usage: packrat [--simulation] [--telemetry-listen ADDRESS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n  -h, --help                 show this help"
+    "Usage: packrat [--simulation] [--key-log PATH] [--telemetry-listen ADDRESS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n  -h, --help                 show this help"
 }
 
 pub fn parse_startup_args<I, S>(args: I) -> Result<CliAction, String>
@@ -122,7 +131,11 @@ where
     S: AsRef<str>,
 {
     let args: Vec<String> = args.into_iter().map(|arg| arg.as_ref().to_string()).collect();
-    let mut options = StartupOptions { mode: StartupMode::Capture, telemetry_listen: None };
+    let mut options = StartupOptions {
+        mode: StartupMode::Capture,
+        telemetry_listen: None,
+        key_log_path: None,
+    };
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -132,6 +145,11 @@ where
                 index += 1;
                 let value = args.get(index).ok_or("--telemetry-listen requires an address")?;
                 options.telemetry_listen = Some(value.parse().map_err(|_| format!("invalid telemetry address: {value}"))?);
+            }
+            "--key-log" => {
+                index += 1;
+                let value = args.get(index).ok_or("--key-log requires a path")?;
+                options.key_log_path = Some(value.into());
             }
             unknown => return Err(format!("unknown argument: {unknown}")),
         }
@@ -214,6 +232,7 @@ pub struct App {
     pub streams:         StreamAssembler,
     pub timeline:        ProtocolTimelines,
     pub tls_tracker:     TlsTracker,
+    pub quic_scope:      QuicScope,
     pub vlan_intel:      VlanIntel,
     pub ioc_engine:      IocEngine,
     pub rule_engine:     RuleEngine,
@@ -248,6 +267,7 @@ pub struct App {
     // TLS UI state
     pub tls_scroll:      usize,
     pub tls_selected:    usize,
+    pub encrypted_view:  EncryptedView,
     // Objects UI state
     pub objects_scroll:       usize,
     pub objects_subtab:       ObjectsSubTab,
@@ -363,6 +383,7 @@ impl App {
             streams:          StreamAssembler::default(),
             timeline:         ProtocolTimelines::default(),
             tls_tracker:      TlsTracker::default(),
+            quic_scope:       QuicScope::default(),
             vlan_intel:       VlanIntel::default(),
             ioc_engine:       {
                 let mut e = IocEngine::default();
@@ -400,6 +421,7 @@ impl App {
             hosts_tag_input:  String::new(),
             tls_scroll:            0,
             tls_selected:          0,
+            encrypted_view:        EncryptedView::Tls,
             objects_scroll:        0,
             objects_subtab:        ObjectsSubTab::Objects,
             yara_rules_scroll:     0,
@@ -1214,6 +1236,7 @@ impl App {
 
         // TLS intelligence
         self.tls_tracker.ingest(&pkt);
+        self.quic_scope.ingest(&pkt);
 
         // VLAN intelligence
         self.vlan_intel.ingest(&pkt);
@@ -1366,6 +1389,9 @@ impl App {
 
         if self.rate_tick % 20 == 1 {
             let _ = self.socket_scope.refresh();
+            if self.tls_tracker.key_shelf.path.is_some() {
+                let _ = self.tls_tracker.reload_key_log();
+            }
         }
 
         // Advance PCAP replay — inject replayed packets
@@ -1530,6 +1556,7 @@ impl App {
         self.streams.clear();
         self.timeline.clear();
         self.tls_tracker.clear();
+        self.quic_scope.clear();
         self.vlan_intel.clear();
         self.ioc_engine.clear_hits();
         self.rule_engine.clear_hits();
@@ -1824,6 +1851,13 @@ impl App {
         match self.route_ledger.promote_observed() {
             Ok(count) => self.set_status(format!("Added {count} routes to the baseline")),
             Err(error) => self.set_status(format!("Route policy error: {error}")),
+        }
+    }
+
+    pub fn load_key_log(&mut self, path: impl AsRef<std::path::Path>) {
+        match self.tls_tracker.load_key_log(path.as_ref()) {
+            Ok(count) => self.set_status(format!("Loaded {count} TLS/QUIC key-log secrets")),
+            Err(error) => self.set_status(format!("Key-log error: {error}")),
         }
     }
 }

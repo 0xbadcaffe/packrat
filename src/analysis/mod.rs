@@ -23,3 +23,6 @@ pub mod evidence_vault;
 pub mod telemetry;
 pub mod socket_scope;
 pub mod route_ledger;
+pub mod key_shelf;
+pub mod encrypted_insight;
+pub mod quic_scope;

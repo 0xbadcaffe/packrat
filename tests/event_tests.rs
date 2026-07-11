@@ -40,7 +40,7 @@ async fn app_new_for_test_ok() {
 fn parse_startup_args_defaults_to_capture() {
     assert_eq!(
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
-        CliAction::Run(StartupOptions { mode: StartupMode::Capture, telemetry_listen: None })
+        CliAction::Run(StartupOptions { mode: StartupMode::Capture, telemetry_listen: None, key_log_path: None })
     );
 }
 
@@ -48,11 +48,11 @@ fn parse_startup_args_defaults_to_capture() {
 fn parse_startup_args_enables_simulation() {
     assert_eq!(
         app::parse_startup_args(["--simulation"]).unwrap(),
-        CliAction::Run(StartupOptions { mode: StartupMode::Simulation, telemetry_listen: None })
+        CliAction::Run(StartupOptions { mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None })
     );
     assert_eq!(
         app::parse_startup_args(["-s"]).unwrap(),
-        CliAction::Run(StartupOptions { mode: StartupMode::Simulation, telemetry_listen: None })
+        CliAction::Run(StartupOptions { mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None })
     );
 }
 
@@ -69,6 +69,20 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
         CliAction::Run(StartupOptions {
             mode: StartupMode::Capture,
             telemetry_listen: Some("127.0.0.1:9477".parse().unwrap()),
+            key_log_path: None,
+        })
+    );
+}
+
+#[test]
+fn parse_startup_args_accepts_key_log_path() {
+    let result = app::parse_startup_args(["--key-log", "/tmp/keys.log"]).unwrap();
+    assert_eq!(
+        result,
+        CliAction::Run(StartupOptions {
+            mode: StartupMode::Capture,
+            telemetry_listen: None,
+            key_log_path: Some("/tmp/keys.log".into()),
         })
     );
 }

@@ -1,6 +1,9 @@
 //! TLS intelligence — SNI extraction, cipher suite tracking, JA3 fingerprinting.
 
 use std::collections::HashMap;
+use std::path::Path;
+use crate::analysis::encrypted_insight::{parse_client_hello, parse_server_hello};
+use crate::analysis::key_shelf::KeyShelf;
 use crate::net::packet::Packet;
 
 // ─── TLS record types ─────────────────────────────────────────────────────────
@@ -19,6 +22,13 @@ pub struct TlsSession {
     pub tls_version:     Option<String>,
     pub ja3:             Option<String>,
     pub ja3s:            Option<String>,
+    pub ja4:             Option<String>,
+    pub client_random:   Option<String>,
+    pub alpn:            Option<String>,
+    pub ech_offered:     bool,
+    /// Matching key-log material is available. Payload decryption is only
+    /// reported after a decoder successfully authenticates records.
+    pub key_material:    bool,
     pub cert_cn:         Option<String>,
     pub cert_san:        Vec<String>,
     pub cert_issuer:     Option<String>,
@@ -56,77 +66,53 @@ static WEAK_CIPHERS: &[u16] = &[
 
 const MAX_SESSIONS: usize = 1000;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TlsTracker {
     sessions: HashMap<String, TlsSession>,
+    pub key_shelf: KeyShelf,
+}
+
+impl Default for TlsTracker {
+    fn default() -> Self {
+        Self { sessions: HashMap::new(), key_shelf: KeyShelf::default() }
+    }
 }
 
 impl TlsTracker {
     pub fn ingest(&mut self, pkt: &Packet) {
-        // Quick check: look for TLS record in packet bytes
-        let bytes = &pkt.bytes;
-
-        // Ethernet(14) + IP(20) + TCP(20) = 54 bytes minimum
-        if bytes.len() < 60 { return; }
-
-        let payload_start = 54; // approximate
-        let payload = &bytes[payload_start..];
-
-        if payload.is_empty() || payload[0] != TLS_HANDSHAKE { return; }
-        if payload.len() < 6 { return; }
-
         let flow_id = make_flow_id(pkt);
-
-        if payload.len() > 5 {
-            let handshake_type = payload[5];
-            match handshake_type {
-                TLS_CLIENT_HELLO => {
-                    let session = self.sessions.entry(flow_id.clone())
-                        .or_insert_with(|| TlsSession {
-                            flow_id: flow_id.clone(),
-                            first_seen: pkt.timestamp,
-                            ..Default::default()
-                        });
-
-                    // Extract TLS version from ClientHello (bytes 9-10 after start of payload)
-                    if payload.len() > 11 {
-                        let major = payload[9];
-                        let minor = payload[10];
-                        session.tls_version = Some(tls_version_str(major, minor));
-                    }
-
-                    // Extract SNI from extensions
-                    if let Some(sni) = extract_sni(payload) {
-                        session.sni = Some(sni);
-                    }
-
-                    // Simple JA3: version + cipher_suites + extensions (approximate)
-                    session.ja3 = Some(compute_ja3_simple(payload));
-                }
-                TLS_SERVER_HELLO => {
-                    let session = self.sessions.entry(flow_id.clone())
-                        .or_insert_with(|| TlsSession {
-                            flow_id: flow_id.clone(),
-                            first_seen: pkt.timestamp,
-                            ..Default::default()
-                        });
-
-                    if payload.len() > 11 {
-                        let major = payload[9];
-                        let minor = payload[10];
-                        if session.tls_version.is_none() {
-                            session.tls_version = Some(tls_version_str(major, minor));
-                        }
-                    }
-
-                    // Extract selected cipher suite (bytes 11-12 in ServerHello)
-                    if payload.len() > 13 {
-                        let cs = u16::from_be_bytes([payload[11], payload[12]]);
-                        session.cipher_suite = Some(cs);
-                    }
-                }
-                _ => {}
-            }
+        if let Some(profile) = parse_client_hello(&pkt.bytes, 't') {
+            let key_material = self.key_shelf.has_client_random(&profile.client_random);
+            let session = self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
+                flow_id: flow_id.clone(),
+                first_seen: pkt.timestamp,
+                ..Default::default()
+            });
+            session.tls_version = Some(tls_version_code(profile.negotiated_version));
+            session.sni = profile.sni;
+            session.alpn = profile.alpn;
+            session.client_random = Some(profile.client_random);
+            session.ja4 = Some(profile.ja4);
+            session.ech_offered = profile.ech_offered;
+            session.key_material = key_material;
+        } else if let Some((version, cipher)) = parse_server_hello(&pkt.bytes) {
+            let session = self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
+                flow_id: flow_id.clone(),
+                first_seen: pkt.timestamp,
+                ..Default::default()
+            });
+            if session.tls_version.is_none() { session.tls_version = Some(tls_version_code(version)); }
+            session.cipher_suite = Some(cipher);
+        } else if let Some(position) = pkt.bytes.windows(7).position(|window| window[0] == 0x15 && window[1] == 0x03) {
+            let session = self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
+                flow_id: flow_id.clone(),
+                first_seen: pkt.timestamp,
+                ..Default::default()
+            });
+            session.alert_level = pkt.bytes.get(position + 5).copied();
+            session.alert_desc = pkt.bytes.get(position + 6).copied();
+        } else {
+            return;
         }
 
         // Evict if over cap
@@ -166,6 +152,25 @@ impl TlsTracker {
     pub fn len(&self) -> usize { self.sessions.len() }
     pub fn is_empty(&self) -> bool { self.sessions.is_empty() }
     pub fn clear(&mut self) { self.sessions.clear(); }
+
+    pub fn load_key_log(&mut self, path: impl AsRef<Path>) -> Result<usize, String> {
+        let count = self.key_shelf.load(path)?;
+        self.apply_key_material();
+        Ok(count)
+    }
+
+    pub fn reload_key_log(&mut self) -> Result<usize, String> {
+        let count = self.key_shelf.reload()?;
+        self.apply_key_material();
+        Ok(count)
+    }
+
+    fn apply_key_material(&mut self) {
+        for session in self.sessions.values_mut() {
+            session.key_material = session.client_random.as_deref()
+                .is_some_and(|random| self.key_shelf.has_client_random(random));
+        }
+    }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -187,6 +192,11 @@ fn tls_version_str(major: u8, minor: u8) -> String {
         _      => format!("TLS {major}.{minor}"),
     }
 }
+
+fn tls_version_code(version: u16) -> String {
+    tls_version_str((version >> 8) as u8, version as u8)
+}
+
 
 fn cipher_suite_name(cs: u16) -> &'static str {
     match cs {

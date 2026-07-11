@@ -157,7 +157,7 @@ impl Tab {
             Tab::Scanner       => "Scanner",
             Tab::Hosts         => "Hosts",
             Tab::Notebook      => "Notebook",
-            Tab::TlsAnalysis   => "TLS",
+            Tab::TlsAnalysis   => "Encrypted",
             Tab::Objects       => "Objects",
             Tab::Rules         => "Rules",
             Tab::Workbench     => "Workbench",

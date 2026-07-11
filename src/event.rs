@@ -1053,6 +1053,13 @@ fn handle_tls(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Tab => app.next_tab(),
+        KeyCode::Char('[') | KeyCode::Char(']') => {
+            app.encrypted_view = match app.encrypted_view {
+                crate::app::EncryptedView::Tls => crate::app::EncryptedView::Quic,
+                crate::app::EncryptedView::Quic => crate::app::EncryptedView::Tls,
+            };
+            app.tls_selected = 0;
+        }
         KeyCode::Down | KeyCode::Char('j') => {
             let max = app.tls_tracker.len().saturating_sub(1);
             if app.tls_selected < max { app.tls_selected += 1; }
@@ -1067,7 +1074,14 @@ fn handle_tls(app: &mut App, key: KeyEvent) {
             app.tls_selected = app.tls_tracker.len().saturating_sub(1);
             app.tls_scroll = app.tls_selected;
         }
-        KeyCode::Char('c') => { app.tls_tracker.clear(); app.tls_selected = 0; app.tls_scroll = 0; }
+        KeyCode::Char('c') => {
+            match app.encrypted_view {
+                crate::app::EncryptedView::Tls => app.tls_tracker.clear(),
+                crate::app::EncryptedView::Quic => app.quic_scope.clear(),
+            }
+            app.tls_selected = 0;
+            app.tls_scroll = 0;
+        }
         KeyCode::Char('h') => { app.show_help = true; }
         _ => {}
     }

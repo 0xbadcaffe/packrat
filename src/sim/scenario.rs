@@ -200,6 +200,7 @@ pub fn tls_sessions() -> Vec<crate::analysis::tls::TlsSession> {
             first_seen:     1.0,
             alert_level:    None,
             alert_desc:     None,
+            ..Default::default()
         },
         TlsSession {
             flow_id:        format!("{}:51001-{}:443", VICTIM, INTRA_A),
@@ -215,6 +216,7 @@ pub fn tls_sessions() -> Vec<crate::analysis::tls::TlsSession> {
             first_seen:     2.5,
             alert_level:    None,
             alert_desc:     None,
+            ..Default::default()
         },
         TlsSession {
             flow_id:        format!("{}:51002-8.8.8.8:853", VICTIM),
@@ -230,6 +232,7 @@ pub fn tls_sessions() -> Vec<crate::analysis::tls::TlsSession> {
             first_seen:     3.0,
             alert_level:    None,
             alert_desc:     None,
+            ..Default::default()
         },
         TlsSession {
             flow_id:        format!("{}:51003-104.16.0.1:443", VICTIM),
@@ -245,6 +248,7 @@ pub fn tls_sessions() -> Vec<crate::analysis::tls::TlsSession> {
             first_seen:     4.0,
             alert_level:    None,
             alert_desc:     None,
+            ..Default::default()
         },
         TlsSession {
             flow_id:        format!("{}:51004-23.0.0.1:443", INTRA_A),
@@ -260,6 +264,7 @@ pub fn tls_sessions() -> Vec<crate::analysis::tls::TlsSession> {
             first_seen:     5.5,
             alert_level:    None,
             alert_desc:     None,
+            ..Default::default()
         },
         TlsSession {
             flow_id:        format!("{}:51005-{}:8443", VICTIM, INTRA_B),
@@ -275,6 +280,7 @@ pub fn tls_sessions() -> Vec<crate::analysis::tls::TlsSession> {
             first_seen:     6.0,
             alert_level:    Some(2),  // fatal alert
             alert_desc:     Some(42), // bad_certificate
+            ..Default::default()
         },
     ]
 }
