@@ -429,6 +429,12 @@ fn handle_security(app: &mut App, key: KeyEvent) {
         KeyCode::Char('C') => {
             app.security.clear(); app.credentials.clear(); app.security_scroll = 0;
         }
+        KeyCode::Char('l') if matches!(app.security_tab, SecuritySubTab::RoutePolicy) => {
+            app.cycle_route_policy_mode();
+        }
+        KeyCode::Char('y') if matches!(app.security_tab, SecuritySubTab::RoutePolicy) => {
+            app.promote_observed_routes();
+        }
         // Replay sub-tab controls
         KeyCode::Char('e') if matches!(app.security_tab, SecuritySubTab::Replay) => {
             app.replay_editing = true;
