@@ -49,17 +49,21 @@ These gaps are intentionally stated precisely; the current UI does not claim
 that they are complete.
 
 - Add an optional eBPF event collector for sockets too short-lived for `/proc`
-  polling, with a narrow privilege-separated IPC contract.
+  polling. Packrat can now import external socket ownership CSV rows with
+  `--socket-events`; a kernel collector and helper IPC are still separate work.
 - Perform authenticated TLS record decryption using legitimately supplied key
   logs; current support parses and correlates secrets only.
-- Decrypt protected QUIC packets, decode HTTP/3 frames, and add JA4Q.
+- Decrypt protected QUIC packets and decode HTTP/3 frames. Current QUIC support
+  includes invariant metadata and Packrat's RatQ fingerprint, not protected
+  payload decoding.
 - Separate capture and firewall privileges into a minimal helper, then drop
   capabilities in the terminal process. Landlock currently limits filesystem
   writes but is not a privilege boundary for packet capture.
 - Add a stronger automatic-containment policy gate, such as two independent
   critical signals or a rule explicitly approved for automatic response.
-- Add attributable online fingerprint reputation data only as an explicit,
-  cached operator action; no silent external lookups.
+- Add attributable online fingerprint reputation refreshes only as explicit,
+  cached operator actions. Current reputation support is offline CSV context for
+  addresses, CIDRs, JA4, and RatQ values; no silent external lookups run.
 - Expand replay fixtures as each new detector and containment policy ships.
 
 These remaining items require focused security design and should not be
