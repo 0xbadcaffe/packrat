@@ -168,6 +168,15 @@ impl Default for TrafficLatch {
 
 impl TrafficLatch {
     pub fn on_incident<B: LatchBackend>(&mut self, incident: &Incident, backend: &B) -> &LatchAction {
+        self.on_incident_with_auto_gate(incident, backend, false)
+    }
+
+    pub fn on_incident_with_auto_gate<B: LatchBackend>(
+        &mut self,
+        incident: &Incident,
+        backend: &B,
+        automatic_allowed: bool,
+    ) -> &LatchAction {
         if let Some(index) = self.actions.iter().position(|action| action.incident_id == incident.id) {
             return &self.actions[index];
         }
@@ -180,10 +189,16 @@ impl TrafficLatch {
                 LatchMode::Monitor => (LatchStatus::Observed, "monitor mode; no firewall change".into()),
                 LatchMode::Preview => (LatchStatus::Previewed, preview(address, self.expires_seconds)),
                 LatchMode::Manual => (LatchStatus::PendingApproval, preview(address, self.expires_seconds)),
-                LatchMode::Automatic => match backend.block(&LatchRequest { address, expires_seconds: self.expires_seconds }) {
-                    Ok(detail) => (LatchStatus::Applied, detail),
-                    Err(error) => (LatchStatus::Failed, error),
-                },
+                LatchMode::Automatic if !automatic_allowed => (
+                    LatchStatus::PendingApproval,
+                    format!("automatic gate not satisfied; {}", preview(address, self.expires_seconds)),
+                ),
+                LatchMode::Automatic => {
+                    match backend.block(&LatchRequest { address, expires_seconds: self.expires_seconds }) {
+                        Ok(detail) => (LatchStatus::Applied, detail),
+                        Err(error) => (LatchStatus::Failed, error),
+                    }
+                }
             },
         };
         self.actions.push(LatchAction {
@@ -282,6 +297,22 @@ mod tests {
     #[test]
     fn protected_address_is_never_sent_to_backend() {
         let mut latch = TrafficLatch { mode: LatchMode::Automatic, protected_addresses: vec!["203.0.113.9".parse().unwrap()], ..Default::default() };
-        assert_eq!(latch.on_incident(&incident("203.0.113.9"), &MemoryLatch).status, LatchStatus::Rejected);
+        assert_eq!(latch.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, true).status, LatchStatus::Rejected);
+    }
+
+    #[test]
+    fn automatic_mode_requires_policy_gate() {
+        let mut latch = TrafficLatch { mode: LatchMode::Automatic, expires_seconds: 60, ..Default::default() };
+        assert_eq!(
+            latch.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, false).status,
+            LatchStatus::PendingApproval,
+        );
+        assert!(latch.actions[0].detail.contains("automatic gate not satisfied"));
+
+        let mut allowed = TrafficLatch { mode: LatchMode::Automatic, expires_seconds: 60, ..Default::default() };
+        assert_eq!(
+            allowed.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, true).status,
+            LatchStatus::Applied,
+        );
     }
 }

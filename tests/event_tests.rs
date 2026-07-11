@@ -9,7 +9,7 @@
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use packrat_tui::app::{self, App, CliAction, StartupMode, StartupOptions};
-use packrat_tui::analysis::traffic_latch::LatchMode;
+use packrat_tui::analysis::traffic_latch::{LatchMode, LatchStatus};
 use packrat_tui::event;
 use packrat_tui::tabs::{Tab, Workspace};
 use rstest::rstest;
@@ -223,6 +223,17 @@ async fn critical_detection_requires_review_and_retains_evidence_after_acknowled
     event::handle(&mut app, key(KeyCode::Char('C')));
     assert!(app.incidents.active().is_none());
     assert_eq!(app.incidents.incidents[0].packet_history.len(), 1);
+}
+
+#[tokio::test]
+async fn automatic_latch_requires_policy_gate_for_default_critical_signal() {
+    let mut app = App::new_for_test();
+    app.traffic_latch.mode = LatchMode::Automatic;
+    app.inject_packet(critical_packet());
+
+    assert_eq!(app.traffic_latch.actions.len(), 1);
+    assert_eq!(app.traffic_latch.actions[0].status, LatchStatus::PendingApproval);
+    assert!(app.traffic_latch.actions[0].detail.contains("automatic gate not satisfied"));
 }
 
 // ─── Workspace navigation ────────────────────────────────────────────────────

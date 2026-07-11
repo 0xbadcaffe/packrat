@@ -16,8 +16,10 @@ packet -> built-in IDS / user rules -> critical incident -> red review alert
 
 TrafficLatch is monitor-only by default. Preview records a proposed action,
 manual requires approval from reviewed Incident History, and automatic mode is
-an explicit startup choice. Linux enforcement uses validated IP addresses and
-expiring nftables sets; protected and unsafe address classes are rejected.
+an explicit startup choice gated by either an `auto_contain` critical user rule
+or two independent critical detectors for the same attacker and target. Linux
+enforcement uses validated IP addresses and expiring nftables sets; protected
+and unsafe address classes are rejected.
 
 Deployment placement still defines the enforcement boundary:
 
@@ -59,8 +61,6 @@ that they are complete.
 - Separate capture and firewall privileges into a minimal helper, then drop
   capabilities in the terminal process. Landlock currently limits filesystem
   writes but is not a privilege boundary for packet capture.
-- Add a stronger automatic-containment policy gate, such as two independent
-  critical signals or a rule explicitly approved for automatic response.
 - Add attributable online fingerprint reputation refreshes only as explicit,
   cached operator actions. Current reputation support is offline CSV context for
   addresses, CIDRs, JA4, and RatQ values; no silent external lookups run.
