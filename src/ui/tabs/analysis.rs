@@ -428,7 +428,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 return lines;
             };
 
-            let rows = [
+            let mut rows = vec![
                 ("Incident", format!("#{}  {}", incident.id, incident.status)),
                 ("Detection source", incident.source.to_string()),
                 ("Detector", incident.detector.clone()),
@@ -438,6 +438,11 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 ("Packet window", format!("#{} - #{}", incident.first_packet, incident.last_packet)),
                 ("Retained packets", incident.packet_history.len().to_string()),
             ];
+            if let Some(action) = app.traffic_latch.actions.iter()
+                .find(|action| action.incident_id == incident.id)
+            {
+                rows.push(("TrafficLatch", format!("{} - {}", action.status, action.detail)));
+            }
             for (label, value) in rows {
                 lines.push(Line::from(vec![
                     Span::styled(format!("  {label:<18}"), Style::default().fg(C_FG2())),
@@ -448,6 +453,15 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 lines.push(Line::from(Span::styled(
                     "\n  Press C to acknowledge this reviewed alert. The retained evidence remains available.",
                     Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
+                )));
+            }
+            if app.traffic_latch.actions.iter().any(|action| {
+                action.incident_id == incident.id
+                    && action.status == crate::analysis::traffic_latch::LatchStatus::PendingApproval
+            }) {
+                lines.push(Line::from(Span::styled(
+                    "  Press x to apply the expiring, reviewed TrafficLatch action.",
+                    Style::default().fg(C_RED()).add_modifier(Modifier::BOLD),
                 )));
             }
             lines.push(Line::raw(""));

@@ -96,6 +96,14 @@ pub fn handle(app: &mut App, event: Event) -> bool {
 
     if app.active_tab == Tab::Analysis
         && app.analysis_section == crate::app::INCIDENT_ANALYSIS_SECTION
+        && key.code == KeyCode::Char('x')
+    {
+        app.approve_active_latch();
+        return false;
+    }
+
+    if app.active_tab == Tab::Analysis
+        && app.analysis_section == crate::app::INCIDENT_ANALYSIS_SECTION
         && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
     {
         if let Err(message) = app.acknowledge_active_incident() {

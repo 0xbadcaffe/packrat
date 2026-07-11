@@ -29,6 +29,7 @@ struct CaseBundle<'a> {
     evidence:   Vec<EvidenceRecord>,
     processes:  Vec<ProcessRecord<'a>>,
     route_drift: Vec<RouteDriftRecord<'a>>,
+    containment: Vec<ContainmentRecord<'a>>,
     graph_meta: GraphMeta,
 }
 
@@ -142,6 +143,17 @@ struct RouteDriftRecord<'a> {
     port: u16,
     protocol: &'a str,
     authority: Option<&'a str>,
+}
+
+#[derive(serde::Serialize)]
+struct ContainmentRecord<'a> {
+    incident_id: u64,
+    address: Option<String>,
+    mode: String,
+    status: String,
+    expires_seconds: u64,
+    detail: &'a str,
+    created_at: f64,
 }
 
 #[derive(serde::Serialize)]
@@ -307,6 +319,16 @@ fn build(app: &App) -> CaseBundle<'_> {
         authority: finding.route.authority.as_deref(),
     }).collect();
 
+    let containment = app.traffic_latch.actions.iter().map(|action| ContainmentRecord {
+        incident_id: action.incident_id,
+        address: action.address.map(|address| address.to_string()),
+        mode: action.mode.to_string(),
+        status: action.status.to_string(),
+        expires_seconds: action.expires_seconds,
+        detail: &action.detail,
+        created_at: action.created_at,
+    }).collect();
+
     // Operator graph summary
     let graph = &app.operator_graph;
     let mut top: Vec<TopNode> = graph.all_nodes_sorted()
@@ -326,5 +348,5 @@ fn build(app: &App) -> CaseBundle<'_> {
         top_scored: top,
     };
 
-    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, creds, notebook, incidents, evidence, processes, route_drift, graph_meta }
+    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, creds, notebook, incidents, evidence, processes, route_drift, containment, graph_meta }
 }

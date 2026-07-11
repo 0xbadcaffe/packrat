@@ -59,6 +59,9 @@ async fn main() -> Result<()> {
 
     let (packet_tx, mut packet_rx) = tokio::sync::mpsc::channel::<Packet>(10_000);
     let mut app = App::new_with_mode(packet_tx, options.mode);
+    app.traffic_latch.mode = options.latch_mode;
+    app.traffic_latch.expires_seconds = options.latch_expiry_seconds;
+    app.traffic_latch.protected_addresses = options.protected_addresses;
     if let Some(path) = options.key_log_path {
         app.load_key_log(path);
     }
