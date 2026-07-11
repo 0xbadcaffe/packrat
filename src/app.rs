@@ -1297,17 +1297,17 @@ impl App {
         // Critical alert actions in user rules share the same review workflow.
         let rule_hits_before = self.rule_engine.hits.len();
         self.rule_engine.evaluate(&pkt);
-        let critical_rule_hits: Vec<(String, String, String)> = self.rule_engine.hits[rule_hits_before..]
+        let critical_rule_hits: Vec<(String, String, String, bool)> = self.rule_engine.hits[rule_hits_before..]
             .iter()
             .filter(|hit| matches!(&hit.action, RuleAction::Alert { severity: EvidenceSeverity::Critical, .. }))
-            .map(|hit| (hit.rule_id.clone(), hit.rule_name.clone(), hit.message.clone()))
+            .map(|hit| (hit.rule_id.clone(), hit.rule_name.clone(), hit.message.clone(), hit.auto_contain))
             .collect();
 
         for (signature, detail) in critical_ids {
             self.open_industry_incident(&pkt, &signature, &detail);
         }
-        for (rule_id, rule_name, message) in critical_rule_hits {
-            self.open_user_rule_incident(&pkt, &rule_id, &rule_name, &message);
+        for (rule_id, rule_name, message, auto_contain) in critical_rule_hits {
+            self.open_user_rule_incident(&pkt, &rule_id, &rule_name, &message, auto_contain);
         }
         self.incidents.retain_packet(&pkt);
 
@@ -1348,7 +1348,7 @@ impl App {
             self.packets.iter().cloned(),
         );
         self.freeze_incident_evidence(id);
-        self.evaluate_traffic_latch(id);
+        self.evaluate_traffic_latch(id, false);
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {signature}"));
     }
@@ -1359,6 +1359,7 @@ impl App {
         rule_id: &str,
         rule_name: &str,
         message: &str,
+        auto_contain: bool,
     ) {
         let id = self.incidents.open_or_update(
             IncidentSource::UserRule,
@@ -1369,7 +1370,7 @@ impl App {
             self.packets.iter().cloned(),
         );
         self.freeze_incident_evidence(id);
-        self.evaluate_traffic_latch(id);
+        self.evaluate_traffic_latch(id, auto_contain);
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {rule_name}"));
     }
@@ -1384,12 +1385,26 @@ impl App {
         }
     }
 
-    fn evaluate_traffic_latch(&mut self, incident_id: u64) {
+    fn evaluate_traffic_latch(&mut self, incident_id: u64, auto_contain_rule: bool) {
         let incident = self.incidents.incidents.iter()
             .find(|incident| incident.id == incident_id).cloned();
         if let Some(incident) = incident {
-            self.traffic_latch.on_incident(&incident, &NftablesLatch);
+            let automatic_allowed = auto_contain_rule || self.has_independent_critical_signals(&incident);
+            self.traffic_latch.on_incident_with_auto_gate(&incident, &NftablesLatch, automatic_allowed);
         }
+    }
+
+    fn has_independent_critical_signals(&self, incident: &crate::analysis::incident::Incident) -> bool {
+        let mut detectors = std::collections::BTreeSet::new();
+        for candidate in self.incidents.incidents.iter().filter(|candidate| {
+            candidate.attacker == incident.attacker
+                && candidate.target == incident.target
+                && candidate.severity == EvidenceSeverity::Critical
+                && candidate.status == crate::analysis::incident::IncidentStatus::PendingReview
+        }) {
+            detectors.insert((candidate.source, candidate.detector.clone()));
+        }
+        detectors.len() >= 2
     }
 
     pub fn approve_active_latch(&mut self) {

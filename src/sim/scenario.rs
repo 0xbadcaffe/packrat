@@ -467,7 +467,7 @@ pub fn rules() -> Vec<(crate::analysis::rules::Rule, u64)> {
         (Rule {
             id: "rule-001".into(), name: "C2 Beacon Detection".into(),
             description: "TCP PSH/ACK to known C2 port 4444 at regular intervals".into(),
-            enabled: true, hits: 30,
+            enabled: true, auto_contain: false, hits: 30,
             condition: Condition::And(vec![
                 Condition::Equals { field: "proto".into(),   value: "TCP".into() },
                 Condition::Num    { field: "dstport".into(), op: CmpOp::Eq, value: 4444 },
@@ -477,7 +477,7 @@ pub fn rules() -> Vec<(crate::analysis::rules::Rule, u64)> {
         (Rule {
             id: "rule-002".into(), name: "DNS Tunnel Detection".into(),
             description: "High-entropy subdomain queries indicative of DNS tunnelling".into(),
-            enabled: true, hits: 5,
+            enabled: true, auto_contain: false, hits: 5,
             condition: Condition::And(vec![
                 Condition::Equals  { field: "proto".into(), value: "DNS".into() },
                 Condition::Contains { field: "info".into(),  value: "evil-tunnel.com".into() },
@@ -490,7 +490,7 @@ pub fn rules() -> Vec<(crate::analysis::rules::Rule, u64)> {
         (Rule {
             id: "rule-003".into(), name: "Cleartext HTTP Credentials".into(),
             description: "HTTP Authorization header in plaintext (port 80)".into(),
-            enabled: true, hits: 2,
+            enabled: true, auto_contain: false, hits: 2,
             condition: Condition::And(vec![
                 Condition::Equals  { field: "proto".into(), value: "HTTP".into() },
                 Condition::Contains { field: "info".into(),  value: "Authorization".into() },
@@ -503,7 +503,7 @@ pub fn rules() -> Vec<(crate::analysis::rules::Rule, u64)> {
         (Rule {
             id: "rule-004".into(), name: "Kerberos AS-REQ Spray".into(),
             description: "Repeated Kerberos pre-auth requests — password spray indicator".into(),
-            enabled: true, hits: 5,
+            enabled: true, auto_contain: false, hits: 5,
             condition: Condition::And(vec![
                 Condition::Equals  { field: "proto".into(), value: "Kerberos".into() },
                 Condition::Contains { field: "info".into(),  value: "AS-REQ".into() },
@@ -513,7 +513,7 @@ pub fn rules() -> Vec<(crate::analysis::rules::Rule, u64)> {
         (Rule {
             id: "rule-005".into(), name: "SMB Admin Share Access".into(),
             description: "Connection to administrative C$ or ADMIN$ share".into(),
-            enabled: true, hits: 1,
+            enabled: true, auto_contain: false, hits: 1,
             condition: Condition::And(vec![
                 Condition::Equals  { field: "proto".into(), value: "SMB".into() },
                 Condition::Contains { field: "info".into(),  value: "C$".into() },
@@ -526,7 +526,7 @@ pub fn rules() -> Vec<(crate::analysis::rules::Rule, u64)> {
         (Rule {
             id: "rule-006".into(), name: "FTP Cleartext Password".into(),
             description: "FTP PASS command containing plaintext password".into(),
-            enabled: true, hits: 1,
+            enabled: true, auto_contain: false, hits: 1,
             condition: Condition::And(vec![
                 Condition::Equals  { field: "proto".into(), value: "FTP".into() },
                 Condition::Contains { field: "info".into(),  value: "PASS".into() },
@@ -536,14 +536,14 @@ pub fn rules() -> Vec<(crate::analysis::rules::Rule, u64)> {
         (Rule {
             id: "rule-007".into(), name: "OT Protocol Access (Modbus)".into(),
             description: "Modbus traffic to ICS/SCADA devices — monitor for anomalies".into(),
-            enabled: true, hits: 1,
+            enabled: true, auto_contain: false, hits: 1,
             condition: Condition::Equals { field: "proto".into(), value: "Modbus".into() },
             actions: vec![Action::Log { message: "Modbus FC3 register read — verify source is authorised".into() }],
         }, 1),
         (Rule {
             id: "rule-008".into(), name: "Large Frame Anomaly".into(),
             description: "Frames above 8KB may indicate data exfiltration or exploit".into(),
-            enabled: false, hits: 0,
+            enabled: false, auto_contain: false, hits: 0,
             condition: Condition::Num { field: "len".into(), op: CmpOp::Gt, value: 8192 },
             actions: vec![Action::Alert { message: "Oversized frame".into(), severity: Severity::Low }],
         }, 0),

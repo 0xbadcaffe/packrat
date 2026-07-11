@@ -134,7 +134,7 @@ operators may explicitly select one of these modes:
 | `monitor` | record the critical incident only |
 | `preview` | record the validated action that would be attempted |
 | `manual` | queue an action; press `x` in reviewed Incident History to approve |
-| `auto` | immediately request an expiring nftables block for the attacker address |
+| `auto` | request an expiring nftables block only after the automatic-response gate passes |
 
 Start with preview and protect management addresses:
 
@@ -151,11 +151,19 @@ After validating policies and nftables permissions, replace `preview` with
 broadcast, and protected addresses. Applied entries expire automatically and
 all decisions are included in case exports.
 
+Automatic mode requires one of these gates before it applies a block:
+
+- the matching critical user rule has `"auto_contain": true`
+- Packrat has at least two independent pending critical detectors for the same
+  attacker and target
+
+If neither gate passes, the action stays pending and can still be approved
+manually with `x` after incident review.
+
 Containment only affects traffic controlled by the host running Packrat. An
 endpoint can constrain its own traffic; a gateway can constrain forwarded
-traffic; a passive mirror port has no enforcement path. Current automatic mode
-acts on any critical incident, so use narrowly reviewed critical rules and
-preview mode before production deployment.
+traffic; a passive mirror port has no enforcement path. Use narrowly reviewed
+critical rules and preview mode before production deployment.
 
 ## User Detection Rules
 
@@ -168,6 +176,7 @@ critical incident for administrative-path access from an untrusted range:
   "name": "External administrative path access",
   "description": "Escalate untrusted requests to management paths.",
   "enabled": true,
+  "auto_contain": false,
   "condition": {
     "And": [
       { "Contains": { "field": "src", "value": "198.51.100." } },

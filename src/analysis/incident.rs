@@ -11,7 +11,7 @@ const MAX_INCIDENTS: usize = 250;
 const MAX_HISTORY_PACKETS: usize = 2_000;
 const INITIAL_HISTORY_PACKETS: usize = 500;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IncidentSource {
     IndustrySignature,
     UserRule,

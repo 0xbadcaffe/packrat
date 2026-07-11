@@ -44,6 +44,8 @@ pub struct Rule {
     pub name:        String,
     pub description: String,
     pub enabled:     bool,
+    #[serde(default)]
+    pub auto_contain: bool,
     pub condition:   Condition,
     pub actions:     Vec<Action>,
     /// Hit count since last clear.
@@ -57,6 +59,7 @@ impl Rule {
             name:        name.into(),
             description: String::new(),
             enabled:     true,
+            auto_contain: false,
             condition:   cond,
             actions,
             hits:        0,
@@ -74,6 +77,7 @@ pub struct RuleHit {
     pub ts:       f64,
     pub action:   Action,
     pub message:  String,
+    pub auto_contain: bool,
 }
 
 // ─── Rule engine ──────────────────────────────────────────────────────────────
@@ -156,6 +160,7 @@ impl RuleEngine {
                             ts:        pkt.timestamp,
                             action:    action.clone(),
                             message,
+                            auto_contain: rule.auto_contain,
                         });
                     }
                 }
