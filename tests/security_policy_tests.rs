@@ -1,6 +1,7 @@
 //! Replay fixtures for Packrat's shipped passive IDS signatures.
 
 use packrat_tui::net::packet::Packet;
+use packrat_tui::analysis::vlan::{AlertSeverity, VlanIntel};
 use packrat_tui::net::security::SecurityEngine;
 use rstest::rstest;
 
@@ -68,4 +69,66 @@ fn shipped_signature_replays(#[case] signature: &str) {
         "fixture did not trigger {signature}; got {:?}",
         security.ids_alerts.iter().map(|alert| alert.signature).collect::<Vec<_>>(),
     );
+}
+
+fn ethernet_packet(no: u64, src_mac: [u8; 6], dst_mac: [u8; 6], vlan_id: Option<u16>) -> Packet {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&dst_mac);
+    bytes.extend_from_slice(&src_mac);
+    bytes.extend_from_slice(&[0x08, 0x00]);
+    Packet {
+        no,
+        timestamp: no as f64,
+        src: "203.0.113.9".into(),
+        dst: "10.0.0.5".into(),
+        protocol: "TCP".into(),
+        length: bytes.len() as u16,
+        info: String::new(),
+        src_port: Some(50000),
+        dst_port: Some(443),
+        vlan_id,
+        vlan_pcp: None,
+        vlan_dei: None,
+        outer_vlan_id: None,
+        bytes,
+    }
+}
+
+#[test]
+fn vlan_replay_detects_double_tag_native_pcp_and_dtp() {
+    let mut intel = VlanIntel::default();
+
+    let mut qinq = ethernet_packet(1, [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01], [0, 1, 2, 3, 4, 5], Some(20));
+    qinq.outer_vlan_id = Some(100);
+    intel.ingest(&qinq);
+
+    let native = ethernet_packet(2, [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x02], [0, 1, 2, 3, 4, 5], Some(1));
+    intel.ingest(&native);
+
+    let mut pcp = ethernet_packet(3, [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x03], [0, 1, 2, 3, 4, 5], Some(30));
+    pcp.vlan_pcp = Some(7);
+    intel.ingest(&pcp);
+
+    let dtp = ethernet_packet(
+        4,
+        [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x04],
+        [0x01, 0x00, 0x0c, 0xcc, 0xcc, 0xcc],
+        None,
+    );
+    intel.ingest(&dtp);
+
+    assert!(intel.alerts.iter().any(|alert| alert.category == "VLAN-Hop" && alert.severity == AlertSeverity::Critical));
+    assert!(intel.alerts.iter().any(|alert| alert.category == "Native-VLAN"));
+    assert!(intel.alerts.iter().any(|alert| alert.category == "PCP-Abuse"));
+    assert!(intel.alerts.iter().any(|alert| alert.category == "DTP" && alert.severity == AlertSeverity::Critical));
+}
+
+#[test]
+fn vlan_replay_detects_mac_crossing_vlans() {
+    let mut intel = VlanIntel::default();
+    let mac = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x05];
+    intel.ingest(&ethernet_packet(1, mac, [0, 1, 2, 3, 4, 5], Some(10)));
+    intel.ingest(&ethernet_packet(2, mac, [0, 1, 2, 3, 4, 5], Some(20)));
+
+    assert!(intel.alerts.iter().any(|alert| alert.category == "MAC-VLAN-Cross"));
 }
