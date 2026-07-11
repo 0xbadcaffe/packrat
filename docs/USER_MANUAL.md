@@ -35,6 +35,9 @@ cargo run --features real-capture -- --telemetry-listen 127.0.0.1:9477
 cargo run --features real-capture -- --key-log /secure/session-keys.log
 SSLKEYLOGFILE=/secure/session-keys.log cargo run --features real-capture
 
+# Import socket ownership events captured by an external helper.
+cargo run --features real-capture -- --socket-events /secure/socket-events.csv
+
 # Restrict filesystem writes with Linux Landlock.
 cargo run --features real-capture -- --sandbox
 ```
@@ -189,8 +192,8 @@ PCAP or `--simulation` before enabling response actions.
 Use `[`/`]` in Security to cycle detector and operational views:
 
 - SocketScope correlates Linux socket tables with PID, UID, process, command,
-  and per-process packet/byte totals. Very short-lived sockets may disappear
-  before the periodic `/proc` refresh; there is no eBPF collector yet.
+  and per-process packet/byte totals. For very short-lived sockets, start
+  Packrat with `--socket-events PATH` to import helper-generated ownership rows.
 - RouteLedger records process/host-to-destination routes. Press `l` to cycle
   Observe, Learn, and Detect Drift modes; press `y` to promote observations.
   Its baseline is `~/.config/packrat/route-baseline.json`.
@@ -198,6 +201,8 @@ Use `[`/`]` in Security to cycle detector and operational views:
   labels the default gateway when Linux route data is available.
 - NetRegistry enriches observed addresses from
   `~/.config/packrat/identity-map.csv`. Press `r` for an explicit WHOIS refresh.
+  It also loads offline reputation rows from
+  `~/.config/packrat/reputation-map.csv`.
 
 The identity map uses `CIDR,ASN,organization` rows and longest-prefix matching:
 
@@ -208,13 +213,31 @@ The identity map uses `CIDR,ASN,organization` rows and longest-prefix matching:
 2001:db8:42::/48,AS64501,Example IPv6 edge
 ```
 
+The reputation map uses `target,severity,label,source`. Targets may be an IP,
+CIDR, JA4 value, or RatQ value. This is offline operator-supplied context; no
+external reputation lookup runs during packet ingestion.
+
+```csv
+# target,severity,label,source
+203.0.113.9,high,test sinkhole,lab blocklist
+198.51.100.0/24,medium,partner watch range,change ticket 1842
+ratq1_deadbeefcafe,medium,known QUIC client shape,malware lab
+```
+
+Socket event imports use this CSV shape:
+
+```csv
+# protocol,local_addr,local_port,remote_addr,remote_port,pid,uid,process,command
+tcp,192.0.2.10,4444,198.51.100.7,443,4242,1000,curl,curl https://example.test
+```
+
 ## Encrypted Traffic
 
 Traffic > Encrypted switches between TLS and QUIC scope with `[`/`]`. TLS
 ClientHello inspection includes SNI, ALPN, supported versions, cipher and
 extension metadata, ECH-offered state, and JA4. QUIC scope reports invariant
-header fields, version, connection IDs, packet type, and address migration
-signals.
+header fields, version, connection IDs, packet type, address migration signals,
+and a Packrat RatQ fingerprint built from visible invariant metadata.
 
 `--key-log` or `SSLKEYLOGFILE` loads TLS 1.2, TLS 1.3, and QUIC secret labels
 and correlates available material by client random. Packrat does not yet decrypt
