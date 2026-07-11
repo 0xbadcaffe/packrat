@@ -19,6 +19,7 @@ use crate::analysis::telemetry::{TelemetryHub, TelemetrySnapshot};
 use crate::analysis::socket_scope::SocketScope;
 use crate::analysis::route_ledger::RouteLedger;
 use crate::analysis::quic_scope::QuicScope;
+use crate::analysis::traffic_latch::{LatchMode, NftablesLatch, TrafficLatch};
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::notebook::Notebook;
 use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
@@ -119,10 +120,13 @@ pub struct StartupOptions {
     pub mode: StartupMode,
     pub telemetry_listen: Option<std::net::SocketAddr>,
     pub key_log_path: Option<std::path::PathBuf>,
+    pub latch_mode: LatchMode,
+    pub latch_expiry_seconds: u64,
+    pub protected_addresses: Vec<std::net::IpAddr>,
 }
 
 pub fn usage() -> &'static str {
-    "Usage: packrat [--simulation] [--key-log PATH] [--telemetry-listen ADDRESS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n  -h, --help                 show this help"
+    "Usage: packrat [OPTIONS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n      --traffic-latch MODE   monitor, preview, manual, or auto (default: monitor)\n      --latch-seconds N      automatic firewall expiry (default: 900)\n      --protect-address IP   never contain this address; may be repeated\n  -h, --help                 show this help"
 }
 
 pub fn parse_startup_args<I, S>(args: I) -> Result<CliAction, String>
@@ -135,6 +139,9 @@ where
         mode: StartupMode::Capture,
         telemetry_listen: None,
         key_log_path: None,
+        latch_mode: LatchMode::Monitor,
+        latch_expiry_seconds: 900,
+        protected_addresses: Vec::new(),
     };
     let mut index = 0;
     while index < args.len() {
@@ -150,6 +157,26 @@ where
                 index += 1;
                 let value = args.get(index).ok_or("--key-log requires a path")?;
                 options.key_log_path = Some(value.into());
+            }
+            "--traffic-latch" => {
+                index += 1;
+                let value = args.get(index).ok_or("--traffic-latch requires a mode")?;
+                options.latch_mode = value.parse()?;
+            }
+            "--latch-seconds" => {
+                index += 1;
+                let value = args.get(index).ok_or("--latch-seconds requires a value")?;
+                options.latch_expiry_seconds = value.parse::<u64>()
+                    .map_err(|_| format!("invalid latch expiry: {value}"))?;
+                if !(10..=86_400).contains(&options.latch_expiry_seconds) {
+                    return Err("latch expiry must be between 10 and 86400 seconds".into());
+                }
+            }
+            "--protect-address" => {
+                index += 1;
+                let value = args.get(index).ok_or("--protect-address requires an IP")?;
+                options.protected_addresses.push(value.parse()
+                    .map_err(|_| format!("invalid protected address: {value}"))?);
             }
             unknown => return Err(format!("unknown argument: {unknown}")),
         }
@@ -241,6 +268,7 @@ pub struct App {
     pub telemetry:       TelemetryHub,
     pub socket_scope:    SocketScope,
     pub route_ledger:    RouteLedger,
+    pub traffic_latch:   TrafficLatch,
     /// Visible only while an unreviewed critical incident needs attention.
     pub alert_overlay_open: bool,
     pub carver:          Carver,
@@ -400,6 +428,7 @@ impl App {
             telemetry:        TelemetryHub::default(),
             socket_scope:     SocketScope::default(),
             route_ledger:     RouteLedger::default(),
+            traffic_latch:    TrafficLatch::default(),
             alert_overlay_open: false,
             carver:           Carver::default(),
             carved_objects:   Vec::new(),
@@ -1298,6 +1327,7 @@ impl App {
             self.packets.iter().cloned(),
         );
         self.freeze_incident_evidence(id);
+        self.evaluate_traffic_latch(id);
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {signature}"));
     }
@@ -1318,6 +1348,7 @@ impl App {
             self.packets.iter().cloned(),
         );
         self.freeze_incident_evidence(id);
+        self.evaluate_traffic_latch(id);
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {rule_name}"));
     }
@@ -1329,6 +1360,28 @@ impl App {
         let Some(incident) = incident else { return; };
         if let Err(error) = self.evidence_vault.freeze(&incident) {
             self.set_status(format!("Incident #{incident_id} retained in memory; evidence export failed: {error}"));
+        }
+    }
+
+    fn evaluate_traffic_latch(&mut self, incident_id: u64) {
+        let incident = self.incidents.incidents.iter()
+            .find(|incident| incident.id == incident_id).cloned();
+        if let Some(incident) = incident {
+            self.traffic_latch.on_incident(&incident, &NftablesLatch);
+        }
+    }
+
+    pub fn approve_active_latch(&mut self) {
+        let Some(incident_id) = self.incidents.active().map(|incident| incident.id) else {
+            self.set_status("No active incident has a pending TrafficLatch action");
+            return;
+        };
+        match self.traffic_latch.approve(incident_id, &NftablesLatch) {
+            Ok(action) => {
+                let detail = action.detail.clone();
+                self.set_status(format!("TrafficLatch: {detail}"));
+            }
+            Err(error) => self.set_status(format!("TrafficLatch error: {error}")),
         }
     }
 
@@ -1564,6 +1617,7 @@ impl App {
         self.evidence_vault.clear_session();
         self.socket_scope.traffic.clear();
         self.route_ledger.clear_session();
+        self.traffic_latch.clear_session();
         self.alert_overlay_open = false;
         self.carved_objects.clear();
         self.yara_engine.clear_results();

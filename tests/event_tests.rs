@@ -9,6 +9,7 @@
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use packrat_tui::app::{self, App, CliAction, StartupMode, StartupOptions};
+use packrat_tui::analysis::traffic_latch::LatchMode;
 use packrat_tui::event;
 use packrat_tui::tabs::{Tab, Workspace};
 use rstest::rstest;
@@ -40,7 +41,10 @@ async fn app_new_for_test_ok() {
 fn parse_startup_args_defaults_to_capture() {
     assert_eq!(
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
-        CliAction::Run(StartupOptions { mode: StartupMode::Capture, telemetry_listen: None, key_log_path: None })
+        CliAction::Run(StartupOptions {
+            mode: StartupMode::Capture, telemetry_listen: None, key_log_path: None,
+            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
+        })
     );
 }
 
@@ -48,11 +52,17 @@ fn parse_startup_args_defaults_to_capture() {
 fn parse_startup_args_enables_simulation() {
     assert_eq!(
         app::parse_startup_args(["--simulation"]).unwrap(),
-        CliAction::Run(StartupOptions { mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None })
+        CliAction::Run(StartupOptions {
+            mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None,
+            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
+        })
     );
     assert_eq!(
         app::parse_startup_args(["-s"]).unwrap(),
-        CliAction::Run(StartupOptions { mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None })
+        CliAction::Run(StartupOptions {
+            mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None,
+            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
+        })
     );
 }
 
@@ -70,6 +80,9 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             mode: StartupMode::Capture,
             telemetry_listen: Some("127.0.0.1:9477".parse().unwrap()),
             key_log_path: None,
+            latch_mode: LatchMode::Monitor,
+            latch_expiry_seconds: 900,
+            protected_addresses: vec![],
         })
     );
 }
@@ -83,7 +96,25 @@ fn parse_startup_args_accepts_key_log_path() {
             mode: StartupMode::Capture,
             telemetry_listen: None,
             key_log_path: Some("/tmp/keys.log".into()),
+            latch_mode: LatchMode::Monitor,
+            latch_expiry_seconds: 900,
+            protected_addresses: vec![],
         })
+    );
+}
+
+#[test]
+fn parse_startup_args_configures_traffic_latch_safely() {
+    let result = app::parse_startup_args([
+        "--traffic-latch", "auto", "--latch-seconds", "60",
+        "--protect-address", "192.0.2.1",
+    ]).unwrap();
+    let CliAction::Run(options) = result else { panic!("expected run options"); };
+    assert_eq!(options.latch_mode, LatchMode::Automatic);
+    assert_eq!(options.latch_expiry_seconds, 60);
+    assert_eq!(
+        options.protected_addresses,
+        vec!["192.0.2.1".parse::<std::net::IpAddr>().unwrap()]
     );
 }
 

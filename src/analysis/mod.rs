@@ -26,3 +26,4 @@ pub mod route_ledger;
 pub mod key_shelf;
 pub mod encrypted_insight;
 pub mod quic_scope;
+pub mod traffic_latch;
