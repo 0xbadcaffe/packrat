@@ -436,7 +436,7 @@ mod tests {
     fn helper_refresh_marks_selected_address_reputation() {
         use std::os::unix::fs::PermissionsExt;
 
-        let path = std::env::temp_dir().join(format!("packrat-reputation-helper-{}.sh", std::process::id()));
+        let path = std::env::temp_dir().join(format!("packrat-reputation-helper-{}-{}.sh", std::process::id(), unique_test_suffix()));
         std::fs::write(
             &path,
             "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"severity\":\"high\",\"label\":\"helper listed\",\"source\":\"unit helper\"}'\n",
@@ -461,7 +461,7 @@ mod tests {
     fn helper_refresh_caches_fingerprint_reputation() {
         use std::os::unix::fs::PermissionsExt;
 
-        let path = std::env::temp_dir().join(format!("packrat-fingerprint-helper-{}.sh", std::process::id()));
+        let path = std::env::temp_dir().join(format!("packrat-fingerprint-helper-{}-{}.sh", std::process::id(), unique_test_suffix()));
         std::fs::write(
             &path,
             "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"severity\":\"medium\",\"label\":\"fingerprint listed\",\"source\":\"unit helper\"}'\n",
@@ -480,5 +480,13 @@ mod tests {
             "medium",
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    fn unique_test_suffix() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
     }
 }
