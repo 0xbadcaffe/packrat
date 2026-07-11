@@ -38,6 +38,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.hosts_tagging
         || app.graph_ui.searching
         || app.search_open
+        || app.settings_open
         || app.show_help
         || app.stream_overlay.is_some()
         || app.autopsy_state.is_some()
@@ -77,6 +78,11 @@ pub fn handle(app: &mut App, event: Event) -> bool {
 
     if app.project_manager_open {
         handle_project_manager(app, key);
+        return false;
+    }
+
+    if app.settings_open {
+        handle_settings(app, key);
         return false;
     }
 
@@ -120,6 +126,11 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         // Open global search palette with '?'
         if key.code == KeyCode::Char('?') {
             app.open_search();
+            return false;
+        }
+
+        if key.code == KeyCode::Char(',') {
+            app.open_settings();
             return false;
         }
 
@@ -181,6 +192,8 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             Tab::Diff          => handle_diff(app, key),
             Tab::TlsAnalysis   => handle_tls(app, key),
             Tab::OperatorGraph => handle_graph(app, key),
+            Tab::Investigate   => handle_investigate(app, key),
+            Tab::Settings      => handle_settings_tab(app, key),
             _                  => handle_main(app, key),
         }
     }
@@ -216,6 +229,32 @@ fn handle_view_menu(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn handle_settings(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char(',') | KeyCode::Char('q') => app.close_settings(),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.settings_cursor = (app.settings_cursor + 1).min(4);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.settings_cursor = app.settings_cursor.saturating_sub(1);
+        }
+        KeyCode::Enter if app.settings_cursor == 0 => {
+            app.close_settings();
+            app.theme_picker_open = true;
+            let cur = app.selected_theme_name.clone();
+            app.theme_picker_cursor = THEME_NAMES.iter().position(|&n| n == cur).unwrap_or(0);
+        }
+        _ => {}
+    }
+}
+
+fn handle_settings_tab(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.active_tab = Tab::Notebook,
+        _ => handle_settings(app, key),
+    }
+}
+
 fn is_quit(key: &KeyEvent) -> bool {
     key.code == KeyCode::Char('q')
         || (key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL)
@@ -236,6 +275,7 @@ fn global_tab_switch(app: &mut App, key: &KeyEvent) -> bool {
         KeyCode::Char('W') => { app.active_tab = Tab::Workbench;       true }
         KeyCode::Char('G') => { app.active_tab = Tab::OperatorGraph;   true }
         KeyCode::Char('D') => { app.active_tab = Tab::Diff;            true }
+        KeyCode::Char(',') => { app.open_settings(); true }
         _ => false,
     }
 }
@@ -971,6 +1011,26 @@ fn handle_graph(app: &mut App, key: KeyEvent) {
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
+fn handle_investigate(app: &mut App, key: KeyEvent) {
+    if global_tab_switch(app, &key) { return; }
+
+    match key.code {
+        KeyCode::Char('[') => app.investigation_prev_view(),
+        KeyCode::Char(']') => app.investigation_next_view(),
+        KeyCode::Char('n') | KeyCode::Down => app.worklist_next_packet(),
+        KeyCode::Char('p') | KeyCode::Up => app.worklist_prev_packet(),
+        KeyCode::Char('j') => app.investigation_scroll_down(),
+        KeyCode::Char('k') => app.investigation_scroll_up(),
+        KeyCode::Char('w') => app.toggle_worklist(),
+        KeyCode::Char('d') | KeyCode::Delete => app.remove_active_worklist_packet(),
+        KeyCode::Char('l') => app.active_tab = Tab::Packets,
+        KeyCode::Esc => app.close_worklist(),
+        KeyCode::Char('g') => app.investigation_scroll = 0,
+        KeyCode::Tab | KeyCode::F(2) => app.open_view_menu(),
+        _ => {}
+    }
+}
+
 fn handle_main(app: &mut App, key: KeyEvent) {
     if app.filter.active {
         match key.code {
@@ -1012,12 +1072,7 @@ fn handle_main(app: &mut App, key: KeyEvent) {
             } else if matches!(app.active_tab, Tab::Flows) {
                 app.flows_jump_to_packets();
             } else if matches!(app.active_tab, Tab::Packets) {
-                // Open selected packet in the protocol workbench
-                if let Some(pkt) = app.selected_packet() {
-                    let pkt = pkt.clone();
-                    app.workbench.load_packet(&pkt);
-                    app.active_tab = Tab::Workbench;
-                }
+                app.open_selected_packet_investigation();
             }
         }
         KeyCode::Esc => {
@@ -1033,7 +1088,8 @@ fn handle_main(app: &mut App, key: KeyEvent) {
             if matches!(app.active_tab, Tab::Packets | Tab::Analysis
                 | Tab::Strings | Tab::Dynamic | Tab::Visualize | Tab::Flows) =>
             app.clear_packets(),
-        KeyCode::Char('w') => app.toggle_recording(),
+        KeyCode::Char('m') if matches!(app.active_tab, Tab::Packets) => app.mark_selected_packet_for_investigation(),
+        KeyCode::Char('w') if matches!(app.active_tab, Tab::Packets) => app.toggle_worklist(),
 
         KeyCode::Char('/') => {
             if matches!(app.active_tab, Tab::Strings) {

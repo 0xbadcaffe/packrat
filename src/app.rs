@@ -108,6 +108,108 @@ pub enum EncryptedView {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvestigationView {
+    Summary,
+    Decode,
+    Bytes,
+    Flow,
+    Strings,
+    Encrypted,
+    Security,
+    Notes,
+}
+
+impl InvestigationView {
+    pub const COUNT: usize = 8;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Summary => "Summary",
+            Self::Decode => "Decode",
+            Self::Bytes => "Bytes",
+            Self::Flow => "Flow",
+            Self::Strings => "Strings",
+            Self::Encrypted => "Encrypted",
+            Self::Security => "Security",
+            Self::Notes => "Notes",
+        }
+    }
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Decode,
+            2 => Self::Bytes,
+            3 => Self::Flow,
+            4 => Self::Strings,
+            5 => Self::Encrypted,
+            6 => Self::Security,
+            7 => Self::Notes,
+            _ => Self::Summary,
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::Summary => 0,
+            Self::Decode => 1,
+            Self::Bytes => 2,
+            Self::Flow => 3,
+            Self::Strings => 4,
+            Self::Encrypted => 5,
+            Self::Security => 6,
+            Self::Notes => 7,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PacketWorklist {
+    pub packet_nos: Vec<u64>,
+    pub active: Option<usize>,
+    pub open: bool,
+}
+
+impl PacketWorklist {
+    pub fn add(&mut self, packet_no: u64) -> bool {
+        if let Some(index) = self.packet_nos.iter().position(|no| *no == packet_no) {
+            self.active = Some(index);
+            return false;
+        }
+        self.packet_nos.push(packet_no);
+        self.active = Some(self.packet_nos.len() - 1);
+        true
+    }
+
+    pub fn remove_active(&mut self) -> Option<u64> {
+        let index = self.active?;
+        if index >= self.packet_nos.len() { return None; }
+        let removed = self.packet_nos.remove(index);
+        self.active = if self.packet_nos.is_empty() {
+            None
+        } else {
+            Some(index.min(self.packet_nos.len() - 1))
+        };
+        Some(removed)
+    }
+
+    pub fn active_packet_no(&self) -> Option<u64> {
+        self.active.and_then(|index| self.packet_nos.get(index).copied())
+    }
+
+    pub fn next(&mut self) {
+        if self.packet_nos.is_empty() { return; }
+        self.active = Some(self.active.map(|index| (index + 1) % self.packet_nos.len()).unwrap_or(0));
+    }
+
+    pub fn prev(&mut self) {
+        if self.packet_nos.is_empty() { return; }
+        self.active = Some(self.active
+            .map(|index| if index == 0 { self.packet_nos.len() - 1 } else { index - 1 })
+            .unwrap_or(0));
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartupMode {
     Capture,
     Simulation,
@@ -374,6 +476,11 @@ pub struct App {
     /// Workspace-local view drawer state.
     pub view_menu_open:       bool,
     pub view_menu_cursor:     usize,
+    pub worklist:             PacketWorklist,
+    pub investigation_view:   InvestigationView,
+    pub investigation_scroll: usize,
+    pub settings_open:        bool,
+    pub settings_cursor:      usize,
     // ─── Project management ────────────────────────────────────────────────────
     /// Name of the currently open project (None = ad-hoc workspace).
     pub current_project_name: Option<String>,
@@ -521,6 +628,11 @@ impl App {
             theme_picker_cursor:  0,
             view_menu_open:       false,
             view_menu_cursor:     0,
+            worklist:             PacketWorklist::default(),
+            investigation_view:   InvestigationView::Summary,
+            investigation_scroll: 0,
+            settings_open:        false,
+            settings_cursor:      0,
             current_project_name: None,
             current_project_path: None,
             project_dirty:        false,
@@ -1679,6 +1791,8 @@ impl App {
         self.packets.clear();
         self.filtered.clear();
         self.selected = None;
+        self.worklist = PacketWorklist::default();
+        self.investigation_scroll = 0;
         self.total_bytes = 0;
         self.packet_counter = 0;
         self.flow_tracker.clear();
@@ -1773,6 +1887,90 @@ impl App {
         self.selected.and_then(|i| self.filtered.get(i)).and_then(|&pi| self.packets.get(pi))
     }
 
+    pub fn active_investigation_packet(&self) -> Option<&Packet> {
+        self.worklist.active_packet_no()
+            .and_then(|packet_no| self.packet_by_no(packet_no))
+            .or_else(|| self.selected_packet())
+    }
+
+    pub fn mark_selected_packet_for_investigation(&mut self) {
+        let Some(packet_no) = self.selected_packet().map(|packet| packet.no) else {
+            self.set_status("No packet selected to add to worklist");
+            return;
+        };
+        let added = self.worklist.add(packet_no);
+        self.set_status(if added {
+            format!("Added packet #{packet_no} to worklist")
+        } else {
+            format!("Packet #{packet_no} is already in worklist")
+        });
+    }
+
+    pub fn open_selected_packet_investigation(&mut self) {
+        let Some(packet_no) = self.selected_packet().map(|packet| packet.no) else {
+            self.set_status("No packet selected to investigate");
+            return;
+        };
+        self.worklist.add(packet_no);
+        self.active_tab = Tab::Investigate;
+        self.investigation_scroll = 0;
+    }
+
+    pub fn toggle_worklist(&mut self) {
+        self.worklist.open = !self.worklist.open;
+    }
+
+    pub fn close_worklist(&mut self) {
+        self.worklist.open = false;
+    }
+
+    pub fn worklist_next_packet(&mut self) {
+        self.worklist.next();
+        self.investigation_scroll = 0;
+    }
+
+    pub fn worklist_prev_packet(&mut self) {
+        self.worklist.prev();
+        self.investigation_scroll = 0;
+    }
+
+    pub fn remove_active_worklist_packet(&mut self) {
+        match self.worklist.remove_active() {
+            Some(packet_no) => self.set_status(format!("Removed packet #{packet_no} from worklist")),
+            None => self.set_status("Worklist is empty"),
+        }
+    }
+
+    pub fn investigation_next_view(&mut self) {
+        let next = (self.investigation_view.index() + 1) % InvestigationView::COUNT;
+        self.investigation_view = InvestigationView::from_index(next);
+        self.investigation_scroll = 0;
+    }
+
+    pub fn investigation_prev_view(&mut self) {
+        let current = self.investigation_view.index();
+        let prev = if current == 0 { InvestigationView::COUNT - 1 } else { current - 1 };
+        self.investigation_view = InvestigationView::from_index(prev);
+        self.investigation_scroll = 0;
+    }
+
+    pub fn investigation_scroll_down(&mut self) {
+        self.investigation_scroll = self.investigation_scroll.saturating_add(1);
+    }
+
+    pub fn investigation_scroll_up(&mut self) {
+        self.investigation_scroll = self.investigation_scroll.saturating_sub(1);
+    }
+
+    pub fn open_settings(&mut self) {
+        self.settings_open = true;
+        self.settings_cursor = 0;
+    }
+
+    pub fn close_settings(&mut self) {
+        self.settings_open = false;
+    }
+
     pub fn current_rate(&self) -> u32 { *self.rate_history.last().unwrap_or(&0) }
 
     pub fn move_down(&mut self) {
@@ -1782,6 +1980,7 @@ impl App {
                     if sel + 1 < self.filtered.len() { self.selected = Some(sel + 1); }
                 } else if !self.filtered.is_empty() { self.selected = Some(0); }
             }
+            Tab::Investigate => self.investigation_scroll_down(),
             Tab::Analysis => { if self.analysis_section < INCIDENT_ANALYSIS_SECTION { self.analysis_section += 1; } }
             // j = toward tail (decrease offset-from-end)
             Tab::Dynamic  => { self.dyn_scroll = self.dyn_scroll.saturating_sub(1); }
@@ -1800,6 +1999,7 @@ impl App {
     pub fn move_up(&mut self) {
         match self.active_tab {
             Tab::Packets  => { if let Some(sel) = self.selected { if sel > 0 { self.selected = Some(sel - 1); } } }
+            Tab::Investigate => self.investigation_scroll_up(),
             Tab::Analysis => { if self.analysis_section > 0 { self.analysis_section -= 1; } }
             // k = away from tail (increase offset-from-end), clamped to log length
             Tab::Dynamic  => {
@@ -1861,6 +2061,8 @@ impl App {
     pub fn move_top(&mut self) {
         if matches!(self.active_tab, Tab::Packets) {
             self.selected = if self.filtered.is_empty() { None } else { Some(0) };
+        } else if matches!(self.active_tab, Tab::Investigate) {
+            self.investigation_scroll = 0;
         }
     }
 
@@ -1871,6 +2073,9 @@ impl App {
             }
             Tab::Dynamic => {
                 self.dyn_scroll = 0; // 0 = tail (offset-from-end model)
+            }
+            Tab::Investigate => {
+                self.investigation_scroll = usize::MAX / 2;
             }
             _ => {}
         }

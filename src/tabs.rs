@@ -2,6 +2,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Packets,
+    Investigate,
     Analysis,
     Strings,
     Dynamic,
@@ -19,6 +20,7 @@ pub enum Tab {
     Workbench,
     OperatorGraph,
     Diff,
+    Settings,
 }
 
 /// Top-level investigation workspaces. Individual views remain lightweight
@@ -34,6 +36,7 @@ pub enum Workspace {
 
 const TRAFFIC_VIEWS: &[Tab] = &[Tab::Packets, Tab::Flows, Tab::Hosts, Tab::TlsAnalysis];
 const INSPECT_VIEWS: &[Tab] = &[
+    Tab::Investigate,
     Tab::Analysis,
     Tab::Strings,
     Tab::Visualize,
@@ -43,7 +46,7 @@ const INSPECT_VIEWS: &[Tab] = &[
 ];
 const DEFENSE_VIEWS: &[Tab] = &[Tab::Security, Tab::Rules, Tab::OperatorGraph];
 const ACTION_VIEWS: &[Tab] = &[Tab::Scanner, Tab::Traceroute, Tab::Craft];
-const CASE_VIEWS: &[Tab] = &[Tab::Notebook, Tab::Dynamic];
+const CASE_VIEWS: &[Tab] = &[Tab::Notebook, Tab::Dynamic, Tab::Settings];
 
 impl Workspace {
     pub const COUNT: usize = 5;
@@ -94,51 +97,55 @@ impl Workspace {
 }
 
 impl Tab {
-    pub const COUNT: usize = 18;
+    pub const COUNT: usize = 20;
 
     pub fn index(&self) -> usize {
         match self {
             Tab::Packets       => 0,
-            Tab::Analysis      => 1,
-            Tab::Strings       => 2,
-            Tab::Dynamic       => 3,
-            Tab::Visualize     => 4,
-            Tab::Flows         => 5,
-            Tab::Craft         => 6,
-            Tab::Traceroute    => 7,
-            Tab::Security      => 8,
-            Tab::Scanner       => 9,
-            Tab::Hosts         => 10,
-            Tab::Notebook      => 11,
-            Tab::TlsAnalysis   => 12,
-            Tab::Objects       => 13,
-            Tab::Rules         => 14,
-            Tab::Workbench     => 15,
-            Tab::OperatorGraph => 16,
-            Tab::Diff          => 17,
+            Tab::Investigate   => 1,
+            Tab::Analysis      => 2,
+            Tab::Strings       => 3,
+            Tab::Dynamic       => 4,
+            Tab::Visualize     => 5,
+            Tab::Flows         => 6,
+            Tab::Craft         => 7,
+            Tab::Traceroute    => 8,
+            Tab::Security      => 9,
+            Tab::Scanner       => 10,
+            Tab::Hosts         => 11,
+            Tab::Notebook      => 12,
+            Tab::TlsAnalysis   => 13,
+            Tab::Objects       => 14,
+            Tab::Rules         => 15,
+            Tab::Workbench     => 16,
+            Tab::OperatorGraph => 17,
+            Tab::Diff          => 18,
+            Tab::Settings      => 19,
         }
     }
 
     pub fn from_index(i: usize) -> Self {
         match i {
             0  => Tab::Packets,
-            1  => Tab::Analysis,
-            2  => Tab::Strings,
-            3  => Tab::Dynamic,
-            4  => Tab::Visualize,
-            5  => Tab::Flows,
-            6  => Tab::Craft,
-            7  => Tab::Traceroute,
-            8  => Tab::Security,
-            9  => Tab::Scanner,
-            10 => Tab::Hosts,
-            11 => Tab::Notebook,
-            12 => Tab::TlsAnalysis,
-            13 => Tab::Objects,
-            14 => Tab::Rules,
-            15 => Tab::Workbench,
-            16 => Tab::OperatorGraph,
-            17 => Tab::Diff,
+            1  => Tab::Investigate,
+            2  => Tab::Analysis,
+            3  => Tab::Strings,
+            4  => Tab::Dynamic,
+            5  => Tab::Visualize,
+            6  => Tab::Flows,
+            7  => Tab::Craft,
+            8  => Tab::Traceroute,
+            9  => Tab::Security,
+            10 => Tab::Scanner,
+            11 => Tab::Hosts,
+            12 => Tab::Notebook,
+            13 => Tab::TlsAnalysis,
+            14 => Tab::Objects,
+            15 => Tab::Rules,
+            16 => Tab::Workbench,
+            17 => Tab::OperatorGraph,
+            18 => Tab::Diff,
+            19 => Tab::Settings,
             _  => Tab::Packets,
         }
     }
@@ -146,6 +153,7 @@ impl Tab {
     pub fn label(&self) -> &'static str {
         match self {
             Tab::Packets       => "Packets",
+            Tab::Investigate   => "Investigate",
             Tab::Analysis      => "Analysis",
             Tab::Strings       => "Strings",
             Tab::Dynamic       => "Dynamic",
@@ -163,13 +171,15 @@ impl Tab {
             Tab::Workbench     => "Workbench",
             Tab::OperatorGraph => "Graph",
             Tab::Diff          => "Diff",
+            Tab::Settings      => "Settings",
         }
     }
 
     pub fn workspace(self) -> Workspace {
         match self {
             Tab::Packets | Tab::Flows | Tab::Hosts | Tab::TlsAnalysis => Workspace::Traffic,
-            Tab::Analysis
+            Tab::Investigate
+            | Tab::Analysis
             | Tab::Strings
             | Tab::Visualize
             | Tab::Workbench
@@ -177,7 +187,7 @@ impl Tab {
             | Tab::Diff => Workspace::Inspect,
             Tab::Security | Tab::Rules | Tab::OperatorGraph => Workspace::Defense,
             Tab::Scanner | Tab::Traceroute | Tab::Craft => Workspace::Actions,
-            Tab::Notebook | Tab::Dynamic => Workspace::Case,
+            Tab::Notebook | Tab::Dynamic | Tab::Settings => Workspace::Case,
         }
     }
 

@@ -59,6 +59,7 @@ pub fn draw(f: &mut Frame, app: &App) {
 fn view_description(view: Tab) -> &'static str {
     match view {
         Tab::Packets => "packet list and protocol decode",
+        Tab::Investigate => "worklist-driven packet investigation",
         Tab::Flows => "conversations, volume, beacon scoring",
         Tab::Hosts => "host inventory and tags",
         Tab::TlsAnalysis => "TLS, JA4, ECH, key logs, and QUIC",
@@ -76,5 +77,6 @@ fn view_description(view: Tab) -> &'static str {
         Tab::Craft => "controlled packet construction",
         Tab::Notebook => "case notes",
         Tab::Dynamic => "runtime event timeline",
+        Tab::Settings => "themes, helpers, capture, and keys",
     }
 }

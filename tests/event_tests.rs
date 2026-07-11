@@ -11,6 +11,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use packrat_tui::app::{self, App, CliAction, StartupMode, StartupOptions};
 use packrat_tui::analysis::traffic_latch::{LatchMode, LatchStatus};
 use packrat_tui::event;
+use packrat_tui::net::packet::Packet;
 use packrat_tui::tabs::{Tab, Workspace};
 use rstest::rstest;
 
@@ -26,6 +27,25 @@ fn ctrl(c: char) -> Event {
 
 fn shift(c: char) -> Event {
     Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT))
+}
+
+fn packet(no: u64) -> Packet {
+    Packet {
+        no,
+        timestamp: no as f64,
+        src: "192.0.2.10".into(),
+        dst: "198.51.100.7".into(),
+        protocol: "TLS".into(),
+        length: 64,
+        info: "test packet".into(),
+        src_port: Some(50000),
+        dst_port: Some(443),
+        vlan_id: None,
+        vlan_pcp: None,
+        vlan_dei: None,
+        outer_vlan_id: None,
+        bytes: vec![0_u8; 64],
+    }
 }
 
 #[tokio::test]
@@ -280,7 +300,7 @@ async fn automatic_latch_requires_policy_gate_for_default_critical_signal() {
 
 #[rstest]
 #[case(KeyCode::Char('1'), Tab::Packets)]
-#[case(KeyCode::Char('2'), Tab::Analysis)]
+#[case(KeyCode::Char('2'), Tab::Investigate)]
 #[case(KeyCode::Char('3'), Tab::Security)]
 #[case(KeyCode::Char('4'), Tab::Scanner)]
 #[case(KeyCode::Char('5'), Tab::Notebook)]
@@ -334,6 +354,34 @@ async fn backslash_opens_theme_picker() {
     let mut app = App::new_for_test();
     event::handle(&mut app, key(KeyCode::Char('\\')));
     assert!(app.theme_picker_open);
+}
+
+#[tokio::test]
+async fn comma_opens_settings_window() {
+    let mut app = App::new_for_test();
+    event::handle(&mut app, key(KeyCode::Char(',')));
+    assert!(app.settings_open);
+    event::handle(&mut app, key(KeyCode::Esc));
+    assert!(!app.settings_open);
+}
+
+#[tokio::test]
+async fn selected_packet_can_be_marked_and_investigated() {
+    let mut app = App::new_for_test();
+    app.inject_packet(packet(1));
+    app.inject_packet(packet(2));
+    app.selected = Some(0);
+
+    event::handle(&mut app, key(KeyCode::Char('m')));
+    assert_eq!(app.worklist.packet_nos, vec![1]);
+
+    app.selected = Some(1);
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.active_tab, Tab::Investigate);
+    assert_eq!(app.worklist.active_packet_no(), Some(2));
+
+    event::handle(&mut app, key(KeyCode::Char('p')));
+    assert_eq!(app.worklist.active_packet_no(), Some(1));
 }
 
 #[tokio::test]
@@ -832,6 +880,7 @@ async fn objects_g_resets_all_scrolls() {
 
 #[rstest]
 #[case(Tab::Packets)]
+#[case(Tab::Investigate)]
 #[case(Tab::Analysis)]
 #[case(Tab::Strings)]
 #[case(Tab::Dynamic)]
@@ -849,6 +898,7 @@ async fn objects_g_resets_all_scrolls() {
 #[case(Tab::Workbench)]
 #[case(Tab::OperatorGraph)]
 #[case(Tab::Diff)]
+#[case(Tab::Settings)]
 fn tab_index_roundtrip(#[case] tab: Tab) {
     let idx = tab.index();
     assert_eq!(Tab::from_index(idx), tab);
@@ -856,7 +906,7 @@ fn tab_index_roundtrip(#[case] tab: Tab) {
 
 #[test]
 fn tab_count_matches_variants() {
-    assert_eq!(Tab::COUNT, 18);
+    assert_eq!(Tab::COUNT, 20);
 }
 
 // ─── Global search palette ────────────────────────────────────────────────────
