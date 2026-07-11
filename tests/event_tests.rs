@@ -43,7 +43,8 @@ fn parse_startup_args_defaults_to_capture() {
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
         CliAction::Run(StartupOptions {
             mode: StartupMode::Capture, telemetry_listen: None, key_log_path: None,
-            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![], sandbox: false,
+            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
+            sandbox: false, socket_events_path: None,
         })
     );
 }
@@ -54,14 +55,16 @@ fn parse_startup_args_enables_simulation() {
         app::parse_startup_args(["--simulation"]).unwrap(),
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None,
-            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![], sandbox: false,
+            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
+            sandbox: false, socket_events_path: None,
         })
     );
     assert_eq!(
         app::parse_startup_args(["-s"]).unwrap(),
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None,
-            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![], sandbox: false,
+            latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
+            sandbox: false, socket_events_path: None,
         })
     );
 }
@@ -84,6 +87,7 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             latch_expiry_seconds: 900,
             protected_addresses: vec![],
             sandbox: false,
+            socket_events_path: None,
         })
     );
 }
@@ -101,8 +105,17 @@ fn parse_startup_args_accepts_key_log_path() {
             latch_expiry_seconds: 900,
             protected_addresses: vec![],
             sandbox: false,
+            socket_events_path: None,
         })
     );
+}
+
+#[test]
+fn parse_startup_args_accepts_socket_events_path() {
+    let CliAction::Run(options) = app::parse_startup_args(["--socket-events", "/tmp/sockets.csv"]).unwrap() else {
+        panic!("expected run options");
+    };
+    assert_eq!(options.socket_events_path, Some("/tmp/sockets.csv".into()));
 }
 
 #[test]

@@ -74,6 +74,12 @@ async fn main() -> Result<()> {
     {
         app.load_key_log(path);
     }
+    if let Some(path) = options.socket_events_path {
+        match app.socket_scope.load_event_file(&path) {
+            Ok(count) => app.set_status(format!("Imported {count} socket ownership events")),
+            Err(error) => app.set_status(format!("Socket event import failed: {error}")),
+        }
+    }
     if let Some(listener) = telemetry_listener {
         tokio::spawn(analysis::telemetry::serve(listener, app.telemetry.clone()));
     }

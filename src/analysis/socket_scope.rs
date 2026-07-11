@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::{Path, PathBuf};
 
 use crate::net::packet::Packet;
 
@@ -36,6 +37,9 @@ pub struct SocketScope {
     pub owners: Vec<SocketOwner>,
     pub traffic: HashMap<u32, ProcessTraffic>,
     port_index: HashMap<(String, u16), Vec<usize>>,
+    imported_owners: Vec<SocketOwner>,
+    pub imported_events: usize,
+    pub event_path: Option<PathBuf>,
     pub last_error: Option<String>,
     pub refreshes: u64,
 }
@@ -61,6 +65,7 @@ impl SocketScope {
                     inode: socket.inode,
                 })
             }).collect();
+            self.owners.extend(self.imported_owners.clone());
             self.rebuild_index();
             self.last_error = None;
             self.refreshes += 1;
@@ -97,6 +102,29 @@ impl SocketScope {
         let mut values: Vec<_> = self.traffic.values().collect();
         values.sort_by_key(|usage| std::cmp::Reverse(usage.bytes_in + usage.bytes_out));
         values
+    }
+
+    /// Import socket ownership rows captured by an external helper. CSV format:
+    /// protocol,local_addr,local_port,remote_addr,remote_port,pid,uid,process,command
+    pub fn load_event_file(&mut self, path: impl AsRef<Path>) -> Result<usize, String> {
+        let path = path.as_ref();
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("read socket event file {}: {error}", path.display()))?;
+        let mut owners = Vec::new();
+        for (line_no, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') { continue; }
+            owners.push(parse_event_owner(line, line_no + 1)?);
+        }
+        let count = owners.len();
+        self.event_path = Some(path.to_path_buf());
+        self.imported_events = count;
+        self.imported_owners = owners;
+        self.owners.retain(|owner| owner.inode != 0);
+        self.owners.extend(self.imported_owners.clone());
+        self.rebuild_index();
+        self.last_error = None;
+        Ok(count)
     }
 
     fn rebuild_index(&mut self) {
@@ -137,6 +165,29 @@ impl SocketScope {
                 && address_matches(owner.remote_addr, remote_ip)
         })
     }
+}
+
+fn parse_event_owner(line: &str, line_no: usize) -> Result<SocketOwner, String> {
+    let fields: Vec<_> = line.splitn(9, ',').map(str::trim).collect();
+    if fields.len() != 9 {
+        return Err(format!("socket event line {line_no} must have 9 CSV fields"));
+    }
+    let protocol = fields[0].to_ascii_uppercase();
+    if !matches!(protocol.as_str(), "TCP" | "UDP") {
+        return Err(format!("socket event line {line_no} has unsupported protocol"));
+    }
+    Ok(SocketOwner {
+        protocol,
+        local_addr: fields[1].parse().map_err(|_| format!("socket event line {line_no} has invalid local_addr"))?,
+        local_port: fields[2].parse().map_err(|_| format!("socket event line {line_no} has invalid local_port"))?,
+        remote_addr: fields[3].parse().map_err(|_| format!("socket event line {line_no} has invalid remote_addr"))?,
+        remote_port: fields[4].parse().map_err(|_| format!("socket event line {line_no} has invalid remote_port"))?,
+        pid: fields[5].parse().map_err(|_| format!("socket event line {line_no} has invalid pid"))?,
+        uid: fields[6].parse().map_err(|_| format!("socket event line {line_no} has invalid uid"))?,
+        process: fields[7].to_string(),
+        command: fields[8].to_string(),
+        inode: 0,
+    })
 }
 
 fn address_matches(socket: IpAddr, packet: Option<IpAddr>) -> bool {
@@ -261,5 +312,37 @@ mod tests {
         assert_eq!(row.remote_addr, "203.0.0.7".parse::<IpAddr>().unwrap());
         assert_eq!(row.remote_port, 50000);
         assert_eq!(row.inode, 12345);
+    }
+
+    #[test]
+    fn imported_event_owner_attributes_matching_packet() {
+        let path = std::env::temp_dir().join(format!("packrat-socket-events-{}.csv", std::process::id()));
+        std::fs::write(
+            &path,
+            "tcp,192.0.2.10,4444,198.51.100.7,443,4242,1000,curl,curl https://example.test\n",
+        ).unwrap();
+        let mut scope = SocketScope::default();
+        assert_eq!(scope.load_event_file(&path).unwrap(), 1);
+        let packet = Packet {
+            no: 1,
+            timestamp: 7.0,
+            src: "192.0.2.10".into(),
+            dst: "198.51.100.7".into(),
+            protocol: "TCP".into(),
+            length: 120,
+            info: String::new(),
+            src_port: Some(4444),
+            dst_port: Some(443),
+            vlan_id: None,
+            vlan_pcp: None,
+            vlan_dei: None,
+            outer_vlan_id: None,
+            bytes: Vec::new(),
+        };
+        assert_eq!(scope.observe(&packet).as_deref(), Some("curl"));
+        let usage = scope.traffic.get(&4242).unwrap();
+        assert_eq!(usage.bytes_out, 120);
+        assert_eq!(usage.packets_out, 1);
+        let _ = std::fs::remove_file(path);
     }
 }
