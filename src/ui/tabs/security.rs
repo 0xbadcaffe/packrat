@@ -31,6 +31,8 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         SecuritySubTab::VlanIntel    => draw_vlan_intel(f, app, chunks[1]),
         SecuritySubTab::ProcessScope => draw_process_scope(f, app, chunks[1]),
         SecuritySubTab::RoutePolicy  => draw_route_policy(f, app, chunks[1]),
+        SecuritySubTab::WirePulse    => draw_wire_pulse(f, app, chunks[1]),
+        SecuritySubTab::NetRegistry  => draw_net_registry(f, app, chunks[1]),
         SecuritySubTab::Replay       => draw_replay(f, app, chunks[1]),
     }
 }
@@ -50,6 +52,8 @@ fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
         SecuritySubTab::VlanIntel => "VLAN Intelligence",
         SecuritySubTab::ProcessScope => "SocketScope",
         SecuritySubTab::RoutePolicy => "RouteLedger",
+        SecuritySubTab::WirePulse => "WirePulse",
+        SecuritySubTab::NetRegistry => "NetRegistry",
         SecuritySubTab::Replay => "PCAP Replay",
     };
     let header = Paragraph::new(Line::from(vec![
@@ -116,6 +120,67 @@ fn draw_route_policy(f: &mut Frame, app: &App, area: Rect) {
     ).block(block_titled(&title)).style(Style::default().bg(C_BG()));
     f.render_widget(table, area);
     render_hint(f, area, "[l] observe -> learn -> drift detection  [y] promote observed routes  [j/k] scroll");
+}
+
+fn draw_wire_pulse(f: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default().direction(Direction::Vertical)
+        .constraints([Constraint::Length(7), Constraint::Min(0)]).split(area);
+    let histogram = app.wire_pulse.histogram();
+    let labels = ["<1ms", "1-10", "10-50", "50-100", "100-250", ">=250"];
+    let max = histogram.iter().copied().max().unwrap_or(1).max(1);
+    let lines = labels.iter().zip(histogram).map(|(label, count)| Line::from(vec![
+        Span::styled(format!(" {label:<9}"), Style::default().fg(C_FG2())),
+        Span::styled("█".repeat(count * 30 / max), Style::default().fg(
+            if label == &">=250" { C_RED() } else { C_CYAN() }
+        )),
+        Span::styled(format!(" {count}"), Style::default().fg(C_FG3())),
+    ])).collect::<Vec<_>>();
+    let summary = format!(
+        " WirePulse - gateway: {}  median: {}  p95: {} ",
+        app.wire_pulse.gateway.as_deref().unwrap_or("unknown"),
+        app.wire_pulse.median_ms().map(|value| format!("{value:.1}ms")).unwrap_or_else(|| "-".into()),
+        app.wire_pulse.p95_ms().map(|value| format!("{value:.1}ms")).unwrap_or_else(|| "-".into()),
+    );
+    f.render_widget(Paragraph::new(lines).block(block_titled(&summary)).style(Style::default().bg(C_BG())), chunks[0]);
+
+    let header = Row::new(vec![cell_hdr("Pkt"), cell_hdr("Kind"), cell_hdr("Target"), cell_hdr("Latency"), cell_hdr("Time")]);
+    let rows = app.wire_pulse.samples.iter().rev().skip(app.security_scroll)
+        .take(chunks[1].height.saturating_sub(3) as usize).map(|sample| Row::new(vec![
+            Cell::from(sample.packet_no.to_string()),
+            Cell::from(sample.kind.to_string()),
+            Cell::from(sample.target.as_str()),
+            Cell::from(format!("{:.2}ms", sample.latency_ms)),
+            Cell::from(format!("{:.3}", sample.timestamp)),
+        ])).collect::<Vec<_>>();
+    let table = Table::new(
+        std::iter::once(header).chain(rows).collect::<Vec<_>>(),
+        [Constraint::Length(8), Constraint::Length(12), Constraint::Length(24), Constraint::Length(14), Constraint::Min(0)],
+    ).block(block_titled(" Passive DNS and TCP Latency ")).style(Style::default().bg(C_BG()));
+    f.render_widget(table, chunks[1]);
+}
+
+fn draw_net_registry(f: &mut Frame, app: &App, area: Rect) {
+    let entries = app.net_registry.sorted();
+    let visible = area.height.saturating_sub(3) as usize;
+    let header = Row::new(vec![
+        cell_hdr("Address"), cell_hdr("ASN"), cell_hdr("Organization"), cell_hdr("Source"),
+    ]);
+    let rows = entries.iter().skip(app.security_scroll).take(visible).map(|identity| Row::new(vec![
+        Cell::from(identity.address.to_string()).style(Style::default().fg(C_CYAN())),
+        Cell::from(identity.asn.as_deref().unwrap_or("-")),
+        Cell::from(identity.organization.as_str()),
+        Cell::from(identity.source.as_str()).style(Style::default().fg(C_FG3())),
+    ])).collect::<Vec<_>>();
+    let title = format!(
+        " NetRegistry - {} observed addresses, {} local prefixes ",
+        entries.len(), app.net_registry.prefixes.len(),
+    );
+    let table = Table::new(
+        std::iter::once(header).chain(rows).collect::<Vec<_>>(),
+        [Constraint::Length(26), Constraint::Length(14), Constraint::Min(30), Constraint::Length(22)],
+    ).block(block_titled(&title)).style(Style::default().bg(C_BG()));
+    f.render_widget(table, area);
+    render_hint(f, area, "Prefix map: ~/.config/packrat/identity-map.csv  [r] explicit WHOIS refresh  [j/k] select");
 }
 
 // ─── IDS Alerts ──────────────────────────────────────────────────────────────

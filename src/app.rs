@@ -20,6 +20,8 @@ use crate::analysis::socket_scope::SocketScope;
 use crate::analysis::route_ledger::RouteLedger;
 use crate::analysis::quic_scope::QuicScope;
 use crate::analysis::traffic_latch::{LatchMode, NftablesLatch, TrafficLatch};
+use crate::analysis::wire_pulse::WirePulse;
+use crate::analysis::net_registry::NetRegistry;
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::notebook::Notebook;
 use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
@@ -69,6 +71,8 @@ pub enum SecuritySubTab {
     VlanIntel,
     ProcessScope,
     RoutePolicy,
+    WirePulse,
+    NetRegistry,
     Replay,
 }
 
@@ -269,6 +273,8 @@ pub struct App {
     pub socket_scope:    SocketScope,
     pub route_ledger:    RouteLedger,
     pub traffic_latch:   TrafficLatch,
+    pub wire_pulse:      WirePulse,
+    pub net_registry:    NetRegistry,
     /// Visible only while an unreviewed critical incident needs attention.
     pub alert_overlay_open: bool,
     pub carver:          Carver,
@@ -429,6 +435,8 @@ impl App {
             socket_scope:     SocketScope::default(),
             route_ledger:     RouteLedger::default(),
             traffic_latch:    TrafficLatch::default(),
+            wire_pulse:       WirePulse::default(),
+            net_registry:     NetRegistry::default(),
             alert_overlay_open: false,
             carver:           Carver::default(),
             carved_objects:   Vec::new(),
@@ -1223,6 +1231,9 @@ impl App {
         self.flow_tracker.update(&pkt);
         let process = self.socket_scope.observe(&pkt);
         self.route_ledger.observe(&pkt, process.as_deref());
+        self.wire_pulse.observe(&pkt);
+        self.net_registry.observe(&pkt.src);
+        self.net_registry.observe(&pkt.dst);
 
         // Graph ingestion — extract before pkt is moved
         {
@@ -1492,6 +1503,8 @@ impl App {
             evidence_exports: self.evidence_vault.exports.len(),
             packets_per_second: self.current_rate(),
             capturing: self.capturing,
+            latency_p95_ms: self.wire_pulse.p95_ms().unwrap_or(0.0),
+            enriched_addresses: self.net_registry.observed.len(),
         });
     }
 
@@ -1618,6 +1631,8 @@ impl App {
         self.socket_scope.traffic.clear();
         self.route_ledger.clear_session();
         self.traffic_latch.clear_session();
+        self.wire_pulse.clear();
+        self.net_registry.clear_session();
         self.alert_overlay_open = false;
         self.carved_objects.clear();
         self.yara_engine.clear_results();
@@ -1870,7 +1885,9 @@ impl App {
             SecuritySubTab::IocHits       => SecuritySubTab::VlanIntel,
             SecuritySubTab::VlanIntel     => SecuritySubTab::ProcessScope,
             SecuritySubTab::ProcessScope  => SecuritySubTab::RoutePolicy,
-            SecuritySubTab::RoutePolicy   => SecuritySubTab::Replay,
+            SecuritySubTab::RoutePolicy   => SecuritySubTab::WirePulse,
+            SecuritySubTab::WirePulse     => SecuritySubTab::NetRegistry,
+            SecuritySubTab::NetRegistry   => SecuritySubTab::Replay,
             SecuritySubTab::Replay        => SecuritySubTab::Ids,
         };
     }
@@ -1890,7 +1907,9 @@ impl App {
             SecuritySubTab::VlanIntel     => SecuritySubTab::IocHits,
             SecuritySubTab::ProcessScope  => SecuritySubTab::VlanIntel,
             SecuritySubTab::RoutePolicy   => SecuritySubTab::ProcessScope,
-            SecuritySubTab::Replay        => SecuritySubTab::RoutePolicy,
+            SecuritySubTab::WirePulse     => SecuritySubTab::RoutePolicy,
+            SecuritySubTab::NetRegistry   => SecuritySubTab::WirePulse,
+            SecuritySubTab::Replay        => SecuritySubTab::NetRegistry,
         };
     }
 
@@ -1912,6 +1931,21 @@ impl App {
         match self.tls_tracker.load_key_log(path.as_ref()) {
             Ok(count) => self.set_status(format!("Loaded {count} TLS/QUIC key-log secrets")),
             Err(error) => self.set_status(format!("Key-log error: {error}")),
+        }
+    }
+
+    pub fn refresh_selected_whois(&mut self) {
+        let address = self.net_registry.sorted().get(self.security_scroll).map(|entry| entry.address);
+        let Some(address) = address else {
+            self.set_status("No public address selected for WHOIS");
+            return;
+        };
+        match self.net_registry.refresh_whois(address) {
+            Ok(identity) => {
+                let organization = identity.organization.clone();
+                self.set_status(format!("WHOIS {address}: {organization}"));
+            }
+            Err(error) => self.set_status(format!("WHOIS error: {error}")),
         }
     }
 }

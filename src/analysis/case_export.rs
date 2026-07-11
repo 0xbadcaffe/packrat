@@ -30,6 +30,8 @@ struct CaseBundle<'a> {
     processes:  Vec<ProcessRecord<'a>>,
     route_drift: Vec<RouteDriftRecord<'a>>,
     containment: Vec<ContainmentRecord<'a>>,
+    latency: Vec<LatencyRecord<'a>>,
+    network_identity: Vec<IdentityRecord<'a>>,
     graph_meta: GraphMeta,
 }
 
@@ -154,6 +156,22 @@ struct ContainmentRecord<'a> {
     expires_seconds: u64,
     detail: &'a str,
     created_at: f64,
+}
+
+#[derive(serde::Serialize)]
+struct LatencyRecord<'a> {
+    kind: String,
+    target: &'a str,
+    latency_ms: f64,
+    packet_no: u64,
+}
+
+#[derive(serde::Serialize)]
+struct IdentityRecord<'a> {
+    address: String,
+    asn: Option<&'a str>,
+    organization: &'a str,
+    source: &'a str,
 }
 
 #[derive(serde::Serialize)]
@@ -329,6 +347,20 @@ fn build(app: &App) -> CaseBundle<'_> {
         created_at: action.created_at,
     }).collect();
 
+    let latency = app.wire_pulse.samples.iter().map(|sample| LatencyRecord {
+        kind: sample.kind.to_string(),
+        target: &sample.target,
+        latency_ms: sample.latency_ms,
+        packet_no: sample.packet_no,
+    }).collect();
+
+    let network_identity = app.net_registry.sorted().into_iter().map(|identity| IdentityRecord {
+        address: identity.address.to_string(),
+        asn: identity.asn.as_deref(),
+        organization: &identity.organization,
+        source: &identity.source,
+    }).collect();
+
     // Operator graph summary
     let graph = &app.operator_graph;
     let mut top: Vec<TopNode> = graph.all_nodes_sorted()
@@ -348,5 +380,5 @@ fn build(app: &App) -> CaseBundle<'_> {
         top_scored: top,
     };
 
-    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, creds, notebook, incidents, evidence, processes, route_drift, containment, graph_meta }
+    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, creds, notebook, incidents, evidence, processes, route_drift, containment, latency, network_identity, graph_meta }
 }

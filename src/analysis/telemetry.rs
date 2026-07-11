@@ -20,6 +20,8 @@ pub struct TelemetrySnapshot {
     pub evidence_exports: usize,
     pub packets_per_second: u32,
     pub capturing: bool,
+    pub latency_p95_ms: f64,
+    pub enriched_addresses: usize,
 }
 
 impl TelemetrySnapshot {
@@ -50,6 +52,10 @@ impl TelemetrySnapshot {
                 "packrat_packets_per_second {}\n",
                 "# TYPE packrat_capture_active gauge\n",
                 "packrat_capture_active {}\n",
+                "# TYPE packrat_latency_p95_milliseconds gauge\n",
+                "packrat_latency_p95_milliseconds {:.3}\n",
+                "# TYPE packrat_enriched_addresses gauge\n",
+                "packrat_enriched_addresses {}\n",
                 "# EOF\n"
             ),
             self.packets_total,
@@ -64,6 +70,8 @@ impl TelemetrySnapshot {
             self.evidence_exports,
             self.packets_per_second,
             u8::from(self.capturing),
+            self.latency_p95_ms,
+            self.enriched_addresses,
         )
     }
 }
