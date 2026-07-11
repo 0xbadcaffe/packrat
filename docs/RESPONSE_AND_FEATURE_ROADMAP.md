@@ -41,7 +41,8 @@ Deployment placement still defines the enforcement boundary:
 - RouteLedger egress learning, persisted baselines, and drift detection.
 - TLS ClientHello metadata, JA4, ECH awareness, key-log correlation, and
   helper-backed authenticated record decode.
-- QUIC invariant header, connection ID, packet-type, and migration inspection.
+- QUIC invariant header, connection ID, packet-type, migration inspection, and
+  helper-backed protected QUIC/HTTP3 frame summaries.
 - EvidenceVault freeze-on-critical PCAP, JSON, and NDJSON artifacts.
 - WirePulse passive DNS, TCP handshake, and gateway latency measurements.
 - NetRegistry local prefix enrichment and operator-requested WHOIS refresh.
@@ -62,9 +63,8 @@ that they are complete.
   `--socket-events`; a kernel collector and helper IPC are still separate work.
 - Move helper-backed TLS record decode from per-record command execution to a
   long-lived helper IPC channel for high-rate captures.
-- Decrypt protected QUIC packets and decode HTTP/3 frames. Current QUIC support
-  includes invariant metadata and Packrat's RatQ fingerprint, not protected
-  payload decoding.
+- Move helper-backed QUIC/HTTP3 decode from per-packet command execution to a
+  long-lived helper IPC channel for high-rate captures.
 - Separate packet-capture privileges into a minimal helper, then drop capture
   capabilities in the terminal process. Firewall changes can already be
   delegated with `--latch-helper`; Landlock limits filesystem writes but is not

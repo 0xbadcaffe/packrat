@@ -266,7 +266,7 @@ fn draw_quic(f: &mut Frame, app: &App, area: Rect) {
     let connections = app.quic_scope.all();
     let header = Row::new(vec![
         Cell::from("Connection ID"), Cell::from("Version"), Cell::from("Types"),
-        Cell::from("RatQ"), Cell::from("Packets"), Cell::from("Bytes"), Cell::from("Addresses"), Cell::from("Flags"),
+        Cell::from("RatQ"), Cell::from("Decoded"), Cell::from("Packets"), Cell::from("Bytes"), Cell::from("Addresses"), Cell::from("Flags"),
     ]).style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD));
     let rows = connections.iter().map(|connection| {
         let mut types: Vec<_> = connection.packet_types.iter().cloned().collect();
@@ -280,6 +280,7 @@ fn draw_quic(f: &mut Frame, app: &App, area: Rect) {
             Cell::from(connection.version.map(|version| format!("0x{version:08x}")).unwrap_or_else(|| "short".into())),
             Cell::from(types.join(",")),
             Cell::from(connection.ratq.clone()).style(Style::default().fg(C_MAGENTA())),
+            Cell::from(connection.decoded_frames.len().to_string()).style(Style::default().fg(if connection.decoded_frames.is_empty() { C_FG3() } else { C_GREEN() })),
             Cell::from(connection.packets.to_string()),
             Cell::from(crate::ui::fmt_bytes(connection.bytes)),
             Cell::from(connection.addresses.len().to_string()),
@@ -290,12 +291,12 @@ fn draw_quic(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Min(0), Constraint::Length(1)]).split(area);
     let table = Table::new(
         std::iter::once(header).chain(rows).collect::<Vec<_>>(),
-        [Constraint::Length(24), Constraint::Length(12), Constraint::Length(18), Constraint::Length(18),
+        [Constraint::Length(24), Constraint::Length(12), Constraint::Length(18), Constraint::Length(18), Constraint::Length(8),
          Constraint::Length(10), Constraint::Length(12), Constraint::Length(10), Constraint::Min(0)],
     ).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(format!(" QUIC Scope - {} connections ", connections.len()), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))))
         .style(Style::default().bg(C_BG()));
     f.render_widget(table, chunks[0]);
-    f.render_widget(Paragraph::new(" QUIC invariant headers only; protected payload is never presented as decoded  [[/]] TLS/QUIC")
+    f.render_widget(Paragraph::new(" QUIC invariant headers plus authenticated helper frames when configured  [[/]] TLS/QUIC")
         .style(Style::default().fg(C_FG3()).bg(C_BG2())), chunks[1]);
 }

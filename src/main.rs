@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
     app.latch_helper_path = options.latch_helper_path;
     app.reputation_helper_path = options.reputation_helper_path;
     app.tls_tracker.decrypt_helper_path = options.tls_decrypt_helper_path;
+    app.quic_scope.decode_helper_path = options.quic_decode_helper_path;
     if let Some(path) = options
         .key_log_path
         .or_else(|| std::env::var_os("SSLKEYLOGFILE").map(Into::into))
