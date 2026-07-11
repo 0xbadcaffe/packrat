@@ -27,6 +27,8 @@ struct CaseBundle<'a> {
     notebook:   Vec<NoteRecord>,
     incidents:  Vec<IncidentRecord<'a>>,
     evidence:   Vec<EvidenceRecord>,
+    processes:  Vec<ProcessRecord<'a>>,
+    route_drift: Vec<RouteDriftRecord<'a>>,
     graph_meta: GraphMeta,
 }
 
@@ -119,6 +121,27 @@ struct EvidenceRecord {
     metadata: String,
     ndjson: String,
     packets: usize,
+}
+
+#[derive(serde::Serialize)]
+struct ProcessRecord<'a> {
+    pid: u32,
+    uid: u32,
+    process: &'a str,
+    bytes_out: u64,
+    bytes_in: u64,
+    packets_out: u64,
+    packets_in: u64,
+}
+
+#[derive(serde::Serialize)]
+struct RouteDriftRecord<'a> {
+    packet_no: u64,
+    subject: &'a str,
+    target: &'a str,
+    port: u16,
+    protocol: &'a str,
+    authority: Option<&'a str>,
 }
 
 #[derive(serde::Serialize)]
@@ -265,6 +288,25 @@ fn build(app: &App) -> CaseBundle<'_> {
         packets: export.packet_count,
     }).collect();
 
+    let processes = app.socket_scope.sorted_traffic().into_iter().map(|usage| ProcessRecord {
+        pid: usage.pid,
+        uid: usage.uid,
+        process: &usage.process,
+        bytes_out: usage.bytes_out,
+        bytes_in: usage.bytes_in,
+        packets_out: usage.packets_out,
+        packets_in: usage.packets_in,
+    }).collect();
+
+    let route_drift = app.route_ledger.drift.iter().map(|finding| RouteDriftRecord {
+        packet_no: finding.packet_no,
+        subject: &finding.route.subject,
+        target: &finding.route.target,
+        port: finding.route.port,
+        protocol: &finding.route.protocol,
+        authority: finding.route.authority.as_deref(),
+    }).collect();
+
     // Operator graph summary
     let graph = &app.operator_graph;
     let mut top: Vec<TopNode> = graph.all_nodes_sorted()
@@ -284,5 +326,5 @@ fn build(app: &App) -> CaseBundle<'_> {
         top_scored: top,
     };
 
-    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, creds, notebook, incidents, evidence, graph_meta }
+    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, creds, notebook, incidents, evidence, processes, route_drift, graph_meta }
 }

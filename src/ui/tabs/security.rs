@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
 use crate::app::{App, SecuritySubTab};
@@ -29,39 +29,93 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         SecuritySubTab::VulnHits     => draw_vuln(f, app, chunks[1]),
         SecuritySubTab::IocHits      => draw_ioc_hits(f, app, chunks[1]),
         SecuritySubTab::VlanIntel    => draw_vlan_intel(f, app, chunks[1]),
+        SecuritySubTab::ProcessScope => draw_process_scope(f, app, chunks[1]),
+        SecuritySubTab::RoutePolicy  => draw_route_policy(f, app, chunks[1]),
         SecuritySubTab::Replay       => draw_replay(f, app, chunks[1]),
     }
 }
 
 fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
-    let labels = [
-        "IDS", "Credentials", "OS Fingerprint", "ARP Watch",
-        "DNS Tunnel", "HTTP", "TLS", "Brute Force", "Vulns", "IOC Hits", "VLAN Intel", "Replay",
-    ];
-    let idx = match app.security_tab {
-        SecuritySubTab::Ids           => 0,
-        SecuritySubTab::Credentials   => 1,
-        SecuritySubTab::OsFingerprint => 2,
-        SecuritySubTab::ArpWatch      => 3,
-        SecuritySubTab::DnsTunnel     => 4,
-        SecuritySubTab::HttpAnalytics => 5,
-        SecuritySubTab::TlsWeakness   => 6,
-        SecuritySubTab::BruteForce    => 7,
-        SecuritySubTab::VulnHits      => 8,
-        SecuritySubTab::IocHits       => 9,
-        SecuritySubTab::VlanIntel     => 10,
-        SecuritySubTab::Replay        => 11,
+    let label = match app.security_tab {
+        SecuritySubTab::Ids => "IDS Alerts",
+        SecuritySubTab::Credentials => "Credentials",
+        SecuritySubTab::OsFingerprint => "OS Fingerprints",
+        SecuritySubTab::ArpWatch => "ARP Watch",
+        SecuritySubTab::DnsTunnel => "DNS Tunnels",
+        SecuritySubTab::HttpAnalytics => "HTTP Analytics",
+        SecuritySubTab::TlsWeakness => "TLS Weaknesses",
+        SecuritySubTab::BruteForce => "Brute Force",
+        SecuritySubTab::VulnHits => "Vulnerability Hits",
+        SecuritySubTab::IocHits => "IOC Hits",
+        SecuritySubTab::VlanIntel => "VLAN Intelligence",
+        SecuritySubTab::ProcessScope => "SocketScope",
+        SecuritySubTab::RoutePolicy => "RouteLedger",
+        SecuritySubTab::Replay => "PCAP Replay",
     };
-    let titles: Vec<Line> = labels.iter().map(|l| Line::from(*l)).collect();
-    let tabs = Tabs::new(titles)
-        .select(idx)
-        .style(Style::default().fg(C_FG3()).bg(C_BG2()))
-        .highlight_style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))
-        .divider("│")
-        .block(Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(C_BORDER())));
-    f.render_widget(tabs, area);
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(" Defense / ", Style::default().fg(C_FG3())),
+        Span::styled(label, Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+        Span::styled("   [ / ] previous / next detector view", Style::default().fg(C_FG2())),
+    ])).style(Style::default().bg(C_BG2()));
+    f.render_widget(header, area);
+}
+
+fn draw_process_scope(f: &mut Frame, app: &App, area: Rect) {
+    let visible = area.height.saturating_sub(3) as usize;
+    let header = Row::new(vec![
+        cell_hdr("PID"), cell_hdr("UID"), cell_hdr("Process"), cell_hdr("Packets Out/In"),
+        cell_hdr("Bytes Out"), cell_hdr("Bytes In"), cell_hdr("Last Seen"),
+    ]).height(1);
+    let rows = app.socket_scope.sorted_traffic().into_iter()
+        .skip(app.security_scroll).take(visible).map(|usage| Row::new(vec![
+            Cell::from(Span::styled(usage.pid.to_string(), Style::default().fg(C_CYAN()))),
+            Cell::from(Span::styled(usage.uid.to_string(), Style::default().fg(C_FG3()))),
+            Cell::from(Span::styled(&usage.process, Style::default().fg(C_YELLOW()))),
+            Cell::from(format!("{} / {}", usage.packets_out, usage.packets_in)),
+            Cell::from(crate::ui::fmt_bytes(usage.bytes_out)),
+            Cell::from(crate::ui::fmt_bytes(usage.bytes_in)),
+            Cell::from(format!("{:.3}", usage.last_seen)),
+        ])).collect::<Vec<_>>();
+    let title = format!(
+        " SocketScope - {} attributed sockets, {} active processes ",
+        app.socket_scope.owners.len(), app.socket_scope.traffic.len(),
+    );
+    let table = Table::new(
+        std::iter::once(header).chain(rows).collect::<Vec<_>>(),
+        [Constraint::Length(8), Constraint::Length(8), Constraint::Length(22),
+         Constraint::Length(16), Constraint::Length(12), Constraint::Length(12), Constraint::Min(0)],
+    ).block(block_titled(&title)).style(Style::default().bg(C_BG()));
+    f.render_widget(table, area);
+    render_hint(f, area, "Linux /proc socket attribution refreshes every 2 seconds  [j/k] scroll  [/] views");
+}
+
+fn draw_route_policy(f: &mut Frame, app: &App, area: Rect) {
+    let visible = area.height.saturating_sub(3) as usize;
+    let header = Row::new(vec![
+        cell_hdr("Pkt"), cell_hdr("Subject"), cell_hdr("Target"), cell_hdr("Port"),
+        cell_hdr("Protocol"), cell_hdr("Authority"),
+    ]).height(1);
+    let rows = app.route_ledger.drift.iter().rev()
+        .skip(app.security_scroll).take(visible).map(|finding| Row::new(vec![
+            Cell::from(Span::styled(finding.packet_no.to_string(), Style::default().fg(C_FG3()))),
+            Cell::from(Span::styled(&finding.route.subject, Style::default().fg(C_YELLOW()))),
+            Cell::from(Span::styled(&finding.route.target, Style::default().fg(C_RED()))),
+            Cell::from(finding.route.port.to_string()),
+            Cell::from(finding.route.protocol.as_str()),
+            Cell::from(finding.route.authority.as_deref().unwrap_or("-")),
+        ])).collect::<Vec<_>>();
+    let title = format!(
+        " RouteLedger - mode: {}  baseline: {}  observed: {}  drift: {} ",
+        app.route_ledger.mode, app.route_ledger.baseline.len(),
+        app.route_ledger.observed.len(), app.route_ledger.drift.len(),
+    );
+    let table = Table::new(
+        std::iter::once(header).chain(rows).collect::<Vec<_>>(),
+        [Constraint::Length(8), Constraint::Length(22), Constraint::Length(20),
+         Constraint::Length(8), Constraint::Length(12), Constraint::Min(0)],
+    ).block(block_titled(&title)).style(Style::default().bg(C_BG()));
+    f.render_widget(table, area);
+    render_hint(f, area, "[l] observe -> learn -> drift detection  [y] promote observed routes  [j/k] scroll");
 }
 
 // ─── IDS Alerts ──────────────────────────────────────────────────────────────

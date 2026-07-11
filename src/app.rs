@@ -16,6 +16,8 @@ use crate::analysis::ioc::IocEngine;
 use crate::analysis::incident::{IncidentSource, IncidentStore};
 use crate::analysis::evidence_vault::EvidenceVault;
 use crate::analysis::telemetry::{TelemetryHub, TelemetrySnapshot};
+use crate::analysis::socket_scope::SocketScope;
+use crate::analysis::route_ledger::RouteLedger;
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::notebook::Notebook;
 use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
@@ -63,6 +65,8 @@ pub enum SecuritySubTab {
     VulnHits,
     IocHits,
     VlanIntel,
+    ProcessScope,
+    RoutePolicy,
     Replay,
 }
 
@@ -216,6 +220,8 @@ pub struct App {
     pub incidents:       IncidentStore,
     pub evidence_vault:  EvidenceVault,
     pub telemetry:       TelemetryHub,
+    pub socket_scope:    SocketScope,
+    pub route_ledger:    RouteLedger,
     /// Visible only while an unreviewed critical incident needs attention.
     pub alert_overlay_open: bool,
     pub carver:          Carver,
@@ -371,6 +377,8 @@ impl App {
             incidents:        IncidentStore::default(),
             evidence_vault:   EvidenceVault::default(),
             telemetry:        TelemetryHub::default(),
+            socket_scope:     SocketScope::default(),
+            route_ledger:     RouteLedger::default(),
             alert_overlay_open: false,
             carver:           Carver::default(),
             carved_objects:   Vec::new(),
@@ -1162,6 +1170,8 @@ impl App {
         self.total_bytes += pkt.length as u64;
         self.rate_this_sec += 1;
         self.flow_tracker.update(&pkt);
+        let process = self.socket_scope.observe(&pkt);
+        self.route_ledger.observe(&pkt, process.as_deref());
 
         // Graph ingestion — extract before pkt is moved
         {
@@ -1354,6 +1364,10 @@ impl App {
         // Advance port scanner
         if self.scan.running { self.scan.tick(); }
 
+        if self.rate_tick % 20 == 1 {
+            let _ = self.socket_scope.refresh();
+        }
+
         // Advance PCAP replay — inject replayed packets
         let replayed = self.replay.tick();
         for pkt in replayed { self.ingest_packet_inner(pkt); }
@@ -1521,6 +1535,8 @@ impl App {
         self.rule_engine.clear_hits();
         self.incidents.clear();
         self.evidence_vault.clear_session();
+        self.socket_scope.traffic.clear();
+        self.route_ledger.clear_session();
         self.alert_overlay_open = false;
         self.carved_objects.clear();
         self.yara_engine.clear_results();
@@ -1771,7 +1787,9 @@ impl App {
             SecuritySubTab::BruteForce    => SecuritySubTab::VulnHits,
             SecuritySubTab::VulnHits      => SecuritySubTab::IocHits,
             SecuritySubTab::IocHits       => SecuritySubTab::VlanIntel,
-            SecuritySubTab::VlanIntel     => SecuritySubTab::Replay,
+            SecuritySubTab::VlanIntel     => SecuritySubTab::ProcessScope,
+            SecuritySubTab::ProcessScope  => SecuritySubTab::RoutePolicy,
+            SecuritySubTab::RoutePolicy   => SecuritySubTab::Replay,
             SecuritySubTab::Replay        => SecuritySubTab::Ids,
         };
     }
@@ -1789,8 +1807,24 @@ impl App {
             SecuritySubTab::VulnHits      => SecuritySubTab::BruteForce,
             SecuritySubTab::IocHits       => SecuritySubTab::VulnHits,
             SecuritySubTab::VlanIntel     => SecuritySubTab::IocHits,
-            SecuritySubTab::Replay        => SecuritySubTab::VlanIntel,
+            SecuritySubTab::ProcessScope  => SecuritySubTab::VlanIntel,
+            SecuritySubTab::RoutePolicy   => SecuritySubTab::ProcessScope,
+            SecuritySubTab::Replay        => SecuritySubTab::RoutePolicy,
         };
+    }
+
+    pub fn cycle_route_policy_mode(&mut self) {
+        match self.route_ledger.cycle_mode() {
+            Ok(mode) => self.set_status(format!("Route policy mode: {mode}")),
+            Err(error) => self.set_status(format!("Route policy error: {error}")),
+        }
+    }
+
+    pub fn promote_observed_routes(&mut self) {
+        match self.route_ledger.promote_observed() {
+            Ok(count) => self.set_status(format!("Added {count} routes to the baseline")),
+            Err(error) => self.set_status(format!("Route policy error: {error}")),
+        }
     }
 }
 
