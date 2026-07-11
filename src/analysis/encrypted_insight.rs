@@ -105,8 +105,9 @@ fn find_handshake(raw: &[u8], handshake_type: u8) -> Option<&[u8]> {
         | raw.get(handshake + 3).copied()? as usize;
     let body = handshake + 4;
     let available_end = (start + 5 + record_len).min(raw.len());
+    if body > available_end { return None; }
     let end = body.checked_add(handshake_len)?.min(available_end);
-    (body <= end).then_some(&raw[body..end])
+    Some(&raw[body..end])
 }
 
 fn parse_sni(body: &[u8]) -> Option<String> {
@@ -319,5 +320,12 @@ mod tests {
         assert_eq!(header.packet_type, "Initial");
         assert_eq!(header.destination_id, "0102030405060708");
         assert!(header.ratq.starts_with("ratq1_"));
+    }
+
+    #[test]
+    fn truncated_tls_handshake_does_not_panic() {
+        let packet = [0x16, 0x03, 0x03, 0x00, 0x01, 0x01];
+        assert!(parse_client_hello(&packet, 't').is_none());
+        assert!(parse_server_hello(&packet).is_none());
     }
 }
