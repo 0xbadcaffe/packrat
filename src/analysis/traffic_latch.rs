@@ -2,6 +2,7 @@
 
 use std::io::Write;
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::analysis::incident::Incident;
@@ -73,7 +74,7 @@ pub struct LatchAction {
     pub created_at: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LatchRequest {
     pub address: IpAddr,
     pub expires_seconds: u64,
@@ -81,6 +82,48 @@ pub struct LatchRequest {
 
 pub trait LatchBackend {
     fn block(&self, request: &LatchRequest) -> Result<String, String>;
+}
+
+#[derive(Debug)]
+pub struct CommandLatch {
+    pub program: PathBuf,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct HelperResponse {
+    ok: bool,
+    detail: String,
+}
+
+impl CommandLatch {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self { program: path.as_ref().to_path_buf() }
+    }
+}
+
+impl LatchBackend for CommandLatch {
+    fn block(&self, request: &LatchRequest) -> Result<String, String> {
+        let mut child = Command::new(&self.program)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("start latch helper {}: {error}", self.program.display()))?;
+        let input = serde_json::to_vec(request)
+            .map_err(|error| format!("encode latch helper request: {error}"))?;
+        child.stdin.as_mut().ok_or("latch helper stdin unavailable")?
+            .write_all(&input).map_err(|error| format!("write latch helper request: {error}"))?;
+        let output = child.wait_with_output().map_err(|error| format!("wait for latch helper: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "latch helper failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let response: HelperResponse = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("decode latch helper response: {error}"))?;
+        if response.ok { Ok(response.detail) } else { Err(response.detail) }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -167,14 +210,14 @@ impl Default for TrafficLatch {
 }
 
 impl TrafficLatch {
-    pub fn on_incident<B: LatchBackend>(&mut self, incident: &Incident, backend: &B) -> &LatchAction {
+    pub fn on_incident(&mut self, incident: &Incident, backend: &dyn LatchBackend) -> &LatchAction {
         self.on_incident_with_auto_gate(incident, backend, false)
     }
 
-    pub fn on_incident_with_auto_gate<B: LatchBackend>(
+    pub fn on_incident_with_auto_gate(
         &mut self,
         incident: &Incident,
-        backend: &B,
+        backend: &dyn LatchBackend,
         automatic_allowed: bool,
     ) -> &LatchAction {
         if let Some(index) = self.actions.iter().position(|action| action.incident_id == incident.id) {
@@ -213,7 +256,7 @@ impl TrafficLatch {
         self.actions.last().unwrap()
     }
 
-    pub fn approve<B: LatchBackend>(&mut self, incident_id: u64, backend: &B) -> Result<&LatchAction, String> {
+    pub fn approve(&mut self, incident_id: u64, backend: &dyn LatchBackend) -> Result<&LatchAction, String> {
         let action = self.actions.iter_mut().find(|action| action.incident_id == incident_id)
             .ok_or("no TrafficLatch action for this incident")?;
         if action.status != LatchStatus::PendingApproval {
@@ -314,5 +357,28 @@ mod tests {
             allowed.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, true).status,
             LatchStatus::Applied,
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_latch_uses_json_helper_contract() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!("packrat-latch-helper-{}.sh", std::process::id()));
+        std::fs::write(
+            &path,
+            "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"detail\":\"helper block accepted\"}'\n",
+        ).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+
+        let backend = CommandLatch::new(&path);
+        let detail = backend.block(&LatchRequest {
+            address: "203.0.113.9".parse().unwrap(),
+            expires_seconds: 60,
+        }).unwrap();
+        assert_eq!(detail, "helper block accepted");
+        let _ = std::fs::remove_file(path);
     }
 }

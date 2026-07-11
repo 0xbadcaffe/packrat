@@ -38,6 +38,9 @@ SSLKEYLOGFILE=/secure/session-keys.log cargo run --features real-capture
 # Import socket ownership events captured by an external helper.
 cargo run --features real-capture -- --socket-events /secure/socket-events.csv
 
+# Delegate TrafficLatch firewall changes to a minimal helper command.
+cargo run --features real-capture -- --traffic-latch manual --latch-helper /usr/libexec/packrat-latch
+
 # Restrict filesystem writes with Linux Landlock.
 cargo run --features real-capture -- --sandbox
 ```
@@ -159,6 +162,22 @@ Automatic mode requires one of these gates before it applies a block:
 
 If neither gate passes, the action stays pending and can still be approved
 manually with `x` after incident review.
+
+By default, Packrat applies approved Linux blocks with nftables from the TUI
+process. For stricter privilege separation, start it with `--latch-helper PATH`.
+The helper receives a JSON request on stdin and returns a JSON response on
+stdout:
+
+```json
+{ "address": "203.0.113.9", "expires_seconds": 300 }
+```
+
+```json
+{ "ok": true, "detail": "blocked 203.0.113.9 for 300 seconds" }
+```
+
+The helper should be a small local program with only the firewall privileges it
+needs. Packrat records the helper result in the incident action history.
 
 Containment only affects traffic controlled by the host running Packrat. An
 endpoint can constrain its own traffic; a gateway can constrain forwarded

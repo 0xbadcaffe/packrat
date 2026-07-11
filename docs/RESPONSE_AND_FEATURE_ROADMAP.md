@@ -21,6 +21,10 @@ or two independent critical detectors for the same attacker and target. Linux
 enforcement uses validated IP addresses and expiring nftables sets; protected
 and unsafe address classes are rejected.
 
+Approved containment can use the built-in nftables backend or `--latch-helper`,
+which delegates firewall changes to a minimal external command over a JSON
+stdin/stdout contract.
+
 Deployment placement still defines the enforcement boundary:
 
 | Placement | What Packrat can contain |
@@ -58,9 +62,10 @@ that they are complete.
 - Decrypt protected QUIC packets and decode HTTP/3 frames. Current QUIC support
   includes invariant metadata and Packrat's RatQ fingerprint, not protected
   payload decoding.
-- Separate capture and firewall privileges into a minimal helper, then drop
-  capabilities in the terminal process. Landlock currently limits filesystem
-  writes but is not a privilege boundary for packet capture.
+- Separate packet-capture privileges into a minimal helper, then drop capture
+  capabilities in the terminal process. Firewall changes can already be
+  delegated with `--latch-helper`; Landlock limits filesystem writes but is not
+  a privilege boundary for packet capture.
 - Add attributable online fingerprint reputation refreshes only as explicit,
   cached operator actions. Current reputation support is offline CSV context for
   addresses, CIDRs, JA4, and RatQ values; no silent external lookups run.
