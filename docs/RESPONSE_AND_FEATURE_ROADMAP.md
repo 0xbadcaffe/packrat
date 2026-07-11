@@ -48,7 +48,7 @@ Deployment placement still defines the enforcement boundary:
 - Local `/health` and OpenMetrics `/metrics` telemetry endpoints.
 - Expiring, audited nftables containment in preview, manual, and auto modes.
 - Optional Linux Landlock filesystem-write sandbox.
-- Replay regression fixtures for shipped penetration signature families.
+- Replay coverage for shipped IDS signatures and VLAN penetration indicators.
 
 ## Remaining Engineering Work
 
@@ -70,7 +70,7 @@ that they are complete.
 - Extend explicit reputation helper refreshes to selected JA4 and RatQ
   fingerprints. Current helper refresh is address-scoped; offline CSV context
   already covers addresses, CIDRs, JA4, and RatQ values.
-- Expand replay fixtures as each new detector and containment policy ships.
+- Keep replay fixtures current as each new detector and containment policy ships.
 
 These remaining items require focused security design and should not be
 represented as simple parser or UI additions.
