@@ -244,6 +244,7 @@ fn handle_settings(app: &mut App, key: KeyEvent) {
             let cur = app.selected_theme_name.clone();
             app.theme_picker_cursor = THEME_NAMES.iter().position(|&n| n == cur).unwrap_or(0);
         }
+        KeyCode::Enter => app.activate_settings_selection(),
         _ => {}
     }
 }

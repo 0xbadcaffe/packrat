@@ -60,7 +60,7 @@ pub fn draw(f: &mut Frame) {
             ("c",      "Clear hosts"),
         ]),
         ("Security Tab", &[
-            ("[/]",  "Previous / next sub-tab"),
+            ("[/]",  "Previous / next detector view"),
             ("a c o w d u t b v i p", "Jump to common detector views"),
             ("l / y", "RouteLedger mode / promote observed routes"),
             ("r", "Refresh selected NetRegistry address with WHOIS"),
@@ -72,7 +72,7 @@ pub fn draw(f: &mut Frame) {
             ("c", "Clear current encrypted-traffic view"),
         ]),
         ("Objects Tab", &[
-            ("o y m",   "Objects / YARA Rules / YARA Matches sub-tab"),
+            ("o y m",   "Objects / YARA Rules / YARA Matches panels"),
             ("r",       "Reload YARA rules from disk"),
             ("s",       "Force YARA rescan of all objects"),
         ]),

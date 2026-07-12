@@ -40,7 +40,7 @@ fn draw_details(f: &mut Frame, app: &App, area: Rect) {
         0 => vec![
             Line::from(vec![Span::styled("Appearance", heading())]),
             Line::from(format!("Theme: {}", app.selected_theme_name)),
-            Line::from("Use \\ for quick theme picker, or Enter here to open it."),
+            Line::from("Enter: open theme picker.  \\ also opens it from anywhere."),
             Line::from("Future: compact density, timestamp format, packet color rules."),
         ],
         1 => vec![
@@ -48,6 +48,7 @@ fn draw_details(f: &mut Frame, app: &App, area: Rect) {
             Line::from(format!("Interface: {}", app.selected_iface)),
             Line::from(format!("Capturing: {}", if app.capturing { "yes" } else { "no" })),
             Line::from(format!("Visible packets: {} / total {}", app.filtered.len(), app.packets.len())),
+            Line::from("Enter: toggle capture."),
             Line::from("Future: default interface, capture buffer limits, auto-scroll."),
         ],
         2 => vec![
@@ -62,6 +63,7 @@ fn draw_details(f: &mut Frame, app: &App, area: Rect) {
             Line::from(format!("TrafficLatch mode: {}", app.traffic_latch.mode)),
             Line::from(format!("Containment timeout: {}s", app.traffic_latch.expires_seconds)),
             Line::from(format!("Protected addresses: {}", app.traffic_latch.protected_addresses.len())),
+            Line::from("Enter: cycle TrafficLatch mode."),
             Line::from("Auto containment still requires the policy gate."),
         ],
         _ => vec![

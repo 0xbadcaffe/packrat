@@ -1971,6 +1971,25 @@ impl App {
         self.settings_open = false;
     }
 
+    pub fn activate_settings_selection(&mut self) {
+        match self.settings_cursor {
+            1 => {
+                self.toggle_capture();
+                self.set_status(if self.capturing { "Capture started" } else { "Capture stopped" });
+            }
+            3 => {
+                self.traffic_latch.mode = match self.traffic_latch.mode {
+                    LatchMode::Monitor => LatchMode::Preview,
+                    LatchMode::Preview => LatchMode::Manual,
+                    LatchMode::Manual => LatchMode::Automatic,
+                    LatchMode::Automatic => LatchMode::Monitor,
+                };
+                self.set_status(format!("TrafficLatch mode set to {}", self.traffic_latch.mode));
+            }
+            _ => {}
+        }
+    }
+
     pub fn current_rate(&self) -> u32 { *self.rate_history.last().unwrap_or(&0) }
 
     pub fn move_down(&mut self) {

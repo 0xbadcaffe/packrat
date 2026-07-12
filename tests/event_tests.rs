@@ -366,6 +366,26 @@ async fn comma_opens_settings_window() {
 }
 
 #[tokio::test]
+async fn settings_enter_toggles_capture_from_capture_section() {
+    let mut app = App::new_for_test();
+    event::handle(&mut app, key(KeyCode::Char(',')));
+    event::handle(&mut app, key(KeyCode::Char('j')));
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert!(app.capturing);
+}
+
+#[tokio::test]
+async fn settings_enter_cycles_latch_mode_from_defense_section() {
+    let mut app = App::new_for_test();
+    event::handle(&mut app, key(KeyCode::Char(',')));
+    event::handle(&mut app, key(KeyCode::Char('j')));
+    event::handle(&mut app, key(KeyCode::Char('j')));
+    event::handle(&mut app, key(KeyCode::Char('j')));
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.traffic_latch.mode, LatchMode::Preview);
+}
+
+#[tokio::test]
 async fn selected_packet_can_be_marked_and_investigated() {
     let mut app = App::new_for_test();
     app.inject_packet(packet(1));
