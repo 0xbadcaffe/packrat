@@ -229,7 +229,7 @@ fn draw_ids(f: &mut Frame, app: &App, area: Rect) {
     .block(block_titled(&count_str))
     .style(Style::default().bg(C_BG()));
     f.render_widget(table, area);
-    render_hint(f, area, "[Tab/[/]] sub-tab  [j/k] scroll  [C] clear  [q] quit");
+    render_hint(f, area, "[/] detector view  [j/k] scroll  [C] clear  [q] quit");
 }
 
 // ─── Credentials ─────────────────────────────────────────────────────────────
@@ -593,7 +593,7 @@ fn draw_vlan_intel(f: &mut Frame, app: &App, area: Rect) {
     .style(Style::default().bg(C_BG()));
     f.render_widget(alert_table, chunks[1]);
 
-    render_hint(f, area, "[Tab/[/]] sub-tab  [j/k] scroll  [C] clear  Detects: double-tag, DTP, MAC-cross-VLAN, PCP-abuse, native-VLAN-1");
+    render_hint(f, area, "[/] detector view  [j/k] scroll  [C] clear  Detects: double-tag, DTP, MAC-cross-VLAN, PCP-abuse, native-VLAN-1");
 }
 
 fn format_bytes(b: u64) -> String {
