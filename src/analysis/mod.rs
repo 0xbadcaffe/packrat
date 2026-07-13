@@ -1,6 +1,7 @@
 pub mod case_export;
 pub mod vlan;
 pub mod display_filter;
+pub mod packet_fields;
 pub mod geo;
 pub mod notebook;
 pub mod stream;

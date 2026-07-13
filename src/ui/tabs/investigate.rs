@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{App, InvestigationView};
+use crate::analysis::packet_fields::PacketField;
 use crate::model::evidence::{EvidenceRef, PacketRef};
 use crate::net::flow::FlowKey;
 use crate::net::packet::Packet;
@@ -102,7 +103,8 @@ fn draw_active_view(f: &mut Frame, app: &App, area: Rect) {
 
     match app.investigation_view {
         InvestigationView::Summary => draw_summary(f, app, packet, area),
-        InvestigationView::Decode | InvestigationView::Bytes => crate::ui::tabs::packets::draw_packet_detail(f, app, packet, area),
+        InvestigationView::Decode => draw_headers(f, app, area),
+        InvestigationView::Bytes => crate::ui::tabs::packets::draw_packet_detail(f, app, packet, area),
         InvestigationView::Flow => draw_flow(f, app, packet, area),
         InvestigationView::Strings => draw_strings(f, app, packet, area),
         InvestigationView::Encrypted => draw_encrypted(f, app, packet, area),
@@ -129,6 +131,69 @@ fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
         Line::from(format!("Worklist packets: {}", app.worklist.packet_nos.len())),
     ];
     f.render_widget(Paragraph::new(scrolled(lines, app.investigation_scroll, area)).block(panel("Summary")).wrap(Wrap { trim: false }), area);
+}
+
+fn draw_headers(f: &mut Frame, app: &App, area: Rect) {
+    let fields = app.visible_packet_header_fields();
+    let selected = app.header_cursor.min(fields.len().saturating_sub(1));
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(8), Constraint::Length(5)])
+        .split(area);
+
+    let visible_rows = chunks[0].height.saturating_sub(3) as usize;
+    let start = if visible_rows == 0 {
+        0
+    } else if selected >= visible_rows {
+        selected + 1 - visible_rows
+    } else {
+        0
+    };
+
+    let rows: Vec<Row> = fields.iter().enumerate().skip(start).take(visible_rows.max(1)).map(|(index, field)| {
+        let style = if index == selected {
+            Style::default().fg(C_BG()).bg(C_CYAN()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(C_FG())
+        };
+        Row::new(vec![
+            Cell::from(field.layer.clone()),
+            Cell::from(field.path.clone()),
+            Cell::from(field.label.clone()),
+            Cell::from(field.value.clone()),
+        ]).style(style)
+    }).collect();
+
+    let title = if app.header_searching {
+        format!(" Headers  search: {}_ ", app.header_search)
+    } else if app.header_search.is_empty() {
+        " Headers  / search  j/k move  f filter  c clear search ".into()
+    } else {
+        format!(" Headers  filter: {}  / edit  c clear ", app.header_search)
+    };
+
+    let table = Table::new(rows, [
+        Constraint::Length(12),
+        Constraint::Length(24),
+        Constraint::Length(24),
+        Constraint::Min(12),
+    ])
+    .header(Row::new(["Layer", "Path", "Field", "Value"]).style(Style::default().fg(C_FG2()).add_modifier(Modifier::BOLD)))
+    .block(panel_owned(title));
+    f.render_widget(table, chunks[0]);
+
+    let detail = fields.get(selected)
+        .map(header_detail_lines)
+        .unwrap_or_else(|| vec![
+            Line::from("No header fields match the current search."),
+            Line::from("Press c to clear search or / to enter a new query."),
+        ]);
+    f.render_widget(
+        Paragraph::new(detail)
+            .block(panel("Selected Field"))
+            .wrap(Wrap { trim: false }),
+        chunks[1],
+    );
 }
 
 fn draw_flow(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
@@ -286,6 +351,28 @@ fn panel(title: &'static str) -> Block<'static> {
         .border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(format!(" {title} "), Style::default().fg(C_GREEN()).add_modifier(Modifier::BOLD)))
         .style(Style::default().bg(C_BG()))
+}
+
+fn panel_owned(title: String) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(C_BORDER()))
+        .title(Span::styled(title, Style::default().fg(C_GREEN()).add_modifier(Modifier::BOLD)))
+        .style(Style::default().bg(C_BG()))
+}
+
+fn header_detail_lines(field: &PacketField) -> Vec<Line<'static>> {
+    let offset = match (field.offset, field.length) {
+        (Some(offset), Some(length)) => format!("offset {offset}, length {length}"),
+        (Some(offset), None) => format!("offset {offset}"),
+        _ => "offset unknown".into(),
+    };
+    vec![
+        Line::from(vec![Span::styled(field.path.clone(), heading()), Span::raw(format!("  {}", field.label))]),
+        Line::from(format!("Layer: {}   Value: {}", field.layer, field.value)),
+        Line::from(format!("{offset}   Use / to search paths or values, f to filter supported fields.")),
+    ]
 }
 
 fn heading() -> Style {

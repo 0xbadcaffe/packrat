@@ -8,7 +8,7 @@
 //! every important per-tab action key.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use packrat_tui::app::{self, App, CliAction, StartupMode, StartupOptions};
+use packrat_tui::app::{self, App, CliAction, InvestigationView, StartupMode, StartupOptions};
 use packrat_tui::analysis::traffic_latch::{LatchMode, LatchStatus};
 use packrat_tui::event;
 use packrat_tui::net::packet::Packet;
@@ -46,6 +46,25 @@ fn packet(no: u64) -> Packet {
         outer_vlan_id: None,
         bytes: vec![0_u8; 64],
     }
+}
+
+fn tcp_packet(no: u64) -> Packet {
+    let mut bytes = vec![
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+        0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+        0x08, 0x00,
+        0x45, 0x00, 0x00, 0x28, 0x12, 0x34, 0x00, 0x00, 64, 6, 0x00, 0x00,
+        192, 0, 2, 10, 198, 51, 100, 7,
+    ];
+    bytes.extend(50_000u16.to_be_bytes());
+    bytes.extend(443u16.to_be_bytes());
+    bytes.extend(0x0102_0304u32.to_be_bytes());
+    bytes.extend(0x0506_0708u32.to_be_bytes());
+    bytes.extend([0x50, 0x18, 0x10, 0x00, 0, 0, 0, 0]);
+    let mut pkt = packet(no);
+    pkt.bytes = bytes;
+    pkt.length = pkt.bytes.len() as u16;
+    pkt
 }
 
 #[tokio::test]
@@ -402,6 +421,30 @@ async fn selected_packet_can_be_marked_and_investigated() {
 
     event::handle(&mut app, key(KeyCode::Char('p')));
     assert_eq!(app.worklist.active_packet_no(), Some(1));
+}
+
+#[tokio::test]
+async fn investigate_headers_searches_tcp_fields_without_global_palette() {
+    let mut app = App::new_for_test();
+    app.inject_packet(tcp_packet(1));
+    app.selected = Some(0);
+    event::handle(&mut app, key(KeyCode::Enter));
+    app.investigation_view = InvestigationView::Decode;
+
+    event::handle(&mut app, key(KeyCode::Char('/')));
+    event::handle(&mut app, key(KeyCode::Char('t')));
+    event::handle(&mut app, key(KeyCode::Char('c')));
+    event::handle(&mut app, key(KeyCode::Char('p')));
+    event::handle(&mut app, key(KeyCode::Char('.')));
+    event::handle(&mut app, key(KeyCode::Char('s')));
+    event::handle(&mut app, key(KeyCode::Char('e')));
+    event::handle(&mut app, key(KeyCode::Char('q')));
+    event::handle(&mut app, key(KeyCode::Enter));
+
+    assert!(!app.search_open);
+    assert!(!app.header_searching);
+    assert_eq!(app.visible_packet_header_fields()[0].path, "tcp.seq");
+    assert_eq!(app.visible_packet_header_fields()[0].value, "16909060");
 }
 
 #[tokio::test]

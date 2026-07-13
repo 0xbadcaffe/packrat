@@ -25,6 +25,7 @@ use crate::analysis::net_registry::NetRegistry;
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::notebook::Notebook;
 use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
+use crate::analysis::packet_fields::{self, PacketField};
 use crate::analysis::protocol_workbench::ProtocolWorkbench;
 use crate::analysis::rules::RuleEngine;
 use crate::analysis::rules::Action as RuleAction;
@@ -125,7 +126,7 @@ impl InvestigationView {
     pub fn label(self) -> &'static str {
         match self {
             Self::Summary => "Summary",
-            Self::Decode => "Decode",
+            Self::Decode => "Headers",
             Self::Bytes => "Bytes",
             Self::Flow => "Flow",
             Self::Strings => "Strings",
@@ -479,6 +480,9 @@ pub struct App {
     pub worklist:             PacketWorklist,
     pub investigation_view:   InvestigationView,
     pub investigation_scroll: usize,
+    pub header_cursor:        usize,
+    pub header_searching:     bool,
+    pub header_search:        String,
     pub settings_open:        bool,
     pub settings_cursor:      usize,
     // ─── Project management ────────────────────────────────────────────────────
@@ -631,6 +635,9 @@ impl App {
             worklist:             PacketWorklist::default(),
             investigation_view:   InvestigationView::Summary,
             investigation_scroll: 0,
+            header_cursor:        0,
+            header_searching:     false,
+            header_search:        String::new(),
             settings_open:        false,
             settings_cursor:      0,
             current_project_name: None,
@@ -1793,6 +1800,7 @@ impl App {
         self.selected = None;
         self.worklist = PacketWorklist::default();
         self.investigation_scroll = 0;
+        self.reset_header_focus();
         self.total_bytes = 0;
         self.packet_counter = 0;
         self.flow_tracker.clear();
@@ -1914,6 +1922,7 @@ impl App {
         self.worklist.add(packet_no);
         self.active_tab = Tab::Investigate;
         self.investigation_scroll = 0;
+        self.reset_header_focus();
     }
 
     pub fn toggle_worklist(&mut self) {
@@ -1927,11 +1936,13 @@ impl App {
     pub fn worklist_next_packet(&mut self) {
         self.worklist.next();
         self.investigation_scroll = 0;
+        self.reset_header_focus();
     }
 
     pub fn worklist_prev_packet(&mut self) {
         self.worklist.prev();
         self.investigation_scroll = 0;
+        self.reset_header_focus();
     }
 
     pub fn remove_active_worklist_packet(&mut self) {
@@ -1939,12 +1950,14 @@ impl App {
             Some(packet_no) => self.set_status(format!("Removed packet #{packet_no} from worklist")),
             None => self.set_status("Worklist is empty"),
         }
+        self.reset_header_focus();
     }
 
     pub fn investigation_next_view(&mut self) {
         let next = (self.investigation_view.index() + 1) % InvestigationView::COUNT;
         self.investigation_view = InvestigationView::from_index(next);
         self.investigation_scroll = 0;
+        self.reset_header_focus();
     }
 
     pub fn investigation_prev_view(&mut self) {
@@ -1952,6 +1965,7 @@ impl App {
         let prev = if current == 0 { InvestigationView::COUNT - 1 } else { current - 1 };
         self.investigation_view = InvestigationView::from_index(prev);
         self.investigation_scroll = 0;
+        self.reset_header_focus();
     }
 
     pub fn investigation_scroll_down(&mut self) {
@@ -1960,6 +1974,83 @@ impl App {
 
     pub fn investigation_scroll_up(&mut self) {
         self.investigation_scroll = self.investigation_scroll.saturating_sub(1);
+    }
+
+    pub fn packet_header_fields(&self) -> Vec<PacketField> {
+        self.active_investigation_packet()
+            .map(packet_fields::extract_fields)
+            .unwrap_or_default()
+    }
+
+    pub fn visible_packet_header_fields(&self) -> Vec<PacketField> {
+        packet_fields::filter_fields(&self.packet_header_fields(), &self.header_search)
+    }
+
+    pub fn header_cursor_down(&mut self) {
+        let count = self.visible_packet_header_fields().len();
+        if count == 0 {
+            self.header_cursor = 0;
+        } else {
+            self.header_cursor = (self.header_cursor + 1).min(count - 1);
+        }
+    }
+
+    pub fn header_cursor_up(&mut self) {
+        self.header_cursor = self.header_cursor.saturating_sub(1);
+    }
+
+    pub fn header_cursor_home(&mut self) {
+        self.header_cursor = 0;
+    }
+
+    pub fn header_cursor_end(&mut self) {
+        self.header_cursor = self.visible_packet_header_fields().len().saturating_sub(1);
+    }
+
+    pub fn start_header_search(&mut self) {
+        self.header_searching = true;
+        self.header_cursor = 0;
+    }
+
+    pub fn close_header_search(&mut self) {
+        self.header_searching = false;
+    }
+
+    pub fn update_header_search(&mut self, c: char) {
+        self.header_search.push(c);
+        self.header_cursor = 0;
+    }
+
+    pub fn pop_header_search(&mut self) {
+        self.header_search.pop();
+        self.header_cursor = 0;
+    }
+
+    pub fn clear_header_search(&mut self) {
+        self.header_search.clear();
+        self.header_cursor = 0;
+    }
+
+    pub fn apply_selected_header_filter(&mut self) {
+        let fields = self.visible_packet_header_fields();
+        let Some(field) = fields.get(self.header_cursor).or_else(|| fields.first()) else {
+            self.set_status("No packet header field selected");
+            return;
+        };
+        let Some(expr) = packet_fields::filter_expression(field) else {
+            self.set_status(format!("No display filter mapping for {}", field.path));
+            return;
+        };
+        self.filter.input = expr.clone();
+        self.filter.active = false;
+        self.rebuild_filtered();
+        self.active_tab = Tab::Packets;
+        self.set_status(format!("Filter applied: {expr}"));
+    }
+
+    fn reset_header_focus(&mut self) {
+        self.header_cursor = 0;
+        self.header_searching = false;
     }
 
     pub fn open_settings(&mut self) {
