@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use crate::app::{App, ObjectsSubTab, SecuritySubTab};
+use crate::app::{App, InvestigationView, ObjectsSubTab, SecuritySubTab};
 use crate::ui::project_manager::{PmField, PmTab};
 use crate::model::project::ProjectSaveMode;
 use crate::storage::project_store;
@@ -38,6 +38,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.hosts_tagging
         || app.graph_ui.searching
         || app.search_open
+        || app.header_searching
         || app.settings_open
         || app.show_help
         || app.stream_overlay.is_some()
@@ -122,6 +123,8 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         handle_iface_picker(app, key);
     } else if app.strings_search_active {
         handle_strings_search(app, key);
+    } else if app.header_searching {
+        handle_investigate(app, key);
     } else {
         // Open global search palette with '?'
         if key.code == KeyCode::Char('?') {
@@ -1013,7 +1016,40 @@ fn handle_graph(app: &mut App, key: KeyEvent) {
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 fn handle_investigate(app: &mut App, key: KeyEvent) {
+    if app.header_searching {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => app.close_header_search(),
+            KeyCode::Backspace => app.pop_header_search(),
+            KeyCode::Char(c) => app.update_header_search(c),
+            _ => {}
+        }
+        return;
+    }
+
     if global_tab_switch(app, &key) { return; }
+
+    if app.investigation_view == InvestigationView::Decode {
+        match key.code {
+            KeyCode::Char('/') => app.start_header_search(),
+            KeyCode::Char('j') | KeyCode::Down => app.header_cursor_down(),
+            KeyCode::Char('k') | KeyCode::Up => app.header_cursor_up(),
+            KeyCode::Char('g') => app.header_cursor_home(),
+            KeyCode::Char('G') => app.header_cursor_end(),
+            KeyCode::Char('f') => app.apply_selected_header_filter(),
+            KeyCode::Char('c') => app.clear_header_search(),
+            KeyCode::Char('n') => app.worklist_next_packet(),
+            KeyCode::Char('p') => app.worklist_prev_packet(),
+            KeyCode::Char('[') => app.investigation_prev_view(),
+            KeyCode::Char(']') => app.investigation_next_view(),
+            KeyCode::Char('w') => app.toggle_worklist(),
+            KeyCode::Char('d') | KeyCode::Delete => app.remove_active_worklist_packet(),
+            KeyCode::Char('l') => app.active_tab = Tab::Packets,
+            KeyCode::Esc => app.close_worklist(),
+            KeyCode::Tab | KeyCode::F(2) => app.open_view_menu(),
+            _ => {}
+        }
+        return;
+    }
 
     match key.code {
         KeyCode::Char('[') => app.investigation_prev_view(),
