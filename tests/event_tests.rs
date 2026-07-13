@@ -67,6 +67,16 @@ fn tcp_packet(no: u64) -> Packet {
     pkt
 }
 
+fn tcp_payload_packet(no: u64, payload: &[u8]) -> Packet {
+    let mut pkt = tcp_packet(no);
+    let total_len = (40 + payload.len()) as u16;
+    pkt.bytes[16..18].copy_from_slice(&total_len.to_be_bytes());
+    pkt.bytes.extend_from_slice(payload);
+    pkt.length = pkt.bytes.len() as u16;
+    pkt.protocol = "HTTP".into();
+    pkt
+}
+
 #[tokio::test]
 async fn app_new_for_test_ok() {
     let app = App::new_for_test();
@@ -445,6 +455,23 @@ async fn investigate_headers_searches_tcp_fields_without_global_palette() {
     assert!(!app.header_searching);
     assert_eq!(app.visible_packet_header_fields()[0].path, "tcp.seq");
     assert_eq!(app.visible_packet_header_fields()[0].value, "16909060");
+}
+
+#[tokio::test]
+async fn investigate_s_opens_follow_stream_for_active_packet() {
+    let mut app = App::new_for_test();
+    app.inject_packet(tcp_payload_packet(1, b"GET /admin HTTP/1.1\r\n\r\n"));
+    app.selected = Some(0);
+    event::handle(&mut app, key(KeyCode::Enter));
+    app.investigation_view = InvestigationView::Flow;
+
+    event::handle(&mut app, key(KeyCode::Char('s')));
+
+    let Some((_title, segments)) = &app.stream_overlay else {
+        panic!("stream overlay did not open");
+    };
+    assert_eq!(segments.len(), 1);
+    assert!(segments[0].1.starts_with(b"GET /admin"));
 }
 
 #[tokio::test]
