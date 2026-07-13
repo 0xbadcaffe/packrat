@@ -29,7 +29,7 @@ use crate::analysis::packet_fields::{self, PacketField};
 use crate::analysis::protocol_workbench::ProtocolWorkbench;
 use crate::analysis::rules::RuleEngine;
 use crate::analysis::rules::Action as RuleAction;
-use crate::analysis::stream::StreamAssembler;
+use crate::analysis::stream::{ReassembledStream, StreamAssembler, StreamKey};
 use crate::analysis::timeline::ProtocolTimelines;
 use crate::analysis::tls::TlsTracker;
 use crate::analysis::vlan::VlanIntel;
@@ -1899,6 +1899,45 @@ impl App {
         self.worklist.active_packet_no()
             .and_then(|packet_no| self.packet_by_no(packet_no))
             .or_else(|| self.selected_packet())
+    }
+
+    pub fn active_investigation_stream(&self) -> Option<&ReassembledStream> {
+        let packet = self.active_investigation_packet()?;
+        let key = StreamKey::from_packet(packet)?;
+        self.streams.get(&key.id())
+    }
+
+    pub fn open_active_investigation_stream_overlay(&mut self) {
+        let Some(packet) = self.active_investigation_packet() else {
+            self.set_status("No packet selected for stream follow");
+            return;
+        };
+        let Some(key) = StreamKey::from_packet(packet) else {
+            self.set_status("Active packet is not TCP-backed");
+            return;
+        };
+        let Some(stream) = self.streams.get(&key.id()) else {
+            self.set_status("No reassembled stream is available for this packet yet");
+            return;
+        };
+
+        let mut segments = Vec::new();
+        for segment in &stream.segments {
+            let data = if segment.from_client {
+                &stream.client_data
+            } else {
+                &stream.server_data
+            };
+            let end = segment.offset.saturating_add(segment.length).min(data.len());
+            if segment.offset < end {
+                segments.push((segment.from_client, data[segment.offset..end].to_vec()));
+            }
+        }
+        if segments.is_empty() {
+            self.set_status("Reassembled stream has no payload bytes yet");
+            return;
+        }
+        self.stream_overlay = Some((key.id(), segments));
     }
 
     pub fn mark_selected_packet_for_investigation(&mut self) {

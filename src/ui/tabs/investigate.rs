@@ -8,6 +8,7 @@ use ratatui::{
 
 use crate::app::{App, InvestigationView};
 use crate::analysis::packet_fields::PacketField;
+use crate::analysis::stream::ReassembledStream;
 use crate::model::evidence::{EvidenceRef, PacketRef};
 use crate::net::flow::FlowKey;
 use crate::net::packet::Packet;
@@ -208,24 +209,87 @@ fn draw_flow(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
             Cell::from(format!("{:.1}", flow.beacon_score)),
         ]))
         .collect();
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(6), Constraint::Min(0)])
+        .split(area);
+
     if rows.is_empty() {
         f.render_widget(
             Paragraph::new("No flow record exists for this packet yet.")
                 .block(panel("Flow Context"))
                 .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+    } else {
+        let table = Table::new(rows, [
+            Constraint::Percentage(48),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(10),
+            Constraint::Length(8),
+        ]).header(Row::new(["Flow", "Proto", "Packets", "Bytes", "Beacon"]).style(Style::default().fg(C_FG2())))
+            .block(panel("Flow Context"));
+        f.render_widget(table, chunks[0]);
+    }
+
+    draw_stream_context(f, app, chunks[1]);
+}
+
+fn draw_stream_context(f: &mut Frame, app: &App, area: Rect) {
+    let Some(stream) = app.active_investigation_stream() else {
+        f.render_widget(
+            Paragraph::new("No reassembled TCP stream is available for this packet.\n\nFor UDP protocols such as DTLS, use Headers for record fields and Security/Encrypted for context.")
+                .block(panel("Stream Reassembly"))
+                .wrap(Wrap { trim: false }),
             area,
         );
         return;
+    };
+
+    let mut lines = vec![
+        Line::from(vec![Span::styled(stream.key.id(), heading())]),
+        Line::from(format!(
+            "Client bytes: {}   Server bytes: {}   Segments: {}   Closed: {}   s: follow stream",
+            stream.client_data.len(),
+            stream.server_data.len(),
+            stream.segments.len(),
+            stream.closed,
+        )),
+        Line::from(format!("First seen: {:.6}s   Last seen: {:.6}s", stream.first_seen, stream.last_seen)),
+        Line::raw(""),
+    ];
+    lines.extend(stream_segment_lines(stream));
+    f.render_widget(
+        Paragraph::new(scrolled(lines, app.investigation_scroll, area))
+            .block(panel("Stream Reassembly"))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn stream_segment_lines(stream: &ReassembledStream) -> Vec<Line<'static>> {
+    if stream.segments.is_empty() {
+        return vec![Line::from("The stream exists, but no payload bytes have been reassembled yet.")];
     }
-    let table = Table::new(rows, [
-        Constraint::Percentage(48),
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Length(10),
-        Constraint::Length(8),
-    ]).header(Row::new(["Flow", "Proto", "Packets", "Bytes", "Beacon"]).style(Style::default().fg(C_FG2())))
-        .block(panel("Flow Context"));
-    f.render_widget(table, area);
+
+    stream.segments.iter().enumerate().map(|(index, segment)| {
+        let data = if segment.from_client { &stream.client_data } else { &stream.server_data };
+        let end = segment.offset.saturating_add(segment.length).min(data.len());
+        let preview = if segment.offset < end {
+            printable_bytes(&data[segment.offset..end], 96)
+        } else {
+            String::new()
+        };
+        let direction = if segment.from_client { "C->S" } else { "S->C" };
+        let color = if segment.from_client { C_CYAN() } else { C_GREEN() };
+        Line::from(vec![
+            Span::styled(format!("{:>3} {} ", index + 1, direction), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{:.6}s len={}  ", segment.timestamp, segment.length), Style::default().fg(C_FG2())),
+            Span::styled(preview, Style::default().fg(color)),
+        ])
+    }).collect()
 }
 
 fn draw_strings(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
@@ -373,6 +437,13 @@ fn header_detail_lines(field: &PacketField) -> Vec<Line<'static>> {
         Line::from(format!("Layer: {}   Value: {}", field.layer, field.value)),
         Line::from(format!("{offset}   Use / to search paths or values, f to filter supported fields.")),
     ]
+}
+
+fn printable_bytes(bytes: &[u8], max: usize) -> String {
+    bytes.iter()
+        .take(max)
+        .map(|byte| if byte.is_ascii_graphic() || *byte == b' ' { *byte as char } else { '.' })
+        .collect()
 }
 
 fn heading() -> Style {
