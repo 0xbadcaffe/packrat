@@ -307,6 +307,20 @@ mod tests {
         }
     }
 
+    struct ForbiddenLatch;
+    impl LatchBackend for ForbiddenLatch {
+        fn block(&self, _request: &LatchRequest) -> Result<String, String> {
+            panic!("containment backend must not be called")
+        }
+    }
+
+    struct FailingLatch;
+    impl LatchBackend for FailingLatch {
+        fn block(&self, _request: &LatchRequest) -> Result<String, String> {
+            Err("firewall unavailable".into())
+        }
+    }
+
     fn incident(address: &str) -> Incident {
         Incident {
             id: 1,
@@ -353,6 +367,40 @@ mod tests {
             allowed.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, true).status,
             LatchStatus::Applied,
         );
+    }
+
+    #[test]
+    fn monitor_and_preview_modes_never_call_backend() {
+        let mut monitor = TrafficLatch::default();
+        assert_eq!(monitor.on_incident(&incident("203.0.113.9"), &ForbiddenLatch).status, LatchStatus::Observed);
+
+        let mut preview = TrafficLatch { mode: LatchMode::Preview, expires_seconds: 120, ..Default::default() };
+        let action = preview.on_incident(&incident("203.0.113.9"), &ForbiddenLatch);
+        assert_eq!(action.status, LatchStatus::Previewed);
+        assert!(action.detail.contains("120 seconds"));
+    }
+
+    #[test]
+    fn invalid_and_special_purpose_attackers_are_rejected() {
+        for address in ["not-an-address", "127.0.0.1", "0.0.0.0", "::1", "ff02::1"] {
+            let mut latch = TrafficLatch { mode: LatchMode::Automatic, ..Default::default() };
+            assert_eq!(
+                latch.on_incident_with_auto_gate(&incident(address), &ForbiddenLatch, true).status,
+                LatchStatus::Rejected,
+                "{address} must not reach the firewall backend",
+            );
+        }
+    }
+
+    #[test]
+    fn backend_failure_is_audited_and_duplicate_incident_is_not_retried() {
+        let mut latch = TrafficLatch { mode: LatchMode::Automatic, ..Default::default() };
+        let first = latch.on_incident_with_auto_gate(&incident("203.0.113.9"), &FailingLatch, true);
+        assert_eq!(first.status, LatchStatus::Failed);
+        assert_eq!(first.detail, "firewall unavailable");
+        let duplicate = latch.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, true);
+        assert_eq!(duplicate.status, LatchStatus::Failed);
+        assert_eq!(latch.actions.len(), 1);
     }
 
     #[cfg(unix)]
