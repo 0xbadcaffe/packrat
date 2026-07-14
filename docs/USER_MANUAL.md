@@ -368,9 +368,10 @@ that response and starts a fresh helper process for a later record.
 ```
 
 `--quic-decode-helper PATH` delegates protected QUIC/HTTP3 decode to a local
-helper. Packrat sends the connection id, packet number, and packet bytes as
-JSON and stores returned frame summaries only when the helper returns `ok:
-true`.
+helper. Packrat reuses one helper process and exchanges newline-delimited JSON
+request/response pairs containing the connection id, packet number, and packet
+bytes. Returned frame summaries are stored only when the helper returns `ok:
+true`. The helper must flush one single-line response for each request.
 
 ```json
 {
