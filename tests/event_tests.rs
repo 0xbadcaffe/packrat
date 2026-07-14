@@ -93,7 +93,7 @@ fn parse_startup_args_defaults_to_capture() {
         CliAction::Run(StartupOptions {
             mode: StartupMode::Capture, telemetry_listen: None, key_log_path: None, tls_decrypt_helper_path: None, quic_decode_helper_path: None,
             latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
-            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None,
+            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None, capture_helper_path: None,
         })
     );
 }
@@ -105,7 +105,7 @@ fn parse_startup_args_enables_simulation() {
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None, tls_decrypt_helper_path: None, quic_decode_helper_path: None,
             latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
-            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None,
+            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None, capture_helper_path: None,
         })
     );
     assert_eq!(
@@ -113,7 +113,7 @@ fn parse_startup_args_enables_simulation() {
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None, tls_decrypt_helper_path: None, quic_decode_helper_path: None,
             latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
-            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None,
+            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None, capture_helper_path: None,
         })
     );
 }
@@ -141,6 +141,7 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             socket_events_path: None,
             latch_helper_path: None,
             reputation_helper_path: None,
+            capture_helper_path: None,
         })
     );
 }
@@ -163,6 +164,7 @@ fn parse_startup_args_accepts_key_log_path() {
             socket_events_path: None,
             latch_helper_path: None,
             reputation_helper_path: None,
+            capture_helper_path: None,
         })
     );
 }
@@ -205,6 +207,14 @@ fn parse_startup_args_accepts_reputation_helper_path() {
         panic!("expected run options");
     };
     assert_eq!(options.reputation_helper_path, Some("/usr/libexec/packrat-reputation".into()));
+}
+
+#[test]
+fn parse_startup_args_accepts_capture_helper_path() {
+    let CliAction::Run(options) = app::parse_startup_args([
+        "--capture-helper", "/usr/libexec/packrat-capture-helper",
+    ]).unwrap() else { panic!("expected run options"); };
+    assert_eq!(options.capture_helper_path, Some("/usr/libexec/packrat-capture-helper".into()));
 }
 
 #[test]
