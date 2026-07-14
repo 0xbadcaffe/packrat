@@ -81,8 +81,9 @@ fn draw_process_scope(f: &mut Frame, app: &App, area: Rect) {
             Cell::from(format!("{:.3}", usage.last_seen)),
         ])).collect::<Vec<_>>();
     let title = format!(
-        " SocketScope - {} attributed sockets, {} imported, {} active processes ",
-        app.socket_scope.owners.len(), app.socket_scope.imported_events, app.socket_scope.traffic.len(),
+        " SocketScope - {} attributed, {} imported, {} processes, {} eBPF lost ",
+        app.socket_scope.owners.len(), app.socket_scope.imported_events,
+        app.socket_scope.traffic.len(), app.socket_scope.ebpf_lost_events,
     );
     let table = Table::new(
         std::iter::once(header).chain(rows).collect::<Vec<_>>(),
@@ -90,7 +91,7 @@ fn draw_process_scope(f: &mut Frame, app: &App, area: Rect) {
          Constraint::Length(16), Constraint::Length(12), Constraint::Length(12), Constraint::Min(0)],
     ).block(block_titled(&title)).style(Style::default().bg(C_BG()));
     f.render_widget(table, area);
-    render_hint(f, area, "Linux /proc plus --socket-events CSV attribution  [j/k] scroll  [/] views");
+    render_hint(f, area, "Linux /proc plus incremental eBPF/CSV attribution  [j/k] scroll  [/] views");
 }
 
 fn draw_route_policy(f: &mut Frame, app: &App, area: Rect) {

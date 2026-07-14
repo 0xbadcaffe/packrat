@@ -1660,6 +1660,7 @@ impl App {
         if self.scan.running { self.scan.tick(); }
 
         if self.rate_tick % 20 == 1 {
+            let _ = self.socket_scope.refresh_event_file();
             let _ = self.socket_scope.refresh();
             if self.tls_tracker.key_shelf.path.is_some() {
                 let _ = self.tls_tracker.reload_key_log();

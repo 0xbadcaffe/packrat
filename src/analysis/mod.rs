@@ -28,6 +28,7 @@ pub mod evidence_vault;
 pub mod helper_process;
 pub mod telemetry;
 pub mod socket_scope;
+pub mod socket_ebpf;
 pub mod route_ledger;
 pub mod key_shelf;
 pub mod encrypted_insight;

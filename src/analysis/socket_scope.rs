@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::net::packet::Packet;
@@ -39,7 +40,10 @@ pub struct SocketScope {
     port_index: HashMap<(String, u16), Vec<usize>>,
     imported_owners: Vec<SocketOwner>,
     pub imported_events: usize,
+    pub ebpf_lost_events: u64,
+    pub ebpf_invalid_events: u64,
     pub event_path: Option<PathBuf>,
+    event_offset: u64,
     pub last_error: Option<String>,
     pub refreshes: u64,
 }
@@ -113,6 +117,10 @@ impl SocketScope {
         let mut owners = Vec::new();
         for (line_no, line) in text.lines().enumerate() {
             let line = line.trim();
+            if line.starts_with("# packrat-ebpf-stats") {
+                self.parse_ebpf_stats(line);
+                continue;
+            }
             if line.is_empty() || line.starts_with('#') { continue; }
             owners.push(parse_event_owner(line, line_no + 1)?);
         }
@@ -120,11 +128,64 @@ impl SocketScope {
         self.event_path = Some(path.to_path_buf());
         self.imported_events = count;
         self.imported_owners = owners;
+        self.event_offset = text.len() as u64;
         self.owners.retain(|owner| owner.inode != 0);
         self.owners.extend(self.imported_owners.clone());
         self.rebuild_index();
         self.last_error = None;
         Ok(count)
+    }
+
+    /// Import only newly appended helper rows. Handles collector restarts that
+    /// truncate the file and never advances beyond an incomplete final line.
+    pub fn refresh_event_file(&mut self) -> Result<usize, String> {
+        let Some(path) = self.event_path.clone() else { return Ok(0); };
+        let mut file = std::fs::File::open(&path)
+            .map_err(|error| format!("read socket event file {}: {error}", path.display()))?;
+        let length = file.metadata().map_err(|error| format!("stat socket event file: {error}"))?.len();
+        if length < self.event_offset {
+            self.event_offset = 0;
+            self.imported_owners.clear();
+        }
+        file.seek(SeekFrom::Start(self.event_offset))
+            .map_err(|error| format!("seek socket event file: {error}"))?;
+        let mut appended = String::new();
+        file.read_to_string(&mut appended)
+            .map_err(|error| format!("read appended socket events: {error}"))?;
+        let complete_length = appended.rfind('\n').map(|index| index + 1).unwrap_or(0);
+        let mut imported = 0;
+        for (index, line) in appended[..complete_length].lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            if line.starts_with("# packrat-ebpf-stats") {
+                self.parse_ebpf_stats(line);
+                continue;
+            }
+            if line.starts_with('#') { continue; }
+            let owner = parse_event_owner(line, index + 1)?;
+            self.imported_owners.push(owner);
+            imported += 1;
+        }
+        self.event_offset += complete_length as u64;
+        self.imported_events = self.imported_events.saturating_add(imported);
+        if self.imported_owners.len() > 10_000 {
+            self.imported_owners.drain(0..self.imported_owners.len() - 10_000);
+        }
+        self.owners.retain(|owner| owner.inode != 0);
+        self.owners.extend(self.imported_owners.clone());
+        self.rebuild_index();
+        self.last_error = None;
+        Ok(imported)
+    }
+
+    fn parse_ebpf_stats(&mut self, line: &str) {
+        for field in line.split_whitespace() {
+            if let Some(value) = field.strip_prefix("kernel_lost=").and_then(|value| value.parse().ok()) {
+                self.ebpf_lost_events = value;
+            } else if let Some(value) = field.strip_prefix("userspace_invalid=").and_then(|value| value.parse().ok()) {
+                self.ebpf_invalid_events = value;
+            }
+        }
     }
 
     fn rebuild_index(&mut self) {
@@ -159,7 +220,7 @@ impl SocketScope {
         let candidates = self.port_index.get(&(protocol.to_string(), local_port))?;
         let local_ip = local_ip.parse::<IpAddr>().ok();
         let remote_ip = remote_ip.parse::<IpAddr>().ok();
-        candidates.iter().filter_map(|index| self.owners.get(*index)).find(|owner| {
+        candidates.iter().rev().filter_map(|index| self.owners.get(*index)).find(|owner| {
             address_matches(owner.local_addr, local_ip)
                 && (owner.remote_port == 0 || owner.remote_port == remote_port)
                 && address_matches(owner.remote_addr, remote_ip)
