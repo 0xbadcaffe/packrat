@@ -30,7 +30,7 @@ use crate::analysis::packet_compare::{self, PacketComparison};
 use crate::analysis::protocol_workbench::ProtocolWorkbench;
 use crate::analysis::rules::RuleEngine;
 use crate::analysis::rules::Action as RuleAction;
-use crate::analysis::stream::{ReassembledStream, StreamAssembler, StreamKey};
+use crate::analysis::stream::{ReassembledStream, StreamAssembler, StreamKey, StreamOverlayState};
 use crate::analysis::timeline::ProtocolTimelines;
 use crate::analysis::tls::TlsTracker;
 use crate::analysis::vlan::VlanIntel;
@@ -381,7 +381,7 @@ pub struct App {
     pub flow_tracker: FlowTracker,
     pub flows_selected: Option<usize>,
     pub flows_sort: FlowSort,
-    pub stream_overlay: Option<(String, Vec<(bool, Vec<u8>)>)>,
+    pub stream_overlay: Option<StreamOverlayState>,
     pub packet_comparison: Option<PacketComparison>,
     pub lua_plugins: PluginManager,
     pub lua_reload_msg: Option<String>,
@@ -1943,7 +1943,26 @@ impl App {
             self.set_status("Reassembled stream has no payload bytes yet");
             return;
         }
-        self.stream_overlay = Some((key.id(), segments));
+        self.stream_overlay = Some(StreamOverlayState::new(key.id(), segments));
+    }
+
+    pub fn export_stream_overlay(&mut self) {
+        let Some(overlay) = &self.stream_overlay else {
+            return;
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let base = format!("packrat_stream_{stamp}");
+        let result = crate::analysis::stream::export_segments(&overlay.segments, &base);
+        match result {
+            Ok((left, right)) => self.set_status(format!(
+                "Exported stream to {} and {}",
+                left.display(), right.display()
+            )),
+            Err(error) => self.set_status(format!("Stream export failed: {error}")),
+        }
     }
 
     pub fn open_packet_comparison(&mut self) {
@@ -2263,7 +2282,7 @@ impl App {
                 }
                 let title = format!("{}:{} <-> {}:{} ({})",
                     key.ep1.0, key.ep1.1, key.ep2.0, key.ep2.1, key.proto);
-                self.stream_overlay = Some((title, segments));
+                self.stream_overlay = Some(StreamOverlayState::new(title, segments));
             }
         }
     }

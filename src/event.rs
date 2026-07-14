@@ -62,9 +62,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
     }
 
     if app.stream_overlay.is_some() {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-            app.stream_overlay = None;
-        }
+        handle_stream_overlay(app, key);
         return false;
     }
 
@@ -209,6 +207,51 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         }
     }
     false
+}
+
+fn handle_stream_overlay(app: &mut App, key: KeyEvent) {
+    let searching = app.stream_overlay.as_ref().is_some_and(|overlay| overlay.searching);
+    if searching {
+        let overlay = app.stream_overlay.as_mut().expect("stream overlay exists");
+        match key.code {
+            KeyCode::Esc => {
+                overlay.searching = false;
+                overlay.search_query.clear();
+                overlay.refresh_matches();
+            }
+            KeyCode::Enter => overlay.searching = false,
+            KeyCode::Backspace => {
+                overlay.search_query.pop();
+                overlay.refresh_matches();
+            }
+            KeyCode::Char(character) => {
+                overlay.search_query.push(character);
+                overlay.refresh_matches();
+            }
+            _ => {}
+        }
+        return;
+    }
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => app.stream_overlay = None,
+        KeyCode::Char('/') => {
+            if let Some(overlay) = app.stream_overlay.as_mut() {
+                overlay.searching = true;
+            }
+        }
+        KeyCode::Char('n') => {
+            if let Some(overlay) = app.stream_overlay.as_mut() {
+                overlay.next_match();
+            }
+        }
+        KeyCode::Char('N') => {
+            if let Some(overlay) = app.stream_overlay.as_mut() {
+                overlay.previous_match();
+            }
+        }
+        KeyCode::Char('e') => app.export_stream_overlay(),
+        _ => {}
+    }
 }
 
 fn handle_critical_alert(app: &mut App, key: KeyEvent) {
