@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::analysis::ipv6_fragments::{Ipv6FragmentOutcome, Ipv6FragmentReassembler};
+use crate::analysis::industrial_policy;
 use crate::net::packet::Packet;
 use crate::net::inspector::shannon_entropy;
 
@@ -503,6 +504,7 @@ impl SecurityEngine {
         self.check_dhcp_integrity(pkt);
         self.check_ipv6_fragment_reassembly(pkt);
         self.check_http_request_smuggling(pkt);
+        self.check_industrial_policy(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -1330,6 +1332,22 @@ impl SecurityEngine {
                 detail: format!("{reason} from {} to {}:{destination_port}", pkt.src, pkt.dst),
             });
         }
+    }
+
+    fn check_industrial_policy(&mut self, pkt: &Packet) {
+        let Some(finding) = industrial_policy::inspect(pkt) else {
+            return;
+        };
+        self.push_ids(IdsAlert {
+            pkt_no: pkt.no,
+            signature: if finding.critical {
+                "Critical industrial control command"
+            } else {
+                "Industrial state-changing command"
+            },
+            severity: if finding.critical { Severity::Critical } else { Severity::High },
+            detail: finding.detail(pkt),
+        });
     }
 
     fn check_ids(&mut self, pkt: &Packet) {
