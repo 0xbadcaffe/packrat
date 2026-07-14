@@ -85,6 +85,8 @@ pub struct ReassembledStream {
     /// None = not yet seen any data (no SYN or data packet yet).
     client_next_seq:   Option<u32>,
     server_next_seq:   Option<u32>,
+    client_pending:    Vec<PendingTcpSegment>,
+    server_pending:    Vec<PendingTcpSegment>,
 }
 
 impl ReassembledStream {
@@ -114,6 +116,14 @@ pub struct StreamSegment {
     pub offset:      usize,
     pub length:      usize,
     pub timestamp:   f64,
+}
+
+#[derive(Debug, Clone)]
+struct PendingTcpSegment {
+    sequence: u32,
+    payload: Vec<u8>,
+    fin: bool,
+    timestamp: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +228,8 @@ impl Default for StreamKey {
 
 const MAX_STREAMS:      usize = 500;
 const MAX_STREAM_BYTES: usize = 1_000_000; // 1 MB per direction
+const MAX_PENDING_SEGMENTS: usize = 1_024;
+const MAX_PENDING_BYTES: usize = 2_000_000;
 
 #[derive(Debug, Default)]
 pub struct StreamAssembler {
@@ -298,75 +310,48 @@ impl StreamAssembler {
             (&mut stream.server_data, &mut stream.server_next_seq)
         };
 
-        // SYN without payload: initialise ISN, consume one sequence number
-        if is_syn && payload.is_empty() {
-            *next_seq_slot = Some(tcp_seq.wrapping_add(1));
-            if from_client { stream.client_pkts += 1; } else { stream.server_pkts += 1; }
-            return;
-        }
-
-        if payload.is_empty() {
-            // Pure ACK or FIN with no payload
-            if is_fin { *next_seq_slot = next_seq_slot.map(|s| s.wrapping_add(1)); stream.closed = true; }
-            return;
-        }
-
-        // Determine how many of these bytes are new
-        let new_payload: &[u8] = match *next_seq_slot {
-            None => {
-                // No SYN seen — start tracking from this packet
-                *next_seq_slot = Some(tcp_seq.wrapping_add(payload.len() as u32)
-                    .wrapping_add(if is_fin { 1 } else { 0 }));
-                payload
-            }
-            Some(expected) => {
-                // How far ahead of expected is this segment's start?
-                // Using wrapping subtraction: positive = ahead, negative (large u32) = retransmit
-                let delta = tcp_seq.wrapping_sub(expected) as i32;
-                if delta >= 0 {
-                    // In-order or gap (out-of-order): append the whole payload
-                    let new_end = tcp_seq.wrapping_add(payload.len() as u32)
-                        .wrapping_add(if is_fin { 1 } else { 0 });
-                    // Advance next_seq to the furthest seen
-                    if (new_end.wrapping_sub(expected)) as i32 > 0 {
-                        *next_seq_slot = Some(new_end);
-                    }
-                    payload
-                } else {
-                    // Retransmit: how many bytes are already accounted for?
-                    let already_seen = (-delta) as usize;
-                    if already_seen >= payload.len() {
-                        return; // pure retransmit, nothing new
-                    }
-                    let new_end = tcp_seq.wrapping_add(payload.len() as u32)
-                        .wrapping_add(if is_fin { 1 } else { 0 });
-                    if (new_end.wrapping_sub(expected)) as i32 > 0 {
-                        *next_seq_slot = Some(new_end);
-                    }
-                    &payload[already_seen..]
-                }
-            }
+        let pending = if from_client {
+            &mut stream.client_pending
+        } else {
+            &mut stream.server_pending
         };
-
-        if new_payload.is_empty() { return; }
-
-        let seg = StreamSegment {
-            from_client,
-            offset:    data.len(),
-            length:    new_payload.len(),
-            timestamp: pkt.timestamp,
-        };
-
-        if data.len() < MAX_STREAM_BYTES {
-            let space = MAX_STREAM_BYTES - data.len();
-            data.extend_from_slice(&new_payload[..new_payload.len().min(space)]);
+        let payload_sequence = tcp_seq.wrapping_add(u32::from(is_syn));
+        if next_seq_slot.is_none() {
+            *next_seq_slot = Some(payload_sequence);
         }
 
         if from_client { stream.client_pkts += 1; } else { stream.server_pkts += 1; }
 
-        if is_fin { stream.closed = true; }
+        if is_syn && payload.is_empty() {
+            *next_seq_slot = Some(tcp_seq.wrapping_add(1));
+            if is_fin {
+                *next_seq_slot = next_seq_slot.map(|sequence| sequence.wrapping_add(1));
+                stream.closed = true;
+            }
+            return;
+        }
+        if payload.is_empty() && !is_fin {
+            return;
+        }
 
-        stream.segments.push(seg);
+        let segment = PendingTcpSegment {
+            sequence: payload_sequence,
+            payload: payload.to_vec(),
+            fin: is_fin,
+            timestamp: pkt.timestamp,
+        };
+        if sequence_delta(segment.sequence, next_seq_slot.unwrap_or(segment.sequence)) > 0 {
+            buffer_pending(pending, segment);
+            return;
+        }
+
+        let (emitted, fin_consumed) = consume_contiguous(data, next_seq_slot, pending, segment);
+        for (offset, length, timestamp) in emitted {
+            stream.segments.push(StreamSegment { from_client, offset, length, timestamp });
+        }
+        if fin_consumed {
+            stream.closed = true;
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<&ReassembledStream> { self.streams.get(id) }
@@ -381,6 +366,86 @@ impl StreamAssembler {
     pub fn is_empty(&self) -> bool { self.streams.is_empty() }
 
     pub fn clear(&mut self) { self.streams.clear(); }
+}
+
+fn sequence_delta(sequence: u32, expected: u32) -> i32 {
+    sequence.wrapping_sub(expected) as i32
+}
+
+fn buffer_pending(pending: &mut Vec<PendingTcpSegment>, segment: PendingTcpSegment) {
+    if pending.iter().any(|existing| {
+        existing.sequence == segment.sequence
+            && existing.payload == segment.payload
+            && existing.fin == segment.fin
+    }) {
+        return;
+    }
+    let pending_bytes: usize = pending.iter().map(|segment| segment.payload.len()).sum();
+    if pending.len() >= MAX_PENDING_SEGMENTS
+        || pending_bytes.saturating_add(segment.payload.len()) > MAX_PENDING_BYTES
+    {
+        return;
+    }
+    pending.push(segment);
+}
+
+fn consume_contiguous(
+    data: &mut Vec<u8>,
+    next_sequence: &mut Option<u32>,
+    pending: &mut Vec<PendingTcpSegment>,
+    first: PendingTcpSegment,
+) -> (Vec<(usize, usize, f64)>, bool) {
+    let mut emitted = Vec::new();
+    let mut fin_consumed = consume_one(data, next_sequence, first, &mut emitted);
+
+    loop {
+        let expected = match *next_sequence {
+            Some(expected) => expected,
+            None => break,
+        };
+        pending.retain(|segment| {
+            let payload_end = segment.sequence.wrapping_add(segment.payload.len() as u32);
+            sequence_delta(payload_end, expected) > 0 || (segment.fin && payload_end == expected)
+        });
+        let Some(index) = pending.iter().position(|segment| {
+            let start_delta = sequence_delta(segment.sequence, expected);
+            let payload_end = segment.sequence.wrapping_add(segment.payload.len() as u32);
+            let end_delta = sequence_delta(payload_end, expected);
+            start_delta <= 0 && (end_delta > 0 || (segment.fin && end_delta == 0))
+        }) else {
+            break;
+        };
+        let segment = pending.remove(index);
+        fin_consumed |= consume_one(data, next_sequence, segment, &mut emitted);
+    }
+    (emitted, fin_consumed)
+}
+
+fn consume_one(
+    data: &mut Vec<u8>,
+    next_sequence: &mut Option<u32>,
+    segment: PendingTcpSegment,
+    emitted: &mut Vec<(usize, usize, f64)>,
+) -> bool {
+    let expected = next_sequence.unwrap_or(segment.sequence);
+    let behind = sequence_delta(expected, segment.sequence).max(0) as usize;
+    let unseen = segment.payload.get(behind..).unwrap_or_default();
+    if !unseen.is_empty() {
+        let offset = data.len();
+        let captured = unseen.len().min(MAX_STREAM_BYTES.saturating_sub(data.len()));
+        data.extend_from_slice(&unseen[..captured]);
+        if captured > 0 {
+            emitted.push((offset, captured, segment.timestamp));
+        }
+        *next_sequence = Some(expected.wrapping_add(unseen.len() as u32));
+    }
+    let payload_end = segment.sequence.wrapping_add(segment.payload.len() as u32);
+    if segment.fin && next_sequence == &Some(payload_end) {
+        *next_sequence = Some(payload_end.wrapping_add(1));
+        true
+    } else {
+        false
+    }
 }
 
 fn printable_preview(data: &[u8], max: usize) -> String {
