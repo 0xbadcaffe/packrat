@@ -202,6 +202,13 @@ struct DhcpMessage {
     server_identity: Vec<u8>,
 }
 
+#[derive(Debug, Default)]
+struct HttpHeaderState {
+    bytes: Vec<u8>,
+    last_seen: f64,
+    complete: bool,
+}
+
 // ─── IDS Alerts ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -380,6 +387,7 @@ pub struct SecurityEngine {
     dhcp_vlans: HashMap<Option<u16>, DhcpVlanState>,
     ipv6_fragments: Ipv6FragmentReassembler,
     pub ipv6_reassembled: u64,
+    http_headers: HashMap<(TcpFlowKey, bool), HttpHeaderState>,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -415,6 +423,7 @@ impl SecurityEngine {
             dhcp_vlans: HashMap::new(),
             ipv6_fragments: Ipv6FragmentReassembler::default(),
             ipv6_reassembled: 0,
+            http_headers: HashMap::new(),
             cred_hit_count: 0,
         }
     }
@@ -448,6 +457,7 @@ impl SecurityEngine {
         self.dhcp_vlans.clear();
         self.ipv6_fragments.clear();
         self.ipv6_reassembled = 0;
+        self.http_headers.clear();
         self.cred_hit_count = 0;
     }
 
@@ -492,6 +502,7 @@ impl SecurityEngine {
         self.check_dns_abuse_and_lateral_movement(pkt);
         self.check_dhcp_integrity(pkt);
         self.check_ipv6_fragment_reassembly(pkt);
+        self.check_http_request_smuggling(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -1272,6 +1283,52 @@ impl SecurityEngine {
                 };
                 self.check_ids(&synthetic);
             }
+        }
+    }
+
+    fn check_http_request_smuggling(&mut self, pkt: &Packet) {
+        let Some(TcpFrame::Segment(segment)) = parse_ipv4_tcp_frame(&pkt.bytes) else {
+            return;
+        };
+        let destination_port = pkt.dst_port.unwrap_or(0);
+        if !matches!(destination_port, 80 | 3000 | 8000 | 8080 | 8888) || segment.payload.is_empty() {
+            return;
+        }
+        self.http_headers.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 30.0
+        });
+        if self.http_headers.len() >= MAX_SCAN_STATES
+            && !self.http_headers.contains_key(&(segment.key.clone(), segment.from_a))
+        {
+            if let Some(oldest) = self.http_headers.iter()
+                .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+                .map(|(key, _)| key.clone())
+            {
+                self.http_headers.remove(&oldest);
+            }
+        }
+
+        let state = self.http_headers.entry((segment.key, segment.from_a)).or_default();
+        state.last_seen = pkt.timestamp;
+        if state.complete {
+            return;
+        }
+        let remaining = 32_768usize.saturating_sub(state.bytes.len());
+        state.bytes.extend_from_slice(&segment.payload[..segment.payload.len().min(remaining)]);
+        let Some(header_end) = find_http_header_end(&state.bytes) else {
+            if state.bytes.len() >= 32_768 {
+                state.complete = true;
+            }
+            return;
+        };
+        state.complete = true;
+        if let Some(reason) = http_smuggling_reason(&state.bytes[..header_end]) {
+            self.push_ids(IdsAlert {
+                pkt_no: pkt.no,
+                signature: "HTTP request smuggling ambiguity",
+                severity: Severity::Critical,
+                detail: format!("{reason} from {} to {}:{destination_port}", pkt.src, pkt.dst),
+            });
         }
     }
 
@@ -2422,6 +2479,72 @@ fn record_timed_target(state: &mut TimedTargetState, timestamp: f64, target: &st
 
 fn unique_timed_targets(state: &TimedTargetState) -> usize {
     state.targets.iter().map(|(_, target)| target.as_str()).collect::<HashSet<_>>().len()
+}
+
+fn find_http_header_end(bytes: &[u8]) -> Option<usize> {
+    if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+        return Some(index + 4);
+    }
+    bytes.windows(2).position(|window| window == b"\n\n").map(|index| index + 2)
+}
+
+fn http_smuggling_reason(header: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(header);
+    let mut lines = text.split('\n');
+    let request_line = lines.next()?.trim_end_matches('\r');
+    let method = request_line.split_whitespace().next()?;
+    if !matches!(method, "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | "CONNECT" | "TRACE") {
+        return None;
+    }
+
+    let mut content_lengths = Vec::new();
+    let mut transfer_codings = Vec::new();
+    let mut malformed_framing_name = None;
+    for line in lines {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            break;
+        }
+        let Some((raw_name, raw_value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = raw_name.trim().to_ascii_lowercase();
+        if matches!(name.as_str(), "content-length" | "transfer-encoding") && raw_name != raw_name.trim() {
+            malformed_framing_name = Some(name.clone());
+        }
+        if name == "content-length" {
+            for value in raw_value.split(',') {
+                content_lengths.push(value.trim().parse::<u64>().ok());
+            }
+        } else if name == "transfer-encoding" {
+            transfer_codings.extend(raw_value.split(',').map(|value| value.trim().to_ascii_lowercase()));
+        }
+    }
+
+    if let Some(name) = malformed_framing_name {
+        return Some(format!("whitespace-obfuscated {name} header"));
+    }
+    if content_lengths.iter().any(Option::is_none) {
+        return Some("invalid Content-Length value".into());
+    }
+    let distinct_lengths = content_lengths.iter().flatten().copied().collect::<HashSet<_>>();
+    if distinct_lengths.len() > 1 {
+        return Some("conflicting Content-Length values".into());
+    }
+    if !content_lengths.is_empty() && !transfer_codings.is_empty() {
+        return Some("both Transfer-Encoding and Content-Length are present".into());
+    }
+    if let Some(chunked_index) = transfer_codings.iter().position(|coding| coding == "chunked") {
+        if chunked_index + 1 != transfer_codings.len() {
+            return Some("chunked transfer coding is not final".into());
+        }
+    }
+    if header.windows(2).any(|window| window == b"\n\n")
+        && !header.windows(4).any(|window| window == b"\r\n\r\n")
+    {
+        return Some("bare-LF request framing".into());
+    }
+    None
 }
 
 impl Default for SecurityEngine {

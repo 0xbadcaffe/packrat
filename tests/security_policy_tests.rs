@@ -590,3 +590,42 @@ fn detects_dhcp_starvation_identity_burst() {
             && alert.severity == packrat_tui::net::security::Severity::Critical
     }));
 }
+
+fn http_packet(no: u64, sequence: u32, payload: &[u8]) -> Packet {
+    let mut packet = ipv4_tcp_packet(no, sequence, 0x18, payload);
+    packet.bytes[36..38].copy_from_slice(&80_u16.to_be_bytes());
+    packet.protocol = "HTTP".into();
+    packet.dst_port = Some(80);
+    packet
+}
+
+#[test]
+fn detects_http_request_smuggling_framing_ambiguities() {
+    for request in [
+        b"POST / HTTP/1.1\r\nHost: example\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n".as_slice(),
+        b"POST / HTTP/1.1\r\nHost: example\r\nContent-Length: 5\r\nContent-Length: 9\r\n\r\n".as_slice(),
+        b"POST / HTTP/1.1\r\nHost: example\r\nTransfer-Encoding : chunked\r\n\r\n".as_slice(),
+    ] {
+        let mut security = SecurityEngine::default();
+        security.update(&http_packet(1, 100, request));
+        assert!(security.ids_alerts.iter().any(|alert| {
+            alert.signature == "HTTP request smuggling ambiguity"
+                && alert.severity == packrat_tui::net::security::Severity::Critical
+        }));
+    }
+}
+
+#[test]
+fn accumulates_split_http_headers_and_allows_unambiguous_framing() {
+    let first = b"POST /upload HTTP/1.1\r\nHost: example\r\nContent-Length: 5\r\n";
+    let second = b"Transfer-Encoding: chunked\r\n\r\n";
+    let mut split = SecurityEngine::default();
+    split.update(&http_packet(1, 100, first));
+    assert!(!split.ids_alerts.iter().any(|alert| alert.signature == "HTTP request smuggling ambiguity"));
+    split.update(&http_packet(2, 100 + first.len() as u32, second));
+    assert!(split.ids_alerts.iter().any(|alert| alert.signature == "HTTP request smuggling ambiguity"));
+
+    let mut valid = SecurityEngine::default();
+    valid.update(&http_packet(1, 100, b"POST /upload HTTP/1.1\r\nHost: example\r\nContent-Length: 5\r\n\r\nhello"));
+    assert!(!valid.ids_alerts.iter().any(|alert| alert.signature == "HTTP request smuggling ambiguity"));
+}
