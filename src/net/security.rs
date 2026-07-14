@@ -3,6 +3,7 @@
 //! and DNS exfiltration scoring.
 
 use std::collections::{HashMap, HashSet};
+use crate::analysis::dns_transactions::{DnsFindingKind, DnsTransactionTracker};
 use crate::analysis::ipv6_fragments::{Ipv6FragmentOutcome, Ipv6FragmentReassembler};
 use crate::analysis::industrial_policy;
 use crate::net::packet::Packet;
@@ -389,6 +390,7 @@ pub struct SecurityEngine {
     ipv6_fragments: Ipv6FragmentReassembler,
     pub ipv6_reassembled: u64,
     http_headers: HashMap<(TcpFlowKey, bool), HttpHeaderState>,
+    dns_transactions: DnsTransactionTracker,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -425,6 +427,7 @@ impl SecurityEngine {
             ipv6_fragments: Ipv6FragmentReassembler::default(),
             ipv6_reassembled: 0,
             http_headers: HashMap::new(),
+            dns_transactions: DnsTransactionTracker::default(),
             cred_hit_count: 0,
         }
     }
@@ -459,6 +462,7 @@ impl SecurityEngine {
         self.ipv6_fragments.clear();
         self.ipv6_reassembled = 0;
         self.http_headers.clear();
+        self.dns_transactions.clear();
         self.cred_hit_count = 0;
     }
 
@@ -505,6 +509,7 @@ impl SecurityEngine {
         self.check_ipv6_fragment_reassembly(pkt);
         self.check_http_request_smuggling(pkt);
         self.check_industrial_policy(pkt);
+        self.check_dns_transaction_integrity(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -1348,6 +1353,23 @@ impl SecurityEngine {
             severity: if finding.critical { Severity::Critical } else { Severity::High },
             detail: finding.detail(pkt),
         });
+    }
+
+    fn check_dns_transaction_integrity(&mut self, pkt: &Packet) {
+        for finding in self.dns_transactions.observe(pkt) {
+            let (signature, severity) = match finding.kind {
+                DnsFindingKind::UnsolicitedResponse => ("Unsolicited DNS response", Severity::High),
+                DnsFindingKind::QuestionMismatch => ("DNS transaction question mismatch", Severity::Critical),
+                DnsFindingKind::UnexpectedResponder => ("Unexpected DNS responder", Severity::Critical),
+                DnsFindingKind::ConflictingResponse => ("Conflicting DNS responses", Severity::Critical),
+            };
+            self.push_ids(IdsAlert {
+                pkt_no: pkt.no,
+                signature,
+                severity,
+                detail: finding.detail,
+            });
+        }
     }
 
     fn check_ids(&mut self, pkt: &Packet) {
