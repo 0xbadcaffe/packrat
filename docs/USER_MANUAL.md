@@ -262,6 +262,32 @@ PCAP or `--simulation` before enabling response actions.
 
 ## Defense Inspection
 
+### Short-lived socket attribution
+
+On Linux 5.8 or newer, build and install the separate eBPF collector:
+
+```bash
+./scripts/build-ebpf-socket-collector.sh
+./target/release/packrat-socket-collector --check
+sudo ./scripts/install-ebpf-socket-collector.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now packrat-socket-collector.service
+```
+
+Then add the event stream when starting Packrat:
+
+```bash
+./target/release/packrat --socket-events /run/packrat/socket-events.csv
+```
+
+The collector attaches to the socket state tracepoint, drops its load-time
+capabilities, and records PID, UID, process, endpoint, and protocol fields. A
+non-zero `eBPF lost` value means the kernel ring buffer could not reserve space;
+the missing events cannot be reconstructed, so inspect system load before
+relying on complete attribution. This collector currently covers outbound TCP
+connection attempts. `/proc` polling continues to cover established TCP and UDP
+sockets.
+
 Use `[`/`]` in Security to cycle detector and operational views:
 
 - Stateful packet-integrity checks detect conflicting IPv4 fragments,
@@ -282,8 +308,11 @@ Use `[`/`]` in Security to cycle detector and operational views:
   state-changing Modbus, DNP3, S7comm, and BACnet operations.
 
 - SocketScope correlates Linux socket tables with PID, UID, process, command,
-  and per-process packet/byte totals. For very short-lived sockets, start
-  Packrat with `--socket-events PATH` to import helper-generated ownership rows.
+  and per-process packet/byte totals. For very short-lived outbound TCP sockets,
+  run the optional Linux eBPF collector and start Packrat with
+  `--socket-events /run/packrat/socket-events.csv`. Packrat imports appended
+  rows without restarting and shows the collector's kernel-loss count in the
+  SocketScope title.
 - RouteLedger records process/host-to-destination routes. Press `l` to cycle
   Observe, Learn, and Detect Drift modes; press `y` to promote observations.
   Its baseline is `~/.config/packrat/route-baseline.json`.

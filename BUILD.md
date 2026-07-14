@@ -94,6 +94,44 @@ The helper opens libpcap and emits bounded timestamped Ethernet frames. Packet
 parsing, detection, case storage, UI rendering, and response policy remain in
 the unprivileged Packrat process. Stopping capture terminates the helper.
 
+### Short-lived socket eBPF collector
+
+Linux 5.8 or newer can run the optional socket collector. It records outbound
+TCP connection attempts at the `sock/inet_sock_set_state` tracepoint, including
+connections that disappear before `/proc` polling sees them. The TUI remains
+unprivileged and incrementally imports the collector output.
+
+Install Clang and LLVM, then build both the BPF object and loader:
+
+```bash
+sudo apt install clang llvm
+./scripts/build-ebpf-socket-collector.sh
+./target/release/packrat-socket-collector --check
+```
+
+The compatibility check verifies the minimum kernel version, socket tracepoint,
+and BTF availability without loading a program. Install the hardened systemd
+unit and start it:
+
+```bash
+sudo ./scripts/install-ebpf-socket-collector.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now packrat-socket-collector.service
+systemctl status packrat-socket-collector.service
+```
+
+Run Packrat against the live event stream:
+
+```bash
+./target/release/packrat --socket-events /run/packrat/socket-events.csv
+```
+
+The service is granted only `CAP_BPF` and `CAP_PERFMON`. The loader drops both
+after attaching and enables `no_new_privs`. SocketScope displays kernel ring
+buffer losses so overloaded or undersized deployments are visible. The current
+kernel program covers TCP `SYN_SENT`; UDP and accepted inbound socket lifecycle
+events remain outside this collector's scope.
+
 ---
 
 ### macOS
@@ -259,4 +297,6 @@ and libpcap available.
 ```bash
 cargo test
 cargo test --features real-capture   # include capture module tests
+cargo test --test socket_ebpf_tests  # event ABI and incremental import
+cargo check --features ebpf-sockets --bin packrat-socket-collector
 ```
