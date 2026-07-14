@@ -1,9 +1,8 @@
 //! TLS intelligence — SNI extraction, cipher suite tracking, JA3 fingerprinting.
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use crate::analysis::helper_process::spawn_stdin_stdout_helper;
+use crate::analysis::helper_process::JsonLineHelper;
 use crate::analysis::encrypted_insight::{parse_client_hello, parse_server_hello};
 use crate::analysis::key_shelf::KeyShelf;
 use crate::net::packet::Packet;
@@ -83,11 +82,12 @@ pub struct TlsTracker {
     sessions: HashMap<String, TlsSession>,
     pub key_shelf: KeyShelf,
     pub decrypt_helper_path: Option<PathBuf>,
+    decrypt_helper: Option<JsonLineHelper>,
 }
 
 impl Default for TlsTracker {
     fn default() -> Self {
-        Self { sessions: HashMap::new(), key_shelf: KeyShelf::default(), decrypt_helper_path: None }
+        Self { sessions: HashMap::new(), key_shelf: KeyShelf::default(), decrypt_helper_path: None, decrypt_helper: None }
     }
 }
 
@@ -211,7 +211,7 @@ impl TlsTracker {
     }
 
     fn decrypt_record_with_helper(
-        &self,
+        &mut self,
         flow_id: &str,
         packet_no: u64,
         record: &[u8],
@@ -219,14 +219,20 @@ impl TlsTracker {
         let session = self.sessions.get(flow_id)?;
         if !session.key_material { return None; }
         let client_random = session.client_random.clone()?;
-        let helper = self.decrypt_helper_path.as_ref()?;
+        let helper = self.decrypt_helper_path.clone()?;
         let request = TlsDecryptRequest {
             flow_id: flow_id.to_string(),
             packet_no,
             client_random,
             record_hex: hex(record),
         };
-        run_tls_decrypt_helper(helper, &request).ok()
+        if self.decrypt_helper.as_ref().is_none_or(|running| running.program() != helper) {
+            self.decrypt_helper = JsonLineHelper::spawn(&helper, "TLS decrypt").ok();
+        }
+        let result = self.decrypt_helper.as_mut()?.request::<_, TlsDecryptResponse>(&request)
+            .and_then(|response| decode_tls_response(response, packet_no));
+        if result.is_err() { self.decrypt_helper = None; }
+        result.ok()
     }
 }
 
@@ -260,23 +266,12 @@ fn find_tls_record(raw: &[u8], record_type: u8) -> Option<&[u8]> {
     raw.get(start..start + 5 + len)
 }
 
-fn run_tls_decrypt_helper(helper: &Path, request: &TlsDecryptRequest) -> Result<DecryptedTlsRecord, String> {
-    let mut child = spawn_stdin_stdout_helper(helper, "TLS decrypt")?;
-    let input = serde_json::to_vec(request)
-        .map_err(|error| format!("encode TLS decrypt helper request: {error}"))?;
-    child.stdin.as_mut().ok_or("TLS decrypt helper stdin unavailable")?
-        .write_all(&input).map_err(|error| format!("write TLS decrypt helper request: {error}"))?;
-    let output = child.wait_with_output().map_err(|error| format!("wait for TLS decrypt helper: {error}"))?;
-    if !output.status.success() {
-        return Err(format!("TLS decrypt helper failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
-    }
-    let response: TlsDecryptResponse = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("decode TLS decrypt helper response: {error}"))?;
+fn decode_tls_response(response: TlsDecryptResponse, packet_no: u64) -> Result<DecryptedTlsRecord, String> {
     if !response.ok {
         return Err(response.detail.unwrap_or_else(|| "TLS decrypt helper did not authenticate record".into()));
     }
     Ok(DecryptedTlsRecord {
-        packet_no: request.packet_no,
+        packet_no,
         content_type: response.content_type.unwrap_or_else(|| "application_data".into()),
         plaintext: decode_hex(&response.plaintext_hex.ok_or("TLS decrypt helper response missing plaintext_hex")?)
             .ok_or("TLS decrypt helper returned invalid plaintext_hex")?,
@@ -406,7 +401,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("packrat-tls-helper-{}-{}.sh", std::process::id(), unique_test_suffix()));
         std::fs::write(
             &path,
-            "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"content_type\":\"http\",\"plaintext_hex\":\"474554202f20485454502f312e31\",\"detail\":\"auth ok\"}'\n",
+            "#!/bin/sh\nwhile IFS= read -r line; do printf '%s\\n' '{\"ok\":true,\"content_type\":\"http\",\"plaintext_hex\":\"474554202f20485454502f312e31\",\"detail\":\"auth ok\"}'; done\n",
         ).unwrap();
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o700);
@@ -426,6 +421,35 @@ mod tests {
         assert_eq!(session.decrypted_records.len(), 1);
         assert_eq!(session.decrypted_records[0].plaintext, b"GET / HTTP/1.1");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tls_helper_process_is_reused_for_multiple_records() {
+        use std::os::unix::fs::PermissionsExt;
+        let suffix = unique_test_suffix();
+        let path = std::env::temp_dir().join(format!("packrat-tls-persistent-{suffix}.sh"));
+        let starts = std::env::temp_dir().join(format!("packrat-tls-persistent-{suffix}.starts"));
+        std::fs::write(&path, format!(
+            "#!/bin/sh\nprintf 'start\\n' >> '{}'\nwhile IFS= read -r line; do printf '%s\\n' '{{\"ok\":true,\"content_type\":\"data\",\"plaintext_hex\":\"61\"}}'; done\n",
+            starts.display()
+        )).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        let mut tracker = TlsTracker::default();
+        tracker.decrypt_helper_path = Some(path.clone());
+        tracker.insert(TlsSession {
+            flow_id: "192.0.2.10:50000-198.51.100.7:443".into(),
+            client_random: Some("00".repeat(32)), key_material: true, ..Default::default()
+        });
+        tracker.ingest(&packet(vec![0x17, 0x03, 0x03, 0, 1, 1]));
+        tracker.ingest(&packet(vec![0x17, 0x03, 0x03, 0, 1, 2]));
+        assert_eq!(tracker.get("192.0.2.10:50000-198.51.100.7:443").unwrap().decrypted_records.len(), 2);
+        assert_eq!(std::fs::read_to_string(&starts).unwrap().lines().count(), 1);
+        drop(tracker);
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(starts);
     }
 
     #[cfg(unix)]
