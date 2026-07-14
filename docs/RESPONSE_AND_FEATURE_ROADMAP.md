@@ -61,16 +61,12 @@ Deployment placement still defines the enforcement boundary:
 - Bounded IPv6 fragment and ordered bidirectional TCP reassembly, including
   overlap/retransmission handling and sequence wraparound.
 - Worklist packet comparison plus stream search and exact directional export.
+- Optional Linux eBPF collector for outbound TCP sockets too short-lived for
+  `/proc`, with a versioned event ABI, ring-buffer loss accounting,
+  least-privilege loader, kernel compatibility check, and hardened packaging.
 
 ## Remaining Engineering Work
 
-The current UI does not claim the following external collector is complete.
-
-- Add an optional eBPF event collector for sockets too short-lived for `/proc`
-  polling. Packrat can now import external socket ownership CSV rows with
-  `--socket-events`; a kernel program, least-privilege loader, event-loss
-  accounting, kernel-version compatibility tests, and packaging remain.
+- Extend short-lived socket lifecycle coverage beyond outbound TCP `SYN_SENT`
+  to accepted inbound TCP and UDP while retaining reliable PID attribution.
 - Keep replay fixtures current as each new detector and containment policy ships.
-
-The eBPF collector requires focused kernel and deployment security work and
-must not be represented as a parser or UI addition.

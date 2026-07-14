@@ -1,0 +1,8 @@
+/run/packrat/socket-events.csv {
+    size 16M
+    rotate 2
+    missingok
+    notifempty
+    copytruncate
+    compress
+}

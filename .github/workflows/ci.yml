@@ -1,0 +1,86 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  native:
+    name: native-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            real_capture: true
+          - os: macos-latest
+            real_capture: true
+          - os: windows-latest
+            real_capture: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux capture deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libpcap-dev llvm
+
+      - name: cargo check
+        run: cargo check --locked
+
+      - name: cargo test
+        run: cargo test --locked
+
+      - name: cargo check --features real-capture
+        if: matrix.real_capture
+        run: cargo check --locked --features real-capture
+
+      - name: Build eBPF socket program
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p target/ebpf
+          clang -O2 -g -target bpfel -Wall -Werror -I ebpf \
+            -c ebpf/packrat_socket.bpf.c -o target/ebpf/packrat_socket.bpf.o
+          llvm-objdump -h target/ebpf/packrat_socket.bpf.o
+
+      - name: Check eBPF collector
+        if: runner.os == 'Linux'
+        run: cargo check --locked --features ebpf-sockets --bin packrat-socket-collector
+
+  target-matrix:
+    name: target-${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+          - powerpc64le-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-pc-windows-msvc
+          - x86_64-pc-windows-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: cargo check --target
+        run: cargo check --locked --target ${{ matrix.target }}

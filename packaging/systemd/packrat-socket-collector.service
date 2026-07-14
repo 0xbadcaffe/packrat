@@ -1,0 +1,35 @@
+[Unit]
+Description=Packrat short-lived socket eBPF collector
+Documentation=file:///usr/share/doc/packrat/USER_MANUAL.md
+After=local-fs.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+RuntimeDirectory=packrat
+RuntimeDirectoryMode=0755
+ExecStart=/usr/libexec/packrat/packrat-socket-collector --object /usr/libexec/packrat/packrat_socket.bpf.o --output /run/packrat/socket-events.csv
+AmbientCapabilities=CAP_BPF CAP_PERFMON
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target
