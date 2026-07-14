@@ -17,6 +17,41 @@ fn u16_be_at(b: &[u8], off: usize) -> u16 {
 }
 
 const MAX_ENTRIES: usize = 1000;
+const MAX_FRAGMENT_DATAGRAMS: usize = 512;
+const MAX_FRAGMENTS_PER_DATAGRAM: usize = 64;
+const FRAGMENT_STATE_TTL_SECS: f64 = 60.0;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct FragmentKey {
+    src: [u8; 4],
+    dst: [u8; 4],
+    identification: u16,
+    protocol: u8,
+}
+
+#[derive(Debug, Clone)]
+struct FragmentSlice {
+    start: u32,
+    data: Vec<u8>,
+}
+
+#[derive(Debug, Default)]
+struct FragmentState {
+    slices: Vec<FragmentSlice>,
+    count: usize,
+    last_seen: f64,
+    overlap_alerted: bool,
+    flood_alerted: bool,
+}
+
+struct Ipv4Fragment<'a> {
+    key: FragmentKey,
+    offset: u32,
+    more_fragments: bool,
+    payload: &'a [u8],
+    declared_payload_len: usize,
+    malformed_length: bool,
+}
 
 // ─── IDS Alerts ───────────────────────────────────────────────────────────────
 
@@ -179,6 +214,7 @@ pub struct SecurityEngine {
     os_by_ip: HashMap<String, &'static str>,
     bf_windows: HashMap<BfKey, BfWindow>,
     dns_accum: HashMap<String, DnsAccum>,
+    fragment_states: HashMap<FragmentKey, FragmentState>,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -198,6 +234,7 @@ impl SecurityEngine {
             os_by_ip: HashMap::new(),
             bf_windows: HashMap::new(),
             dns_accum: HashMap::new(),
+            fragment_states: HashMap::new(),
             cred_hit_count: 0,
         }
     }
@@ -215,6 +252,7 @@ impl SecurityEngine {
         self.os_by_ip.clear();
         self.bf_windows.clear();
         self.dns_accum.clear();
+        self.fragment_states.clear();
         self.cred_hit_count = 0;
     }
 
@@ -249,6 +287,7 @@ impl SecurityEngine {
 
     /// Process a single packet through all detection engines.
     pub fn update(&mut self, pkt: &Packet) {
+        self.check_ipv4_fragments(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -266,6 +305,78 @@ impl SecurityEngine {
             self.ids_alerts.remove(0);
         }
         self.ids_alerts.push(alert);
+    }
+
+    // ─── IPv4 Fragment Integrity ────────────────────────────────────────────
+
+    fn check_ipv4_fragments(&mut self, pkt: &Packet) {
+        let fragment = match parse_ipv4_fragment(&pkt.bytes) {
+            Some(fragment) => fragment,
+            None => return,
+        };
+
+        self.fragment_states.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= FRAGMENT_STATE_TTL_SECS
+        });
+        if !self.fragment_states.contains_key(&fragment.key)
+            && self.fragment_states.len() >= MAX_FRAGMENT_DATAGRAMS
+        {
+            if let Some(oldest) = self.fragment_states.iter()
+                .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+                .map(|(key, _)| key.clone())
+            {
+                self.fragment_states.remove(&oldest);
+            }
+        }
+
+        let mut alerts = Vec::new();
+        if fragment.malformed_length {
+            alerts.push((
+                "Malformed IPv4 fragment",
+                Severity::High,
+                format!("IPv4 fragment has a total length smaller than its header from {}", pkt.src),
+            ));
+        }
+        if fragment.more_fragments && fragment.declared_payload_len < 8 {
+            alerts.push((
+                "Tiny IPv4 fragment",
+                Severity::High,
+                format!("IPv4 fragment payload is {} bytes from {}", fragment.declared_payload_len, pkt.src),
+            ));
+        }
+
+        let state = self.fragment_states.entry(fragment.key.clone()).or_default();
+        state.last_seen = pkt.timestamp;
+        state.count += 1;
+
+        if !state.overlap_alerted && has_conflicting_fragment_overlap(&state.slices, &fragment) {
+            state.overlap_alerted = true;
+            alerts.push((
+                "Conflicting IPv4 fragments",
+                Severity::Critical,
+                format!("Overlapping IPv4 fragments carry different bytes from {} to {}", pkt.src, pkt.dst),
+            ));
+        }
+
+        if !fragment.payload.is_empty() {
+            state.slices.push(FragmentSlice {
+                start: fragment.offset,
+                data: fragment.payload.to_vec(),
+            });
+        }
+
+        if state.count > MAX_FRAGMENTS_PER_DATAGRAM && !state.flood_alerted {
+            state.flood_alerted = true;
+            alerts.push((
+                "IPv4 fragment flood",
+                Severity::High,
+                format!("More than {MAX_FRAGMENTS_PER_DATAGRAM} fragments for one datagram from {}", pkt.src),
+            ));
+        }
+
+        for (signature, severity, detail) in alerts {
+            self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
+        }
     }
 
     fn check_ids(&mut self, pkt: &Packet) {
@@ -988,6 +1099,78 @@ impl SecurityEngine {
             .map(|&b| if b.is_ascii() && (b >= 0x20 || b == b'\n' || b == b'\r' || b == b'\t') { b as char } else { '.' })
             .collect()
     }
+}
+
+fn parse_ipv4_fragment(raw: &[u8]) -> Option<Ipv4Fragment<'_>> {
+    let (ip_offset, ether_type) = ethernet_network_header(raw)?;
+    if ether_type != 0x0800 || raw.len() < ip_offset + 20 || raw[ip_offset] >> 4 != 4 {
+        return None;
+    }
+
+    let header_len = usize::from(raw[ip_offset] & 0x0f) * 4;
+    let flags_and_offset = u16::from_be_bytes([raw[ip_offset + 6], raw[ip_offset + 7]]);
+    let offset = u32::from(flags_and_offset & 0x1fff) * 8;
+    let more_fragments = flags_and_offset & 0x2000 != 0;
+    if !more_fragments && offset == 0 {
+        return None;
+    }
+
+    let total_len = usize::from(u16::from_be_bytes([raw[ip_offset + 2], raw[ip_offset + 3]]));
+    let malformed_length = header_len < 20 || total_len < header_len;
+    let declared_payload_len = total_len.saturating_sub(header_len);
+    let payload_start = ip_offset.saturating_add(header_len).min(raw.len());
+    let captured_payload_len = declared_payload_len.min(raw.len().saturating_sub(payload_start));
+    let payload = &raw[payload_start..payload_start + captured_payload_len];
+
+    Some(Ipv4Fragment {
+        key: FragmentKey {
+            src: raw[ip_offset + 12..ip_offset + 16].try_into().ok()?,
+            dst: raw[ip_offset + 16..ip_offset + 20].try_into().ok()?,
+            identification: u16::from_be_bytes([raw[ip_offset + 4], raw[ip_offset + 5]]),
+            protocol: raw[ip_offset + 9],
+        },
+        offset,
+        more_fragments,
+        payload,
+        declared_payload_len,
+        malformed_length,
+    })
+}
+
+fn ethernet_network_header(raw: &[u8]) -> Option<(usize, u16)> {
+    if raw.len() < 14 {
+        return None;
+    }
+    let mut ether_type_offset = 12usize;
+    loop {
+        let ether_type = u16::from_be_bytes([
+            *raw.get(ether_type_offset)?,
+            *raw.get(ether_type_offset + 1)?,
+        ]);
+        if ether_type != 0x8100 && ether_type != 0x88a8 {
+            return Some((ether_type_offset + 2, ether_type));
+        }
+        ether_type_offset = ether_type_offset.checked_add(4)?;
+    }
+}
+
+fn has_conflicting_fragment_overlap(slices: &[FragmentSlice], fragment: &Ipv4Fragment<'_>) -> bool {
+    let new_start = fragment.offset;
+    let new_end = new_start.saturating_add(fragment.payload.len() as u32);
+    slices.iter().any(|existing| {
+        let existing_end = existing.start.saturating_add(existing.data.len() as u32);
+        let overlap_start = new_start.max(existing.start);
+        let overlap_end = new_end.min(existing_end);
+        if overlap_start >= overlap_end {
+            return false;
+        }
+
+        let new_offset = (overlap_start - new_start) as usize;
+        let existing_offset = (overlap_start - existing.start) as usize;
+        let overlap_len = (overlap_end - overlap_start) as usize;
+        fragment.payload[new_offset..new_offset + overlap_len]
+            != existing.data[existing_offset..existing_offset + overlap_len]
+    })
 }
 
 impl Default for SecurityEngine {
