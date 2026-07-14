@@ -36,6 +36,7 @@ const EXFIL_ENTROPY_THRESHOLD: u64 = 256_000;
 const DNS_NXDOMAIN_THRESHOLD: usize = 20;
 const LATERAL_TARGET_THRESHOLD: usize = 8;
 const NTLM_TARGET_THRESHOLD: usize = 3;
+const DHCP_STARVATION_THRESHOLD: usize = 64;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct FragmentKey {
@@ -185,6 +186,19 @@ struct TimedTargetState {
     targets: Vec<(f64, String)>,
     last_seen: f64,
     alerted: bool,
+}
+
+#[derive(Debug, Default)]
+struct DhcpVlanState {
+    servers: HashSet<Vec<u8>>,
+    clients: Vec<(f64, Vec<u8>)>,
+    starvation_alerted: bool,
+}
+
+struct DhcpMessage {
+    message_type: u8,
+    client_identity: Vec<u8>,
+    server_identity: Vec<u8>,
 }
 
 // ─── IDS Alerts ───────────────────────────────────────────────────────────────
@@ -361,6 +375,7 @@ pub struct SecurityEngine {
     external_dns_pairs: HashMap<(String, String), f64>,
     admin_fanout: HashMap<(String, u16), TimedTargetState>,
     ntlm_fanout: HashMap<String, TimedTargetState>,
+    dhcp_vlans: HashMap<Option<u16>, DhcpVlanState>,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -393,6 +408,7 @@ impl SecurityEngine {
             external_dns_pairs: HashMap::new(),
             admin_fanout: HashMap::new(),
             ntlm_fanout: HashMap::new(),
+            dhcp_vlans: HashMap::new(),
             cred_hit_count: 0,
         }
     }
@@ -423,6 +439,7 @@ impl SecurityEngine {
         self.external_dns_pairs.clear();
         self.admin_fanout.clear();
         self.ntlm_fanout.clear();
+        self.dhcp_vlans.clear();
         self.cred_hit_count = 0;
     }
 
@@ -464,6 +481,7 @@ impl SecurityEngine {
         self.check_layer2_control_plane(pkt);
         self.check_beacon_and_exfiltration(pkt);
         self.check_dns_abuse_and_lateral_movement(pkt);
+        self.check_dhcp_integrity(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -1125,6 +1143,58 @@ impl SecurityEngine {
                         format!("{source} sent NTLM authentication to {unique_targets} hosts"),
                     ));
                 }
+            }
+        }
+
+        for (signature, severity, detail) in alerts {
+            self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
+        }
+    }
+
+    // ─── DHCP Authority and Starvation ──────────────────────────────────────
+
+    fn check_dhcp_integrity(&mut self, pkt: &Packet) {
+        let Some(message) = parse_dhcp_message(&pkt.bytes) else {
+            return;
+        };
+        let state = self.dhcp_vlans.entry(pkt.vlan_id).or_default();
+        let mut alerts = Vec::new();
+
+        if matches!(message.message_type, 2 | 5) && !message.server_identity.is_empty() {
+            if !state.servers.is_empty() && !state.servers.contains(&message.server_identity) {
+                alerts.push((
+                    "DHCP server identity changed",
+                    Severity::High,
+                    format!("A new DHCP OFFER/ACK authority appeared on VLAN {} from {}", pkt.vlan_id.map(|id| id.to_string()).unwrap_or_else(|| "untagged".into()), pkt.src),
+                ));
+            }
+            if state.servers.len() < 32 {
+                state.servers.insert(message.server_identity);
+            }
+        }
+
+        if message.message_type == 1 && !message.client_identity.is_empty() {
+            state.clients.retain(|(timestamp, _)| {
+                pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= 10.0
+            });
+            if state.clients.is_empty() {
+                state.starvation_alerted = false;
+            }
+            state.clients.push((pkt.timestamp, message.client_identity));
+            if state.clients.len() > 256 {
+                state.clients.remove(0);
+            }
+            let unique_clients = state.clients.iter()
+                .map(|(_, identity)| identity.as_slice())
+                .collect::<HashSet<_>>()
+                .len();
+            if unique_clients >= DHCP_STARVATION_THRESHOLD && !state.starvation_alerted {
+                state.starvation_alerted = true;
+                alerts.push((
+                    "DHCP client identity burst",
+                    Severity::Critical,
+                    format!("{unique_clients} distinct DHCP clients appeared on one VLAN within 10 seconds"),
+                ));
             }
         }
 
@@ -1996,6 +2066,74 @@ fn is_empty_ipv4_udp_probe(raw: &[u8]) -> bool {
         return false;
     }
     u16::from_be_bytes([raw[udp_offset + 4], raw[udp_offset + 5]]) == 8
+}
+
+fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
+    let (ip_offset, 0x0800) = ethernet_network_header(raw)? else {
+        return None;
+    };
+    if raw.len() < ip_offset + 20 || raw[ip_offset] >> 4 != 4 || raw[ip_offset + 9] != 17 {
+        return None;
+    }
+    let ip_header_len = usize::from(raw[ip_offset] & 0x0f) * 4;
+    let udp_offset = ip_offset.checked_add(ip_header_len)?;
+    if ip_header_len < 20 || raw.len() < udp_offset + 8 {
+        return None;
+    }
+    let source_port = u16::from_be_bytes([raw[udp_offset], raw[udp_offset + 1]]);
+    let destination_port = u16::from_be_bytes([raw[udp_offset + 2], raw[udp_offset + 3]]);
+    if !matches!((source_port, destination_port), (67, 68) | (68, 67)) {
+        return None;
+    }
+    let udp_len = usize::from(u16::from_be_bytes([raw[udp_offset + 4], raw[udp_offset + 5]]));
+    let payload_start = udp_offset + 8;
+    let payload_end = (udp_offset + udp_len).min(raw.len());
+    if payload_end < payload_start + 240 {
+        return None;
+    }
+    let payload = &raw[payload_start..payload_end];
+    if payload[236..240] != [99, 130, 83, 99] {
+        return None;
+    }
+
+    let mut message_type = None;
+    let mut client_identifier = None;
+    let mut server_identifier = None;
+    let mut cursor = 240usize;
+    while cursor < payload.len() {
+        let option = payload[cursor];
+        cursor += 1;
+        if option == 0 {
+            continue;
+        }
+        if option == 255 {
+            break;
+        }
+        let length = usize::from(*payload.get(cursor)?);
+        cursor += 1;
+        let value = payload.get(cursor..cursor + length)?;
+        match option {
+            53 if length == 1 => message_type = Some(value[0]),
+            54 if length == 4 => server_identifier = Some(value.to_vec()),
+            61 if !value.is_empty() => client_identifier = Some(value.to_vec()),
+            _ => {}
+        }
+        cursor += length;
+    }
+
+    let hardware_len = usize::from(payload[2]).min(16);
+    let client_identity = client_identifier
+        .unwrap_or_else(|| payload[28..28 + hardware_len].to_vec());
+    let mut server_identity = server_identifier
+        .unwrap_or_else(|| raw[ip_offset + 12..ip_offset + 16].to_vec());
+    if let Some(source_mac) = ethernet_source_mac(raw) {
+        server_identity.extend_from_slice(&source_mac);
+    }
+    Some(DhcpMessage {
+        message_type: message_type?,
+        client_identity,
+        server_identity,
+    })
 }
 
 fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
