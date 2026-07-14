@@ -258,3 +258,69 @@ fn detects_tcp_payload_continuing_after_reset() {
 
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "TCP payload after reset"));
 }
+
+fn tcp_probe(no: u64, destination: [u8; 4], destination_port: u16, flags: u8, timestamp: f64) -> Packet {
+    let mut probe = ipv4_tcp_packet(no, no as u32, flags, b"");
+    probe.bytes[30..34].copy_from_slice(&destination);
+    probe.bytes[36..38].copy_from_slice(&destination_port.to_be_bytes());
+    probe.dst = destination.iter().map(u8::to_string).collect::<Vec<_>>().join(".");
+    probe.dst_port = Some(destination_port);
+    probe.timestamp = timestamp;
+    probe
+}
+
+#[test]
+fn detects_vertical_and_horizontal_scan_windows() {
+    let mut vertical = SecurityEngine::default();
+    for index in 0..12_u16 {
+        vertical.update(&tcp_probe(index as u64 + 1, [10, 0, 0, 5], 1000 + index, 0x02, index as f64));
+    }
+    assert!(vertical.ids_alerts.iter().any(|alert| alert.signature == "Vertical port scan"));
+
+    let mut horizontal = SecurityEngine::default();
+    for index in 1..=12_u8 {
+        horizontal.update(&tcp_probe(index as u64, [10, 0, 0, index], 445, 0x02, index as f64));
+    }
+    assert!(horizontal.ids_alerts.iter().any(|alert| alert.signature == "Horizontal host scan"));
+}
+
+#[test]
+fn detects_tcp_stealth_scan_flag_patterns() {
+    let mut security = SecurityEngine::default();
+    security.update(&tcp_probe(1, [10, 0, 0, 5], 80, 0x00, 1.0));
+    security.update(&tcp_probe(2, [10, 0, 0, 5], 80, 0x01, 2.0));
+    security.update(&tcp_probe(3, [10, 0, 0, 5], 80, 0x29, 3.0));
+
+    let count = security.ids_alerts.iter()
+        .filter(|alert| alert.signature == "TCP stealth scan probe")
+        .count();
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn detects_syn_flood_within_one_second() {
+    let mut security = SecurityEngine::default();
+    for index in 0..100_u64 {
+        security.update(&tcp_probe(index + 1, [10, 0, 0, 5], 443, 0x02, index as f64 / 1000.0));
+    }
+
+    assert!(security.ids_alerts.iter().any(|alert| {
+        alert.signature == "SYN flood"
+            && alert.severity == packrat_tui::net::security::Severity::Critical
+    }));
+}
+
+#[test]
+fn detects_icmp_address_sweep() {
+    let mut security = SecurityEngine::default();
+    for index in 1..=12_u8 {
+        let mut echo = packet("ICMP", 0, "Echo request", vec![]);
+        echo.no = index as u64;
+        echo.timestamp = index as f64;
+        echo.dst = format!("10.0.0.{index}");
+        echo.dst_port = None;
+        security.update(&echo);
+    }
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "ICMP address sweep"));
+}

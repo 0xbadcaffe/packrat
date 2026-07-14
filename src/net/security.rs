@@ -2,7 +2,7 @@
 //! vulnerability patterns, brute-force detection, HTTP analytics, TLS/SSL weakness,
 //! and DNS exfiltration scoring.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::net::packet::Packet;
 use crate::net::inspector::shannon_entropy;
 
@@ -23,6 +23,11 @@ const FRAGMENT_STATE_TTL_SECS: f64 = 60.0;
 const MAX_TCP_FLOWS: usize = 512;
 const MAX_TCP_SLICES_PER_DIRECTION: usize = 128;
 const TCP_STATE_TTL_SECS: f64 = 300.0;
+const SCAN_WINDOW_SECS: f64 = 15.0;
+const SYN_FLOOD_WINDOW_SECS: f64 = 1.0;
+const SCAN_UNIQUE_THRESHOLD: usize = 12;
+const SYN_FLOOD_THRESHOLD: usize = 100;
+const MAX_SCAN_STATES: usize = 512;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct FragmentKey {
@@ -83,6 +88,30 @@ struct TcpSegment<'a> {
 enum TcpFrame<'a> {
     Malformed(&'static str),
     Segment(TcpSegment<'a>),
+}
+
+#[derive(Debug)]
+struct ScanProbe {
+    timestamp: f64,
+    destination: String,
+    port: u16,
+}
+
+#[derive(Debug, Default)]
+struct SourceScanState {
+    probes: Vec<ScanProbe>,
+    icmp_targets: Vec<(f64, String)>,
+    vertical_alerted: HashSet<String>,
+    horizontal_alerted: HashSet<u16>,
+    icmp_alerted: bool,
+    last_seen: f64,
+}
+
+#[derive(Debug, Default)]
+struct SynFloodState {
+    timestamps: Vec<f64>,
+    alerted: bool,
+    last_seen: f64,
 }
 
 // ─── IDS Alerts ───────────────────────────────────────────────────────────────
@@ -248,6 +277,8 @@ pub struct SecurityEngine {
     dns_accum: HashMap<String, DnsAccum>,
     fragment_states: HashMap<FragmentKey, FragmentState>,
     tcp_integrity: HashMap<TcpFlowKey, TcpIntegrityState>,
+    scan_sources: HashMap<String, SourceScanState>,
+    syn_flood_targets: HashMap<(String, u16), SynFloodState>,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -269,6 +300,8 @@ impl SecurityEngine {
             dns_accum: HashMap::new(),
             fragment_states: HashMap::new(),
             tcp_integrity: HashMap::new(),
+            scan_sources: HashMap::new(),
+            syn_flood_targets: HashMap::new(),
             cred_hit_count: 0,
         }
     }
@@ -288,6 +321,8 @@ impl SecurityEngine {
         self.dns_accum.clear();
         self.fragment_states.clear();
         self.tcp_integrity.clear();
+        self.scan_sources.clear();
+        self.syn_flood_targets.clear();
         self.cred_hit_count = 0;
     }
 
@@ -324,6 +359,7 @@ impl SecurityEngine {
     pub fn update(&mut self, pkt: &Packet) {
         self.check_ipv4_fragments(pkt);
         self.check_tcp_integrity(pkt);
+        self.check_scan_activity(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -498,6 +534,165 @@ impl SecurityEngine {
 
         for (signature, severity, detail) in alerts {
             self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
+        }
+    }
+
+    // ─── Scan and Flood Correlation ─────────────────────────────────────────
+
+    fn check_scan_activity(&mut self, pkt: &Packet) {
+        self.scan_sources.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= SCAN_WINDOW_SECS
+        });
+        self.syn_flood_targets.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= SYN_FLOOD_WINDOW_SECS
+        });
+        evict_oldest_scan_source(&mut self.scan_sources);
+        evict_oldest_syn_target(&mut self.syn_flood_targets);
+
+        let tcp_flags = match parse_ipv4_tcp_frame(&pkt.bytes) {
+            Some(TcpFrame::Segment(segment)) => Some(segment.flags),
+            _ => None,
+        };
+        let mut alerts = Vec::new();
+
+        if let Some(flags) = tcp_flags {
+            const FIN: u8 = 0x01;
+            const SYN: u8 = 0x02;
+            const RST: u8 = 0x04;
+            const PSH: u8 = 0x08;
+            const ACK: u8 = 0x10;
+            const URG: u8 = 0x20;
+            let control = flags & (FIN | SYN | RST | PSH | ACK | URG);
+            let stealth_kind = if control == 0 {
+                Some("NULL")
+            } else if control == FIN {
+                Some("FIN")
+            } else if control & (FIN | PSH | URG) == (FIN | PSH | URG) && control & (SYN | ACK | RST) == 0 {
+                Some("Xmas")
+            } else {
+                None
+            };
+            if let Some(kind) = stealth_kind {
+                alerts.push((
+                    "TCP stealth scan probe",
+                    Severity::Medium,
+                    format!("{kind} probe from {} to {}:{}", pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)),
+                ));
+            }
+
+            if flags & SYN != 0 && flags & ACK == 0 {
+                let port = pkt.dst_port.unwrap_or(0);
+                self.record_scan_probe(pkt, port, &mut alerts);
+                self.record_syn_flood(pkt, port, &mut alerts);
+            }
+        } else if is_empty_ipv4_udp_probe(&pkt.bytes) {
+            if let Some(port) = pkt.dst_port {
+                self.record_scan_probe(pkt, port, &mut alerts);
+            }
+        }
+
+        if pkt.protocol.eq_ignore_ascii_case("ICMP")
+            && pkt.info.to_ascii_lowercase().contains("echo request")
+        {
+            let state = self.scan_sources.entry(pkt.src.clone()).or_default();
+            state.last_seen = pkt.timestamp;
+            state.icmp_targets.retain(|(timestamp, _)| {
+                pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= SCAN_WINDOW_SECS
+            });
+            if state.icmp_targets.is_empty() {
+                state.icmp_alerted = false;
+            }
+            state.icmp_targets.push((pkt.timestamp, pkt.dst.clone()));
+            let unique_targets = state.icmp_targets.iter()
+                .map(|(_, destination)| destination.as_str())
+                .collect::<HashSet<_>>()
+                .len();
+            if unique_targets >= SCAN_UNIQUE_THRESHOLD && !state.icmp_alerted {
+                state.icmp_alerted = true;
+                alerts.push((
+                    "ICMP address sweep",
+                    Severity::Medium,
+                    format!("{} probed {unique_targets} hosts with ICMP echo requests", pkt.src),
+                ));
+            }
+        }
+
+        for (signature, severity, detail) in alerts {
+            self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
+        }
+    }
+
+    fn record_scan_probe(
+        &mut self,
+        pkt: &Packet,
+        port: u16,
+        alerts: &mut Vec<(&'static str, Severity, String)>,
+    ) {
+        let state = self.scan_sources.entry(pkt.src.clone()).or_default();
+        state.last_seen = pkt.timestamp;
+        state.probes.retain(|probe| {
+            pkt.timestamp < probe.timestamp || pkt.timestamp - probe.timestamp <= SCAN_WINDOW_SECS
+        });
+        if state.probes.is_empty() {
+            state.vertical_alerted.clear();
+            state.horizontal_alerted.clear();
+        }
+        state.probes.push(ScanProbe {
+            timestamp: pkt.timestamp,
+            destination: pkt.dst.clone(),
+            port,
+        });
+
+        let unique_ports = state.probes.iter()
+            .filter(|probe| probe.destination == pkt.dst)
+            .map(|probe| probe.port)
+            .collect::<HashSet<_>>()
+            .len();
+        if unique_ports >= SCAN_UNIQUE_THRESHOLD && state.vertical_alerted.insert(pkt.dst.clone()) {
+            alerts.push((
+                "Vertical port scan",
+                Severity::High,
+                format!("{} probed {unique_ports} ports on {}", pkt.src, pkt.dst),
+            ));
+        }
+
+        let unique_targets = state.probes.iter()
+            .filter(|probe| probe.port == port)
+            .map(|probe| probe.destination.as_str())
+            .collect::<HashSet<_>>()
+            .len();
+        if unique_targets >= SCAN_UNIQUE_THRESHOLD && state.horizontal_alerted.insert(port) {
+            alerts.push((
+                "Horizontal host scan",
+                Severity::High,
+                format!("{} probed port {port} on {unique_targets} hosts", pkt.src),
+            ));
+        }
+    }
+
+    fn record_syn_flood(
+        &mut self,
+        pkt: &Packet,
+        port: u16,
+        alerts: &mut Vec<(&'static str, Severity, String)>,
+    ) {
+        let key = (pkt.dst.clone(), port);
+        let state = self.syn_flood_targets.entry(key).or_default();
+        state.last_seen = pkt.timestamp;
+        state.timestamps.retain(|timestamp| {
+            pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= SYN_FLOOD_WINDOW_SECS
+        });
+        if state.timestamps.is_empty() {
+            state.alerted = false;
+        }
+        state.timestamps.push(pkt.timestamp);
+        if state.timestamps.len() >= SYN_FLOOD_THRESHOLD && !state.alerted {
+            state.alerted = true;
+            alerts.push((
+                "SYN flood",
+                Severity::Critical,
+                format!("{}:{} received {} SYN packets within one second", pkt.dst, port, state.timestamps.len()),
+            ));
         }
     }
 
@@ -1351,6 +1546,21 @@ fn parse_ipv4_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
     }))
 }
 
+fn is_empty_ipv4_udp_probe(raw: &[u8]) -> bool {
+    let Some((ip_offset, 0x0800)) = ethernet_network_header(raw) else {
+        return false;
+    };
+    if raw.len() < ip_offset + 20 || raw[ip_offset] >> 4 != 4 || raw[ip_offset + 9] != 17 {
+        return false;
+    }
+    let ip_header_len = usize::from(raw[ip_offset] & 0x0f) * 4;
+    let udp_offset = ip_offset + ip_header_len;
+    if ip_header_len < 20 || raw.len() < udp_offset + 8 {
+        return false;
+    }
+    u16::from_be_bytes([raw[udp_offset + 4], raw[udp_offset + 5]]) == 8
+}
+
 fn has_conflicting_tcp_overlap(slices: &[FragmentSlice], segment: &TcpSegment<'_>) -> bool {
     let new_start = segment.sequence;
     let new_end = new_start.saturating_add(segment.payload.len() as u32);
@@ -1367,6 +1577,30 @@ fn has_conflicting_tcp_overlap(slices: &[FragmentSlice], segment: &TcpSegment<'_
         segment.payload[new_offset..new_offset + overlap_len]
             != existing.data[existing_offset..existing_offset + overlap_len]
     })
+}
+
+fn evict_oldest_scan_source(states: &mut HashMap<String, SourceScanState>) {
+    if states.len() < MAX_SCAN_STATES {
+        return;
+    }
+    if let Some(oldest) = states.iter()
+        .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+        .map(|(key, _)| key.clone())
+    {
+        states.remove(&oldest);
+    }
+}
+
+fn evict_oldest_syn_target(states: &mut HashMap<(String, u16), SynFloodState>) {
+    if states.len() < MAX_SCAN_STATES {
+        return;
+    }
+    if let Some(oldest) = states.iter()
+        .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+        .map(|(key, _)| key.clone())
+    {
+        states.remove(&oldest);
+    }
 }
 
 impl Default for SecurityEngine {
