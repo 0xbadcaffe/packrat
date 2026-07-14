@@ -3,9 +3,15 @@
 #define AF_INET 2
 #define AF_INET6 10
 #define IPPROTO_TCP 6
+#define IPPROTO_UDP 17
 #define TCP_SYN_SENT 2
 #define EVENT_VERSION 1
 #define EVENT_SIZE 80
+#define EVENT_TCP_CONNECT 1
+#define EVENT_TCP_ACCEPT 2
+#define EVENT_UDP_SEND 3
+#define EVENT_UDP_RECEIVE 4
+#define UDP_DEDUP_NS 250000000ULL
 
 struct trace_entry {
     __u16 type;
@@ -29,6 +35,47 @@ struct inet_sock_set_state_ctx {
     __u8 saddr_v6[16];
     __u8 daddr_v6[16];
 };
+
+struct in6_addr {
+    __u8 s6_addr[16];
+} __attribute__((preserve_access_index));
+
+struct sock_common {
+    __u32 skc_daddr;
+    __u32 skc_rcv_saddr;
+    __u16 skc_dport;
+    __u16 skc_num;
+    __u16 skc_family;
+    struct in6_addr skc_v6_daddr;
+    struct in6_addr skc_v6_rcv_saddr;
+} __attribute__((preserve_access_index));
+
+struct sock {
+    struct sock_common __sk_common;
+} __attribute__((preserve_access_index));
+
+#if defined(__TARGET_ARCH_x86)
+struct pt_regs {
+    unsigned long ax;
+} __attribute__((preserve_access_index));
+#define PT_REGS_RETURN(ctx) BPF_CORE_READ(ctx, ax)
+#elif defined(__TARGET_ARCH_arm64)
+struct pt_regs {
+    unsigned long regs[31];
+} __attribute__((preserve_access_index));
+#define PT_REGS_RETURN(ctx) BPF_CORE_READ(ctx, regs[0])
+#else
+#error "set __TARGET_ARCH_x86 or __TARGET_ARCH_arm64"
+#endif
+
+#define BPF_CORE_READ(source, field)                                            \
+    ({                                                                          \
+        typeof((source)->field) value = {};                                     \
+        bpf_probe_read_kernel(                                                  \
+            &value, sizeof(value),                                              \
+            __builtin_preserve_access_index(&(source)->field));                 \
+        value;                                                                  \
+    })
 
 struct socket_event {
     __u16 version;
@@ -64,11 +111,91 @@ struct {
     __type(value, __u64);
 } LOST_EVENTS SEC(".maps");
 
+struct recent_socket_key {
+    __u64 pid_tgid;
+    __u64 socket_address;
+    __u8 kind;
+    __u8 padding[7];
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 16384);
+    __type(key, struct recent_socket_key);
+    __type(value, __u64);
+} RECENT_FD_EVENTS SEC(".maps");
+
 static __always_inline void account_loss(void) {
     __u32 key = 0;
     __u64 *lost = bpf_map_lookup_elem(&LOST_EVENTS, &key);
     if (lost)
         __sync_fetch_and_add(lost, 1);
+}
+
+static __always_inline int emit_socket_event(__u8 kind, __u8 protocol,
+                                              struct sock *sk,
+                                              int deduplicate) {
+    if (!sk)
+        return 0;
+
+    __u16 family = BPF_CORE_READ(sk, __sk_common.skc_family);
+    if (family != AF_INET && family != AF_INET6)
+        return 0;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    if (pid == 0)
+        return 0;
+
+    __u64 now = bpf_ktime_get_ns();
+    if (deduplicate) {
+        struct recent_socket_key key = {
+            .pid_tgid = pid_tgid,
+            .socket_address = (__u64)sk,
+            .kind = kind,
+        };
+        __u64 *previous = bpf_map_lookup_elem(&RECENT_FD_EVENTS, &key);
+        if (previous && now - *previous < UDP_DEDUP_NS)
+            return 0;
+        bpf_map_update_elem(&RECENT_FD_EVENTS, &key, &now, BPF_ANY);
+    }
+
+    struct socket_event *event = bpf_ringbuf_reserve(&EVENTS, sizeof(*event), 0);
+    if (!event) {
+        account_loss();
+        return 0;
+    }
+    __builtin_memset(event, 0, sizeof(*event));
+    event->version = EVENT_VERSION;
+    event->size = EVENT_SIZE;
+    event->pid = pid;
+    event->uid = (__u32)bpf_get_current_uid_gid();
+    event->family = family;
+    event->protocol = protocol;
+    event->flags = kind;
+    event->local_port = BPF_CORE_READ(sk, __sk_common.skc_num);
+    event->remote_port = __builtin_bswap16(
+        BPF_CORE_READ(sk, __sk_common.skc_dport));
+    event->timestamp_ns = now;
+    bpf_get_current_comm(event->comm, sizeof(event->comm));
+
+    if (event->family == AF_INET) {
+        __u32 local = BPF_CORE_READ(sk, __sk_common.skc_rcv_saddr);
+        __u32 remote = BPF_CORE_READ(sk, __sk_common.skc_daddr);
+        __builtin_memcpy(event->local_addr, &local, sizeof(local));
+        __builtin_memcpy(event->remote_addr, &remote, sizeof(remote));
+    } else if (event->family == AF_INET6) {
+        bpf_probe_read_kernel(
+            event->local_addr, sizeof(event->local_addr),
+            __builtin_preserve_access_index(
+                &sk->__sk_common.skc_v6_rcv_saddr));
+        bpf_probe_read_kernel(
+            event->remote_addr, sizeof(event->remote_addr),
+            __builtin_preserve_access_index(
+                &sk->__sk_common.skc_v6_daddr));
+    }
+    bpf_ringbuf_submit(event, 0);
+    return 0;
 }
 
 SEC("tracepoint/sock/inet_sock_set_state")
@@ -96,7 +223,7 @@ int packrat_inet_sock_state(struct inet_sock_set_state_ctx *ctx) {
     event->uid = (__u32)bpf_get_current_uid_gid();
     event->family = ctx->family;
     event->protocol = IPPROTO_TCP;
-    event->flags = 1; /* outbound connect */
+    event->flags = EVENT_TCP_CONNECT;
     event->local_port = ctx->sport;
     event->remote_port = ctx->dport;
     event->timestamp_ns = bpf_ktime_get_ns();
@@ -112,6 +239,24 @@ int packrat_inet_sock_state(struct inet_sock_set_state_ctx *ctx) {
 
     bpf_ringbuf_submit(event, 0);
     return 0;
+}
+
+SEC("kretprobe/inet_csk_accept")
+int packrat_tcp_accept(struct pt_regs *ctx) {
+    return emit_socket_event(EVENT_TCP_ACCEPT, IPPROTO_TCP,
+                             (struct sock *)PT_REGS_RETURN(ctx), 0);
+}
+
+SEC("fentry/udp_sendmsg")
+int packrat_udp_sendmsg(__u64 *ctx) {
+    return emit_socket_event(EVENT_UDP_SEND, IPPROTO_UDP,
+                             (struct sock *)ctx[0], 1);
+}
+
+SEC("fentry/udp_recvmsg")
+int packrat_udp_recvmsg(__u64 *ctx) {
+    return emit_socket_event(EVENT_UDP_RECEIVE, IPPROTO_UDP,
+                             (struct sock *)ctx[0], 1);
 }
 
 char LICENSE[] SEC("license") = "GPL";

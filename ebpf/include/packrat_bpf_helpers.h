@@ -13,14 +13,23 @@ typedef unsigned long long __u64;
 
 enum {
     BPF_MAP_TYPE_ARRAY = 2,
+    BPF_MAP_TYPE_LRU_HASH = 9,
     BPF_MAP_TYPE_RINGBUF = 27,
 };
 
+enum {
+    BPF_ANY = 0,
+};
+
 static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *)1;
+static long (*bpf_map_update_elem)(void *map, const void *key,
+                                   const void *value, __u64 flags) = (void *)2;
 static __u64 (*bpf_ktime_get_ns)(void) = (void *)5;
 static __u64 (*bpf_get_current_pid_tgid)(void) = (void *)14;
 static __u64 (*bpf_get_current_uid_gid)(void) = (void *)15;
 static long (*bpf_get_current_comm)(void *buffer, __u32 size) = (void *)16;
+static long (*bpf_probe_read_kernel)(void *destination, __u32 size,
+                                     const void *source) = (void *)113;
 static void *(*bpf_ringbuf_reserve)(void *ringbuf, __u64 size, __u64 flags) = (void *)131;
 static void (*bpf_ringbuf_submit)(void *data, __u64 flags) = (void *)132;
 

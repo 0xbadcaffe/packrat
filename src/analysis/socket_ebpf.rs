@@ -89,21 +89,17 @@ impl SocketEbpfEvent {
         let family = read_u16(bytes, 12)?;
         let protocol = bytes[14];
         let kind = SocketEventKind::try_from(bytes[15])?;
-        let (local_addr, remote_addr, socket_fd) = match kind {
-            SocketEventKind::TcpConnect => {
-                if protocol != 6 {
-                    return Err(format!("TCP connect event has protocol {protocol}"));
-                }
-                (
-                    decode_address(family, &bytes[48..64])?,
-                    decode_address(family, &bytes[64..80])?,
-                    None,
-                )
-            }
-            SocketEventKind::TcpAccept | SocketEventKind::UdpSend | SocketEventKind::UdpReceive => {
-                if protocol != 0 || family != 0 {
-                    return Err("file-descriptor socket event contains unresolved endpoints".into());
-                }
+        let (local_addr, remote_addr, socket_fd) = match (kind, protocol) {
+            (SocketEventKind::TcpConnect | SocketEventKind::TcpAccept, 6)
+            | (SocketEventKind::UdpSend | SocketEventKind::UdpReceive, 17) => (
+                decode_address(family, &bytes[48..64])?,
+                decode_address(family, &bytes[64..80])?,
+                None,
+            ),
+            (
+                SocketEventKind::TcpAccept | SocketEventKind::UdpSend | SocketEventKind::UdpReceive,
+                0,
+            ) if family == 0 => {
                 let fd = read_u32(bytes, 20)? as i32;
                 if fd < 0 {
                     return Err(
@@ -115,6 +111,11 @@ impl SocketEbpfEvent {
                     IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                     Some(fd),
                 )
+            }
+            _ => {
+                return Err(format!(
+                    "socket event kind {kind:?} has invalid protocol {protocol}"
+                ));
             }
         };
         let comm_end = bytes[32..48]
@@ -144,10 +145,15 @@ impl SocketEbpfEvent {
         })
     }
 
-    pub fn to_socket_scope_csv(&self) -> String {
+    pub fn to_socket_scope_csv(&self) -> Result<String, String> {
         let process = csv_safe(&self.process);
-        format!(
-            "TCP,{},{},{},{},{},{},{},{}",
+        let protocol = match self.protocol {
+            6 => "TCP",
+            17 => "UDP",
+            value => return Err(format!("socket protocol {value} is unresolved")),
+        };
+        Ok(format!(
+            "{protocol},{},{},{},{},{},{},{},{}",
             self.local_addr,
             self.local_port,
             self.remote_addr,
@@ -156,7 +162,7 @@ impl SocketEbpfEvent {
             self.uid,
             process,
             process,
-        )
+        ))
     }
 }
 
@@ -188,14 +194,14 @@ pub fn compatibility_report(
         reasons.push("sock/inet_sock_set_state tracepoint is unavailable".into());
     }
     if !btf {
-        reasons.push("kernel BTF is unavailable; diagnostics and portability are reduced".into());
+        reasons.push("kernel BTF is required for TCP accept and UDP lifecycle hooks".into());
     }
     CompatibilityReport {
         kernel,
         ring_buffer,
         socket_tracepoint,
         btf,
-        compatible: ring_buffer && socket_tracepoint,
+        compatible: ring_buffer && socket_tracepoint && btf,
         reasons,
     }
 }

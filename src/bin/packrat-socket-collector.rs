@@ -19,8 +19,8 @@ mod collector {
     use std::time::{Duration, Instant};
 
     use aya::maps::{Array, RingBuf};
-    use aya::programs::TracePoint;
-    use aya::Ebpf;
+    use aya::programs::{FEntry, KProbe, TracePoint};
+    use aya::{Btf, Ebpf};
     use packrat_tui::analysis::socket_ebpf::{compatibility_report, SocketEbpfEvent};
 
     struct Options {
@@ -59,6 +59,11 @@ mod collector {
         program.load()?;
         program.attach("sock", "inet_sock_set_state")?;
 
+        let btf = Btf::from_sys_fs()?;
+        attach_fentry(&mut ebpf, "packrat_udp_sendmsg", "udp_sendmsg", &btf)?;
+        attach_fentry(&mut ebpf, "packrat_udp_recvmsg", "udp_recvmsg", &btf)?;
+        attach_accept(&mut ebpf)?;
+
         let events = ebpf
             .take_map("EVENTS")
             .ok_or("eBPF object lacks EVENTS map")?;
@@ -85,12 +90,12 @@ mod collector {
             while let Some(item) = ring.next() {
                 drained = true;
                 match SocketEbpfEvent::decode(&item) {
-                    Ok(event) => {
-                        writeln!(output, "{}", event.to_socket_scope_csv())?;
+                    Ok(event) if event.socket_fd.is_none() => {
+                        writeln!(output, "{}", event.to_socket_scope_csv()?)?;
                         received += 1;
                         wrote = true;
                     }
-                    Err(_) => invalid += 1,
+                    Ok(_) | Err(_) => invalid += 1,
                 }
             }
             if wrote {
@@ -106,6 +111,31 @@ mod collector {
                 thread::sleep(Duration::from_millis(25));
             }
         }
+    }
+
+    fn attach_fentry(
+        ebpf: &mut Ebpf,
+        program_name: &str,
+        function_name: &str,
+        btf: &Btf,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let program: &mut FEntry = ebpf
+            .program_mut(program_name)
+            .ok_or_else(|| format!("eBPF object lacks {program_name}"))?
+            .try_into()?;
+        program.load(function_name, btf)?;
+        program.attach()?;
+        Ok(())
+    }
+
+    fn attach_accept(ebpf: &mut Ebpf) -> Result<(), Box<dyn std::error::Error>> {
+        let program: &mut KProbe = ebpf
+            .program_mut("packrat_tcp_accept")
+            .ok_or("eBPF object lacks packrat_tcp_accept")?
+            .try_into()?;
+        program.load()?;
+        program.attach("inet_csk_accept", 0)?;
+        Ok(())
     }
 
     fn output_writer(path: Option<&Path>) -> Result<Box<dyn Write>, std::io::Error> {
