@@ -97,9 +97,9 @@ the unprivileged Packrat process. Stopping capture terminates the helper.
 ### Short-lived socket eBPF collector
 
 Linux 5.8 or newer can run the optional socket collector. It records outbound
-TCP connection attempts at the `sock/inet_sock_set_state` tracepoint, including
-connections that disappear before `/proc` polling sees them. The TUI remains
-unprivileged and incrementally imports the collector output.
+TCP connection attempts, accepted inbound TCP sockets, and UDP send/receive
+activity, including sockets that disappear before `/proc` polling sees them.
+The TUI remains unprivileged and incrementally imports the collector output.
 
 Install Clang and LLVM, then build both the BPF object and loader:
 
@@ -128,9 +128,18 @@ Run Packrat against the live event stream:
 
 The service is granted only `CAP_BPF` and `CAP_PERFMON`. The loader drops both
 after attaching and enables `no_new_privs`. SocketScope displays kernel ring
-buffer losses so overloaded or undersized deployments are visible. The current
-kernel program covers TCP `SYN_SENT`; UDP and accepted inbound socket lifecycle
-events remain outside this collector's scope.
+buffer losses so overloaded or undersized deployments are visible. TCP accept
+and UDP hooks require kernel BTF and the `inet_csk_accept`, `udp_sendmsg`, and
+`udp_recvmsg` symbols. The build script supports x86-64 and arm64.
+
+Run the privileged loopback integration test on the deployment kernel:
+
+```bash
+sudo ./scripts/test-ebpf-socket-collector.sh
+```
+
+It loads the object, generates TCP connect/accept and UDP send/receive traffic,
+verifies process attribution, and detaches the programs when finished.
 
 ---
 

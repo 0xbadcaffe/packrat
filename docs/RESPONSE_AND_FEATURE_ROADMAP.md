@@ -61,12 +61,16 @@ Deployment placement still defines the enforcement boundary:
 - Bounded IPv6 fragment and ordered bidirectional TCP reassembly, including
   overlap/retransmission handling and sequence wraparound.
 - Worklist packet comparison plus stream search and exact directional export.
-- Optional Linux eBPF collector for outbound TCP sockets too short-lived for
-  `/proc`, with a versioned event ABI, ring-buffer loss accounting,
-  least-privilege loader, kernel compatibility check, and hardened packaging.
+- Optional Linux eBPF collector for outbound and accepted TCP plus UDP
+  send/receive activity too short-lived for `/proc`, with a versioned event ABI,
+  bounded deduplication, ring-buffer loss accounting, least-privilege loader,
+  kernel compatibility check, integration harness, and hardened packaging.
+- Detector coverage catalog enforced by tests: every built-in signature must
+  name positive replay/sequence coverage and a negative baseline control.
 
-## Remaining Engineering Work
+## Roadmap Status
 
-- Extend short-lived socket lifecycle coverage beyond outbound TCP `SYN_SENT`
-  to accepted inbound TCP and UDP while retaining reliable PID attribution.
-- Keep replay fixtures current as each new detector and containment policy ships.
+The finite non-AI feature roadmap is implemented. New detector signatures are
+blocked by CI unless their replay coverage is registered. Before releasing the
+eBPF collector for a specific kernel, run the privileged loopback harness from
+`BUILD.md`; kernel loading cannot be validated in an unprivileged test process.

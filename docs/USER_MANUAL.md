@@ -280,13 +280,13 @@ Then add the event stream when starting Packrat:
 ./target/release/packrat --socket-events /run/packrat/socket-events.csv
 ```
 
-The collector attaches to the socket state tracepoint, drops its load-time
-capabilities, and records PID, UID, process, endpoint, and protocol fields. A
+The collector attaches to the TCP state, TCP accept, and UDP send/receive kernel
+hooks, drops its load-time capabilities, and records PID, UID, process,
+endpoint, and protocol fields. A
 non-zero `eBPF lost` value means the kernel ring buffer could not reserve space;
 the missing events cannot be reconstructed, so inspect system load before
-relying on complete attribution. This collector currently covers outbound TCP
-connection attempts. `/proc` polling continues to cover established TCP and UDP
-sockets.
+relying on complete attribution. `/proc` polling continues to supplement the
+event collector for established sockets.
 
 Use `[`/`]` in Security to cycle detector and operational views:
 
@@ -308,8 +308,8 @@ Use `[`/`]` in Security to cycle detector and operational views:
   state-changing Modbus, DNP3, S7comm, and BACnet operations.
 
 - SocketScope correlates Linux socket tables with PID, UID, process, command,
-  and per-process packet/byte totals. For very short-lived outbound TCP sockets,
-  run the optional Linux eBPF collector and start Packrat with
+  and per-process packet/byte totals. For short-lived TCP and UDP sockets, run
+  the optional Linux eBPF collector and start Packrat with
   `--socket-events /run/packrat/socket-events.csv`. Packrat imports appended
   rows without restarting and shows the collector's kernel-loss count in the
   SocketScope title.
