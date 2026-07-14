@@ -39,16 +39,22 @@ mod collector {
             || Path::new("/sys/kernel/debug/tracing/events/sock/inet_sock_set_state").exists();
         let btf = Path::new("/sys/kernel/btf/vmlinux").exists();
         let report = compatibility_report(&release, tracepoint, btf);
+        let kallsyms = std::fs::read_to_string("/proc/kallsyms").unwrap_or_default();
+        let lifecycle_hooks = required_hooks_present(&kallsyms);
         if options.check_only {
-            print_report(&release, &report);
-            return if report.compatible {
+            print_report(&release, &report, lifecycle_hooks);
+            return if report.compatible && lifecycle_hooks {
                 Ok(())
             } else {
                 Err("kernel is not compatible".into())
             };
         }
-        if !report.compatible {
-            return Err(format!("incompatible kernel: {}", report.reasons.join("; ")).into());
+        if !report.compatible || !lifecycle_hooks {
+            let mut reasons = report.reasons.clone();
+            if !lifecycle_hooks {
+                reasons.push("required TCP/UDP lifecycle symbols are unavailable".into());
+            }
+            return Err(format!("incompatible kernel: {}", reasons.join("; ")).into());
         }
 
         let mut ebpf = Ebpf::load_file(&options.object)?;
@@ -201,15 +207,27 @@ mod collector {
     fn print_report(
         release: &str,
         report: &packrat_tui::analysis::socket_ebpf::CompatibilityReport,
+        lifecycle_hooks: bool,
     ) {
         println!("kernel={release}");
         println!("ring_buffer={}", report.ring_buffer);
         println!("socket_tracepoint={}", report.socket_tracepoint);
         println!("btf={}", report.btf);
-        println!("compatible={}", report.compatible);
+        println!("lifecycle_hooks={lifecycle_hooks}");
+        println!("compatible={}", report.compatible && lifecycle_hooks);
         for reason in &report.reasons {
             println!("reason={reason}");
         }
+    }
+
+    fn required_hooks_present(kallsyms: &str) -> bool {
+        ["inet_csk_accept", "udp_sendmsg", "udp_recvmsg"]
+            .iter()
+            .all(|required| {
+                kallsyms
+                    .lines()
+                    .any(|line| line.split_whitespace().nth(2) == Some(*required))
+            })
     }
 
     fn drop_capabilities() -> Result<(), std::io::Error> {
@@ -254,7 +272,7 @@ mod collector {
 
     #[cfg(test)]
     mod tests {
-        use super::parse_args;
+        use super::{parse_args, required_hooks_present};
         use std::path::PathBuf;
 
         #[test]
@@ -281,6 +299,15 @@ mod collector {
             assert!(parse_args(["--object"]).is_err());
             assert!(parse_args(["--stats-seconds", "zero"]).is_err());
             assert!(parse_args(["--unexpected"]).is_err());
+        }
+
+        #[test]
+        fn requires_all_kernel_lifecycle_symbols() {
+            let complete = "0 T inet_csk_accept\n0 T udp_sendmsg\n0 T udp_recvmsg\n";
+            assert!(required_hooks_present(complete));
+            assert!(!required_hooks_present(
+                "0 T inet_csk_accept\n0 T udp_sendmsg\n"
+            ));
         }
     }
 }
