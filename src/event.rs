@@ -1026,8 +1026,6 @@ fn handle_investigate(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    if global_tab_switch(app, &key) { return; }
-
     if app.investigation_view == InvestigationView::Decode {
         match key.code {
             KeyCode::Char('/') => app.start_header_search(),
@@ -1035,6 +1033,7 @@ fn handle_investigate(app: &mut App, key: KeyEvent) {
             KeyCode::Char('k') | KeyCode::Up => app.header_cursor_up(),
             KeyCode::Char('g') => app.header_cursor_home(),
             KeyCode::Char('G') => app.header_cursor_end(),
+            KeyCode::Enter => app.jump_selected_header_to_bytes(),
             KeyCode::Char('f') => app.apply_selected_header_filter(),
             KeyCode::Char('c') => app.clear_header_search(),
             KeyCode::Char('s') => app.open_active_investigation_stream_overlay(),
@@ -1047,10 +1046,36 @@ fn handle_investigate(app: &mut App, key: KeyEvent) {
             KeyCode::Char('l') => app.active_tab = Tab::Packets,
             KeyCode::Esc => app.close_worklist(),
             KeyCode::Tab | KeyCode::F(2) => app.open_view_menu(),
-            _ => {}
+            _ => { global_tab_switch(app, &key); }
         }
         return;
     }
+
+
+    if app.investigation_view == InvestigationView::Bytes {
+        match key.code {
+            KeyCode::Char('h') | KeyCode::Left => app.byte_cursor_left(),
+            KeyCode::Char('l') | KeyCode::Right => app.byte_cursor_right(),
+            KeyCode::Char('j') | KeyCode::Down => app.byte_cursor_down(),
+            KeyCode::Char('k') | KeyCode::Up => app.byte_cursor_up(),
+            KeyCode::Char('g') => app.byte_cursor_home(),
+            KeyCode::Char('G') => app.byte_cursor_end(),
+            KeyCode::Char('n') => app.worklist_next_packet(),
+            KeyCode::Char('p') => app.worklist_prev_packet(),
+            KeyCode::Char('[') => app.investigation_prev_view(),
+            KeyCode::Char(']') => app.investigation_next_view(),
+            KeyCode::Char('w') => app.toggle_worklist(),
+            KeyCode::Char('d') | KeyCode::Delete => app.remove_active_worklist_packet(),
+            KeyCode::Char('s') => app.open_active_investigation_stream_overlay(),
+            KeyCode::Char('v') => app.active_tab = Tab::Packets,
+            KeyCode::Esc => app.close_worklist(),
+            KeyCode::Tab | KeyCode::F(2) => app.open_view_menu(),
+            _ => { global_tab_switch(app, &key); }
+        }
+        return;
+    }
+
+    if global_tab_switch(app, &key) { return; }
 
     match key.code {
         KeyCode::Char('[') => app.investigation_prev_view(),

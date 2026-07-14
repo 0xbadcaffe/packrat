@@ -458,6 +458,49 @@ async fn investigate_headers_searches_tcp_fields_without_global_palette() {
 }
 
 #[tokio::test]
+async fn investigate_header_jumps_to_keyboard_byte_interpreter() {
+    let mut app = App::new_for_test();
+    app.inject_packet(tcp_packet(1));
+    app.selected = Some(0);
+    event::handle(&mut app, key(KeyCode::Enter));
+    app.investigation_view = InvestigationView::Decode;
+
+    event::handle(&mut app, key(KeyCode::Char('/')));
+    for character in "tcp.seq".chars() {
+        event::handle(&mut app, key(KeyCode::Char(character)));
+    }
+    event::handle(&mut app, key(KeyCode::Enter));
+    let expected_offset = app.visible_packet_header_fields()[0].offset.unwrap();
+    event::handle(&mut app, key(KeyCode::Enter));
+
+    assert_eq!(app.investigation_view, InvestigationView::Bytes);
+    assert_eq!(app.byte_cursor, expected_offset);
+
+    event::handle(&mut app, key(KeyCode::Char('l')));
+    assert_eq!(app.byte_cursor, expected_offset + 1);
+    event::handle(&mut app, key(KeyCode::Char('g')));
+    assert_eq!(app.byte_cursor, 0);
+    event::handle(&mut app, key(KeyCode::Char('G')));
+    assert_eq!(app.byte_cursor, app.active_investigation_packet().unwrap().bytes.len() - 1);
+}
+
+#[tokio::test]
+async fn investigate_derived_header_without_offset_stays_in_headers() {
+    let mut app = App::new_for_test();
+    app.inject_packet(tcp_packet(1));
+    app.selected = Some(0);
+    event::handle(&mut app, key(KeyCode::Enter));
+    app.investigation_view = InvestigationView::Decode;
+
+    assert_eq!(app.visible_packet_header_fields()[0].path, "frame.number");
+    assert_eq!(app.visible_packet_header_fields()[0].offset, None);
+    event::handle(&mut app, key(KeyCode::Enter));
+
+    assert_eq!(app.investigation_view, InvestigationView::Decode);
+    assert!(app.status_msg.as_deref().unwrap_or_default().contains("no byte offset"));
+}
+
+#[tokio::test]
 async fn investigate_s_opens_follow_stream_for_active_packet() {
     let mut app = App::new_for_test();
     app.inject_packet(tcp_payload_packet(1, b"GET /admin HTTP/1.1\r\n\r\n"));
