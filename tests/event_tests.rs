@@ -518,6 +518,31 @@ async fn investigate_s_opens_follow_stream_for_active_packet() {
 }
 
 #[tokio::test]
+async fn investigate_equals_compares_active_packet_with_next_worklist_packet() {
+    let mut app = App::new_for_test();
+    app.inject_packet(tcp_packet(1));
+    let mut second = tcp_packet(2);
+    second.bytes[38..42].copy_from_slice(&99_u32.to_be_bytes());
+    app.inject_packet(second);
+    app.selected = Some(0);
+    event::handle(&mut app, key(KeyCode::Enter));
+    app.active_tab = Tab::Packets;
+    app.selected = Some(1);
+    event::handle(&mut app, key(KeyCode::Char('m')));
+    app.worklist.prev();
+    app.active_tab = Tab::Investigate;
+
+    event::handle(&mut app, key(KeyCode::Char('=')));
+    let comparison = app.packet_comparison.as_ref().expect("comparison overlay");
+    assert_eq!((comparison.left_no, comparison.right_no), (1, 2));
+    assert!(comparison.field_differences.iter().any(|difference| difference.path == "tcp.seq"));
+
+    event::handle(&mut app, key(KeyCode::Esc));
+    assert!(app.packet_comparison.is_none());
+    assert_eq!(app.worklist.active_packet_no(), Some(1));
+}
+
+#[tokio::test]
 async fn theme_picker_esc_closes() {
     let mut app = App::new_for_test();
     app.theme_picker_open = true;

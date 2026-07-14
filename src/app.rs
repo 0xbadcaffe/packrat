@@ -26,6 +26,7 @@ use crate::analysis::jobs::JobQueue;
 use crate::analysis::notebook::Notebook;
 use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
 use crate::analysis::packet_fields::{self, PacketField};
+use crate::analysis::packet_compare::{self, PacketComparison};
 use crate::analysis::protocol_workbench::ProtocolWorkbench;
 use crate::analysis::rules::RuleEngine;
 use crate::analysis::rules::Action as RuleAction;
@@ -381,6 +382,7 @@ pub struct App {
     pub flows_selected: Option<usize>,
     pub flows_sort: FlowSort,
     pub stream_overlay: Option<(String, Vec<(bool, Vec<u8>)>)>,
+    pub packet_comparison: Option<PacketComparison>,
     pub lua_plugins: PluginManager,
     pub lua_reload_msg: Option<String>,
     pub craft: CraftState,
@@ -544,6 +546,7 @@ impl App {
             flows_selected: None,
             flows_sort: FlowSort::Bytes,
             stream_overlay: None,
+            packet_comparison: None,
             lua_plugins: {
                 let mut pm = PluginManager::new();
                 pm.reload();
@@ -1808,6 +1811,7 @@ impl App {
         self.flow_tracker.clear();
         self.flows_selected = None;
         self.stream_overlay = None;
+        self.packet_comparison = None;
         self.security.clear();
         self.credentials.clear();
         self.hosts.clear();
@@ -1940,6 +1944,27 @@ impl App {
             return;
         }
         self.stream_overlay = Some((key.id(), segments));
+    }
+
+    pub fn open_packet_comparison(&mut self) {
+        let Some(active_index) = self.worklist.active else {
+            self.set_status("No active worklist packet to compare");
+            return;
+        };
+        if self.worklist.packet_nos.len() < 2 {
+            self.set_status("Add at least two packets to the worklist for comparison");
+            return;
+        }
+        let target_index = (active_index + 1) % self.worklist.packet_nos.len();
+        let Some(left) = self.worklist.packet_nos.get(active_index).and_then(|no| self.packet_by_no(*no)) else {
+            self.set_status("Active worklist packet is no longer available");
+            return;
+        };
+        let Some(right) = self.worklist.packet_nos.get(target_index).and_then(|no| self.packet_by_no(*no)) else {
+            self.set_status("Comparison worklist packet is no longer available");
+            return;
+        };
+        self.packet_comparison = Some(packet_compare::compare(left, right));
     }
 
     pub fn mark_selected_packet_for_investigation(&mut self) {

@@ -55,6 +55,10 @@ pub fn draw(f: &mut Frame, app: &App) {
         draw_stream_overlay(f, title, segments);
     }
 
+    if let Some(comparison) = &app.packet_comparison {
+        draw_packet_comparison(f, comparison);
+    }
+
     if app.search_open {
         search_overlay::draw(f, app);
     }
@@ -301,6 +305,51 @@ fn draw_stream_overlay(f: &mut Frame, title: &str, segments: &[(bool, Vec<u8>)])
         .style(Style::default().bg(C_BG2()))
         .wrap(Wrap { trim: false });
     f.render_widget(p, popup);
+}
+
+fn draw_packet_comparison(f: &mut Frame, comparison: &crate::analysis::packet_compare::PacketComparison) {
+    use crate::analysis::packet_compare::FieldDifferenceKind;
+
+    let area = f.area();
+    let popup = Rect {
+        x: area.x + 4,
+        y: area.y + 2,
+        width: area.width.saturating_sub(8),
+        height: area.height.saturating_sub(4),
+    };
+    f.render_widget(Clear, popup);
+    let byte_summary = comparison.first_byte_difference
+        .map(|offset| format!("First byte difference: 0x{offset:04x}"))
+        .unwrap_or_else(|| "Captured bytes are identical".into());
+    let mut lines = vec![
+        Line::from(format!("Lengths: {} vs {} bytes", comparison.left_length, comparison.right_length)),
+        Line::from(byte_summary),
+        Line::raw(""),
+    ];
+    for difference in comparison.field_differences.iter().take(popup.height.saturating_sub(7) as usize) {
+        let marker = match difference.kind {
+            FieldDifferenceKind::Changed => "~",
+            FieldDifferenceKind::LeftOnly => "-",
+            FieldDifferenceKind::RightOnly => "+",
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{marker} {:<24} ", difference.path), Style::default().fg(C_CYAN())),
+            Span::styled(difference.left.as_deref().unwrap_or("<absent>"), Style::default().fg(C_YELLOW())),
+            Span::raw(" -> "),
+            Span::styled(difference.right.as_deref().unwrap_or("<absent>"), Style::default().fg(C_GREEN())),
+        ]));
+    }
+    let widget = Paragraph::new(lines)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(C_CYAN()))
+            .title(Span::styled(
+                format!(" Compare Packet #{} -> #{}  [Esc/= close] ", comparison.left_no, comparison.right_no),
+                Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
+            )))
+        .style(Style::default().bg(C_BG2()))
+        .wrap(Wrap { trim: false });
+    f.render_widget(widget, popup);
 }
 
 fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
