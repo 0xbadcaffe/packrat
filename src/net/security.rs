@@ -28,6 +28,8 @@ const SYN_FLOOD_WINDOW_SECS: f64 = 1.0;
 const SCAN_UNIQUE_THRESHOLD: usize = 12;
 const SYN_FLOOD_THRESHOLD: usize = 100;
 const MAX_SCAN_STATES: usize = 512;
+const RA_FLOOD_THRESHOLD: usize = 20;
+const MAX_CONTROL_PLANE_IDENTITIES: usize = 1024;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct FragmentKey {
@@ -112,6 +114,22 @@ struct SynFloodState {
     timestamps: Vec<f64>,
     alerted: bool,
     last_seen: f64,
+}
+
+#[derive(Debug, Default)]
+struct RouterAdvertisementState {
+    timestamps: Vec<f64>,
+    alerted: bool,
+    invalid_source_alerted: bool,
+    last_seen: f64,
+}
+
+struct Ipv6Inspection<'a> {
+    hop_limit: u8,
+    source: [u8; 16],
+    next_header: u8,
+    extension_count: usize,
+    transport: &'a [u8],
 }
 
 // ─── IDS Alerts ───────────────────────────────────────────────────────────────
@@ -279,6 +297,9 @@ pub struct SecurityEngine {
     tcp_integrity: HashMap<TcpFlowKey, TcpIntegrityState>,
     scan_sources: HashMap<String, SourceScanState>,
     syn_flood_targets: HashMap<(String, u16), SynFloodState>,
+    ndp_bindings: HashMap<[u8; 16], [u8; 6]>,
+    router_advertisements: HashMap<[u8; 6], RouterAdvertisementState>,
+    lldp_chassis: HashMap<[u8; 6], Vec<u8>>,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -302,6 +323,9 @@ impl SecurityEngine {
             tcp_integrity: HashMap::new(),
             scan_sources: HashMap::new(),
             syn_flood_targets: HashMap::new(),
+            ndp_bindings: HashMap::new(),
+            router_advertisements: HashMap::new(),
+            lldp_chassis: HashMap::new(),
             cred_hit_count: 0,
         }
     }
@@ -323,6 +347,9 @@ impl SecurityEngine {
         self.tcp_integrity.clear();
         self.scan_sources.clear();
         self.syn_flood_targets.clear();
+        self.ndp_bindings.clear();
+        self.router_advertisements.clear();
+        self.lldp_chassis.clear();
         self.cred_hit_count = 0;
     }
 
@@ -360,6 +387,8 @@ impl SecurityEngine {
         self.check_ipv4_fragments(pkt);
         self.check_tcp_integrity(pkt);
         self.check_scan_activity(pkt);
+        self.check_ipv6_control_plane(pkt);
+        self.check_layer2_control_plane(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -693,6 +722,132 @@ impl SecurityEngine {
                 Severity::Critical,
                 format!("{}:{} received {} SYN packets within one second", pkt.dst, port, state.timestamps.len()),
             ));
+        }
+    }
+
+    // ─── IPv6 / Layer-2 Control Plane ───────────────────────────────────────
+
+    fn check_ipv6_control_plane(&mut self, pkt: &Packet) {
+        let inspection = match parse_ipv6_inspection(&pkt.bytes) {
+            Some(inspection) => inspection,
+            None => return,
+        };
+        let mut alerts = Vec::new();
+
+        if inspection.extension_count > 8 {
+            alerts.push((
+                "Excessive IPv6 extension headers",
+                Severity::High,
+                format!("{} IPv6 extension headers from {} to {}", inspection.extension_count, pkt.src, pkt.dst),
+            ));
+        }
+        if inspection.next_header != 58 || inspection.transport.is_empty() {
+            for (signature, severity, detail) in alerts {
+                self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
+            }
+            return;
+        }
+
+        let icmp_type = inspection.transport[0];
+        if matches!(icmp_type, 133..=137) && inspection.hop_limit != 255 {
+            alerts.push((
+                "Invalid IPv6 neighbor discovery hop limit",
+                Severity::Critical,
+                format!("ICMPv6 type {icmp_type} used hop limit {} instead of 255 from {}", inspection.hop_limit, pkt.src),
+            ));
+        }
+
+        if icmp_type == 134 {
+            let invalid_source = !is_ipv6_link_local(&inspection.source);
+            if let Some(source_mac) = ethernet_source_mac(&pkt.bytes) {
+                self.router_advertisements.retain(|_, state| {
+                    pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 1.0
+                });
+                if self.router_advertisements.len() < MAX_CONTROL_PLANE_IDENTITIES
+                    || self.router_advertisements.contains_key(&source_mac)
+                {
+                    let state = self.router_advertisements.entry(source_mac).or_default();
+                    state.last_seen = pkt.timestamp;
+                    if invalid_source && !state.invalid_source_alerted {
+                        state.invalid_source_alerted = true;
+                        alerts.push((
+                            "Invalid IPv6 router advertisement source",
+                            Severity::Critical,
+                            format!("Router Advertisement originated from non-link-local address {}", pkt.src),
+                        ));
+                    }
+                    state.timestamps.retain(|timestamp| {
+                        pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= 1.0
+                    });
+                    if state.timestamps.is_empty() {
+                        state.alerted = false;
+                    }
+                    state.timestamps.push(pkt.timestamp);
+                    if state.timestamps.len() >= RA_FLOOD_THRESHOLD && !state.alerted {
+                        state.alerted = true;
+                        alerts.push((
+                            "IPv6 router advertisement flood",
+                            Severity::Critical,
+                            format!("{} Router Advertisements from one MAC within one second", state.timestamps.len()),
+                        ));
+                    }
+                }
+            }
+        }
+
+        if icmp_type == 136 && inspection.transport.len() >= 24 {
+            let target: [u8; 16] = inspection.transport[8..24].try_into().unwrap_or([0; 16]);
+            if let Some(mac) = ndp_target_link_layer_address(&inspection.transport[24..]) {
+                if let Some(previous) = self.ndp_bindings.get(&target).copied() {
+                    if previous != mac {
+                        alerts.push((
+                            "IPv6 neighbor binding changed",
+                            Severity::Critical,
+                            format!("Neighbor Advertisement changed target ownership from {} to {}", format_mac(previous), format_mac(mac)),
+                        ));
+                    }
+                }
+                if self.ndp_bindings.len() < MAX_CONTROL_PLANE_IDENTITIES
+                    || self.ndp_bindings.contains_key(&target)
+                {
+                    self.ndp_bindings.insert(target, mac);
+                }
+            }
+        }
+
+        for (signature, severity, detail) in alerts {
+            self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
+        }
+    }
+
+    fn check_layer2_control_plane(&mut self, pkt: &Packet) {
+        let raw = &pkt.bytes;
+        if is_stp_topology_change(raw) {
+            self.push_ids(IdsAlert {
+                pkt_no: pkt.no,
+                signature: "STP topology change",
+                severity: Severity::Medium,
+                detail: format!("Spanning Tree topology-change BPDU from {}", ethernet_source_mac(raw).map(format_mac).unwrap_or_else(|| "unknown".into())),
+            });
+        }
+
+        let Some((source_mac, chassis)) = lldp_chassis_identity(raw) else {
+            return;
+        };
+        if let Some(previous) = self.lldp_chassis.get(&source_mac) {
+            if previous != &chassis {
+                self.push_ids(IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "LLDP chassis identity changed",
+                    severity: Severity::High,
+                    detail: format!("LLDP source {} changed its advertised chassis identity", format_mac(source_mac)),
+                });
+            }
+        }
+        if self.lldp_chassis.len() < MAX_CONTROL_PLANE_IDENTITIES
+            || self.lldp_chassis.contains_key(&source_mac)
+        {
+            self.lldp_chassis.insert(source_mac, chassis);
         }
     }
 
@@ -1559,6 +1714,102 @@ fn is_empty_ipv4_udp_probe(raw: &[u8]) -> bool {
         return false;
     }
     u16::from_be_bytes([raw[udp_offset + 4], raw[udp_offset + 5]]) == 8
+}
+
+fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
+    let (ip_offset, ether_type) = ethernet_network_header(raw)?;
+    if ether_type != 0x86dd || raw.len() < ip_offset + 40 || raw[ip_offset] >> 4 != 6 {
+        return None;
+    }
+    let payload_len = usize::from(u16::from_be_bytes([raw[ip_offset + 4], raw[ip_offset + 5]]));
+    let packet_end = (ip_offset + 40 + payload_len).min(raw.len());
+    let mut next_header = raw[ip_offset + 6];
+    let mut cursor = ip_offset + 40;
+    let mut extension_count = 0usize;
+
+    while matches!(next_header, 0 | 43 | 44 | 51 | 60) && cursor < packet_end {
+        extension_count += 1;
+        if extension_count > 32 {
+            break;
+        }
+        let current = next_header;
+        next_header = *raw.get(cursor)?;
+        let length = match current {
+            44 => 8,
+            51 => (usize::from(*raw.get(cursor + 1)?) + 2) * 4,
+            _ => (usize::from(*raw.get(cursor + 1)?) + 1) * 8,
+        };
+        cursor = cursor.checked_add(length)?;
+    }
+
+    Some(Ipv6Inspection {
+        hop_limit: raw[ip_offset + 7],
+        source: raw[ip_offset + 8..ip_offset + 24].try_into().ok()?,
+        next_header,
+        extension_count,
+        transport: if cursor <= packet_end { &raw[cursor..packet_end] } else { &[] },
+    })
+}
+
+fn is_ipv6_link_local(address: &[u8; 16]) -> bool {
+    address[0] == 0xfe && address[1] & 0xc0 == 0x80
+}
+
+fn ethernet_source_mac(raw: &[u8]) -> Option<[u8; 6]> {
+    raw.get(6..12)?.try_into().ok()
+}
+
+fn ndp_target_link_layer_address(mut options: &[u8]) -> Option<[u8; 6]> {
+    while options.len() >= 2 {
+        let option_type = options[0];
+        let option_len = usize::from(options[1]) * 8;
+        if option_len == 0 || option_len > options.len() {
+            return None;
+        }
+        if option_type == 2 && option_len >= 8 {
+            return options[2..8].try_into().ok();
+        }
+        options = &options[option_len..];
+    }
+    None
+}
+
+fn format_mac(mac: [u8; 6]) -> String {
+    mac.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(":")
+}
+
+fn is_stp_topology_change(raw: &[u8]) -> bool {
+    raw.len() >= 22
+        && raw[..6] == [0x01, 0x80, 0xc2, 0x00, 0x00, 0x00]
+        && raw[14..17] == [0x42, 0x42, 0x03]
+        && raw[17..19] == [0x00, 0x00]
+        && (raw[20] == 0x80 || raw[21] & 0x81 != 0)
+}
+
+fn lldp_chassis_identity(raw: &[u8]) -> Option<([u8; 6], Vec<u8>)> {
+    let (payload_offset, ether_type) = ethernet_network_header(raw)?;
+    if ether_type != 0x88cc {
+        return None;
+    }
+    let source_mac = ethernet_source_mac(raw)?;
+    let mut cursor = payload_offset;
+    while cursor + 2 <= raw.len() {
+        let header = u16::from_be_bytes([raw[cursor], raw[cursor + 1]]);
+        let tlv_type = (header >> 9) as u8;
+        let length = usize::from(header & 0x01ff);
+        cursor += 2;
+        if cursor + length > raw.len() {
+            return None;
+        }
+        if tlv_type == 0 {
+            return None;
+        }
+        if tlv_type == 1 && length >= 2 {
+            return Some((source_mac, raw[cursor..cursor + length].to_vec()));
+        }
+        cursor += length;
+    }
+    None
 }
 
 fn has_conflicting_tcp_overlap(slices: &[FragmentSlice], segment: &TcpSegment<'_>) -> bool {

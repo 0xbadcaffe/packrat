@@ -324,3 +324,101 @@ fn detects_icmp_address_sweep() {
 
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "ICMP address sweep"));
 }
+
+fn ipv6_control_packet(no: u64, source_mac: [u8; 6], source: [u8; 16], hop_limit: u8, icmp: &[u8]) -> Packet {
+    let mut bytes = vec![0_u8; 14 + 40];
+    bytes[..6].copy_from_slice(&[0x33, 0x33, 0, 0, 0, 1]);
+    bytes[6..12].copy_from_slice(&source_mac);
+    bytes[12..14].copy_from_slice(&0x86dd_u16.to_be_bytes());
+    bytes[14] = 0x60;
+    bytes[18..20].copy_from_slice(&(icmp.len() as u16).to_be_bytes());
+    bytes[20] = 58;
+    bytes[21] = hop_limit;
+    bytes[22..38].copy_from_slice(&source);
+    bytes[38..54].copy_from_slice(&[0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    bytes.extend_from_slice(icmp);
+    packet("ICMPv6", 0, "", bytes).with_number_and_timestamp(no, no as f64)
+}
+
+fn neighbor_advertisement(target: [u8; 16], mac: [u8; 6]) -> Vec<u8> {
+    let mut icmp = vec![0_u8; 32];
+    icmp[0] = 136;
+    icmp[8..24].copy_from_slice(&target);
+    icmp[24] = 2;
+    icmp[25] = 1;
+    icmp[26..32].copy_from_slice(&mac);
+    icmp
+}
+
+#[test]
+fn detects_invalid_ipv6_neighbor_discovery_and_binding_change() {
+    let target = [0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5];
+    let source = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+    let mut security = SecurityEngine::default();
+    security.update(&ipv6_control_packet(1, [0, 1, 2, 3, 4, 5], source, 64, &neighbor_advertisement(target, [0, 1, 2, 3, 4, 5])));
+    security.update(&ipv6_control_packet(2, [0, 1, 2, 3, 4, 6], source, 255, &neighbor_advertisement(target, [0, 1, 2, 3, 4, 6])));
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Invalid IPv6 neighbor discovery hop limit"));
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "IPv6 neighbor binding changed"));
+}
+
+#[test]
+fn detects_invalid_and_flooded_router_advertisements() {
+    let global_source = [0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+    let mut ra = vec![0_u8; 16];
+    ra[0] = 134;
+    let mut security = SecurityEngine::default();
+    for index in 0..20_u64 {
+        let mut packet = ipv6_control_packet(index + 1, [0, 1, 2, 3, 4, 5], global_source, 255, &ra);
+        packet.timestamp = index as f64 / 1000.0;
+        security.update(&packet);
+    }
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Invalid IPv6 router advertisement source"));
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "IPv6 router advertisement flood"));
+}
+
+#[test]
+fn detects_excessive_ipv6_extension_header_chain() {
+    let source = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+    let mut extensions = vec![0_u8; 9 * 8 + 8];
+    for index in 0..9 {
+        extensions[index * 8] = if index == 8 { 58 } else { 0 };
+    }
+    extensions[9 * 8] = 128;
+    let mut packet = ipv6_control_packet(1, [0, 1, 2, 3, 4, 5], source, 255, &extensions);
+    packet.bytes[20] = 0;
+
+    let mut security = SecurityEngine::default();
+    security.update(&packet);
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Excessive IPv6 extension headers"));
+}
+
+fn lldp_packet(no: u64, source_mac: [u8; 6], chassis: &[u8]) -> Packet {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[0x01, 0x80, 0xc2, 0x00, 0x00, 0x0e]);
+    bytes.extend_from_slice(&source_mac);
+    bytes.extend_from_slice(&0x88cc_u16.to_be_bytes());
+    let value_len = chassis.len() + 1;
+    bytes.extend_from_slice(&(((1_u16) << 9) | value_len as u16).to_be_bytes());
+    bytes.push(7);
+    bytes.extend_from_slice(chassis);
+    bytes.extend_from_slice(&0_u16.to_be_bytes());
+    packet("LLDP", 0, "", bytes).with_number_and_timestamp(no, no as f64)
+}
+
+#[test]
+fn detects_stp_topology_change_and_lldp_identity_change() {
+    let mut security = SecurityEngine::default();
+    let mut bpdu = vec![0_u8; 22];
+    bpdu[..6].copy_from_slice(&[0x01, 0x80, 0xc2, 0x00, 0x00, 0x00]);
+    bpdu[6..12].copy_from_slice(&[0, 1, 2, 3, 4, 5]);
+    bpdu[14..17].copy_from_slice(&[0x42, 0x42, 0x03]);
+    bpdu[20] = 0x80;
+    security.update(&packet("STP", 0, "", bpdu));
+    security.update(&lldp_packet(2, [0, 1, 2, 3, 4, 5], b"switch-a"));
+    security.update(&lldp_packet(3, [0, 1, 2, 3, 4, 5], b"switch-b"));
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "STP topology change"));
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "LLDP chassis identity changed"));
+}
