@@ -85,4 +85,14 @@ fn ignores_read_only_modbus_and_emits_critical_control_alerts() {
     assert!(security.ids_alerts.iter().any(|alert| {
         alert.signature == "Critical industrial control command" && alert.severity == Severity::Critical
     }));
+
+    let mut write = vec![0_u8; 8];
+    write[5] = 2;
+    write[7] = 16;
+    let mut security = SecurityEngine::default();
+    security.update(&industrial_packet("Modbus", 502, true, &write));
+    assert!(security
+        .ids_alerts
+        .iter()
+        .any(|alert| alert.signature == "Industrial state-changing command"));
 }

