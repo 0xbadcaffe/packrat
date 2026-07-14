@@ -1,5 +1,6 @@
 use packrat_tui::analysis::socket_ebpf::{
-    compatibility_report, KernelVersion, SocketEbpfEvent, SOCKET_EVENT_SIZE, SOCKET_EVENT_VERSION,
+    compatibility_report, KernelVersion, SocketEbpfEvent, SocketEventKind, SOCKET_EVENT_SIZE,
+    SOCKET_EVENT_VERSION,
 };
 use packrat_tui::analysis::socket_scope::SocketScope;
 
@@ -11,6 +12,7 @@ fn event_bytes(family: u16) -> Vec<u8> {
     bytes[8..12].copy_from_slice(&1000_u32.to_ne_bytes());
     bytes[12..14].copy_from_slice(&family.to_ne_bytes());
     bytes[14] = 6;
+    bytes[15] = SocketEventKind::TcpConnect as u8;
     bytes[16..18].copy_from_slice(&50_000_u16.to_ne_bytes());
     bytes[18..20].copy_from_slice(&443_u16.to_ne_bytes());
     bytes[24..32].copy_from_slice(&123_456_u64.to_ne_bytes());
@@ -32,6 +34,8 @@ fn decodes_ipv4_and_socket_scope_csv() {
     assert_eq!(event.remote_addr.to_string(), "198.51.100.7");
     assert_eq!(event.local_port, 50_000);
     assert_eq!(event.process, "curl");
+    assert_eq!(event.kind, SocketEventKind::TcpConnect);
+    assert_eq!(event.socket_fd, None);
     assert_eq!(
         event.to_socket_scope_csv(),
         "TCP,192.0.2.10,50000,198.51.100.7,443,4242,1000,curl,curl"
@@ -57,8 +61,30 @@ fn rejects_wrong_size_version_family_protocol_and_process() {
     bytes[14] = 17;
     assert!(SocketEbpfEvent::decode(&bytes).is_err());
     bytes = event_bytes(2);
+    bytes[15] = 99;
+    assert!(SocketEbpfEvent::decode(&bytes).is_err());
+    bytes = event_bytes(2);
     bytes[32..48].fill(0);
     assert!(SocketEbpfEvent::decode(&bytes).is_err());
+}
+
+#[test]
+fn decodes_fd_lifecycle_events_without_inventing_endpoints() {
+    for (kind, fd) in [
+        (SocketEventKind::TcpAccept, 7_u32),
+        (SocketEventKind::UdpSend, 8),
+        (SocketEventKind::UdpReceive, 9),
+    ] {
+        let mut bytes = event_bytes(2);
+        bytes[12..16].fill(0);
+        bytes[15] = kind as u8;
+        bytes[20..24].copy_from_slice(&fd.to_ne_bytes());
+        let event = SocketEbpfEvent::decode(&bytes).unwrap();
+        assert_eq!(event.kind, kind);
+        assert_eq!(event.socket_fd, Some(fd as i32));
+        assert!(event.local_addr.is_unspecified());
+        assert!(event.remote_addr.is_unspecified());
+    }
 }
 
 #[test]
