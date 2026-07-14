@@ -77,16 +77,22 @@ sudo pacman -S libpcap
 # Build packrat with real capture
 cargo build --release --features real-capture
 
-# Run default capture mode — requires root for raw socket access
+# Run with direct capture — requires root for raw socket access
 sudo ./target/release/packrat
 ```
 
-To run without sudo, grant the binary the `cap_net_raw` capability:
+For privilege separation, grant only the capture helper `cap_net_raw`; keep the
+TUI binary unprivileged:
 
 ```bash
-sudo setcap cap_net_raw,cap_net_admin=eip ./target/release/packrat
-./target/release/packrat   # no sudo needed after this
+sudo setcap cap_net_raw=eip ./target/release/packrat-capture-helper
+./target/release/packrat \
+  --capture-helper ./target/release/packrat-capture-helper
 ```
+
+The helper opens libpcap and emits bounded timestamped Ethernet frames. Packet
+parsing, detection, case storage, UI rendering, and response policy remain in
+the unprivileged Packrat process. Stopping capture terminates the helper.
 
 ---
 

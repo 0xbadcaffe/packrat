@@ -46,6 +46,9 @@ cargo run --features real-capture -- --quic-decode-helper /usr/libexec/packrat-q
 # Import socket ownership events captured by an external helper.
 cargo run --features real-capture -- --socket-events /secure/socket-events.csv
 
+# Delegate raw packet capture to the minimal privileged helper.
+./target/release/packrat --capture-helper /usr/libexec/packrat-capture-helper
+
 # Delegate TrafficLatch firewall changes to a minimal helper command.
 cargo run --features real-capture -- --traffic-latch manual --latch-helper /usr/libexec/packrat-latch
 

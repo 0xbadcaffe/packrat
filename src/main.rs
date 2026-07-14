@@ -70,6 +70,7 @@ async fn main() -> Result<()> {
     app.traffic_latch.protected_addresses = options.protected_addresses;
     app.latch_helper_path = options.latch_helper_path;
     app.reputation_helper_path = options.reputation_helper_path;
+    app.capture_helper_path = options.capture_helper_path;
     app.tls_tracker.decrypt_helper_path = options.tls_decrypt_helper_path;
     app.quic_scope.decode_helper_path = options.quic_decode_helper_path;
     if let Some(path) = options

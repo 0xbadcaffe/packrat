@@ -4,6 +4,7 @@ use crate::net::packet::Packet;
 
 #[cfg(feature = "real-capture")]
 pub mod live;
+pub mod helper;
 
 /// Anything that can deliver packets onto a channel.
 pub trait CaptureSource: Send + 'static {

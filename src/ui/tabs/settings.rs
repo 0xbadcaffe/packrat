@@ -55,6 +55,7 @@ fn draw_details(f: &mut Frame, app: &App, area: Rect) {
             Line::from(vec![Span::styled("Analysis Helpers", heading())]),
             Line::from(format!("TLS decrypt helper: {}", path_state(app.tls_tracker.decrypt_helper_path.as_ref()))),
             Line::from(format!("QUIC decode helper: {}", path_state(app.quic_scope.decode_helper_path.as_ref()))),
+            Line::from(format!("Capture helper: {}", path_state(app.capture_helper_path.as_ref()))),
             Line::from(format!("Latch helper: {}", path_state(app.latch_helper_path.as_ref()))),
             Line::from(format!("Reputation helper: {}", path_state(app.reputation_helper_path.as_ref()))),
         ],
