@@ -465,3 +465,55 @@ fn detects_large_high_entropy_outbound_transfer() {
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Large asymmetric outbound transfer"));
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "High-entropy outbound transfer"));
 }
+
+#[test]
+fn detects_dns_nxdomain_burst_txt_abuse_and_external_resolver_use() {
+    let mut security = SecurityEngine::default();
+    for index in 0..20_u64 {
+        let mut response = packet("DNS", 50000, "Response NXDOMAIN missing.example", vec![0; 100]);
+        response.no = index + 1;
+        response.timestamp = index as f64;
+        response.src = "10.0.0.1".into();
+        response.dst = "10.0.0.5".into();
+        response.src_port = Some(53);
+        response.dst_port = Some(50000);
+        security.update(&response);
+    }
+
+    let mut txt = packet("DNS", 53, "Query TXT encoded.example", vec![0; 600]);
+    txt.src = "10.0.0.5".into();
+    txt.dst = "8.8.8.8".into();
+    txt.length = 600;
+    security.update(&txt);
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "DNS NXDOMAIN burst"));
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Oversized DNS TXT traffic"));
+    assert!(security.ids_alerts.iter().any(|alert| {
+        alert.signature == "Direct external DNS resolver use"
+            && alert.severity == packrat_tui::net::security::Severity::Low
+    }));
+}
+
+#[test]
+fn detects_administrative_and_ntlm_lateral_fanout() {
+    let mut security = SecurityEngine::default();
+    for index in 1..=8_u8 {
+        let mut smb = packet("SMB", 445, "", vec![0; 64]);
+        smb.no = index as u64;
+        smb.timestamp = index as f64;
+        smb.src = "10.0.0.5".into();
+        smb.dst = format!("10.0.1.{index}");
+        security.update(&smb);
+    }
+    for index in 1..=3_u8 {
+        let mut ntlm = packet("SMB", 445, "", b"NTLMSSP authentication".to_vec());
+        ntlm.no = 20 + index as u64;
+        ntlm.timestamp = 20.0 + index as f64;
+        ntlm.src = "10.0.0.9".into();
+        ntlm.dst = format!("10.0.2.{index}");
+        security.update(&ntlm);
+    }
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Administrative service fan-out"));
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "NTLM authentication fan-out"));
+}

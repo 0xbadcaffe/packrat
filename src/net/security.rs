@@ -33,6 +33,9 @@ const MAX_CONTROL_PLANE_IDENTITIES: usize = 1024;
 const BEACON_MIN_SAMPLES: usize = 7;
 const EXFIL_VOLUME_THRESHOLD: u64 = 1_000_000;
 const EXFIL_ENTROPY_THRESHOLD: u64 = 256_000;
+const DNS_NXDOMAIN_THRESHOLD: usize = 20;
+const LATERAL_TARGET_THRESHOLD: usize = 8;
+const NTLM_TARGET_THRESHOLD: usize = 3;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct FragmentKey {
@@ -168,6 +171,20 @@ struct ExfilState {
     last_seen: f64,
     volume_alerted: bool,
     entropy_alerted: bool,
+}
+
+#[derive(Debug, Default)]
+struct TimedCountState {
+    timestamps: Vec<f64>,
+    last_seen: f64,
+    alerted: bool,
+}
+
+#[derive(Debug, Default)]
+struct TimedTargetState {
+    targets: Vec<(f64, String)>,
+    last_seen: f64,
+    alerted: bool,
 }
 
 // ─── IDS Alerts ───────────────────────────────────────────────────────────────
@@ -340,6 +357,10 @@ pub struct SecurityEngine {
     lldp_chassis: HashMap<[u8; 6], Vec<u8>>,
     beacon_flows: HashMap<BehaviorFlowKey, BeaconState>,
     exfil_flows: HashMap<ExfilKey, ExfilState>,
+    nxdomain_clients: HashMap<String, TimedCountState>,
+    external_dns_pairs: HashMap<(String, String), f64>,
+    admin_fanout: HashMap<(String, u16), TimedTargetState>,
+    ntlm_fanout: HashMap<String, TimedTargetState>,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -368,6 +389,10 @@ impl SecurityEngine {
             lldp_chassis: HashMap::new(),
             beacon_flows: HashMap::new(),
             exfil_flows: HashMap::new(),
+            nxdomain_clients: HashMap::new(),
+            external_dns_pairs: HashMap::new(),
+            admin_fanout: HashMap::new(),
+            ntlm_fanout: HashMap::new(),
             cred_hit_count: 0,
         }
     }
@@ -394,6 +419,10 @@ impl SecurityEngine {
         self.lldp_chassis.clear();
         self.beacon_flows.clear();
         self.exfil_flows.clear();
+        self.nxdomain_clients.clear();
+        self.external_dns_pairs.clear();
+        self.admin_fanout.clear();
+        self.ntlm_fanout.clear();
         self.cred_hit_count = 0;
     }
 
@@ -434,6 +463,7 @@ impl SecurityEngine {
         self.check_ipv6_control_plane(pkt);
         self.check_layer2_control_plane(pkt);
         self.check_beacon_and_exfiltration(pkt);
+        self.check_dns_abuse_and_lateral_movement(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -983,6 +1013,118 @@ impl SecurityEngine {
                     Severity::High,
                     format!("{} sent {} high-entropy bytes toward {}", pkt.src, state.high_entropy_bytes, pkt.dst),
                 ));
+            }
+        }
+
+        for (signature, severity, detail) in alerts {
+            self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
+        }
+    }
+
+    // ─── DNS Abuse and Lateral Movement ─────────────────────────────────────
+
+    fn check_dns_abuse_and_lateral_movement(&mut self, pkt: &Packet) {
+        let mut alerts = Vec::new();
+        let info_lower = pkt.info.to_ascii_lowercase();
+        let is_dns = pkt.protocol.eq_ignore_ascii_case("DNS")
+            || pkt.src_port == Some(53)
+            || pkt.dst_port == Some(53);
+
+        self.nxdomain_clients.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 30.0
+        });
+        self.external_dns_pairs.retain(|_, last_seen| {
+            pkt.timestamp < *last_seen || pkt.timestamp - *last_seen <= 3600.0
+        });
+        self.admin_fanout.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 60.0
+        });
+        self.ntlm_fanout.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 300.0
+        });
+
+        if is_dns && info_lower.contains("nxdomain") {
+            let client = if pkt.src_port == Some(53) { pkt.dst.clone() } else { pkt.src.clone() };
+            if self.nxdomain_clients.len() < MAX_SCAN_STATES || self.nxdomain_clients.contains_key(&client) {
+                let state = self.nxdomain_clients.entry(client.clone()).or_default();
+                state.last_seen = pkt.timestamp;
+                state.timestamps.retain(|timestamp| {
+                    pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= 30.0
+                });
+                if state.timestamps.is_empty() {
+                    state.alerted = false;
+                }
+                state.timestamps.push(pkt.timestamp);
+                if state.timestamps.len() >= DNS_NXDOMAIN_THRESHOLD && !state.alerted {
+                    state.alerted = true;
+                    alerts.push((
+                        "DNS NXDOMAIN burst",
+                        Severity::Medium,
+                        format!("{client} received {} NXDOMAIN responses within 30 seconds", state.timestamps.len()),
+                    ));
+                }
+            }
+        }
+
+        if is_dns && info_lower.contains("txt") && pkt.length > 512 {
+            alerts.push((
+                "Oversized DNS TXT traffic",
+                Severity::Medium,
+                format!("{}-byte DNS TXT traffic between {} and {}", pkt.length, pkt.src, pkt.dst),
+            ));
+        }
+
+        if pkt.dst_port == Some(53) && is_internal_address(&pkt.src) && !is_internal_address(&pkt.dst) {
+            let key = (pkt.src.clone(), pkt.dst.clone());
+            if !self.external_dns_pairs.contains_key(&key) {
+                alerts.push((
+                    "Direct external DNS resolver use",
+                    Severity::Low,
+                    format!("{} sent DNS directly to public resolver {}", pkt.src, pkt.dst),
+                ));
+            }
+            if self.external_dns_pairs.len() < MAX_SCAN_STATES || self.external_dns_pairs.contains_key(&key) {
+                self.external_dns_pairs.insert(key, pkt.timestamp);
+            }
+        }
+
+        let destination_port = pkt.dst_port.unwrap_or(0);
+        if is_internal_address(&pkt.src)
+            && is_internal_address(&pkt.dst)
+            && matches!(destination_port, 22 | 135 | 139 | 445 | 3389 | 5985 | 5986)
+        {
+            let key = (pkt.src.clone(), destination_port);
+            if self.admin_fanout.len() < MAX_SCAN_STATES || self.admin_fanout.contains_key(&key) {
+                let state = self.admin_fanout.entry(key).or_default();
+                state.last_seen = pkt.timestamp;
+                record_timed_target(state, pkt.timestamp, &pkt.dst, 60.0);
+                let unique_targets = unique_timed_targets(state);
+                if unique_targets >= LATERAL_TARGET_THRESHOLD && !state.alerted {
+                    state.alerted = true;
+                    alerts.push((
+                        "Administrative service fan-out",
+                        Severity::High,
+                        format!("{} contacted {unique_targets} internal hosts on port {destination_port}", pkt.src),
+                    ));
+                }
+            }
+        }
+
+        if Self::contains_str_ci(&pkt.bytes, b"NTLMSSP") && is_internal_address(&pkt.src) {
+            let source = pkt.src.clone();
+            if self.ntlm_fanout.len() < MAX_SCAN_STATES || self.ntlm_fanout.contains_key(&source) {
+                let state = self.ntlm_fanout.entry(source.clone()).or_default();
+                state.last_seen = pkt.timestamp;
+                record_timed_target(state, pkt.timestamp, &pkt.dst, 300.0);
+                let unique_targets = unique_timed_targets(state);
+                if unique_targets >= NTLM_TARGET_THRESHOLD && !state.alerted {
+                    state.alerted = true;
+                    alerts.push((
+                        "NTLM authentication fan-out",
+                        Severity::High,
+                        format!("{source} sent NTLM authentication to {unique_targets} hosts"),
+                    ));
+                }
             }
         }
 
@@ -2055,6 +2197,21 @@ fn is_internal_address(address: &str) -> bool {
         Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || ip.is_unicast_link_local() || ip.segments()[0] & 0xfe00 == 0xfc00,
         Err(_) => false,
     }
+}
+
+fn record_timed_target(state: &mut TimedTargetState, timestamp: f64, target: &str, window: f64) {
+    state.targets.retain(|(seen, _)| timestamp < *seen || timestamp - *seen <= window);
+    if state.targets.is_empty() {
+        state.alerted = false;
+    }
+    state.targets.push((timestamp, target.to_string()));
+    if state.targets.len() > 256 {
+        state.targets.remove(0);
+    }
+}
+
+fn unique_timed_targets(state: &TimedTargetState) -> usize {
+    state.targets.iter().map(|(_, target)| target.as_str()).collect::<HashSet<_>>().len()
 }
 
 impl Default for SecurityEngine {
