@@ -1,10 +1,9 @@
 //! QUIC connection inventory from version-independent header fields.
 
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::analysis::helper_process::spawn_stdin_stdout_helper;
+use crate::analysis::helper_process::JsonLineHelper;
 use crate::analysis::encrypted_insight::parse_quic_header;
 use crate::net::packet::Packet;
 
@@ -41,11 +40,12 @@ impl QuicConnection {
 pub struct QuicScope {
     pub connections: HashMap<String, QuicConnection>,
     pub decode_helper_path: Option<PathBuf>,
+    decode_helper: Option<JsonLineHelper>,
 }
 
 impl Default for QuicScope {
     fn default() -> Self {
-        Self { connections: HashMap::new(), decode_helper_path: None }
+        Self { connections: HashMap::new(), decode_helper_path: None, decode_helper: None }
     }
 }
 
@@ -105,8 +105,9 @@ impl QuicScope {
         if connection.version.is_none() { connection.version = header.version; }
         if connection.source_id.is_empty() { connection.source_id = header.source_id; }
         if connection.ratq.is_empty() { connection.ratq = header.ratq; }
-        if let Some(helper) = self.decode_helper_path.as_ref() {
-            if let Ok(mut frames) = run_quic_decode_helper(helper, &connection.id, packet.no, &packet.bytes) {
+        let connection_id = connection.id.clone();
+        if let Some(mut frames) = self.decode_packet(&connection_id, packet.no, &packet.bytes) {
+            if let Some(connection) = self.connections.get_mut(&connection_id) {
                 connection.decoded_frames.append(&mut frames);
                 if connection.decoded_frames.len() > 100 {
                     let excess = connection.decoded_frames.len() - 100;
@@ -125,6 +126,22 @@ impl QuicScope {
     pub fn clear(&mut self) {
         self.connections.clear();
     }
+
+    fn decode_packet(&mut self, connection_id: &str, packet_no: u64, packet: &[u8]) -> Option<Vec<QuicDecodedFrame>> {
+        let helper = self.decode_helper_path.clone()?;
+        if self.decode_helper.as_ref().is_none_or(|running| running.program() != helper) {
+            self.decode_helper = JsonLineHelper::spawn(&helper, "QUIC decode").ok();
+        }
+        let request = QuicDecodeRequest {
+            connection_id: connection_id.to_string(),
+            packet_no,
+            packet_hex: hex(packet),
+        };
+        let result = self.decode_helper.as_mut()?.request::<_, QuicDecodeResponse>(&request)
+            .and_then(|response| decode_quic_response(response, packet_no));
+        if result.is_err() { self.decode_helper = None; }
+        result.ok()
+    }
 }
 
 fn flow_id(packet: &Packet) -> String {
@@ -133,28 +150,7 @@ fn flow_id(packet: &Packet) -> String {
     if left < right { format!("{left}-{right}") } else { format!("{right}-{left}") }
 }
 
-fn run_quic_decode_helper(
-    helper: &Path,
-    connection_id: &str,
-    packet_no: u64,
-    packet: &[u8],
-) -> Result<Vec<QuicDecodedFrame>, String> {
-    let mut child = spawn_stdin_stdout_helper(helper, "QUIC decode")?;
-    let request = QuicDecodeRequest {
-        connection_id: connection_id.to_string(),
-        packet_no,
-        packet_hex: hex(packet),
-    };
-    let input = serde_json::to_vec(&request)
-        .map_err(|error| format!("encode QUIC decode helper request: {error}"))?;
-    child.stdin.as_mut().ok_or("QUIC decode helper stdin unavailable")?
-        .write_all(&input).map_err(|error| format!("write QUIC decode helper request: {error}"))?;
-    let output = child.wait_with_output().map_err(|error| format!("wait for QUIC decode helper: {error}"))?;
-    if !output.status.success() {
-        return Err(format!("QUIC decode helper failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
-    }
-    let response: QuicDecodeResponse = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("decode QUIC decode helper response: {error}"))?;
+fn decode_quic_response(response: QuicDecodeResponse, packet_no: u64) -> Result<Vec<QuicDecodedFrame>, String> {
     if !response.ok {
         return Err(response.detail.unwrap_or_else(|| "QUIC decode helper did not authenticate packet".into()));
     }
@@ -205,7 +201,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("packrat-quic-helper-{}-{}.sh", std::process::id(), unique_test_suffix()));
         std::fs::write(
             &path,
-            "#!/bin/sh\ncat >/dev/null\nprintf '{\"ok\":true,\"frames\":[{\"frame_type\":\"headers\",\"detail\":\"GET /\"}],\"detail\":\"auth ok\"}'\n",
+            "#!/bin/sh\nwhile IFS= read -r line; do printf '%s\\n' '{\"ok\":true,\"frames\":[{\"frame_type\":\"headers\",\"detail\":\"GET /\"}],\"detail\":\"auth ok\"}'; done\n",
         ).unwrap();
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o700);
@@ -218,6 +214,30 @@ mod tests {
         assert_eq!(connection.decoded_frames[0].frame_type, "headers");
         assert_eq!(connection.decoded_frames[0].detail, "GET /");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quic_helper_process_is_reused_for_multiple_packets() {
+        use std::os::unix::fs::PermissionsExt;
+        let suffix = unique_test_suffix();
+        let path = std::env::temp_dir().join(format!("packrat-quic-persistent-{suffix}.sh"));
+        let starts = std::env::temp_dir().join(format!("packrat-quic-persistent-{suffix}.starts"));
+        std::fs::write(&path, format!(
+            "#!/bin/sh\nprintf 'start\\n' >> '{}'\nwhile IFS= read -r line; do printf '%s\\n' '{{\"ok\":true,\"frames\":[{{\"frame_type\":\"ping\",\"detail\":\"ok\"}}]}}'; done\n",
+            starts.display()
+        )).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        let mut scope = QuicScope { decode_helper_path: Some(path.clone()), ..Default::default() };
+        scope.ingest(&quic_packet());
+        scope.ingest(&quic_packet());
+        assert_eq!(scope.all()[0].decoded_frames.len(), 2);
+        assert_eq!(std::fs::read_to_string(&starts).unwrap().lines().count(), 1);
+        drop(scope);
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(starts);
     }
 
     #[cfg(unix)]
