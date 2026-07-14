@@ -422,3 +422,46 @@ fn detects_stp_topology_change_and_lldp_identity_change() {
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "STP topology change"));
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "LLDP chassis identity changed"));
 }
+
+fn behavior_packet(no: u64, timestamp: f64, length: usize, bytes: Vec<u8>) -> Packet {
+    let mut packet = packet("TLS", 443, "", bytes);
+    packet.no = no;
+    packet.timestamp = timestamp;
+    packet.src = "10.0.0.5".into();
+    packet.dst = "8.8.8.8".into();
+    packet.src_port = Some(50000);
+    packet.dst_port = Some(443);
+    packet.length = length as u16;
+    packet
+}
+
+#[test]
+fn detects_periodic_fixed_size_command_and_control_beacon() {
+    let mut security = SecurityEngine::default();
+    for index in 0..7_u64 {
+        security.update(&behavior_packet(index + 1, index as f64 * 10.0, 120, vec![0; 120]));
+    }
+    assert!(security.ids_alerts.iter().any(|alert| {
+        alert.signature == "Periodic command-and-control beacon"
+    }));
+
+    let mut irregular = SecurityEngine::default();
+    for (index, timestamp) in [0.0, 2.0, 9.0, 11.0, 27.0, 31.0, 60.0].into_iter().enumerate() {
+        irregular.update(&behavior_packet(index as u64 + 1, timestamp, 100 + index * 17, vec![0; 100]));
+    }
+    assert!(!irregular.ids_alerts.iter().any(|alert| {
+        alert.signature == "Periodic command-and-control beacon"
+    }));
+}
+
+#[test]
+fn detects_large_high_entropy_outbound_transfer() {
+    let mut security = SecurityEngine::default();
+    let encrypted_like = (0..60_000).map(|index| ((index * 73) % 256) as u8).collect::<Vec<_>>();
+    for index in 0..17_u64 {
+        security.update(&behavior_packet(index + 1, index as f64 / 10.0, 60_000, encrypted_like.clone()));
+    }
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Large asymmetric outbound transfer"));
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "High-entropy outbound transfer"));
+}

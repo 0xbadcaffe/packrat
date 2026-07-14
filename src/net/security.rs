@@ -30,6 +30,9 @@ const SYN_FLOOD_THRESHOLD: usize = 100;
 const MAX_SCAN_STATES: usize = 512;
 const RA_FLOOD_THRESHOLD: usize = 20;
 const MAX_CONTROL_PLANE_IDENTITIES: usize = 1024;
+const BEACON_MIN_SAMPLES: usize = 7;
+const EXFIL_VOLUME_THRESHOLD: u64 = 1_000_000;
+const EXFIL_ENTROPY_THRESHOLD: u64 = 256_000;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct FragmentKey {
@@ -130,6 +133,41 @@ struct Ipv6Inspection<'a> {
     next_header: u8,
     extension_count: usize,
     transport: &'a [u8],
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct BehaviorFlowKey {
+    source: String,
+    destination: String,
+    source_port: u16,
+    destination_port: u16,
+    protocol: String,
+}
+
+#[derive(Debug, Default)]
+struct BeaconState {
+    timestamps: Vec<f64>,
+    sizes: Vec<u16>,
+    last_seen: f64,
+    alerted: bool,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct ExfilKey {
+    internal: String,
+    external: String,
+    destination_port: u16,
+    protocol: String,
+}
+
+#[derive(Debug, Default)]
+struct ExfilState {
+    outbound_bytes: u64,
+    inbound_bytes: u64,
+    high_entropy_bytes: u64,
+    last_seen: f64,
+    volume_alerted: bool,
+    entropy_alerted: bool,
 }
 
 // ─── IDS Alerts ───────────────────────────────────────────────────────────────
@@ -300,6 +338,8 @@ pub struct SecurityEngine {
     ndp_bindings: HashMap<[u8; 16], [u8; 6]>,
     router_advertisements: HashMap<[u8; 6], RouterAdvertisementState>,
     lldp_chassis: HashMap<[u8; 6], Vec<u8>>,
+    beacon_flows: HashMap<BehaviorFlowKey, BeaconState>,
+    exfil_flows: HashMap<ExfilKey, ExfilState>,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -326,6 +366,8 @@ impl SecurityEngine {
             ndp_bindings: HashMap::new(),
             router_advertisements: HashMap::new(),
             lldp_chassis: HashMap::new(),
+            beacon_flows: HashMap::new(),
+            exfil_flows: HashMap::new(),
             cred_hit_count: 0,
         }
     }
@@ -350,6 +392,8 @@ impl SecurityEngine {
         self.ndp_bindings.clear();
         self.router_advertisements.clear();
         self.lldp_chassis.clear();
+        self.beacon_flows.clear();
+        self.exfil_flows.clear();
         self.cred_hit_count = 0;
     }
 
@@ -389,6 +433,7 @@ impl SecurityEngine {
         self.check_scan_activity(pkt);
         self.check_ipv6_control_plane(pkt);
         self.check_layer2_control_plane(pkt);
+        self.check_beacon_and_exfiltration(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -848,6 +893,101 @@ impl SecurityEngine {
             || self.lldp_chassis.contains_key(&source_mac)
         {
             self.lldp_chassis.insert(source_mac, chassis);
+        }
+    }
+
+    // ─── C2 Beacon and Exfiltration Correlation ─────────────────────────────
+
+    fn check_beacon_and_exfiltration(&mut self, pkt: &Packet) {
+        self.beacon_flows.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
+        });
+        self.exfil_flows.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
+        });
+        evict_oldest_beacon(&mut self.beacon_flows);
+        evict_oldest_exfil(&mut self.exfil_flows);
+
+        let mut alerts = Vec::new();
+        if pkt.src_port.is_some() && pkt.dst_port.is_some() {
+            let key = BehaviorFlowKey {
+                source: pkt.src.clone(),
+                destination: pkt.dst.clone(),
+                source_port: pkt.src_port.unwrap_or(0),
+                destination_port: pkt.dst_port.unwrap_or(0),
+                protocol: pkt.protocol.clone(),
+            };
+            let state = self.beacon_flows.entry(key).or_default();
+            state.last_seen = pkt.timestamp;
+            state.timestamps.push(pkt.timestamp);
+            state.sizes.push(pkt.length);
+            if state.timestamps.len() > 32 {
+                state.timestamps.remove(0);
+                state.sizes.remove(0);
+            }
+            if !state.alerted && beacon_pattern(state) {
+                state.alerted = true;
+                alerts.push((
+                    "Periodic command-and-control beacon",
+                    Severity::High,
+                    format!("Regular fixed-size communication from {} to {}:{}", pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)),
+                ));
+            }
+        }
+
+        let source_internal = is_internal_address(&pkt.src);
+        let destination_internal = is_internal_address(&pkt.dst);
+        if source_internal != destination_internal {
+            let outbound = source_internal;
+            let (internal, external) = if outbound {
+                (pkt.src.clone(), pkt.dst.clone())
+            } else {
+                (pkt.dst.clone(), pkt.src.clone())
+            };
+            let key = ExfilKey {
+                internal,
+                external,
+                destination_port: if outbound { pkt.dst_port } else { pkt.src_port }.unwrap_or(0),
+                protocol: pkt.protocol.clone(),
+            };
+            let state = self.exfil_flows.entry(key).or_default();
+            state.last_seen = pkt.timestamp;
+            if outbound {
+                state.outbound_bytes = state.outbound_bytes.saturating_add(u64::from(pkt.length));
+                if pkt.bytes.len() >= 64 && shannon_entropy(&pkt.bytes) >= 7.2 {
+                    state.high_entropy_bytes = state.high_entropy_bytes.saturating_add(u64::from(pkt.length));
+                }
+            } else {
+                state.inbound_bytes = state.inbound_bytes.saturating_add(u64::from(pkt.length));
+            }
+
+            let outbound_ratio = state.outbound_bytes as f64 / state.inbound_bytes.max(1) as f64;
+            if outbound && !state.volume_alerted
+                && state.outbound_bytes >= EXFIL_VOLUME_THRESHOLD
+                && outbound_ratio >= 10.0
+            {
+                state.volume_alerted = true;
+                alerts.push((
+                    "Large asymmetric outbound transfer",
+                    Severity::High,
+                    format!("{} sent {} bytes to {} with {:.1}:1 outbound ratio", pkt.src, state.outbound_bytes, pkt.dst, outbound_ratio),
+                ));
+            }
+            if outbound && !state.entropy_alerted
+                && state.high_entropy_bytes >= EXFIL_ENTROPY_THRESHOLD
+                && state.high_entropy_bytes * 100 / state.outbound_bytes.max(1) >= 80
+            {
+                state.entropy_alerted = true;
+                alerts.push((
+                    "High-entropy outbound transfer",
+                    Severity::High,
+                    format!("{} sent {} high-entropy bytes toward {}", pkt.src, state.high_entropy_bytes, pkt.dst),
+                ));
+            }
+        }
+
+        for (signature, severity, detail) in alerts {
+            self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
         }
     }
 
@@ -1851,6 +1991,69 @@ fn evict_oldest_syn_target(states: &mut HashMap<(String, u16), SynFloodState>) {
         .map(|(key, _)| key.clone())
     {
         states.remove(&oldest);
+    }
+}
+
+fn evict_oldest_beacon(states: &mut HashMap<BehaviorFlowKey, BeaconState>) {
+    if states.len() < MAX_SCAN_STATES {
+        return;
+    }
+    if let Some(oldest) = states.iter()
+        .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+        .map(|(key, _)| key.clone())
+    {
+        states.remove(&oldest);
+    }
+}
+
+fn evict_oldest_exfil(states: &mut HashMap<ExfilKey, ExfilState>) {
+    if states.len() < MAX_SCAN_STATES {
+        return;
+    }
+    if let Some(oldest) = states.iter()
+        .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+        .map(|(key, _)| key.clone())
+    {
+        states.remove(&oldest);
+    }
+}
+
+fn beacon_pattern(state: &BeaconState) -> bool {
+    if state.timestamps.len() < BEACON_MIN_SAMPLES || state.sizes.len() < BEACON_MIN_SAMPLES {
+        return false;
+    }
+    let intervals = state.timestamps.windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .filter(|interval| *interval > 0.0)
+        .collect::<Vec<_>>();
+    if intervals.len() + 1 < BEACON_MIN_SAMPLES {
+        return false;
+    }
+    let duration = state.timestamps.last().copied().unwrap_or(0.0)
+        - state.timestamps.first().copied().unwrap_or(0.0);
+    let interval_mean = intervals.iter().sum::<f64>() / intervals.len() as f64;
+    if duration < 30.0 || interval_mean < 1.0 {
+        return false;
+    }
+    let interval_variance = intervals.iter()
+        .map(|interval| (interval - interval_mean).powi(2))
+        .sum::<f64>() / intervals.len() as f64;
+    let interval_cv = interval_variance.sqrt() / interval_mean;
+
+    let size_mean = state.sizes.iter().map(|size| f64::from(*size)).sum::<f64>()
+        / state.sizes.len() as f64;
+    let size_variance = state.sizes.iter()
+        .map(|size| (f64::from(*size) - size_mean).powi(2))
+        .sum::<f64>() / state.sizes.len() as f64;
+    let size_cv = if size_mean > 0.0 { size_variance.sqrt() / size_mean } else { 1.0 };
+    interval_cv <= 0.15 && size_cv <= 0.10
+}
+
+fn is_internal_address(address: &str) -> bool {
+    match address.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || ip.is_unicast_link_local() || ip.segments()[0] & 0xfe00 == 0xfc00,
+        Err(_) => false,
     }
 }
 
