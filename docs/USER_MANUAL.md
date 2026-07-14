@@ -99,6 +99,11 @@ to select another marked packet without returning to live capture, `w` to show
 or hide the worklist, `d` to remove the active packet, and `l` to return to the
 packet list.
 
+Press `=` to compare the active worklist packet with the next marked packet.
+The comparison overlay omits capture time and frame number, then reports
+changed/added/removed decoded fields and the first differing byte. `Esc` closes
+the overlay without changing the active packet.
+
 Headers is keyboard searchable. Press `/`, enter a field such as `tcp.seq`, and
 press `Enter` to finish the search. Move with `j`/`k`; press `f` to apply a
 supported field as a packet-list filter. Press `Enter` on a byte-backed field
@@ -109,6 +114,12 @@ same offset as unsigned and signed 8-bit data, big- and little-endian 16-bit
 data, big-endian 32-bit data, bits, ASCII, and a 16-byte entropy window. Use
 `h`/`l` for one byte, `j`/`k` for 16 bytes, `g`/`G` for the first or last byte,
 `n`/`p` for another worklist packet, and `v` to return to live packets.
+
+From Flow, press `s` to follow the reassembled TCP stream. Press `/` to search
+printable payload bytes, `n`/`N` to move through matches, and `e` to export exact
+`a-to-b` and `b-to-a` binary payload files. Reassembly buffers out-of-order
+segments until gaps close, trims retransmissions/overlaps, handles sequence
+wraparound, and delays FIN until preceding payload is complete.
 
 ## Packet Inspection Filters
 
@@ -254,8 +265,9 @@ PCAP or `--simulation` before enabling response actions.
 Use `[`/`]` in Security to cycle detector and operational views:
 
 - Stateful packet-integrity checks detect conflicting IPv4 fragments,
-  fragment floods, malformed TCP headers, conflicting TCP retransmissions,
-  illegal flag combinations, and payload continuing after an observed reset.
+  bounded out-of-order IPv6 fragment reassembly, fragment floods, malformed TCP
+  headers, conflicting TCP retransmissions, illegal flag combinations, and
+  payload continuing after an observed reset.
 - Scan correlation detects vertical, horizontal, NULL, FIN, Xmas, ICMP sweep,
   empty-UDP probe, and SYN-flood behavior over bounded time windows.
 - IPv6 and Layer-2 checks validate Neighbor Discovery hop limits, track NDP
@@ -265,6 +277,9 @@ Use `[`/`]` in Security to cycle detector and operational views:
   asymmetric or high-entropy outbound transfers, NXDOMAIN bursts, oversized
   DNS TXT traffic, direct public resolver use, administrative-service fan-out,
   and NTLM authentication fan-out.
+- Protocol policy checks detect DHCP server changes and starvation, DNS
+  transaction/question spoofing, HTTP request-framing ambiguities, and
+  state-changing Modbus, DNP3, S7comm, and BACnet operations.
 
 - SocketScope correlates Linux socket tables with PID, UID, process, command,
   and per-process packet/byte totals. For very short-lived sockets, start
