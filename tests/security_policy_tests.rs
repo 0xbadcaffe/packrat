@@ -132,3 +132,74 @@ fn vlan_replay_detects_mac_crossing_vlans() {
 
     assert!(intel.alerts.iter().any(|alert| alert.category == "MAC-VLAN-Cross"));
 }
+
+fn ipv4_fragment_packet(
+    no: u64,
+    identification: u16,
+    offset_bytes: u16,
+    more_fragments: bool,
+    payload: &[u8],
+) -> Packet {
+    assert_eq!(offset_bytes % 8, 0);
+    let mut bytes = vec![0_u8; 14 + 20];
+    bytes[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    bytes[14] = 0x45;
+    bytes[16..18].copy_from_slice(&((20 + payload.len()) as u16).to_be_bytes());
+    bytes[18..20].copy_from_slice(&identification.to_be_bytes());
+    let fragment_field = (offset_bytes / 8) | if more_fragments { 0x2000 } else { 0 };
+    bytes[20..22].copy_from_slice(&fragment_field.to_be_bytes());
+    bytes[23] = 17;
+    bytes[26..30].copy_from_slice(&[203, 0, 113, 9]);
+    bytes[30..34].copy_from_slice(&[10, 0, 0, 5]);
+    bytes.extend_from_slice(payload);
+    packet("UDP", 53, "", bytes).with_number_and_timestamp(no, no as f64)
+}
+
+trait PacketFixtureExt {
+    fn with_number_and_timestamp(self, no: u64, timestamp: f64) -> Self;
+}
+
+impl PacketFixtureExt for Packet {
+    fn with_number_and_timestamp(mut self, no: u64, timestamp: f64) -> Self {
+        self.no = no;
+        self.timestamp = timestamp;
+        self.length = self.bytes.len() as u16;
+        self
+    }
+}
+
+#[test]
+fn detects_conflicting_ipv4_fragment_overlap() {
+    let mut security = SecurityEngine::default();
+    security.update(&ipv4_fragment_packet(1, 0x1234, 0, true, b"abcdefghijklmnop"));
+    security.update(&ipv4_fragment_packet(2, 0x1234, 8, false, b"XXXXXXXX"));
+
+    assert!(security.ids_alerts.iter().any(|alert| {
+        alert.signature == "Conflicting IPv4 fragments"
+            && alert.severity == packrat_tui::net::security::Severity::Critical
+    }));
+}
+
+#[test]
+fn identical_ipv4_fragment_retransmission_is_not_an_overlap_alert() {
+    let mut security = SecurityEngine::default();
+    let fragment = ipv4_fragment_packet(1, 0x2345, 0, true, b"abcdefgh");
+    security.update(&fragment);
+    security.update(&fragment.with_number_and_timestamp(2, 2.0));
+
+    assert!(!security.ids_alerts.iter().any(|alert| {
+        alert.signature == "Conflicting IPv4 fragments"
+    }));
+}
+
+#[test]
+fn detects_tiny_and_excessive_ipv4_fragments() {
+    let mut security = SecurityEngine::default();
+    security.update(&ipv4_fragment_packet(1, 0x3456, 0, true, b"tiny"));
+    for no in 2..=66 {
+        security.update(&ipv4_fragment_packet(no, 0x4567, 0, true, b"12345678"));
+    }
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Tiny IPv4 fragment"));
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "IPv4 fragment flood"));
+}
