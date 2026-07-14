@@ -51,8 +51,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         help::draw(f);
     }
 
-    if let Some((title, segments)) = &app.stream_overlay {
-        draw_stream_overlay(f, title, segments);
+    if let Some(overlay) = &app.stream_overlay {
+        draw_stream_overlay(f, overlay);
     }
 
     if let Some(comparison) = &app.packet_comparison {
@@ -270,7 +270,7 @@ fn draw_settings_overlay(f: &mut Frame, app: &App) {
     tabs::settings::draw(f, app, popup);
 }
 
-fn draw_stream_overlay(f: &mut Frame, title: &str, segments: &[(bool, Vec<u8>)]) {
+fn draw_stream_overlay(f: &mut Frame, overlay: &crate::analysis::stream::StreamOverlayState) {
     let area = f.area();
     let popup = Rect {
         x: area.x + 4,
@@ -280,17 +280,26 @@ fn draw_stream_overlay(f: &mut Frame, title: &str, segments: &[(bool, Vec<u8>)])
     };
     f.render_widget(Clear, popup);
 
-    let mut lines: Vec<Line> = Vec::new();
-    for (is_init, bytes) in segments.iter().take(50) {
+    let active_segment = overlay.matches.get(overlay.selected_match).map(|matched| matched.segment_index);
+    let mut lines: Vec<Line> = vec![Line::from(if overlay.searching {
+        format!("Search: {}_", overlay.search_query)
+    } else if overlay.search_query.is_empty() {
+        "Search: / type query   e export".into()
+    } else {
+        format!("Search: {}   match {}/{}   n/N navigate   e export", overlay.search_query, overlay.selected_match + 1, overlay.matches.len())
+    })];
+    for (index, (is_init, bytes)) in overlay.segments.iter().take(50).enumerate() {
         let color = if *is_init { C_CYAN() } else { C_GREEN() };
         let direction = if *is_init { "\u{2192}" } else { "\u{2190}" };
         let text: String = bytes.iter().take(200).map(|&b| {
             if b >= 32 && b < 127 { b as char } else { '.' }
         }).collect();
-        lines.push(Line::from(vec![
-            Span::styled(format!("{} ", direction), Style::default().fg(color)),
-            Span::styled(text, Style::default().fg(color)),
-        ]));
+        let style = if active_segment == Some(index) {
+            Style::default().fg(C_BG()).bg(C_YELLOW()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(color)
+        };
+        lines.push(Line::from(vec![Span::styled(format!("{} ", direction), style), Span::styled(text, style)]));
     }
 
     let p = Paragraph::new(lines)
@@ -299,7 +308,7 @@ fn draw_stream_overlay(f: &mut Frame, title: &str, segments: &[(bool, Vec<u8>)])
             .border_type(BorderType::Plain)
             .border_style(Style::default().fg(C_CYAN()))
             .title(Span::styled(
-                format!(" Follow Stream: {}  [Esc to close] ", title),
+                format!(" Follow Stream: {}  [Esc close] ", overlay.title),
                 Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
             )))
         .style(Style::default().bg(C_BG2()))

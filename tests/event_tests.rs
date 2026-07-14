@@ -510,11 +510,11 @@ async fn investigate_s_opens_follow_stream_for_active_packet() {
 
     event::handle(&mut app, key(KeyCode::Char('s')));
 
-    let Some((_title, segments)) = &app.stream_overlay else {
+    let Some(overlay) = &app.stream_overlay else {
         panic!("stream overlay did not open");
     };
-    assert_eq!(segments.len(), 1);
-    assert!(segments[0].1.starts_with(b"GET /admin"));
+    assert_eq!(overlay.segments.len(), 1);
+    assert!(overlay.segments[0].1.starts_with(b"GET /admin"));
 }
 
 #[tokio::test]
@@ -956,9 +956,26 @@ async fn help_closes_on_key(#[case] code: KeyCode) {
 #[tokio::test]
 async fn stream_overlay_closes_on_key(#[case] code: KeyCode) {
     let mut app = App::new_for_test();
-    app.stream_overlay = Some(("test".to_string(), vec![]));
+    app.stream_overlay = Some(packrat_tui::analysis::stream::StreamOverlayState::new("test".to_string(), vec![]));
     event::handle(&mut app, key(code));
     assert!(app.stream_overlay.is_none());
+}
+
+#[tokio::test]
+async fn stream_overlay_searches_and_navigates_matches() {
+    let mut app = App::new_for_test();
+    app.stream_overlay = Some(packrat_tui::analysis::stream::StreamOverlayState::new(
+        "test".into(),
+        vec![(true, b"GET /admin".to_vec()), (false, b"ADMIN denied".to_vec())],
+    ));
+    event::handle(&mut app, key(KeyCode::Char('/')));
+    for character in "admin".chars() {
+        event::handle(&mut app, key(KeyCode::Char(character)));
+    }
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.stream_overlay.as_ref().unwrap().matches.len(), 2);
+    event::handle(&mut app, key(KeyCode::Char('n')));
+    assert_eq!(app.stream_overlay.as_ref().unwrap().selected_match, 1);
 }
 
 // ─── Strings search ───────────────────────────────────────────────────────────
