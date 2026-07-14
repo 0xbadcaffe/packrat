@@ -1,6 +1,17 @@
 # 🐀 packrat
 
-> A terminal-first network analyzer, deep packet inspection, and penetration detection workbench for researchers, red teamers, and embedded/IoT analysts.
+> Go beyond packet viewing. Packrat is a terminal-native network investigation
+> platform that connects deep packet inspection, deterministic threat detection,
+> incident evidence, and controlled response in one keyboard-driven workflow.
+
+Packet analyzers are excellent at showing what crossed the wire. Packrat is built
+to help an operator decide what it means and what to do next. It preserves packet
+context while moving from live traffic to protocol fields, reconstructed streams,
+attack signals, related infrastructure, frozen evidence, and audited containment.
+
+Packrat does not use an AI or LLM analysis mode. Findings remain explainable and
+repeatable: built-in protocol checks, security signatures, user rules, correlation
+windows, and explicit policy gates produce every alert and response decision.
 
 > Crates.io package: `packrat-tui`  
 > Installed binary: `packrat`
@@ -17,6 +28,40 @@ ___________    ____ |  | ______________ _/  |_
 |   __(____  /\___  >__|_ \ |__|  (____  /__|
 |__|       \/     \/     \/            \/
 ```
+
+## More Than a Packet Viewer
+
+Packrat combines capabilities that normally require several disconnected tools:
+
+| Investigation stage | Packrat capability |
+|---|---|
+| **Observe** | Live interface capture, PCAP import/replay, flows, hosts, VLAN/QinQ context, and short-lived Linux socket attribution |
+| **Inspect** | Keyboard packet worklists, field-level header navigation, byte workbench, packet comparison, object carving, and bidirectional stream search/export |
+| **Understand** | TCP and IPv6 fragment reassembly, TLS/DTLS/QUIC metadata, protocol dissection, encrypted-session context, and an evidence-linked operator graph |
+| **Detect** | Replay-tested IDS signatures, IOC and YARA matching, DHCP/DNS/HTTP/VLAN/industrial policy checks, beaconing, scans, credential exposure, and user-defined rules |
+| **Investigate** | Critical alert review, retained attacker conversations, attack-path pivots, notebook evidence, and frozen PCAP/JSON/NDJSON case artifacts |
+| **Respond** | Monitor, preview, approved manual, or policy-gated automatic containment with expiring and audited Linux nftables actions |
+
+This is not a collection of independent tabs. A packet can be added to an
+investigation worklist, followed through its conversation and stream, compared
+with related traffic, tied to a detection, and retained as case evidence without
+losing the active capture context.
+
+### Built for defensible analysis
+
+- **Deterministic by design:** no hidden model decisions and no cloud analysis
+  dependency.
+- **Deep protocol coverage:** enterprise, routing, encrypted transport, VLAN,
+  embedded/IoT, automotive, and industrial control traffic.
+- **Evidence first:** alerts retain packet and conversation provenance for review,
+  export, and later inspection.
+- **Safe response defaults:** containment is monitor-only unless the operator
+  explicitly selects another mode; automatic action requires critical policy
+  gates and rejects protected or unsafe address classes.
+- **Extensible inspection:** add local TOML layouts, hot-reloaded Lua dissectors,
+  IOCs, YARA rules, and packet detection rules.
+- **Terminal operations:** complete investigation workflows are designed for
+  keyboard use over local consoles and remote shells.
 
 ## Install
 
