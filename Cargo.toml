@@ -13,6 +13,9 @@ keywords = ["network", "packet", "tui", "security", "dpi"]
 categories = ["command-line-utilities", "network-programming", "visualization"]
 include = [
     "src/**/*",
+    "ebpf/**/*",
+    "scripts/**/*",
+    "packaging/**/*",
     "Cargo.toml",
     "Cargo.lock",
     "README.md",
@@ -47,10 +50,13 @@ md5        = "0.7"
 sha2       = "0.10"
 landlock   = "0.4.5"
 mlua       = { version = "0.10", features = ["lua54", "vendored"] }
+aya        = { version = "=0.13.1", optional = true }
+libc       = { version = "0.2", optional = true }
 
 [features]
 default        = []
 real-capture   = ["dep:pcap"]
+ebpf-sockets   = ["dep:aya", "dep:libc"]
 
 [dev-dependencies]
 insta   = { version = "1", features = ["yaml"] }
