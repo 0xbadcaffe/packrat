@@ -41,6 +41,63 @@ const LATERAL_TARGET_THRESHOLD: usize = 8;
 const NTLM_TARGET_THRESHOLD: usize = 3;
 const DHCP_STARVATION_THRESHOLD: usize = 64;
 
+/// Stable names emitted by Packrat's built-in passive detectors. Tests require
+/// every entry to declare positive replay coverage and a negative control.
+pub const DETECTOR_SIGNATURES: &[&str] = &[
+    "Malformed IPv4 fragment",
+    "Tiny IPv4 fragment",
+    "Conflicting IPv4 fragments",
+    "IPv4 fragment flood",
+    "Malformed TCP header",
+    "Illegal TCP flag combination",
+    "TCP payload after reset",
+    "Conflicting TCP retransmission",
+    "TCP stealth scan probe",
+    "Vertical port scan",
+    "Horizontal host scan",
+    "SYN flood",
+    "ICMP address sweep",
+    "Excessive IPv6 extension headers",
+    "Invalid IPv6 neighbor discovery hop limit",
+    "Invalid IPv6 router advertisement source",
+    "IPv6 router advertisement flood",
+    "IPv6 neighbor binding changed",
+    "STP topology change",
+    "LLDP chassis identity changed",
+    "Periodic command-and-control beacon",
+    "Large asymmetric outbound transfer",
+    "High-entropy outbound transfer",
+    "DNS NXDOMAIN burst",
+    "Oversized DNS TXT traffic",
+    "Direct external DNS resolver use",
+    "Administrative service fan-out",
+    "NTLM authentication fan-out",
+    "DHCP server identity changed",
+    "DHCP client identity burst",
+    "Conflicting IPv6 fragments",
+    "IPv6 fragment reassembly rejected",
+    "HTTP request smuggling ambiguity",
+    "Critical industrial control command",
+    "Industrial state-changing command",
+    "Unsolicited DNS response",
+    "DNS transaction question mismatch",
+    "Unexpected DNS responder",
+    "Conflicting DNS responses",
+    "EternalBlue",
+    "BlueKeep (CVE-2019-0708)",
+    "Log4Shell (CVE-2021-44228)",
+    "Shellcode NOP sled",
+    "LLMNR Poisoning",
+    "NBNS WPAD Poisoning",
+    "Directory Traversal",
+    "SQL Injection Probe",
+    "XSS Probe",
+    "Heartbleed (CVE-2014-0160)",
+    "PrintNightmare (CVE-2021-1675)",
+    "Pass-the-Hash (suspected)",
+    "Log4Shell via DNS (CVE-2021-44228)",
+];
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct FragmentKey {
     src: [u8; 4],
@@ -523,6 +580,11 @@ impl SecurityEngine {
     // ─── IDS Signatures ──────────────────────────────────────────────────────
 
     fn push_ids(&mut self, alert: IdsAlert) {
+        debug_assert!(
+            DETECTOR_SIGNATURES.contains(&alert.signature),
+            "detector signature lacks replay coverage registration: {}",
+            alert.signature
+        );
         if self.ids_alerts.len() >= MAX_ENTRIES {
             self.ids_alerts.remove(0);
         }

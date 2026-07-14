@@ -71,6 +71,18 @@ fn shipped_signature_replays(#[case] signature: &str) {
     );
 }
 
+#[test]
+fn benign_baseline_triggers_no_catalogued_detectors() {
+    let mut security = SecurityEngine::default();
+    security.update(&packet(
+        "HTTP",
+        80,
+        "GET / HTTP/1.1",
+        b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n".to_vec(),
+    ));
+    assert!(security.ids_alerts.is_empty());
+}
+
 fn ethernet_packet(no: u64, src_mac: [u8; 6], dst_mac: [u8; 6], vlan_id: Option<u16>) -> Packet {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&dst_mac);
@@ -202,6 +214,18 @@ fn detects_tiny_and_excessive_ipv4_fragments() {
 
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Tiny IPv4 fragment"));
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "IPv4 fragment flood"));
+}
+
+#[test]
+fn detects_malformed_ipv4_fragment_length() {
+    let mut malformed = ipv4_fragment_packet(1, 0x5678, 0, true, b"12345678");
+    malformed.bytes[16..18].copy_from_slice(&10_u16.to_be_bytes());
+    let mut security = SecurityEngine::default();
+    security.update(&malformed);
+    assert!(security
+        .ids_alerts
+        .iter()
+        .any(|alert| alert.signature == "Malformed IPv4 fragment"));
 }
 
 fn ipv4_tcp_packet(no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
