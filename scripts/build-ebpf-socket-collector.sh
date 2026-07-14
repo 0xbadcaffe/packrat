@@ -25,6 +25,9 @@ mkdir -p "$OUT"
 llvm-strip -g "$OUT/packrat_socket.bpf.o"
 cargo build --manifest-path "$ROOT/Cargo.toml" --release \
   --features ebpf-sockets --bin packrat-socket-collector
+cargo build --manifest-path "$ROOT/Cargo.toml" --release \
+  --bin packrat-socket-probe
 
 printf 'eBPF object: %s\n' "$OUT/packrat_socket.bpf.o"
 printf 'collector: %s\n' "$ROOT/target/release/packrat-socket-collector"
+printf 'probe: %s\n' "$ROOT/target/release/packrat-socket-probe"
