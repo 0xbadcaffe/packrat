@@ -50,7 +50,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir -p target/ebpf
-          clang -O2 -g -target bpfel -Wall -Werror -I ebpf \
+          clang -O2 -g -target bpfel -D__TARGET_ARCH_x86 -Wall -Werror -I ebpf \
             -c ebpf/packrat_socket.bpf.c -o target/ebpf/packrat_socket.bpf.o
           llvm-objdump -h target/ebpf/packrat_socket.bpf.o
 

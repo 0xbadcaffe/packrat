@@ -37,7 +37,7 @@ fn decodes_ipv4_and_socket_scope_csv() {
     assert_eq!(event.kind, SocketEventKind::TcpConnect);
     assert_eq!(event.socket_fd, None);
     assert_eq!(
-        event.to_socket_scope_csv(),
+        event.to_socket_scope_csv().unwrap(),
         "TCP,192.0.2.10,50000,198.51.100.7,443,4242,1000,curl,curl"
     );
 }
@@ -84,6 +84,26 @@ fn decodes_fd_lifecycle_events_without_inventing_endpoints() {
         assert_eq!(event.socket_fd, Some(fd as i32));
         assert!(event.local_addr.is_unspecified());
         assert!(event.remote_addr.is_unspecified());
+        assert!(event.to_socket_scope_csv().is_err());
+    }
+}
+
+#[test]
+fn decodes_resolved_tcp_accept_and_udp_events() {
+    let mut accepted = event_bytes(2);
+    accepted[15] = SocketEventKind::TcpAccept as u8;
+    let accepted = SocketEbpfEvent::decode(&accepted).unwrap();
+    assert_eq!(accepted.kind, SocketEventKind::TcpAccept);
+    assert_eq!(accepted.socket_fd, None);
+
+    for kind in [SocketEventKind::UdpSend, SocketEventKind::UdpReceive] {
+        let mut datagram = event_bytes(2);
+        datagram[14] = 17;
+        datagram[15] = kind as u8;
+        let event = SocketEbpfEvent::decode(&datagram).unwrap();
+        assert_eq!(event.kind, kind);
+        assert_eq!(event.socket_fd, None);
+        assert!(event.to_socket_scope_csv().unwrap().starts_with("UDP,"));
     }
 }
 
@@ -115,7 +135,7 @@ fn socket_scope_incrementally_imports_events_and_loss_stats() {
         .append(true)
         .open(&path)
         .unwrap();
-    writeln!(file, "{}", event.to_socket_scope_csv()).unwrap();
+    writeln!(file, "{}", event.to_socket_scope_csv().unwrap()).unwrap();
     writeln!(
         file,
         "# packrat-ebpf-stats received=1 kernel_lost=7 userspace_invalid=2"
