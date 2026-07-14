@@ -42,6 +42,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         || app.settings_open
         || app.show_help
         || app.stream_overlay.is_some()
+        || app.packet_comparison.is_some()
         || app.autopsy_state.is_some()
         || (app.project_manager_open && app.project_manager.is_text_editing());
 
@@ -63,6 +64,13 @@ pub fn handle(app: &mut App, event: Event) -> bool {
     if app.stream_overlay.is_some() {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
             app.stream_overlay = None;
+        }
+        return false;
+    }
+
+    if app.packet_comparison.is_some() {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('=')) {
+            app.packet_comparison = None;
         }
         return false;
     }
@@ -1037,6 +1045,7 @@ fn handle_investigate(app: &mut App, key: KeyEvent) {
             KeyCode::Char('f') => app.apply_selected_header_filter(),
             KeyCode::Char('c') => app.clear_header_search(),
             KeyCode::Char('s') => app.open_active_investigation_stream_overlay(),
+            KeyCode::Char('=') => app.open_packet_comparison(),
             KeyCode::Char('n') => app.worklist_next_packet(),
             KeyCode::Char('p') => app.worklist_prev_packet(),
             KeyCode::Char('[') => app.investigation_prev_view(),
@@ -1067,6 +1076,7 @@ fn handle_investigate(app: &mut App, key: KeyEvent) {
             KeyCode::Char('w') => app.toggle_worklist(),
             KeyCode::Char('d') | KeyCode::Delete => app.remove_active_worklist_packet(),
             KeyCode::Char('s') => app.open_active_investigation_stream_overlay(),
+            KeyCode::Char('=') => app.open_packet_comparison(),
             KeyCode::Char('v') => app.active_tab = Tab::Packets,
             KeyCode::Esc => app.close_worklist(),
             KeyCode::Tab | KeyCode::F(2) => app.open_view_menu(),
@@ -1088,6 +1098,7 @@ fn handle_investigate(app: &mut App, key: KeyEvent) {
         KeyCode::Char('d') | KeyCode::Delete => app.remove_active_worklist_packet(),
         KeyCode::Char('l') => app.active_tab = Tab::Packets,
         KeyCode::Char('s') => app.open_active_investigation_stream_overlay(),
+        KeyCode::Char('=') => app.open_packet_comparison(),
         KeyCode::Esc => app.close_worklist(),
         KeyCode::Char('g') => app.investigation_scroll = 0,
         KeyCode::Tab | KeyCode::F(2) => app.open_view_menu(),

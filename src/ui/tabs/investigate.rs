@@ -54,7 +54,7 @@ fn draw_context_header(f: &mut Frame, app: &App, area: Rect) {
         "n/p packet  w worklist  l live"
     };
     spans.push(Span::styled(
-        format!("  Screen: {}  [[/]] screen  {navigation}  , settings", app.investigation_view.label()),
+        format!("  Screen: {}  [[/]] screen  {navigation}  = compare  , settings", app.investigation_view.label()),
         Style::default().fg(C_FG3()),
     ));
     f.render_widget(
