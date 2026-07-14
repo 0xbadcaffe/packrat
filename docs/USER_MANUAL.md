@@ -81,11 +81,31 @@ Dark, Soft Light, and High Contrast themes.
 
 1. Start capture and use Traffic > Packets.
 2. Press `/`, enter an inspection filter, and press `Enter`.
-3. Select a packet with `j`/`k`; press `Enter` to load it in Workbench.
+3. Select a packet with `j`/`k`; press `m` to add it to the investigation
+   worklist or `Enter` to add it and open Investigate immediately.
 4. Open Defense > Security and use `[`/`]` to move through detector and health
    views.
 5. Use Graph to correlate hosts, flows, alerts, IOCs, credentials, and objects.
 6. Press `X` to write a case bundle for handoff.
+
+## Packet Investigation Worklist
+
+Investigate keeps one active packet while you move between Summary, Headers,
+Bytes, Flow, Strings, Encrypted, Security, and Notes with `[`/`]`. Use `n`/`p`
+to select another marked packet without returning to live capture, `w` to show
+or hide the worklist, `d` to remove the active packet, and `l` to return to the
+packet list.
+
+Headers is keyboard searchable. Press `/`, enter a field such as `tcp.seq`, and
+press `Enter` to finish the search. Move with `j`/`k`; press `f` to apply a
+supported field as a packet-list filter. Press `Enter` on a byte-backed field
+to open Bytes at its exact packet offset.
+
+Bytes highlights the selected byte in hexadecimal and ASCII and interprets the
+same offset as unsigned and signed 8-bit data, big- and little-endian 16-bit
+data, big-endian 32-bit data, bits, ASCII, and a 16-byte entropy window. Use
+`h`/`l` for one byte, `j`/`k` for 16 bytes, `g`/`G` for the first or last byte,
+`n`/`p` for another worklist packet, and `v` to return to live packets.
 
 ## Packet Inspection Filters
 
@@ -229,6 +249,19 @@ PCAP or `--simulation` before enabling response actions.
 ## Defense Inspection
 
 Use `[`/`]` in Security to cycle detector and operational views:
+
+- Stateful packet-integrity checks detect conflicting IPv4 fragments,
+  fragment floods, malformed TCP headers, conflicting TCP retransmissions,
+  illegal flag combinations, and payload continuing after an observed reset.
+- Scan correlation detects vertical, horizontal, NULL, FIN, Xmas, ICMP sweep,
+  empty-UDP probe, and SYN-flood behavior over bounded time windows.
+- IPv6 and Layer-2 checks validate Neighbor Discovery hop limits, track NDP
+  binding changes, detect invalid or flooded Router Advertisements, excessive
+  IPv6 extension chains, STP topology changes, and LLDP identity changes.
+- Behavioral correlation reports periodic fixed-size C2 candidates,
+  asymmetric or high-entropy outbound transfers, NXDOMAIN bursts, oversized
+  DNS TXT traffic, direct public resolver use, administrative-service fan-out,
+  and NTLM authentication fan-out.
 
 - SocketScope correlates Linux socket tables with PID, UID, process, command,
   and per-process packet/byte totals. For very short-lived sockets, start

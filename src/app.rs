@@ -481,6 +481,7 @@ pub struct App {
     pub investigation_view:   InvestigationView,
     pub investigation_scroll: usize,
     pub header_cursor:        usize,
+    pub byte_cursor:          usize,
     pub header_searching:     bool,
     pub header_search:        String,
     pub settings_open:        bool,
@@ -636,6 +637,7 @@ impl App {
             investigation_view:   InvestigationView::Summary,
             investigation_scroll: 0,
             header_cursor:        0,
+            byte_cursor:          0,
             header_searching:     false,
             header_search:        String::new(),
             settings_open:        false,
@@ -2087,8 +2089,55 @@ impl App {
         self.set_status(format!("Filter applied: {expr}"));
     }
 
+    pub fn jump_selected_header_to_bytes(&mut self) {
+        let fields = self.visible_packet_header_fields();
+        let Some(field) = fields.get(self.header_cursor).or_else(|| fields.first()) else {
+            self.set_status("No packet header field selected");
+            return;
+        };
+        let Some(offset) = field.offset else {
+            self.set_status(format!("{} is derived metadata and has no byte offset", field.path));
+            return;
+        };
+        let path = field.path.clone();
+        let packet_len = self.active_investigation_packet().map(|packet| packet.bytes.len()).unwrap_or(0);
+        self.byte_cursor = offset.min(packet_len.saturating_sub(1));
+        self.investigation_scroll = self.byte_cursor / 16;
+        self.investigation_view = InvestigationView::Bytes;
+        self.set_status(format!("Byte inspector: {path} at offset 0x{offset:04x}"));
+    }
+
+    pub fn byte_cursor_left(&mut self) {
+        self.byte_cursor = self.byte_cursor.saturating_sub(1);
+    }
+
+    pub fn byte_cursor_right(&mut self) {
+        let packet_len = self.active_investigation_packet().map(|packet| packet.bytes.len()).unwrap_or(0);
+        self.byte_cursor = (self.byte_cursor + 1).min(packet_len.saturating_sub(1));
+    }
+
+    pub fn byte_cursor_up(&mut self) {
+        self.byte_cursor = self.byte_cursor.saturating_sub(16);
+    }
+
+    pub fn byte_cursor_down(&mut self) {
+        let packet_len = self.active_investigation_packet().map(|packet| packet.bytes.len()).unwrap_or(0);
+        self.byte_cursor = (self.byte_cursor + 16).min(packet_len.saturating_sub(1));
+    }
+
+    pub fn byte_cursor_home(&mut self) {
+        self.byte_cursor = 0;
+    }
+
+    pub fn byte_cursor_end(&mut self) {
+        self.byte_cursor = self.active_investigation_packet()
+            .map(|packet| packet.bytes.len().saturating_sub(1))
+            .unwrap_or(0);
+    }
+
     fn reset_header_focus(&mut self) {
         self.header_cursor = 0;
+        self.byte_cursor = 0;
         self.header_searching = false;
     }
 
