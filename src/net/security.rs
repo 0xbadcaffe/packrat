@@ -3,6 +3,7 @@
 //! and DNS exfiltration scoring.
 
 use std::collections::{HashMap, HashSet};
+use crate::analysis::ipv6_fragments::{Ipv6FragmentOutcome, Ipv6FragmentReassembler};
 use crate::net::packet::Packet;
 use crate::net::inspector::shannon_entropy;
 
@@ -342,6 +343,7 @@ pub struct SecuritySummary {
     pub tls_weaknesses: usize,
     pub dns_suspects: usize,
     pub cred_hits: usize,
+    pub ipv6_reassembled: u64,
 }
 
 // ─── Security Engine ──────────────────────────────────────────────────────────
@@ -376,6 +378,8 @@ pub struct SecurityEngine {
     admin_fanout: HashMap<(String, u16), TimedTargetState>,
     ntlm_fanout: HashMap<String, TimedTargetState>,
     dhcp_vlans: HashMap<Option<u16>, DhcpVlanState>,
+    ipv6_fragments: Ipv6FragmentReassembler,
+    pub ipv6_reassembled: u64,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -409,6 +413,8 @@ impl SecurityEngine {
             admin_fanout: HashMap::new(),
             ntlm_fanout: HashMap::new(),
             dhcp_vlans: HashMap::new(),
+            ipv6_fragments: Ipv6FragmentReassembler::default(),
+            ipv6_reassembled: 0,
             cred_hit_count: 0,
         }
     }
@@ -440,6 +446,8 @@ impl SecurityEngine {
         self.admin_fanout.clear();
         self.ntlm_fanout.clear();
         self.dhcp_vlans.clear();
+        self.ipv6_fragments.clear();
+        self.ipv6_reassembled = 0;
         self.cred_hit_count = 0;
     }
 
@@ -469,6 +477,7 @@ impl SecurityEngine {
             tls_weaknesses: self.tls_weaknesses.len(),
             dns_suspects,
             cred_hits: self.cred_hit_count,
+            ipv6_reassembled: self.ipv6_reassembled,
         }
     }
 
@@ -482,6 +491,7 @@ impl SecurityEngine {
         self.check_beacon_and_exfiltration(pkt);
         self.check_dns_abuse_and_lateral_movement(pkt);
         self.check_dhcp_integrity(pkt);
+        self.check_ipv6_fragment_reassembly(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -1200,6 +1210,68 @@ impl SecurityEngine {
 
         for (signature, severity, detail) in alerts {
             self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
+        }
+    }
+
+    fn check_ipv6_fragment_reassembly(&mut self, pkt: &Packet) {
+        match self.ipv6_fragments.ingest(pkt) {
+            Ipv6FragmentOutcome::Ignored => {}
+            Ipv6FragmentOutcome::Pending { conflicting_overlap, fragment_count } => {
+                if conflicting_overlap {
+                    self.push_ids(IdsAlert {
+                        pkt_no: pkt.no,
+                        signature: "Conflicting IPv6 fragments",
+                        severity: Severity::Critical,
+                        detail: format!("Conflicting overlap among {fragment_count} IPv6 fragments from {}", pkt.src),
+                    });
+                }
+            }
+            Ipv6FragmentOutcome::Rejected { reason } => {
+                self.push_ids(IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "IPv6 fragment reassembly rejected",
+                    severity: Severity::High,
+                    detail: format!("{reason} from {}", pkt.src),
+                });
+            }
+            Ipv6FragmentOutcome::Complete { datagram, conflicting_overlap } => {
+                if conflicting_overlap {
+                    self.push_ids(IdsAlert {
+                        pkt_no: pkt.no,
+                        signature: "Conflicting IPv6 fragments",
+                        severity: Severity::Critical,
+                        detail: format!("Conflicting overlap in completed IPv6 datagram from {}", pkt.src),
+                    });
+                }
+                self.ipv6_reassembled = self.ipv6_reassembled.saturating_add(1);
+                let transport_ports = datagram.payload.get(..4).map(|bytes| (
+                    u16::from_be_bytes([bytes[0], bytes[1]]),
+                    u16::from_be_bytes([bytes[2], bytes[3]]),
+                ));
+                let (protocol, ports) = match datagram.key.next_header {
+                    6 => ("TCP", transport_ports),
+                    17 => ("UDP", transport_ports),
+                    58 => ("ICMPv6", None),
+                    _ => ("IPv6-Reassembled", None),
+                };
+                let synthetic = Packet {
+                    no: pkt.no,
+                    timestamp: pkt.timestamp,
+                    src: pkt.src.clone(),
+                    dst: pkt.dst.clone(),
+                    protocol: protocol.into(),
+                    length: datagram.payload.len().min(u16::MAX as usize) as u16,
+                    info: format!("Reassembled from {} IPv6 fragments", datagram.fragment_count),
+                    src_port: ports.map(|pair| pair.0),
+                    dst_port: ports.map(|pair| pair.1),
+                    vlan_id: pkt.vlan_id,
+                    vlan_pcp: pkt.vlan_pcp,
+                    vlan_dei: pkt.vlan_dei,
+                    outer_vlan_id: pkt.outer_vlan_id,
+                    bytes: datagram.payload,
+                };
+                self.check_ids(&synthetic);
+            }
         }
     }
 

@@ -20,6 +20,7 @@ pub mod path_reconstruction;
 pub mod graph_scoring;
 pub mod graph_cluster;
 pub mod incident;
+pub mod ipv6_fragments;
 pub mod evidence_vault;
 pub mod helper_process;
 pub mod telemetry;
