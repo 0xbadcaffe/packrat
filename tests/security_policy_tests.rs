@@ -203,3 +203,58 @@ fn detects_tiny_and_excessive_ipv4_fragments() {
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Tiny IPv4 fragment"));
     assert!(security.ids_alerts.iter().any(|alert| alert.signature == "IPv4 fragment flood"));
 }
+
+fn ipv4_tcp_packet(no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
+    let mut bytes = vec![0_u8; 14 + 20 + 20];
+    bytes[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    bytes[14] = 0x45;
+    bytes[16..18].copy_from_slice(&((40 + payload.len()) as u16).to_be_bytes());
+    bytes[23] = 6;
+    bytes[26..30].copy_from_slice(&[203, 0, 113, 9]);
+    bytes[30..34].copy_from_slice(&[10, 0, 0, 5]);
+    bytes[34..36].copy_from_slice(&50000_u16.to_be_bytes());
+    bytes[36..38].copy_from_slice(&443_u16.to_be_bytes());
+    bytes[38..42].copy_from_slice(&sequence.to_be_bytes());
+    bytes[46] = 0x50;
+    bytes[47] = flags;
+    bytes.extend_from_slice(payload);
+    packet("TLS", 443, "", bytes).with_number_and_timestamp(no, no as f64)
+}
+
+#[test]
+fn detects_conflicting_tcp_retransmission_but_allows_identical_retransmission() {
+    let mut security = SecurityEngine::default();
+    security.update(&ipv4_tcp_packet(1, 100, 0x18, b"original"));
+    security.update(&ipv4_tcp_packet(2, 100, 0x18, b"original"));
+    assert!(!security.ids_alerts.iter().any(|alert| {
+        alert.signature == "Conflicting TCP retransmission"
+    }));
+
+    security.update(&ipv4_tcp_packet(3, 104, 0x18, b"CHANGED"));
+    assert!(security.ids_alerts.iter().any(|alert| {
+        alert.signature == "Conflicting TCP retransmission"
+            && alert.severity == packrat_tui::net::security::Severity::Critical
+    }));
+}
+
+#[test]
+fn detects_illegal_and_malformed_tcp_headers() {
+    let mut security = SecurityEngine::default();
+    security.update(&ipv4_tcp_packet(1, 100, 0x03, b""));
+
+    let mut malformed = ipv4_tcp_packet(2, 100, 0x10, b"");
+    malformed.bytes[46] = 0x40;
+    security.update(&malformed);
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Illegal TCP flag combination"));
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "Malformed TCP header"));
+}
+
+#[test]
+fn detects_tcp_payload_continuing_after_reset() {
+    let mut security = SecurityEngine::default();
+    security.update(&ipv4_tcp_packet(1, 100, 0x04, b""));
+    security.update(&ipv4_tcp_packet(2, 101, 0x18, b"unexpected"));
+
+    assert!(security.ids_alerts.iter().any(|alert| alert.signature == "TCP payload after reset"));
+}

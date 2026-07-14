@@ -20,6 +20,9 @@ const MAX_ENTRIES: usize = 1000;
 const MAX_FRAGMENT_DATAGRAMS: usize = 512;
 const MAX_FRAGMENTS_PER_DATAGRAM: usize = 64;
 const FRAGMENT_STATE_TTL_SECS: f64 = 60.0;
+const MAX_TCP_FLOWS: usize = 512;
+const MAX_TCP_SLICES_PER_DIRECTION: usize = 128;
+const TCP_STATE_TTL_SECS: f64 = 300.0;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct FragmentKey {
@@ -51,6 +54,35 @@ struct Ipv4Fragment<'a> {
     payload: &'a [u8],
     declared_payload_len: usize,
     malformed_length: bool,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct TcpFlowKey {
+    endpoint_a: ([u8; 4], u16),
+    endpoint_b: ([u8; 4], u16),
+}
+
+#[derive(Debug, Default)]
+struct TcpIntegrityState {
+    from_a: Vec<FragmentSlice>,
+    from_b: Vec<FragmentSlice>,
+    last_seen: f64,
+    reset_seen: bool,
+    overlap_alerted: bool,
+    post_reset_alerted: bool,
+}
+
+struct TcpSegment<'a> {
+    key: TcpFlowKey,
+    from_a: bool,
+    sequence: u32,
+    flags: u8,
+    payload: &'a [u8],
+}
+
+enum TcpFrame<'a> {
+    Malformed(&'static str),
+    Segment(TcpSegment<'a>),
 }
 
 // ─── IDS Alerts ───────────────────────────────────────────────────────────────
@@ -215,6 +247,7 @@ pub struct SecurityEngine {
     bf_windows: HashMap<BfKey, BfWindow>,
     dns_accum: HashMap<String, DnsAccum>,
     fragment_states: HashMap<FragmentKey, FragmentState>,
+    tcp_integrity: HashMap<TcpFlowKey, TcpIntegrityState>,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
@@ -235,6 +268,7 @@ impl SecurityEngine {
             bf_windows: HashMap::new(),
             dns_accum: HashMap::new(),
             fragment_states: HashMap::new(),
+            tcp_integrity: HashMap::new(),
             cred_hit_count: 0,
         }
     }
@@ -253,6 +287,7 @@ impl SecurityEngine {
         self.bf_windows.clear();
         self.dns_accum.clear();
         self.fragment_states.clear();
+        self.tcp_integrity.clear();
         self.cred_hit_count = 0;
     }
 
@@ -288,6 +323,7 @@ impl SecurityEngine {
     /// Process a single packet through all detection engines.
     pub fn update(&mut self, pkt: &Packet) {
         self.check_ipv4_fragments(pkt);
+        self.check_tcp_integrity(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -372,6 +408,92 @@ impl SecurityEngine {
                 Severity::High,
                 format!("More than {MAX_FRAGMENTS_PER_DATAGRAM} fragments for one datagram from {}", pkt.src),
             ));
+        }
+
+        for (signature, severity, detail) in alerts {
+            self.push_ids(IdsAlert { pkt_no: pkt.no, signature, severity, detail });
+        }
+    }
+
+    // ─── TCP Integrity / Evasion ────────────────────────────────────────────
+
+    fn check_tcp_integrity(&mut self, pkt: &Packet) {
+        let segment = match parse_ipv4_tcp_frame(&pkt.bytes) {
+            Some(TcpFrame::Segment(segment)) => segment,
+            Some(TcpFrame::Malformed(reason)) => {
+                self.push_ids(IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "Malformed TCP header",
+                    severity: Severity::High,
+                    detail: format!("{reason} from {} to {}", pkt.src, pkt.dst),
+                });
+                return;
+            }
+            None => return,
+        };
+
+        const FIN: u8 = 0x01;
+        const SYN: u8 = 0x02;
+        const RST: u8 = 0x04;
+        if segment.flags & SYN != 0 && segment.flags & (FIN | RST) != 0 {
+            self.push_ids(IdsAlert {
+                pkt_no: pkt.no,
+                signature: "Illegal TCP flag combination",
+                severity: Severity::High,
+                detail: format!("TCP SYN combined with FIN or RST from {} to {}", pkt.src, pkt.dst),
+            });
+        }
+
+        self.tcp_integrity.retain(|_, state| {
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= TCP_STATE_TTL_SECS
+        });
+        if !self.tcp_integrity.contains_key(&segment.key) && self.tcp_integrity.len() >= MAX_TCP_FLOWS {
+            if let Some(oldest) = self.tcp_integrity.iter()
+                .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+                .map(|(key, _)| key.clone())
+            {
+                self.tcp_integrity.remove(&oldest);
+            }
+        }
+
+        let mut alerts = Vec::new();
+        let state = self.tcp_integrity.entry(segment.key.clone()).or_default();
+        state.last_seen = pkt.timestamp;
+
+        if segment.flags & SYN != 0 {
+            state.from_a.clear();
+            state.from_b.clear();
+            state.reset_seen = false;
+            state.overlap_alerted = false;
+            state.post_reset_alerted = false;
+        }
+
+        if state.reset_seen && !segment.payload.is_empty() && !state.post_reset_alerted {
+            state.post_reset_alerted = true;
+            alerts.push((
+                "TCP payload after reset",
+                Severity::High,
+                format!("Payload continued after an observed TCP reset from {} to {}", pkt.src, pkt.dst),
+            ));
+        }
+
+        let slices = if segment.from_a { &mut state.from_a } else { &mut state.from_b };
+        if !segment.payload.is_empty() {
+            if !state.overlap_alerted && has_conflicting_tcp_overlap(slices, &segment) {
+                state.overlap_alerted = true;
+                alerts.push((
+                    "Conflicting TCP retransmission",
+                    Severity::Critical,
+                    format!("Overlapping TCP sequence ranges contain different bytes from {} to {}", pkt.src, pkt.dst),
+                ));
+            }
+            if slices.len() < MAX_TCP_SLICES_PER_DIRECTION {
+                slices.push(FragmentSlice { start: segment.sequence, data: segment.payload.to_vec() });
+            }
+        }
+
+        if segment.flags & RST != 0 {
+            state.reset_seen = true;
         }
 
         for (signature, severity, detail) in alerts {
@@ -1169,6 +1291,80 @@ fn has_conflicting_fragment_overlap(slices: &[FragmentSlice], fragment: &Ipv4Fra
         let existing_offset = (overlap_start - existing.start) as usize;
         let overlap_len = (overlap_end - overlap_start) as usize;
         fragment.payload[new_offset..new_offset + overlap_len]
+            != existing.data[existing_offset..existing_offset + overlap_len]
+    })
+}
+
+fn parse_ipv4_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
+    let (ip_offset, ether_type) = ethernet_network_header(raw)?;
+    if ether_type != 0x0800 || raw.len() < ip_offset + 20 || raw[ip_offset] >> 4 != 4 {
+        return None;
+    }
+    let ip_header_len = usize::from(raw[ip_offset] & 0x0f) * 4;
+    if ip_header_len < 20 || raw.len() < ip_offset + ip_header_len || raw[ip_offset + 9] != 6 {
+        return None;
+    }
+
+    let fragment_field = u16::from_be_bytes([raw[ip_offset + 6], raw[ip_offset + 7]]);
+    if fragment_field & 0x1fff != 0 {
+        return None;
+    }
+
+    let total_len = usize::from(u16::from_be_bytes([raw[ip_offset + 2], raw[ip_offset + 3]]));
+    if total_len < ip_header_len + 20 {
+        return Some(TcpFrame::Malformed("IPv4 payload is shorter than a minimum TCP header"));
+    }
+    let tcp_offset = ip_offset + ip_header_len;
+    if raw.len() < tcp_offset + 20 {
+        return Some(TcpFrame::Malformed("captured TCP header is truncated"));
+    }
+
+    let tcp_header_len = usize::from(raw[tcp_offset + 12] >> 4) * 4;
+    if tcp_header_len < 20 {
+        return Some(TcpFrame::Malformed("TCP data offset is smaller than 20 bytes"));
+    }
+    if total_len < ip_header_len + tcp_header_len {
+        return Some(TcpFrame::Malformed("TCP data offset exceeds the IPv4 payload length"));
+    }
+
+    let src: [u8; 4] = raw[ip_offset + 12..ip_offset + 16].try_into().ok()?;
+    let dst: [u8; 4] = raw[ip_offset + 16..ip_offset + 20].try_into().ok()?;
+    let src_port = u16::from_be_bytes([raw[tcp_offset], raw[tcp_offset + 1]]);
+    let dst_port = u16::from_be_bytes([raw[tcp_offset + 2], raw[tcp_offset + 3]]);
+    let src_endpoint = (src, src_port);
+    let dst_endpoint = (dst, dst_port);
+    let (endpoint_a, endpoint_b, from_a) = if src_endpoint <= dst_endpoint {
+        (src_endpoint, dst_endpoint, true)
+    } else {
+        (dst_endpoint, src_endpoint, false)
+    };
+    let sequence = u32::from_be_bytes(raw[tcp_offset + 4..tcp_offset + 8].try_into().ok()?);
+    let packet_end = (ip_offset + total_len).min(raw.len());
+    let payload_start = (tcp_offset + tcp_header_len).min(packet_end);
+
+    Some(TcpFrame::Segment(TcpSegment {
+        key: TcpFlowKey { endpoint_a, endpoint_b },
+        from_a,
+        sequence,
+        flags: raw[tcp_offset + 13],
+        payload: &raw[payload_start..packet_end],
+    }))
+}
+
+fn has_conflicting_tcp_overlap(slices: &[FragmentSlice], segment: &TcpSegment<'_>) -> bool {
+    let new_start = segment.sequence;
+    let new_end = new_start.saturating_add(segment.payload.len() as u32);
+    slices.iter().any(|existing| {
+        let existing_end = existing.start.saturating_add(existing.data.len() as u32);
+        let overlap_start = new_start.max(existing.start);
+        let overlap_end = new_end.min(existing_end);
+        if overlap_start >= overlap_end {
+            return false;
+        }
+        let new_offset = (overlap_start - new_start) as usize;
+        let existing_offset = (overlap_start - existing.start) as usize;
+        let overlap_len = (overlap_end - overlap_start) as usize;
+        segment.payload[new_offset..new_offset + overlap_len]
             != existing.data[existing_offset..existing_offset + overlap_len]
     })
 }
