@@ -298,11 +298,8 @@ impl StreamAssembler {
         // ── Sequence-number–aware assembly ─────────────────────────────────
         // We track the next expected sequence number per direction to:
         //   a) detect and skip retransmitted bytes
-        //   b) detect gaps (out-of-order delivery) and still append best-effort
-        //
-        // Full out-of-order reorder buffering is not implemented; segments that
-        // arrive out of order are appended immediately so the stream view is
-        // still useful even if it may show data slightly out of sequence.
+        //   b) retain gaps until missing segments arrive
+        //   c) consume FIN only after all preceding payload bytes
 
         let (data, next_seq_slot) = if from_client {
             (&mut stream.client_data, &mut stream.client_next_seq)

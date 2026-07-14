@@ -56,16 +56,21 @@ Deployment placement still defines the enforcement boundary:
 - Expiring, audited nftables containment in preview, manual, and auto modes.
 - Optional Linux Landlock filesystem-write sandbox.
 - Replay coverage for shipped IDS signatures and VLAN penetration indicators.
+- DHCP spoofing/starvation, DNS transaction integrity, HTTP request smuggling,
+  and industrial state-change policy detectors.
+- Bounded IPv6 fragment and ordered bidirectional TCP reassembly, including
+  overlap/retransmission handling and sequence wraparound.
+- Worklist packet comparison plus stream search and exact directional export.
 
 ## Remaining Engineering Work
 
-These gaps are intentionally stated precisely; the current UI does not claim
-that they are complete.
+The current UI does not claim the following external collector is complete.
 
 - Add an optional eBPF event collector for sockets too short-lived for `/proc`
   polling. Packrat can now import external socket ownership CSV rows with
-  `--socket-events`; a kernel collector and helper IPC are still separate work.
+  `--socket-events`; a kernel program, least-privilege loader, event-loss
+  accounting, kernel-version compatibility tests, and packaging remain.
 - Keep replay fixtures current as each new detector and containment policy ships.
 
-These remaining items require focused security design and should not be
-represented as simple parser or UI additions.
+The eBPF collector requires focused kernel and deployment security work and
+must not be represented as a parser or UI addition.
