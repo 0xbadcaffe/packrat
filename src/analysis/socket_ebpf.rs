@@ -6,6 +6,29 @@ pub const SOCKET_EVENT_VERSION: u16 = 1;
 pub const SOCKET_EVENT_SIZE: usize = 80;
 pub const MINIMUM_RINGBUF_KERNEL: KernelVersion = KernelVersion { major: 5, minor: 8 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SocketEventKind {
+    TcpConnect = 1,
+    TcpAccept = 2,
+    UdpSend = 3,
+    UdpReceive = 4,
+}
+
+impl TryFrom<u8> for SocketEventKind {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::TcpConnect),
+            2 => Ok(Self::TcpAccept),
+            3 => Ok(Self::UdpSend),
+            4 => Ok(Self::UdpReceive),
+            _ => Err(format!("unsupported socket event kind {value}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct KernelVersion {
     pub major: u16,
@@ -36,6 +59,8 @@ pub struct SocketEbpfEvent {
     pub uid: u32,
     pub family: u16,
     pub protocol: u8,
+    pub kind: SocketEventKind,
+    pub socket_fd: Option<i32>,
     pub local_addr: IpAddr,
     pub local_port: u16,
     pub remote_addr: IpAddr,
@@ -63,11 +88,35 @@ impl SocketEbpfEvent {
         }
         let family = read_u16(bytes, 12)?;
         let protocol = bytes[14];
-        if protocol != 6 {
-            return Err(format!("unsupported socket protocol {protocol}"));
-        }
-        let local_addr = decode_address(family, &bytes[48..64])?;
-        let remote_addr = decode_address(family, &bytes[64..80])?;
+        let kind = SocketEventKind::try_from(bytes[15])?;
+        let (local_addr, remote_addr, socket_fd) = match kind {
+            SocketEventKind::TcpConnect => {
+                if protocol != 6 {
+                    return Err(format!("TCP connect event has protocol {protocol}"));
+                }
+                (
+                    decode_address(family, &bytes[48..64])?,
+                    decode_address(family, &bytes[64..80])?,
+                    None,
+                )
+            }
+            SocketEventKind::TcpAccept | SocketEventKind::UdpSend | SocketEventKind::UdpReceive => {
+                if protocol != 0 || family != 0 {
+                    return Err("file-descriptor socket event contains unresolved endpoints".into());
+                }
+                let fd = read_u32(bytes, 20)? as i32;
+                if fd < 0 {
+                    return Err(
+                        "file-descriptor socket event contains a negative descriptor".into(),
+                    );
+                }
+                (
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    Some(fd),
+                )
+            }
+        };
         let comm_end = bytes[32..48]
             .iter()
             .position(|byte| *byte == 0)
@@ -85,6 +134,8 @@ impl SocketEbpfEvent {
             uid: read_u32(bytes, 8)?,
             family,
             protocol,
+            kind,
+            socket_fd,
             local_addr,
             local_port: read_u16(bytes, 16)?,
             remote_addr,
