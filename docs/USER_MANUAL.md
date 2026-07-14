@@ -340,9 +340,10 @@ reputation explicitly.
 
 `--key-log` or `SSLKEYLOGFILE` loads TLS 1.2, TLS 1.3, and QUIC secret labels
 and correlates available material by client random. `--tls-decrypt-helper PATH`
-delegates authenticated TLS record decoding to a local helper. Packrat sends the
-flow id, packet number, client random, and TLS record bytes as JSON; it retains
-plaintext only when the helper returns `ok: true`.
+delegates authenticated TLS record decoding to a local helper. Packrat keeps one
+helper process running and exchanges newline-delimited JSON request/response
+pairs. Each request includes the flow id, packet number, client random, and TLS
+record bytes; plaintext is retained only when the helper returns `ok: true`.
 
 ```json
 {
@@ -352,6 +353,10 @@ plaintext only when the helper returns `ok: true`.
   "record_hex": "170303..."
 }
 ```
+
+The helper must write exactly one single-line JSON response for each request
+and flush stdout. If the process exits or returns malformed JSON, Packrat drops
+that response and starts a fresh helper process for a later record.
 
 ```json
 {

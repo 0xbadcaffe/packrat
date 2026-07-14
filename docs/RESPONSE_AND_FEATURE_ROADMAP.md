@@ -48,6 +48,7 @@ Deployment placement still defines the enforcement boundary:
 - NetRegistry local prefix enrichment and operator-requested WHOIS refresh.
 - Explicit reputation refresh helper for selected addresses, JA4, and RatQ; no
   silent lookups.
+- Long-lived newline-delimited TLS decode helper IPC for high-rate captures.
 - Local `/health` and OpenMetrics `/metrics` telemetry endpoints.
 - Expiring, audited nftables containment in preview, manual, and auto modes.
 - Optional Linux Landlock filesystem-write sandbox.
@@ -61,8 +62,6 @@ that they are complete.
 - Add an optional eBPF event collector for sockets too short-lived for `/proc`
   polling. Packrat can now import external socket ownership CSV rows with
   `--socket-events`; a kernel collector and helper IPC are still separate work.
-- Move helper-backed TLS record decode from per-record command execution to a
-  long-lived helper IPC channel for high-rate captures.
 - Move helper-backed QUIC/HTTP3 decode from per-packet command execution to a
   long-lived helper IPC channel for high-rate captures.
 - Separate packet-capture privileges into a minimal helper, then drop capture
