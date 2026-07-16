@@ -124,7 +124,7 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(C_YELLOW()),
             )),
             Line::from(Span::styled(
-                "Enter review  C confirm  z benign  K contained  x close  f severity filter",
+                "Enter review  C confirm  z benign  K contained  x close  f filter  r simulate Guard",
                 Style::default().fg(C_FG2()),
             )),
         ]

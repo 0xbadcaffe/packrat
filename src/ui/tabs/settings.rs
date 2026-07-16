@@ -72,8 +72,12 @@ fn draw_details(f: &mut Frame, app: &App, area: Rect) {
             Line::from(format!("TrafficLatch mode: {}", app.traffic_latch.mode)),
             Line::from(format!("Containment timeout: {}s", app.traffic_latch.expires_seconds)),
             Line::from(format!("Protected addresses: {}", app.traffic_latch.protected_addresses.len())),
+            Line::from(format!("Maximum active blocks: {}", app.traffic_latch.max_active_blocks)),
+            Line::from(format!("Kill switch: {}", if app.traffic_latch.emergency_stop { "ENGAGED" } else { "ready" })),
+            Line::from(format!("Last Guard simulation entries: {}", app.response_preview.len())),
             Line::from("Enter: cycle TrafficLatch mode."),
             Line::from("Auto containment still requires the policy gate."),
+            Line::from("!: force monitor mode and stop future automatic blocks."),
         ],
         _ => vec![
             Line::from(vec![Span::styled("Keys", heading())]),

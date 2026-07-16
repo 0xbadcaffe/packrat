@@ -19,7 +19,7 @@ use crate::analysis::telemetry::{TelemetryHub, TelemetrySnapshot};
 use crate::analysis::socket_scope::SocketScope;
 use crate::analysis::route_ledger::RouteLedger;
 use crate::analysis::quic_scope::QuicScope;
-use crate::analysis::traffic_latch::{CommandLatch, LatchMode, NftablesLatch, TrafficLatch};
+use crate::analysis::traffic_latch::{CommandLatch, LatchAction, LatchMode, NftablesLatch, TrafficLatch};
 use crate::analysis::wire_pulse::WirePulse;
 use crate::analysis::net_registry::NetRegistry;
 use crate::analysis::jobs::JobQueue;
@@ -475,6 +475,7 @@ pub struct App {
     pub socket_scope:    SocketScope,
     pub route_ledger:    RouteLedger,
     pub traffic_latch:   TrafficLatch,
+    pub response_preview: Vec<LatchAction>,
     pub latch_helper_path: Option<std::path::PathBuf>,
     pub wire_pulse:      WirePulse,
     pub net_registry:    NetRegistry,
@@ -652,6 +653,7 @@ impl App {
             socket_scope:     SocketScope::default(),
             route_ledger:     RouteLedger::default(),
             traffic_latch:    TrafficLatch::default(),
+            response_preview: Vec::new(),
             latch_helper_path: None,
             wire_pulse:       WirePulse::default(),
             net_registry:     NetRegistry::default(),
@@ -1714,6 +1716,29 @@ impl App {
         }
     }
 
+    pub fn simulate_guard_response(&mut self) {
+        let incidents = self.incidents.incidents.clone();
+        self.response_preview = incidents.iter()
+            .filter(|incident| incident.status == crate::analysis::incident::IncidentStatus::PendingReview)
+            .map(|incident| {
+                let allowed = self.has_independent_critical_signals(incident);
+                self.traffic_latch.simulate_incident(incident, allowed)
+            })
+            .collect();
+        let eligible = self.response_preview.iter()
+            .filter(|action| action.status == crate::analysis::traffic_latch::LatchStatus::Previewed)
+            .count();
+        self.set_status(format!(
+            "Guard simulation: {eligible} eligible, {} require review or were rejected",
+            self.response_preview.len().saturating_sub(eligible),
+        ));
+    }
+
+    pub fn engage_guard_kill_switch(&mut self) {
+        self.traffic_latch.engage_kill_switch();
+        self.set_status("Guard kill switch engaged; TrafficLatch forced to monitor mode");
+    }
+
     /// Open the retained incident packet history and record that it was reviewed.
     pub fn open_active_incident_analysis(&mut self) -> bool {
         if !self.incidents.mark_active_reviewed() {
@@ -1955,6 +1980,7 @@ impl App {
         self.socket_scope.traffic.clear();
         self.route_ledger.clear_session();
         self.traffic_latch.clear_session();
+        self.response_preview.clear();
         self.wire_pulse.clear();
         self.net_registry.clear_session();
         self.alert_overlay_open = false;

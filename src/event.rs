@@ -183,6 +183,11 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             return false;
         }
 
+        if key.code == KeyCode::Char('!') {
+            app.engage_guard_kill_switch();
+            return false;
+        }
+
         // Pin the active screen context to the cross-workspace investigation tray.
         if key.code == KeyCode::Char('M') {
             app.pin_current_context();
@@ -519,6 +524,7 @@ fn handle_security(app: &mut App, key: KeyEvent) {
             KeyCode::Up | KeyCode::Char('k') => { app.alert_center.previous(); return; }
             KeyCode::Char('f') => { app.alert_center.cycle_severity_filter(); return; }
             KeyCode::Char('m') => { app.pin_selected_alert(); return; }
+            KeyCode::Char('r') => { app.simulate_guard_response(); return; }
             KeyCode::Enter => {
                 app.alert_center.set_selected_disposition(
                     crate::analysis::alert_center::AlertDisposition::Reviewing,

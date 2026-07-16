@@ -482,6 +482,46 @@ fn watch_mode_auto_pins_only_high_priority_alerts() {
 }
 
 #[tokio::test]
+async fn exclamation_engages_guard_kill_switch_from_any_screen() {
+    let mut app = App::new_for_test();
+    app.traffic_latch.mode = LatchMode::Automatic;
+    event::handle(&mut app, key(KeyCode::Char('!')));
+    assert!(app.traffic_latch.emergency_stop);
+    assert_eq!(app.traffic_latch.mode, LatchMode::Monitor);
+}
+
+#[test]
+fn guard_simulation_requires_independent_critical_signals() {
+    use packrat_tui::analysis::incident::IncidentSource;
+    use packrat_tui::analysis::traffic_latch::LatchStatus;
+    use packrat_tui::model::evidence::Severity;
+
+    let mut app = App::new_for_test();
+    let finding = packet(1);
+    app.incidents.open_or_update(
+        IncidentSource::IndustrySignature,
+        "detector-a",
+        "first",
+        Severity::Critical,
+        &finding,
+        std::iter::empty(),
+    );
+    app.simulate_guard_response();
+    assert_eq!(app.response_preview[0].status, LatchStatus::PendingApproval);
+
+    app.incidents.open_or_update(
+        IncidentSource::IndustrySignature,
+        "detector-b",
+        "second",
+        Severity::Critical,
+        &finding,
+        std::iter::empty(),
+    );
+    app.simulate_guard_response();
+    assert!(app.response_preview.iter().all(|action| action.status == LatchStatus::Previewed));
+}
+
+#[tokio::test]
 async fn selected_packet_can_be_marked_and_investigated() {
     let mut app = App::new_for_test();
     app.inject_packet(packet(1));

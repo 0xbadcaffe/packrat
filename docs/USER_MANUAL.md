@@ -259,6 +259,19 @@ Automatic mode requires one of these gates before it applies a block:
 If neither gate passes, the action stays pending and can still be approved
 manually with `x` after incident review.
 
+### Guard simulation and emergency stop
+
+Press `r` in the Alert Center to evaluate all pending critical incidents as if
+Guard were enabled. The simulation applies the same independent-signal gate,
+address validation, protection list, expiry, and maximum-active-block policy,
+but never calls nftables or a latch helper. The status line reports eligible,
+pending, and rejected decisions; Settings > Defense shows the report size.
+
+Press `!` from any screen to engage the Guard kill switch. This immediately
+forces TrafficLatch back to `monitor` and rejects future automatic actions.
+Already-applied nftables entries keep their configured short expiry; Packrat
+does not hide that limitation by claiming they were synchronously removed.
+
 By default, Packrat applies approved Linux blocks with nftables from the TUI
 process. For stricter privilege separation, start it with `--latch-helper PATH`.
 The helper receives a JSON request on stdin and returns a JSON response on
