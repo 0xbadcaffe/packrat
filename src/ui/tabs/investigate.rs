@@ -36,7 +36,7 @@ fn draw_context_header(f: &mut Frame, app: &App, area: Rect) {
     let packet = app.active_investigation_packet();
     let title = packet.map(|pkt| {
         format!(
-            " Packet #{}  {}  {} -> {}  len={}  Worklist {}/{} ",
+            " Packet #{}  {}  {} -> {}  len={}  Tray {}/{} ",
             pkt.no,
             pkt.protocol,
             pkt.src,
@@ -56,7 +56,7 @@ fn draw_context_header(f: &mut Frame, app: &App, area: Rect) {
     let navigation = if app.investigation_view == InvestigationView::Bytes {
         "h/l byte  j/k row  n/p packet  v live"
     } else {
-        "n/p packet  w worklist  l live"
+        "n/p item  w tray  l live"
     };
     spans.push(Span::styled(
         format!("  Screen: {}  [[/]] screen  {navigation}  = compare  , settings", app.investigation_view.label()),
