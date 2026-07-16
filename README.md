@@ -36,7 +36,7 @@ Packrat combines capabilities that normally require several disconnected tools:
 | Investigation stage | Packrat capability |
 |---|---|
 | **Observe** | Live interface capture, PCAP import/replay, flows, hosts, VLAN/QinQ context, and short-lived Linux socket attribution |
-| **Inspect** | Keyboard packet worklists, field-level header navigation, byte workbench, packet comparison, object carving, and bidirectional stream search/export |
+| **Inspect** | Multi-artifact investigation tray, field-level header navigation, byte workbench, packet comparison, object carving, and bidirectional stream search/export |
 | **Understand** | TCP and IPv6 fragment reassembly, TLS/DTLS/QUIC metadata, protocol dissection, encrypted-session context, and an evidence-linked operator graph |
 | **Detect** | Replay-tested IDS signatures, IOC and YARA matching, DHCP/DNS/HTTP/VLAN/industrial policy checks, beaconing, scans, credential exposure, and user-defined rules |
 | **Investigate** | Critical alert review, retained attacker conversations, attack-path pivots, notebook evidence, and frozen PCAP/JSON/NDJSON case artifacts |

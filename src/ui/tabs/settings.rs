@@ -84,9 +84,9 @@ fn draw_details(f: &mut Frame, app: &App, area: Rect) {
             Line::from("1-5: top-level modes"),
             Line::from("[ / ]: local screen inside Investigate"),
             Line::from("Tab/F2: view drawer"),
-            Line::from("m: add selected packet to worklist"),
+            Line::from("m: add packet/alert  M: pin active context to tray"),
             Line::from("Enter: investigate selected packet"),
-            Line::from("w: worklist drawer / recording outside Investigate"),
+            Line::from("w: investigation tray / recording outside Investigate"),
             Line::from(",: settings  Esc: close/back"),
         ],
     };

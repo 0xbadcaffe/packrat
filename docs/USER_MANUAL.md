@@ -89,7 +89,7 @@ Dark, Soft Light, and High Contrast themes.
 1. Start capture and use Traffic > Packets.
 2. Press `/`, enter an inspection filter, and press `Enter`.
 3. Select a packet with `j`/`k`; press `m` to add it to the investigation
-   worklist or `Enter` to add it and open Investigate immediately.
+   tray or `Enter` to add it and open Investigate immediately.
 4. Open Defense > Security to review the unified Alert Center. Use `[`/`]` for
    specialist detector and sensor-health views.
 5. Use Graph to correlate hosts, flows, alerts, IOCs, credentials, and objects.
@@ -115,7 +115,7 @@ to select another tray item without returning to live capture, `w` to show
 or hide the tray, `d` to remove the active item, and `l` to return to the
 packet list.
 
-Press `=` to compare the active worklist packet with the next marked packet.
+Press `=` to compare the active tray packet with the next packet item.
 The comparison overlay omits capture time and frame number, then reports
 changed/added/removed decoded fields and the first differing byte. `Esc` closes
 the overlay without changing the active packet.
@@ -129,7 +129,7 @@ Bytes highlights the selected byte in hexadecimal and ASCII and interprets the
 same offset as unsigned and signed 8-bit data, big- and little-endian 16-bit
 data, big-endian 32-bit data, bits, ASCII, and a 16-byte entropy window. Use
 `h`/`l` for one byte, `j`/`k` for 16 bytes, `g`/`G` for the first or last byte,
-`n`/`p` for another worklist packet, and `v` to return to live packets.
+`n`/`p` for another tray item, and `v` to return to live packets.
 
 From Flow, press `s` to follow the reassembled TCP stream. Press `/` to search
 printable payload bytes, `n`/`N` to move through matches, and `e` to export exact

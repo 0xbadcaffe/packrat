@@ -41,16 +41,17 @@ pub fn draw(f: &mut Frame) {
         ]),
         ("Packets Tab", &[
             ("/",     "Start display filter"),
-            ("m",     "Add selected packet to worklist"),
-            ("w",     "Show packet worklist"),
+            ("m",     "Add selected packet or alert to tray"),
+            ("M",     "Pin active screen context to tray"),
+            ("w",     "Show investigation tray"),
             ("Enter", "Open selected packet in Investigate"),
             ("a",     "Protocol autopsy overlay"),
         ]),
         ("Investigate View", &[
             ("[/]",   "Previous / next packet screen"),
-            ("n / p", "Next / previous worklist packet"),
+            ("n / p", "Next / previous investigation item"),
             ("j / k", "Scroll current screen"),
-            ("d",     "Remove active packet from worklist"),
+            ("d",     "Remove active item from tray"),
             ("l",     "Return to live packet list"),
         ]),
         ("Hosts Tab", &[
