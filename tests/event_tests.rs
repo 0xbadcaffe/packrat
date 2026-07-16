@@ -995,6 +995,24 @@ async fn global_shift_m_pins_host_and_note_contexts() {
     assert_eq!(app.worklist.items[1], packrat_tui::app::InvestigationItem::Note(1));
 }
 
+#[test]
+fn investigation_context_resolves_alert_and_handles_expired_source() {
+    use packrat_tui::app::InvestigationItem;
+
+    let mut app = App::new_for_test();
+    app.alert_center.record(9, "IDS", "HIGH", "Probe", "detector reason");
+    app.worklist.add(InvestigationItem::Alert(1));
+    let context = app.active_investigation_context().unwrap();
+    assert!(context.available);
+    assert_eq!(context.kind, "Alert");
+    assert!(context.details.iter().any(|(label, value)| label == "Reason" && value == "detector reason"));
+
+    app.alert_center.clear();
+    let expired = app.active_investigation_context().unwrap();
+    assert!(!expired.available);
+    assert!(expired.details[0].1.contains("no longer retained"));
+}
+
 // ─── Diff tab ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]

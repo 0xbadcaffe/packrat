@@ -108,10 +108,7 @@ fn draw_worklist(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_active_view(f: &mut Frame, app: &App, area: Rect) {
     let Some(packet) = app.active_investigation_packet() else {
-        let empty = Paragraph::new("No active packet.\n\nGo to Live packets, select a packet, then press m to mark it or Enter to investigate it.")
-            .wrap(Wrap { trim: false })
-            .block(panel("Investigation"));
-        f.render_widget(empty, area);
+        draw_artifact_context(f, app, area);
         return;
     };
 
@@ -125,6 +122,42 @@ fn draw_active_view(f: &mut Frame, app: &App, area: Rect) {
         InvestigationView::Security => draw_security(f, app, packet, area),
         InvestigationView::Notes => draw_notes(f, app, packet, area),
     }
+}
+
+fn draw_artifact_context(f: &mut Frame, app: &App, area: Rect) {
+    let Some(context) = app.active_investigation_context() else {
+        f.render_widget(
+            Paragraph::new("No active investigation item.\n\nSelect context in a source view and press M to pin it.")
+                .wrap(Wrap { trim: false })
+                .block(panel("Investigation Context")),
+            area,
+        );
+        return;
+    };
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!("{}: {}", context.kind, context.title),
+            Style::default().fg(if context.available { C_CYAN() } else { C_RED() }).add_modifier(Modifier::BOLD),
+        )),
+        Line::raw(""),
+    ];
+    for (label, value) in context.details {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{label:<14}"), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
+            Span::styled(value, Style::default().fg(C_FG())),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "n/p next or previous item  d remove  M pin current source context  Alt+Left back",
+        Style::default().fg(C_FG3()),
+    )));
+    f.render_widget(
+        Paragraph::new(scrolled(lines, app.investigation_scroll, area))
+            .wrap(Wrap { trim: false })
+            .block(panel("Context Inspector")),
+        area,
+    );
 }
 
 fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {

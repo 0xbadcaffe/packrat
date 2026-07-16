@@ -102,6 +102,13 @@ selected packet, flow, host, alert, carved object, graph node, or note to pin it
 The Alert Center also accepts lowercase `m`. Duplicate items are focused rather
 than added twice, and `d` removes the active tray item.
 
+The right-side Context Inspector follows the active tray item. Packet items use
+the complete Headers, Bytes, Flow, Strings, Encrypted, Security, and Notes tool
+set. Other item types show their retained host counters, alert reason and state,
+object hash and YARA results, graph risk and evidence, or note metadata. If live
+source data ages out, the tray entry remains visible and is marked unavailable
+instead of displaying unrelated packet context.
+
 For packet items, Investigate keeps one active packet while you move between Summary, Headers,
 Bytes, Flow, Strings, Encrypted, Security, and Notes with `[`/`]`. Use `n`/`p`
 to select another tray item without returning to live capture, `w` to show
