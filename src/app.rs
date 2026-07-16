@@ -356,6 +356,8 @@ fn list_interfaces(include_simulated: bool) -> Vec<String> {
 
 pub struct App {
     pub active_tab: Tab,
+    /// Recently visited screens, newest last. Modal overlays are not included.
+    pub navigation_history: Vec<Tab>,
     pub packets: VecDeque<Packet>,
     pub filtered: Vec<usize>,
     pub selected: Option<usize>,
@@ -521,6 +523,7 @@ impl App {
         let selected_iface = iface_list.first().cloned().unwrap_or_default();
         let mut app = Self {
             active_tab: Tab::Packets,
+            navigation_history: Vec::new(),
             packets: VecDeque::new(),
             filtered: Vec::new(),
             selected: None,
@@ -2367,9 +2370,29 @@ impl App {
     }
 
     pub fn select_workspace(&mut self, workspace: Workspace) {
-        self.active_tab = workspace.home();
+        self.navigate_to(workspace.home());
         self.view_menu_open = false;
         self.view_menu_cursor = 0;
+    }
+
+    pub fn navigate_to(&mut self, destination: Tab) {
+        if destination == self.active_tab {
+            return;
+        }
+        self.navigation_history.push(self.active_tab);
+        if self.navigation_history.len() > 32 {
+            self.navigation_history.remove(0);
+        }
+        self.active_tab = destination;
+    }
+
+    pub fn navigate_back(&mut self) -> bool {
+        let Some(previous) = self.navigation_history.pop() else {
+            return false;
+        };
+        self.active_tab = previous;
+        self.view_menu_open = false;
+        true
     }
 
     pub fn open_view_menu(&mut self) {
@@ -2389,7 +2412,7 @@ impl App {
 
     pub fn activate_view_menu_selection(&mut self) {
         if let Some(view) = self.active_tab.workspace().views().get(self.view_menu_cursor) {
-            self.active_tab = *view;
+            self.navigate_to(*view);
         }
         self.view_menu_open = false;
     }
@@ -2399,7 +2422,7 @@ impl App {
         if self.active_tab.is_workspace_home() {
             return false;
         }
-        self.active_tab = self.active_tab.workspace().home();
+        self.navigate_to(self.active_tab.workspace().home());
         true
     }
 

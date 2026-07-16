@@ -220,7 +220,11 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(C_BORDER()))
             .title(Span::styled(
-                format!(" {}  [Tab/F2 views] ", app.active_tab.label()),
+                format!(
+                    " {} > {}  [Tab/F2 views]  [Alt+Left back] ",
+                    active_workspace.label(),
+                    app.active_tab.label(),
+                ),
                 Style::default().fg(C_FG2()),
             )));
     f.render_widget(tabs, area);
@@ -251,7 +255,6 @@ fn draw_workspace(f: &mut Frame, app: &App, area: Rect) {
         Tab::Workbench     => tabs::workbench::draw(f, app, area),
         Tab::OperatorGraph => tabs::operator_graph::draw(f, app, area),
         Tab::Diff          => tabs::diff::draw(f, app, area),
-        Tab::Settings      => tabs::settings::draw(f, app, area),
     }
 }
 

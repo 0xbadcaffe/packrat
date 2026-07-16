@@ -77,6 +77,5 @@ fn view_description(view: Tab) -> &'static str {
         Tab::Craft => "controlled packet construction",
         Tab::Notebook => "case notes",
         Tab::Dynamic => "runtime event timeline",
-        Tab::Settings => "themes, helpers, capture, and keys",
     }
 }
