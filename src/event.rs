@@ -183,6 +183,12 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             return false;
         }
 
+        // Pin the active screen context to the cross-workspace investigation tray.
+        if key.code == KeyCode::Char('M') {
+            app.pin_current_context();
+            return false;
+        }
+
         // Reload IOC feeds with 'I' from any tab
         if key.code == KeyCode::Char('I') {
             app.reload_ioc_feeds();
@@ -512,6 +518,7 @@ fn handle_security(app: &mut App, key: KeyEvent) {
             KeyCode::Down | KeyCode::Char('j') => { app.alert_center.next(); return; }
             KeyCode::Up | KeyCode::Char('k') => { app.alert_center.previous(); return; }
             KeyCode::Char('f') => { app.alert_center.cycle_severity_filter(); return; }
+            KeyCode::Char('m') => { app.pin_selected_alert(); return; }
             KeyCode::Enter => {
                 app.alert_center.set_selected_disposition(
                     crate::analysis::alert_center::AlertDisposition::Reviewing,

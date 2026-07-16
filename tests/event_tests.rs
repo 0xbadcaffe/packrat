@@ -461,7 +461,7 @@ async fn selected_packet_can_be_marked_and_investigated() {
     app.selected = Some(0);
 
     event::handle(&mut app, key(KeyCode::Char('m')));
-    assert_eq!(app.worklist.packet_nos, vec![1]);
+    assert_eq!(app.worklist.packet_nos(), vec![1]);
 
     app.selected = Some(1);
     event::handle(&mut app, key(KeyCode::Enter));
@@ -955,6 +955,44 @@ async fn alert_center_filter_and_navigation_are_bounded() {
     assert_eq!(app.alert_center.selected_item().unwrap().packet_no, 2);
     event::handle(&mut app, key(KeyCode::Char('j')));
     assert_eq!(app.alert_center.selected, 0);
+}
+
+#[test]
+fn investigation_tray_accepts_typed_context_without_duplicate_items() {
+    use packrat_tui::app::{InvestigationItem, InvestigationTray};
+
+    let mut tray = InvestigationTray::default();
+    assert!(tray.add(InvestigationItem::Host("192.0.2.10".into())));
+    assert!(tray.add(InvestigationItem::Stream("tcp:1".into())));
+    assert!(tray.add(InvestigationItem::Alert(7)));
+    assert!(tray.add(InvestigationItem::Object(3)));
+    assert!(tray.add(InvestigationItem::GraphNode("host:192.0.2.10".into())));
+    assert!(tray.add(InvestigationItem::Note(4)));
+    assert!(!tray.add(InvestigationItem::Alert(7)));
+    assert_eq!(tray.items.len(), 6);
+    assert_eq!(tray.active, Some(2));
+}
+
+#[tokio::test]
+async fn alert_center_m_pins_selected_alert_to_investigation_tray() {
+    let mut app = sec_app();
+    app.alert_center.record(9, "IDS", "HIGH", "Probe", "detail");
+    event::handle(&mut app, key(KeyCode::Char('m')));
+    assert_eq!(app.worklist.items, vec![packrat_tui::app::InvestigationItem::Alert(1)]);
+}
+
+#[tokio::test]
+async fn global_shift_m_pins_host_and_note_contexts() {
+    let mut app = App::new_for_test();
+    app.inject_packet(packet(1));
+    app.active_tab = Tab::Hosts;
+    event::handle(&mut app, shift('M'));
+    assert!(matches!(app.worklist.items[0], packrat_tui::app::InvestigationItem::Host(_)));
+
+    app.notebook.add("investigate", None);
+    app.active_tab = Tab::Notebook;
+    event::handle(&mut app, shift('M'));
+    assert_eq!(app.worklist.items[1], packrat_tui::app::InvestigationItem::Note(1));
 }
 
 // ─── Diff tab ─────────────────────────────────────────────────────────────────

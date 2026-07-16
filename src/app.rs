@@ -166,49 +166,88 @@ impl InvestigationView {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvestigationItem {
+    Packet(u64),
+    Stream(String),
+    Host(String),
+    Alert(u64),
+    Object(u64),
+    GraphNode(String),
+    Note(u64),
+}
+
+impl InvestigationItem {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Packet(no) => format!("Packet #{no}"),
+            Self::Stream(id) => format!("Stream {id}"),
+            Self::Host(address) => format!("Host {address}"),
+            Self::Alert(id) => format!("Alert #{id}"),
+            Self::Object(id) => format!("Object #{id}"),
+            Self::GraphNode(id) => format!("Graph {id}"),
+            Self::Note(id) => format!("Note #{id}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
-pub struct PacketWorklist {
-    pub packet_nos: Vec<u64>,
+pub struct InvestigationTray {
+    pub items: Vec<InvestigationItem>,
     pub active: Option<usize>,
     pub open: bool,
 }
 
-impl PacketWorklist {
-    pub fn add(&mut self, packet_no: u64) -> bool {
-        if let Some(index) = self.packet_nos.iter().position(|no| *no == packet_no) {
+impl InvestigationTray {
+    pub fn add(&mut self, item: InvestigationItem) -> bool {
+        if let Some(index) = self.items.iter().position(|existing| *existing == item) {
             self.active = Some(index);
             return false;
         }
-        self.packet_nos.push(packet_no);
-        self.active = Some(self.packet_nos.len() - 1);
+        self.items.push(item);
+        self.active = Some(self.items.len() - 1);
         true
     }
 
-    pub fn remove_active(&mut self) -> Option<u64> {
+    pub fn add_packet(&mut self, packet_no: u64) -> bool {
+        self.add(InvestigationItem::Packet(packet_no))
+    }
+
+    pub fn remove_active(&mut self) -> Option<InvestigationItem> {
         let index = self.active?;
-        if index >= self.packet_nos.len() { return None; }
-        let removed = self.packet_nos.remove(index);
-        self.active = if self.packet_nos.is_empty() {
+        if index >= self.items.len() { return None; }
+        let removed = self.items.remove(index);
+        self.active = if self.items.is_empty() {
             None
         } else {
-            Some(index.min(self.packet_nos.len() - 1))
+            Some(index.min(self.items.len() - 1))
         };
         Some(removed)
     }
 
     pub fn active_packet_no(&self) -> Option<u64> {
-        self.active.and_then(|index| self.packet_nos.get(index).copied())
+        match self.active.and_then(|index| self.items.get(index)) {
+            Some(InvestigationItem::Packet(no)) => Some(*no),
+            _ => None,
+        }
+    }
+
+    pub fn packet_nos(&self) -> Vec<u64> {
+        self.items.iter().filter_map(|item| match item {
+            InvestigationItem::Packet(no) => Some(*no),
+            _ => None,
+        }).collect()
     }
 
     pub fn next(&mut self) {
-        if self.packet_nos.is_empty() { return; }
-        self.active = Some(self.active.map(|index| (index + 1) % self.packet_nos.len()).unwrap_or(0));
+        if self.items.is_empty() { return; }
+        self.active = Some(self.active.map(|index| (index + 1) % self.items.len()).unwrap_or(0));
     }
 
     pub fn prev(&mut self) {
-        if self.packet_nos.is_empty() { return; }
+        if self.items.is_empty() { return; }
         self.active = Some(self.active
-            .map(|index| if index == 0 { self.packet_nos.len() - 1 } else { index - 1 })
+            .map(|index| if index == 0 { self.items.len() - 1 } else { index - 1 })
             .unwrap_or(0));
     }
 }
@@ -492,7 +531,7 @@ pub struct App {
     /// Workspace-local view drawer state.
     pub view_menu_open:       bool,
     pub view_menu_cursor:     usize,
-    pub worklist:             PacketWorklist,
+    pub worklist:             InvestigationTray,
     pub investigation_view:   InvestigationView,
     pub investigation_scroll: usize,
     pub header_cursor:        usize,
@@ -652,7 +691,7 @@ impl App {
             theme_picker_cursor:  0,
             view_menu_open:       false,
             view_menu_cursor:     0,
-            worklist:             PacketWorklist::default(),
+            worklist:             InvestigationTray::default(),
             investigation_view:   InvestigationView::Summary,
             investigation_scroll: 0,
             header_cursor:        0,
@@ -1879,7 +1918,7 @@ impl App {
         self.packets.clear();
         self.filtered.clear();
         self.selected = None;
-        self.worklist = PacketWorklist::default();
+        self.worklist = InvestigationTray::default();
         self.investigation_scroll = 0;
         self.reset_header_focus();
         self.total_bytes = 0;
@@ -1981,7 +2020,7 @@ impl App {
     pub fn active_investigation_packet(&self) -> Option<&Packet> {
         self.worklist.active_packet_no()
             .and_then(|packet_no| self.packet_by_no(packet_no))
-            .or_else(|| self.selected_packet())
+            .or_else(|| self.worklist.items.is_empty().then(|| self.selected_packet()).flatten())
     }
 
     pub fn active_investigation_stream(&self) -> Option<&ReassembledStream> {
@@ -2043,20 +2082,22 @@ impl App {
     }
 
     pub fn open_packet_comparison(&mut self) {
-        let Some(active_index) = self.worklist.active else {
-            self.set_status("No active worklist packet to compare");
+        let Some(active_packet_no) = self.worklist.active_packet_no() else {
+            self.set_status("Select a packet in the investigation tray to compare");
             return;
         };
-        if self.worklist.packet_nos.len() < 2 {
+        let packet_nos = self.worklist.packet_nos();
+        if packet_nos.len() < 2 {
             self.set_status("Add at least two packets to the worklist for comparison");
             return;
         }
-        let target_index = (active_index + 1) % self.worklist.packet_nos.len();
-        let Some(left) = self.worklist.packet_nos.get(active_index).and_then(|no| self.packet_by_no(*no)) else {
+        let active_index = packet_nos.iter().position(|no| *no == active_packet_no).unwrap_or(0);
+        let target_index = (active_index + 1) % packet_nos.len();
+        let Some(left) = self.packet_by_no(active_packet_no) else {
             self.set_status("Active worklist packet is no longer available");
             return;
         };
-        let Some(right) = self.worklist.packet_nos.get(target_index).and_then(|no| self.packet_by_no(*no)) else {
+        let Some(right) = packet_nos.get(target_index).and_then(|no| self.packet_by_no(*no)) else {
             self.set_status("Comparison worklist packet is no longer available");
             return;
         };
@@ -2068,7 +2109,7 @@ impl App {
             self.set_status("No packet selected to add to worklist");
             return;
         };
-        let added = self.worklist.add(packet_no);
+        let added = self.worklist.add_packet(packet_no);
         self.set_status(if added {
             format!("Added packet #{packet_no} to worklist")
         } else {
@@ -2076,12 +2117,78 @@ impl App {
         });
     }
 
+    pub fn pin_investigation_item(&mut self, item: InvestigationItem) -> bool {
+        let label = item.label();
+        let added = self.worklist.add(item);
+        self.set_status(if added {
+            format!("Pinned {label} to investigation tray")
+        } else {
+            format!("{label} is already in the investigation tray")
+        });
+        added
+    }
+
+    pub fn pin_selected_alert(&mut self) -> bool {
+        let Some(id) = self.alert_center.selected_item().map(|item| item.id) else {
+            self.set_status("No alert selected to pin");
+            return false;
+        };
+        self.pin_investigation_item(InvestigationItem::Alert(id))
+    }
+
+    pub fn pin_current_context(&mut self) -> bool {
+        let item = match self.active_tab {
+            Tab::Packets => self.selected_packet()
+                .map(|packet| InvestigationItem::Packet(packet.no)),
+            Tab::Investigate => self.active_investigation_packet()
+                .map(|packet| InvestigationItem::Packet(packet.no)),
+            Tab::Flows => {
+                let sorted = self.flow_tracker.sorted_flows(&self.flows_sort);
+                self.flows_selected.and_then(|index| sorted.get(index)).map(|flow| {
+                    InvestigationItem::Stream(format!(
+                        "{}:{} <-> {}:{} ({})",
+                        flow.key.ep1.0, flow.key.ep1.1, flow.key.ep2.0, flow.key.ep2.1, flow.key.proto,
+                    ))
+                })
+            }
+            Tab::Hosts => {
+                let hosts = if self.hosts_search.is_empty() {
+                    self.hosts.all()
+                } else {
+                    self.hosts.search(&self.hosts_search)
+                };
+                hosts.get(self.hosts_scroll).map(|host| InvestigationItem::Host(host.ip.clone()))
+            }
+            Tab::Security => self.alert_center.selected_item()
+                .map(|alert| InvestigationItem::Alert(alert.id)),
+            Tab::Objects if self.objects_subtab == ObjectsSubTab::Objects => self.carved_objects
+                .get(self.objects_scroll).map(|object| InvestigationItem::Object(object.id)),
+            Tab::OperatorGraph => self.graph_ui.selected_node
+                .and_then(|id| self.operator_graph.get_node(id))
+                .map(|node| InvestigationItem::GraphNode(node.key.clone())),
+            Tab::Notebook => {
+                let notes = if self.notebook_search.is_empty() {
+                    self.notebook.all().iter().collect::<Vec<_>>()
+                } else {
+                    self.notebook.search(&self.notebook_search)
+                };
+                notes.get(self.notebook_scroll).map(|note| InvestigationItem::Note(note.id))
+            }
+            _ => None,
+        };
+        let Some(item) = item else {
+            self.set_status("No investigation context is selected in this view");
+            return false;
+        };
+        self.pin_investigation_item(item)
+    }
+
     pub fn open_selected_packet_investigation(&mut self) {
         let Some(packet_no) = self.selected_packet().map(|packet| packet.no) else {
             self.set_status("No packet selected to investigate");
             return;
         };
-        self.worklist.add(packet_no);
+        self.worklist.add_packet(packet_no);
         self.active_tab = Tab::Investigate;
         self.investigation_scroll = 0;
         self.reset_header_focus();
@@ -2109,7 +2216,7 @@ impl App {
 
     pub fn remove_active_worklist_packet(&mut self) {
         match self.worklist.remove_active() {
-            Some(packet_no) => self.set_status(format!("Removed packet #{packet_no} from worklist")),
+            Some(item) => self.set_status(format!("Removed {} from investigation tray", item.label())),
             None => self.set_status("Worklist is empty"),
         }
         self.reset_header_focus();

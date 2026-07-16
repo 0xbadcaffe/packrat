@@ -95,12 +95,17 @@ Dark, Soft Light, and High Contrast themes.
 5. Use Graph to correlate hosts, flows, alerts, IOCs, credentials, and objects.
 6. Press `X` to write a case bundle for handoff.
 
-## Packet Investigation Worklist
+## Investigation Tray
 
-Investigate keeps one active packet while you move between Summary, Headers,
+The investigation tray retains typed context across workspaces. Press `M` on a
+selected packet, flow, host, alert, carved object, graph node, or note to pin it.
+The Alert Center also accepts lowercase `m`. Duplicate items are focused rather
+than added twice, and `d` removes the active tray item.
+
+For packet items, Investigate keeps one active packet while you move between Summary, Headers,
 Bytes, Flow, Strings, Encrypted, Security, and Notes with `[`/`]`. Use `n`/`p`
-to select another marked packet without returning to live capture, `w` to show
-or hide the worklist, `d` to remove the active packet, and `l` to return to the
+to select another tray item without returning to live capture, `w` to show
+or hide the tray, `d` to remove the active item, and `l` to return to the
 packet list.
 
 Press `=` to compare the active worklist packet with the next marked packet.

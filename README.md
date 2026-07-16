@@ -42,8 +42,9 @@ Packrat combines capabilities that normally require several disconnected tools:
 | **Investigate** | Critical alert review, retained attacker conversations, attack-path pivots, notebook evidence, and frozen PCAP/JSON/NDJSON case artifacts |
 | **Respond** | Monitor, preview, approved manual, or policy-gated automatic containment with expiring and audited Linux nftables actions |
 
-This is not a collection of independent tabs. A packet can be added to an
-investigation worklist, followed through its conversation and stream, compared
+This is not a collection of independent tabs. Packets, streams, hosts, alerts,
+objects, graph nodes, and notes can be pinned to one investigation tray. A packet
+can be followed through its conversation and stream, compared
 with related traffic, tied to a detection, and retained as case evidence without
 losing the active capture context.
 
