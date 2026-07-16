@@ -186,12 +186,14 @@ fn ensure_nftables_layout() -> Result<(), String> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TrafficLatch {
     pub mode: LatchMode,
     pub expires_seconds: u64,
     pub protected_addresses: Vec<IpAddr>,
     pub actions: Vec<LatchAction>,
+    pub max_active_blocks: usize,
+    pub emergency_stop: bool,
 }
 
 impl Default for TrafficLatch {
@@ -201,6 +203,8 @@ impl Default for TrafficLatch {
             expires_seconds: 900,
             protected_addresses: Vec::new(),
             actions: Vec::new(),
+            max_active_blocks: 32,
+            emergency_stop: false,
         }
     }
 }
@@ -231,6 +235,14 @@ impl TrafficLatch {
                 LatchMode::Automatic if !automatic_allowed => (
                     LatchStatus::PendingApproval,
                     format!("automatic gate not satisfied; {}", preview(address, self.expires_seconds)),
+                ),
+                LatchMode::Automatic if self.emergency_stop => (
+                    LatchStatus::Rejected,
+                    "Guard kill switch is engaged; no firewall change".into(),
+                ),
+                LatchMode::Automatic if self.applied_count() >= self.max_active_blocks => (
+                    LatchStatus::Rejected,
+                    format!("Guard maximum of {} active blocks reached", self.max_active_blocks),
                 ),
                 LatchMode::Automatic => {
                     match backend.block(&LatchRequest { address, expires_seconds: self.expires_seconds }) {
@@ -275,6 +287,48 @@ impl TrafficLatch {
 
     pub fn clear_session(&mut self) {
         self.actions.clear();
+    }
+
+    pub fn applied_count(&self) -> usize {
+        self.actions.iter().filter(|action| action.status == LatchStatus::Applied).count()
+    }
+
+    pub fn engage_kill_switch(&mut self) {
+        self.emergency_stop = true;
+        self.mode = LatchMode::Monitor;
+    }
+
+    pub fn clear_kill_switch(&mut self) {
+        self.emergency_stop = false;
+    }
+
+    /// Evaluate Guard policy without calling any containment backend.
+    pub fn simulate_incident(&self, incident: &Incident, automatic_allowed: bool) -> LatchAction {
+        let address = incident.attacker.parse::<IpAddr>().ok();
+        let (status, detail) = match address {
+            None => (LatchStatus::Rejected, "attacker is not a valid IP address".into()),
+            Some(address) if !is_blockable(address) => (LatchStatus::Rejected, "special-purpose address is protected".into()),
+            Some(address) if self.protected_addresses.contains(&address) => (LatchStatus::Rejected, "address is on the operator protection list".into()),
+            Some(_) if self.emergency_stop => (LatchStatus::Rejected, "Guard kill switch is engaged".into()),
+            Some(_) if self.applied_count() >= self.max_active_blocks => (
+                LatchStatus::Rejected,
+                format!("Guard maximum of {} active blocks reached", self.max_active_blocks),
+            ),
+            Some(address) if !automatic_allowed => (
+                LatchStatus::PendingApproval,
+                format!("automatic gate not satisfied; {}", preview(address, self.expires_seconds)),
+            ),
+            Some(address) => (LatchStatus::Previewed, preview(address, self.expires_seconds)),
+        };
+        LatchAction {
+            incident_id: incident.id,
+            address,
+            mode: LatchMode::Preview,
+            status,
+            expires_seconds: self.expires_seconds,
+            detail,
+            created_at: now(),
+        }
     }
 }
 
@@ -401,6 +455,37 @@ mod tests {
         let duplicate = latch.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, true);
         assert_eq!(duplicate.status, LatchStatus::Failed);
         assert_eq!(latch.actions.len(), 1);
+    }
+
+    #[test]
+    fn response_simulation_never_calls_backend_and_reports_policy_gate() {
+        let latch = TrafficLatch { expires_seconds: 120, ..Default::default() };
+        let pending = latch.simulate_incident(&incident("203.0.113.9"), false);
+        assert_eq!(pending.status, LatchStatus::PendingApproval);
+        let allowed = latch.simulate_incident(&incident("203.0.113.9"), true);
+        assert_eq!(allowed.status, LatchStatus::Previewed);
+        assert!(allowed.detail.contains("120 seconds"));
+    }
+
+    #[test]
+    fn guard_kill_switch_forces_monitor_and_rejects_future_actions() {
+        let mut latch = TrafficLatch { mode: LatchMode::Automatic, ..Default::default() };
+        latch.engage_kill_switch();
+        assert_eq!(latch.mode, LatchMode::Monitor);
+        assert!(latch.emergency_stop);
+        assert_eq!(latch.simulate_incident(&incident("203.0.113.9"), true).status, LatchStatus::Rejected);
+    }
+
+    #[test]
+    fn guard_rejects_actions_at_configured_block_limit() {
+        let mut latch = TrafficLatch {
+            mode: LatchMode::Automatic,
+            max_active_blocks: 0,
+            ..Default::default()
+        };
+        let action = latch.on_incident_with_auto_gate(&incident("203.0.113.9"), &ForbiddenLatch, true);
+        assert_eq!(action.status, LatchStatus::Rejected);
+        assert!(action.detail.contains("maximum"));
     }
 
     #[cfg(unix)]
