@@ -90,8 +90,8 @@ Dark, Soft Light, and High Contrast themes.
 2. Press `/`, enter an inspection filter, and press `Enter`.
 3. Select a packet with `j`/`k`; press `m` to add it to the investigation
    worklist or `Enter` to add it and open Investigate immediately.
-4. Open Defense > Security and use `[`/`]` to move through detector and health
-   views.
+4. Open Defense > Security to review the unified Alert Center. Use `[`/`]` for
+   specialist detector and sensor-health views.
 5. Use Graph to correlate hosts, flows, alerts, IOCs, credentials, and objects.
 6. Press `X` to write a case bundle for handoff.
 
@@ -175,6 +175,27 @@ findings remain in Defense without interrupting the operator.
 Acknowledgement removes the active warning but preserves incident history.
 EvidenceVault also freezes each critical incident once as PCAP, JSON metadata,
 and NDJSON beneath the platform data directory's `packrat/evidence` folder.
+
+## Alert Center
+
+Defense > Security opens on the Alert Center. It combines IDS, IOC, user-rule,
+credential-exposure, and VLAN findings without discarding their source data.
+
+| Key | Action |
+|---|---|
+| `j` / `k` | Select a finding |
+| `f` | Cycle all, critical, high, medium, and low severity filters |
+| `Enter` | Mark the selected finding as under review |
+| `C` | Confirm the finding |
+| `z` | Mark the finding benign |
+| `K` | Record that containment was completed |
+| `x` | Close the finding |
+| `a` | Return to Alert Center from a specialist view |
+| `e` | Open the raw IDS findings view |
+
+These dispositions are operator review state; they do not silently alter rules
+or firewall policy. Critical incidents continue to use the mandatory red review
+overlay and TrafficLatch policy gates described below.
 
 ## TrafficLatch Containment
 

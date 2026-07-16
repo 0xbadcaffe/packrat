@@ -8,7 +8,7 @@
 //! every important per-tab action key.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use packrat_tui::app::{self, App, CliAction, InvestigationView, StartupMode, StartupOptions};
+use packrat_tui::app::{self, App, CliAction, InvestigationView, SecuritySubTab, StartupMode, StartupOptions};
 use packrat_tui::analysis::traffic_latch::{LatchMode, LatchStatus};
 use packrat_tui::event;
 use packrat_tui::net::packet::Packet;
@@ -879,7 +879,8 @@ fn sec_app() -> App {
 }
 
 #[rstest]
-#[case(KeyCode::Char('a'), "Ids")]
+#[case(KeyCode::Char('a'), "Alerts")]
+#[case(KeyCode::Char('e'), "Ids")]
 #[case(KeyCode::Char('c'), "Credentials")]
 #[case(KeyCode::Char('o'), "OsFingerprint")]
 #[case(KeyCode::Char('w'), "ArpWatch")]
@@ -901,6 +902,7 @@ async fn security_subtab_keys(#[case] code: KeyCode, #[case] expected_name: &str
 #[tokio::test]
 async fn security_scroll_j_increments() {
     let mut app = sec_app();
+    app.security_tab = SecuritySubTab::Ids;
     app.security_scroll = 0;
     event::handle(&mut app, key(KeyCode::Char('j')));
     assert_eq!(app.security_scroll, 1);
@@ -909,6 +911,7 @@ async fn security_scroll_j_increments() {
 #[tokio::test]
 async fn security_scroll_k_decrements() {
     let mut app = sec_app();
+    app.security_tab = SecuritySubTab::Ids;
     app.security_scroll = 5;
     event::handle(&mut app, key(KeyCode::Char('k')));
     assert_eq!(app.security_scroll, 4);
@@ -917,9 +920,41 @@ async fn security_scroll_k_decrements() {
 #[tokio::test]
 async fn security_g_jumps_to_top() {
     let mut app = sec_app();
+    app.security_tab = SecuritySubTab::Ids;
     app.security_scroll = 100;
     event::handle(&mut app, key(KeyCode::Char('g')));
     assert_eq!(app.security_scroll, 0);
+}
+
+#[tokio::test]
+async fn alert_center_collects_findings_and_tracks_review_state() {
+    let mut app = sec_app();
+    app.inject_packet(critical_packet());
+    assert!(!app.alert_center.items.is_empty());
+    assert_eq!(app.alert_center.items[0].source, "IDS");
+
+    app.alert_overlay_open = false;
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert_eq!(
+        app.alert_center.selected_item().unwrap().disposition,
+        packrat_tui::analysis::alert_center::AlertDisposition::Reviewing,
+    );
+    event::handle(&mut app, key(KeyCode::Char('C')));
+    assert_eq!(
+        app.alert_center.selected_item().unwrap().disposition,
+        packrat_tui::analysis::alert_center::AlertDisposition::Confirmed,
+    );
+}
+
+#[tokio::test]
+async fn alert_center_filter_and_navigation_are_bounded() {
+    let mut app = sec_app();
+    app.alert_center.record(1, "IDS", "LOW", "low", "detail");
+    app.alert_center.record(2, "RULE", "CRITICAL", "critical", "detail");
+    event::handle(&mut app, key(KeyCode::Char('f')));
+    assert_eq!(app.alert_center.selected_item().unwrap().packet_no, 2);
+    event::handle(&mut app, key(KeyCode::Char('j')));
+    assert_eq!(app.alert_center.selected, 0);
 }
 
 // ─── Diff tab ─────────────────────────────────────────────────────────────────
