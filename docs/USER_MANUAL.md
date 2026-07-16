@@ -209,6 +209,20 @@ These dispositions are operator review state; they do not silently alter rules
 or firewall policy. Critical incidents continue to use the mandatory red review
 overlay and TrafficLatch policy gates described below.
 
+### Watch and Triage modes
+
+Open Settings > Automation to cycle these deterministic modes:
+
+| Mode | Behavior |
+|---|---|
+| `Off` | Record findings for manual review |
+| `Watch` | Automatically pin new high and critical findings to the investigation tray |
+| `Triage` | Watch behavior plus severity-based priority and source-specific next-step recommendations |
+
+Recommendations are fixed local policy text based on finding source and
+severity. There is no AI/LLM inference, external analysis request, or firewall
+action in Watch or Triage mode.
+
 ## TrafficLatch Containment
 
 TrafficLatch is `monitor` by default and does not change firewall policy. Linux

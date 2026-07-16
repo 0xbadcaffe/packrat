@@ -449,8 +449,36 @@ async fn settings_enter_cycles_latch_mode_from_defense_section() {
     event::handle(&mut app, key(KeyCode::Char('j')));
     event::handle(&mut app, key(KeyCode::Char('j')));
     event::handle(&mut app, key(KeyCode::Char('j')));
+    event::handle(&mut app, key(KeyCode::Char('j')));
     event::handle(&mut app, key(KeyCode::Enter));
     assert_eq!(app.traffic_latch.mode, LatchMode::Preview);
+}
+
+#[tokio::test]
+async fn settings_cycles_alert_automation_without_enabling_containment() {
+    let mut app = App::new_for_test();
+    event::handle(&mut app, key(KeyCode::Char(',')));
+    for _ in 0..3 {
+        event::handle(&mut app, key(KeyCode::Char('j')));
+    }
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert_eq!(
+        app.alert_center.automation_mode,
+        packrat_tui::analysis::alert_center::AutomationMode::Watch,
+    );
+    assert_eq!(app.traffic_latch.mode, LatchMode::Monitor);
+}
+
+#[test]
+fn watch_mode_auto_pins_only_high_priority_alerts() {
+    let mut app = App::new_for_test();
+    app.alert_center.automation_mode = packrat_tui::analysis::alert_center::AutomationMode::Watch;
+    app.alert_center.record(1, "IDS", "LOW", "low", "detail");
+    app.alert_center.record(2, "IDS", "HIGH", "high", "detail");
+    for id in app.alert_center.drain_pending_pins() {
+        app.worklist.add(packrat_tui::app::InvestigationItem::Alert(id));
+    }
+    assert_eq!(app.worklist.items, vec![packrat_tui::app::InvestigationItem::Alert(2)]);
 }
 
 #[tokio::test]
