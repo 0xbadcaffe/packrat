@@ -11,6 +11,7 @@ use crate::tabs::{Tab, Workspace};
 use crate::ui::theme::*;
 
 pub mod autopsy_overlay;
+pub mod ascii;
 mod helpers;
 mod help;
 mod iface_picker;

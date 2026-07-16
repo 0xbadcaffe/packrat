@@ -49,10 +49,12 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
                 ]),
             ]
         } else {
-            vec![
-                Line::raw(""),
-                Line::from(vec![Span::styled("  waiting for packets…", Style::default().fg(C_FG3()))]),
-            ]
+            let mut lines = crate::ui::ascii::EMPTY_CAPTURE.iter()
+                .map(|line| Line::from(Span::styled(*line, Style::default().fg(C_CYAN()))))
+                .collect::<Vec<_>>();
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled("  waiting for packets...", Style::default().fg(C_FG3()))));
+            lines
         };
         f.render_widget(Paragraph::new(msg).style(Style::default().bg(C_BG())), area);
         return;
