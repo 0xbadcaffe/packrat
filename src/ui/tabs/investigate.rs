@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap},
 };
 
-use crate::app::{App, InvestigationView};
+use crate::app::{App, InvestigationItem, InvestigationView};
 use crate::analysis::packet_fields::PacketField;
 use crate::analysis::stream::ReassembledStream;
 use crate::model::evidence::{EvidenceRef, PacketRef};
@@ -43,9 +43,14 @@ fn draw_context_header(f: &mut Frame, app: &App, area: Rect) {
             pkt.dst,
             pkt.length,
             app.worklist.active.map(|index| index + 1).unwrap_or(0),
-            app.worklist.packet_nos.len(),
+            app.worklist.items.len(),
         )
-    }).unwrap_or_else(|| " No packet selected  Add from Live with m, open with Enter ".into());
+    }).unwrap_or_else(|| {
+        app.worklist.active
+            .and_then(|index| app.worklist.items.get(index))
+            .map(|item| format!(" {} ", item.label()))
+            .unwrap_or_else(|| " No item selected  Pin from a source view with m ".into())
+    });
 
     let mut spans = vec![Span::styled(title, Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD))];
     let navigation = if app.investigation_view == InvestigationView::Bytes {
@@ -66,10 +71,13 @@ fn draw_context_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_worklist(f: &mut Frame, app: &App, area: Rect) {
-    let items: Vec<ListItem> = app.worklist.packet_nos.iter().enumerate().map(|(index, packet_no)| {
+    let items: Vec<ListItem> = app.worklist.items.iter().enumerate().map(|(index, item)| {
         let selected = app.worklist.active == Some(index);
-        let packet = app.packet_by_no(*packet_no);
-        let label = packet.map(packet_label).unwrap_or_else(|| format!("#{packet_no} missing"));
+        let label = match item {
+            InvestigationItem::Packet(packet_no) => app.packet_by_no(*packet_no)
+                .map(packet_label).unwrap_or_else(|| format!("#{packet_no} missing")),
+            _ => item.label(),
+        };
         let style = if selected {
             Style::default().fg(C_BG()).bg(C_CYAN()).add_modifier(Modifier::BOLD)
         } else {
@@ -83,7 +91,7 @@ fn draw_worklist(f: &mut Frame, app: &App, area: Rect) {
 
     let content = if items.is_empty() {
         vec![ListItem::new(Line::from(vec![
-            Span::styled("No packets marked.", Style::default().fg(C_FG3())),
+            Span::styled("No investigation items pinned.", Style::default().fg(C_FG3())),
         ]))]
     } else {
         items
@@ -93,7 +101,7 @@ fn draw_worklist(f: &mut Frame, app: &App, area: Rect) {
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
             .border_style(Style::default().fg(if app.worklist.open { C_CYAN() } else { C_BORDER() }))
-            .title(Span::styled(" Worklist ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))))
+            .title(Span::styled(" Investigation Tray ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))))
         .style(Style::default().bg(C_BG()));
     f.render_widget(list, area);
 }
@@ -134,7 +142,7 @@ fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
         Line::raw(""),
         Line::from(vec![Span::styled("Context", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))]),
         Line::from(format!("Visible packets: {} / total {}", app.filtered.len(), app.packets.len())),
-        Line::from(format!("Worklist packets: {}", app.worklist.packet_nos.len())),
+        Line::from(format!("Investigation items: {}", app.worklist.items.len())),
     ];
     f.render_widget(Paragraph::new(scrolled(lines, app.investigation_scroll, area)).block(panel("Summary")).wrap(Wrap { trim: false }), area);
 }
