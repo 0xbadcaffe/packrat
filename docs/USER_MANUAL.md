@@ -67,6 +67,10 @@ The top bar contains five workspaces. Press `1` through `5` to open their home
 views. Press `Tab` or `F2` to open the current workspace's view drawer, and
 `Esc` to return from a detail view to its workspace home.
 
+The navigation header shows `Workspace > Screen`. Press `Alt+Left` to return
+through recently visited screens, `Ctrl+P` to open the command palette, and `,`
+to open Settings as a global window without leaving the current investigation.
+
 | Key | Workspace | Included views |
 |---|---|---|
 | `1` | Traffic | Packets, Flows, Hosts, Encrypted |

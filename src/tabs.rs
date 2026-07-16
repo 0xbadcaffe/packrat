@@ -20,7 +20,6 @@ pub enum Tab {
     Workbench,
     OperatorGraph,
     Diff,
-    Settings,
 }
 
 /// Top-level investigation workspaces. Individual views remain lightweight
@@ -46,7 +45,7 @@ const INSPECT_VIEWS: &[Tab] = &[
 ];
 const DEFENSE_VIEWS: &[Tab] = &[Tab::Security, Tab::Rules, Tab::OperatorGraph];
 const ACTION_VIEWS: &[Tab] = &[Tab::Scanner, Tab::Traceroute, Tab::Craft];
-const CASE_VIEWS: &[Tab] = &[Tab::Notebook, Tab::Dynamic, Tab::Settings];
+const CASE_VIEWS: &[Tab] = &[Tab::Notebook, Tab::Dynamic];
 
 impl Workspace {
     pub const COUNT: usize = 5;
@@ -97,7 +96,7 @@ impl Workspace {
 }
 
 impl Tab {
-    pub const COUNT: usize = 20;
+    pub const COUNT: usize = 19;
 
     pub fn index(&self) -> usize {
         match self {
@@ -120,7 +119,6 @@ impl Tab {
             Tab::Workbench     => 16,
             Tab::OperatorGraph => 17,
             Tab::Diff          => 18,
-            Tab::Settings      => 19,
         }
     }
 
@@ -145,7 +143,6 @@ impl Tab {
             16 => Tab::Workbench,
             17 => Tab::OperatorGraph,
             18 => Tab::Diff,
-            19 => Tab::Settings,
             _  => Tab::Packets,
         }
     }
@@ -171,7 +168,6 @@ impl Tab {
             Tab::Workbench     => "Workbench",
             Tab::OperatorGraph => "Graph",
             Tab::Diff          => "Diff",
-            Tab::Settings      => "Settings",
         }
     }
 
@@ -187,7 +183,7 @@ impl Tab {
             | Tab::Diff => Workspace::Inspect,
             Tab::Security | Tab::Rules | Tab::OperatorGraph => Workspace::Defense,
             Tab::Scanner | Tab::Traceroute | Tab::Craft => Workspace::Actions,
-            Tab::Notebook | Tab::Dynamic | Tab::Settings => Workspace::Case,
+            Tab::Notebook | Tab::Dynamic => Workspace::Case,
         }
     }
 

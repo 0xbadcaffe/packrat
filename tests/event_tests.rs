@@ -29,6 +29,10 @@ fn shift(c: char) -> Event {
     Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT))
 }
 
+fn alt(code: KeyCode) -> Event {
+    Event::Key(KeyEvent::new(code, KeyModifiers::ALT))
+}
+
 fn packet(no: u64) -> Packet {
     Packet {
         no,
@@ -368,6 +372,31 @@ async fn escape_returns_to_workspace_home() {
     app.active_tab = Tab::Objects;
     event::handle(&mut app, key(KeyCode::Esc));
     assert_eq!(app.active_tab, Workspace::Inspect.home());
+}
+
+#[tokio::test]
+async fn alt_left_returns_to_previous_screen_across_workspaces() {
+    let mut app = App::new_for_test();
+    event::handle(&mut app, key(KeyCode::Char('3')));
+    event::handle(&mut app, key(KeyCode::Char('N')));
+    assert_eq!(app.active_tab, Tab::Notebook);
+
+    event::handle(&mut app, alt(KeyCode::Left));
+    assert_eq!(app.active_tab, Tab::Security);
+    event::handle(&mut app, alt(KeyCode::Left));
+    assert_eq!(app.active_tab, Tab::Packets);
+}
+
+#[test]
+fn navigation_history_is_bounded_and_ignores_current_screen() {
+    let mut app = App::new_for_test();
+    app.navigate_to(Tab::Packets);
+    assert!(app.navigation_history.is_empty());
+
+    for index in 0..40 {
+        app.navigate_to(if index % 2 == 0 { Tab::Flows } else { Tab::Packets });
+    }
+    assert_eq!(app.navigation_history.len(), 32);
 }
 
 #[rstest]
@@ -1083,7 +1112,6 @@ async fn objects_g_resets_all_scrolls() {
 #[case(Tab::Workbench)]
 #[case(Tab::OperatorGraph)]
 #[case(Tab::Diff)]
-#[case(Tab::Settings)]
 fn tab_index_roundtrip(#[case] tab: Tab) {
     let idx = tab.index();
     assert_eq!(Tab::from_index(idx), tab);
@@ -1091,7 +1119,8 @@ fn tab_index_roundtrip(#[case] tab: Tab) {
 
 #[test]
 fn tab_count_matches_variants() {
-    assert_eq!(Tab::COUNT, 20);
+    assert_eq!(Tab::COUNT, 19);
+    assert_eq!(Workspace::Case.views(), &[Tab::Notebook, Tab::Dynamic]);
 }
 
 // ─── Global search palette ────────────────────────────────────────────────────
@@ -1100,6 +1129,13 @@ fn tab_count_matches_variants() {
 async fn question_mark_opens_search() {
     let mut app = App::new_for_test();
     event::handle(&mut app, key(KeyCode::Char('?')));
+    assert!(app.search_open);
+}
+
+#[tokio::test]
+async fn ctrl_p_opens_command_palette() {
+    let mut app = App::new_for_test();
+    event::handle(&mut app, ctrl('p'));
     assert!(app.search_open);
 }
 

@@ -103,6 +103,14 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
+    if !in_text_mode
+        && key.code == KeyCode::Left
+        && key.modifiers.contains(KeyModifiers::ALT)
+    {
+        app.navigate_back();
+        return false;
+    }
+
     if !in_text_mode && key.code == KeyCode::Esc && app.return_to_workspace_home() {
         return false;
     }
@@ -134,6 +142,11 @@ pub fn handle(app: &mut App, event: Event) -> bool {
     } else {
         // Open global search palette with '?'
         if key.code == KeyCode::Char('?') {
+            app.open_search();
+            return false;
+        }
+
+        if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
             app.open_search();
             return false;
         }
@@ -202,7 +215,6 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             Tab::TlsAnalysis   => handle_tls(app, key),
             Tab::OperatorGraph => handle_graph(app, key),
             Tab::Investigate   => handle_investigate(app, key),
-            Tab::Settings      => handle_settings_tab(app, key),
             _                  => handle_main(app, key),
         }
     }
@@ -303,13 +315,6 @@ fn handle_settings(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn handle_settings_tab(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Esc => app.active_tab = Tab::Notebook,
-        _ => handle_settings(app, key),
-    }
-}
-
 fn is_quit(key: &KeyEvent) -> bool {
     key.code == KeyCode::Char('q')
         || (key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL)
@@ -322,14 +327,14 @@ fn global_tab_switch(app: &mut App, key: &KeyEvent) -> bool {
         KeyCode::Char('3') => { app.select_workspace(Workspace::Defense); true }
         KeyCode::Char('4') => { app.select_workspace(Workspace::Actions); true }
         KeyCode::Char('5') => { app.select_workspace(Workspace::Case); true }
-        KeyCode::Char('H') => { app.active_tab = Tab::Hosts;       true }
-        KeyCode::Char('N') => { app.active_tab = Tab::Notebook;    true }
-        KeyCode::Char('T') => { app.active_tab = Tab::TlsAnalysis; true }
-        KeyCode::Char('O') => { app.active_tab = Tab::Objects;     true }
-        KeyCode::Char('R') => { app.active_tab = Tab::Rules;       true }
-        KeyCode::Char('W') => { app.active_tab = Tab::Workbench;       true }
-        KeyCode::Char('G') => { app.active_tab = Tab::OperatorGraph;   true }
-        KeyCode::Char('D') => { app.active_tab = Tab::Diff;            true }
+        KeyCode::Char('H') => { app.navigate_to(Tab::Hosts);       true }
+        KeyCode::Char('N') => { app.navigate_to(Tab::Notebook);    true }
+        KeyCode::Char('T') => { app.navigate_to(Tab::TlsAnalysis); true }
+        KeyCode::Char('O') => { app.navigate_to(Tab::Objects);     true }
+        KeyCode::Char('R') => { app.navigate_to(Tab::Rules);       true }
+        KeyCode::Char('W') => { app.navigate_to(Tab::Workbench);       true }
+        KeyCode::Char('G') => { app.navigate_to(Tab::OperatorGraph);   true }
+        KeyCode::Char('D') => { app.navigate_to(Tab::Diff);            true }
         KeyCode::Char(',') => { app.open_settings(); true }
         _ => false,
     }

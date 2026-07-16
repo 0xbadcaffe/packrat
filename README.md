@@ -89,6 +89,8 @@ then `Tab` or `F2` for its view drawer; `Esc` returns to the workspace home.
 | **Case** | `5` | Notebook, Dynamic event log |
 
 Expert shortcuts `H`, `N`, `T`, `O`, `R`, `W`, `G`, and `D` remain available.
+Press `Alt+Left` to return to the previous screen, `Ctrl+P` for the command
+palette, and `,` for the global Settings window.
 See [the user manual](docs/USER_MANUAL.md) for investigation, encrypted-traffic,
 evidence, telemetry, and containment workflows.
 
