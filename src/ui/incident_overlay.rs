@@ -25,6 +25,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     f.render_widget(Clear, popup);
 
     let lines = vec![
+        Line::from(Span::styled(
+            crate::ui::ascii::INCIDENT_MARK,
+            Style::default().fg(C_BG()).bg(C_RED()).add_modifier(Modifier::BOLD),
+        )),
         Line::from(vec![
             Span::styled(" CRITICAL ", Style::default().fg(C_BG()).bg(C_RED()).add_modifier(Modifier::BOLD)),
             Span::styled(format!("  Incident #{}  {}", incident.id, incident.detector), Style::default().fg(C_RED()).add_modifier(Modifier::BOLD)),

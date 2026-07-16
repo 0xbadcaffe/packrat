@@ -27,66 +27,15 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_banner(f: &mut Frame, area: Rect) {
-    let bold = Modifier::BOLD;
-    let banner = vec![
-        Line::raw(""),
-        Line::from(vec![
-            Span::styled("        ", Style::default().fg(Color::LightMagenta).add_modifier(bold)),
-            Span::styled("        ", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled("        ", Style::default().fg(Color::LightCyan).add_modifier(bold)),
-            Span::styled(" __    ", Style::default().fg(Color::Yellow).add_modifier(bold)),
-            Span::styled("        ", Style::default().fg(Color::LightRed).add_modifier(bold)),
-            Span::styled("        ", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled("  __   ", Style::default().fg(Color::LightBlue).add_modifier(bold)),
-        ]),
-        Line::from(vec![
-            Span::styled("______  ", Style::default().fg(Color::LightMagenta).add_modifier(bold)),
-            Span::styled("_____   ", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled("  ____  ", Style::default().fg(Color::LightCyan).add_modifier(bold)),
-            Span::styled("|  | __", Style::default().fg(Color::Yellow).add_modifier(bold)),
-            Span::styled("_______ ", Style::default().fg(Color::LightRed).add_modifier(bold)),
-            Span::styled("_____   ", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled("_/  |_ ", Style::default().fg(Color::LightBlue).add_modifier(bold)),
-        ]),
-        Line::from(vec![
-            Span::styled("\\____ \\ ", Style::default().fg(Color::LightMagenta).add_modifier(bold)),
-            Span::styled("\\__  \\  ", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled("_/ ___\\ ", Style::default().fg(Color::LightCyan).add_modifier(bold)),
-            Span::styled("|  |/ /", Style::default().fg(Color::Yellow).add_modifier(bold)),
-            Span::styled("\\_  __ \\", Style::default().fg(Color::LightRed).add_modifier(bold)),
-            Span::styled("\\__  \\  ", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled("\\   __\\", Style::default().fg(Color::LightBlue).add_modifier(bold)),
-        ]),
-        Line::from(vec![
-            Span::styled("|  |_> >", Style::default().fg(Color::LightMagenta).add_modifier(bold)),
-            Span::styled(" / __ \\_", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled("\\  \\___ ", Style::default().fg(Color::LightCyan).add_modifier(bold)),
-            Span::styled("|    < ", Style::default().fg(Color::Yellow).add_modifier(bold)),
-            Span::styled(" |  | \\/", Style::default().fg(Color::LightRed).add_modifier(bold)),
-            Span::styled(" / __ \\_", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled(" |  |  ", Style::default().fg(Color::LightBlue).add_modifier(bold)),
-        ]),
-        Line::from(vec![
-            Span::styled("|   __/ ", Style::default().fg(Color::LightMagenta).add_modifier(bold)),
-            Span::styled("(____  /", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled(" \\___  >", Style::default().fg(Color::LightCyan).add_modifier(bold)),
-            Span::styled("|__|_ \\", Style::default().fg(Color::Yellow).add_modifier(bold)),
-            Span::styled(" |__|   ", Style::default().fg(Color::LightRed).add_modifier(bold)),
-            Span::styled("(____  /", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled(" |__|  ", Style::default().fg(Color::LightBlue).add_modifier(bold)),
-        ]),
-        Line::from(vec![
-            Span::styled("|__|    ", Style::default().fg(Color::LightMagenta).add_modifier(bold)),
-            Span::styled("     \\/ ", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled("     \\/ ", Style::default().fg(Color::LightCyan).add_modifier(bold)),
-            Span::styled("     \\/", Style::default().fg(Color::Yellow).add_modifier(bold)),
-            Span::styled("        ", Style::default().fg(Color::LightRed).add_modifier(bold)),
-            Span::styled("     \\/ ", Style::default().fg(Color::LightGreen).add_modifier(bold)),
-            Span::styled("       ", Style::default().fg(Color::LightBlue).add_modifier(bold)),
-        ]),
-        Line::raw(""),
-        Line::from(vec![Span::styled("  packet analyzer  v0.2.0", Style::default().fg(C_FG3()))]),
-    ];
+    let mut banner = vec![Line::raw("")];
+    banner.extend(crate::ui::ascii::STARTUP_MARK.iter().map(|line| {
+        Line::from(Span::styled(*line, Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)))
+    }));
+    banner.push(Line::raw(""));
+    banner.push(Line::from(Span::styled(
+        " network investigation / deterministic detection / controlled response  v0.4.0",
+        Style::default().fg(C_FG3()),
+    )));
     f.render_widget(Paragraph::new(banner).style(Style::default().bg(C_BG())), area);
 }
 
