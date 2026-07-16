@@ -18,6 +18,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
     draw_subtabs(f, app, chunks[0]);
     match app.security_tab {
+        SecuritySubTab::Alerts       => draw_alert_center(f, app, chunks[1]),
         SecuritySubTab::Ids          => draw_ids(f, app, chunks[1]),
         SecuritySubTab::Credentials  => draw_creds(f, app, chunks[1]),
         SecuritySubTab::OsFingerprint=> draw_os(f, app, chunks[1]),
@@ -39,6 +40,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
     let label = match app.security_tab {
+        SecuritySubTab::Alerts => "Alert Center",
         SecuritySubTab::Ids => "IDS Alerts",
         SecuritySubTab::Credentials => "Credentials",
         SecuritySubTab::OsFingerprint => "OS Fingerprints",
@@ -59,9 +61,72 @@ fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
     let header = Paragraph::new(Line::from(vec![
         Span::styled(" Defense / ", Style::default().fg(C_FG3())),
         Span::styled(label, Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
-        Span::styled("   [ / ] previous / next detector view", Style::default().fg(C_FG2())),
+        Span::styled("   [ / ] operational views   [a] alert center", Style::default().fg(C_FG2())),
     ])).style(Style::default().bg(C_BG2()));
     f.render_widget(header, area);
+}
+
+fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(6), Constraint::Length(7)])
+        .split(area);
+    let visible_indices = app.alert_center.visible_indices();
+    let visible_rows = chunks[0].height.saturating_sub(3) as usize;
+    let start = app.alert_center.selected.saturating_sub(visible_rows.saturating_sub(1));
+    let header = Row::new(vec![
+        cell_hdr("ID"), cell_hdr("Pkt"), cell_hdr("Severity"), cell_hdr("State"),
+        cell_hdr("Source"), cell_hdr("Finding"),
+    ]).height(1);
+    let rows = visible_indices.iter().skip(start).take(visible_rows).enumerate().map(|(offset, index)| {
+        let item = &app.alert_center.items[*index];
+        let selected = start + offset == app.alert_center.selected;
+        let severity_color = match item.severity.as_str() {
+            "CRITICAL" | "CRIT" => C_RED(),
+            "HIGH" => C_ORANGE(),
+            "MEDIUM" | "WARN" => C_YELLOW(),
+            _ => C_GREEN(),
+        };
+        Row::new(vec![
+            Cell::from(item.id.to_string()),
+            Cell::from(item.packet_no.to_string()),
+            Cell::from(Span::styled(&item.severity, Style::default().fg(severity_color))),
+            Cell::from(item.disposition.to_string()),
+            Cell::from(item.source.as_str()),
+            Cell::from(item.title.as_str()),
+        ]).style(if selected {
+            Style::default().bg(C_SEL_BG()).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        })
+    }).collect::<Vec<_>>();
+    let title = format!(
+        " Alert Center - {} findings - severity: {} ",
+        visible_indices.len(), app.alert_center.severity_filter,
+    );
+    let table = Table::new(
+        std::iter::once(header).chain(rows).collect::<Vec<_>>(),
+        [Constraint::Length(6), Constraint::Length(8), Constraint::Length(10),
+         Constraint::Length(11), Constraint::Length(12), Constraint::Min(20)],
+    ).block(block_titled(&title)).style(Style::default().bg(C_BG()));
+    f.render_widget(table, chunks[0]);
+
+    let detail = if let Some(item) = app.alert_center.selected_item() {
+        vec![
+            Line::from(vec![
+                Span::styled(format!("{} / {}", item.source, item.title), Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("  packet #{}", item.packet_no), Style::default().fg(C_FG3())),
+            ]),
+            Line::from(Span::styled(&item.detail, Style::default().fg(C_FG()))),
+            Line::from(Span::styled(
+                "Enter review  C confirm  z benign  K contained  x close  f severity filter",
+                Style::default().fg(C_FG2()),
+            )),
+        ]
+    } else {
+        vec![Line::from(Span::styled("No findings match the active filter.", Style::default().fg(C_FG3())))]
+    };
+    f.render_widget(Paragraph::new(detail).block(block_titled(" Selected Finding ")).wrap(ratatui::widgets::Wrap { trim: true }), chunks[1]);
 }
 
 fn draw_process_scope(f: &mut Frame, app: &App, area: Rect) {

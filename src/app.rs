@@ -53,6 +53,7 @@ use crate::dissector::DissectorDef;
 use crate::net::packet::TreeSection;
 use crate::tabs::{Tab, Workspace};
 use crate::traceroute::TracerouteState;
+use crate::analysis::alert_center::AlertCenter;
 
 const MAX_PACKETS: usize = 10_000;
 pub const INCIDENT_ANALYSIS_SECTION: usize = 11;
@@ -60,6 +61,7 @@ pub const INCIDENT_ANALYSIS_SECTION: usize = 11;
 /// Sub-sections within the Security tab
 #[derive(Debug, Clone, PartialEq)]
 pub enum SecuritySubTab {
+    Alerts,
     Ids,
     Credentials,
     OsFingerprint,
@@ -397,6 +399,7 @@ pub struct App {
     pub craft: CraftState,
     pub traceroute: TracerouteState,
     pub security: SecurityEngine,
+    pub alert_center: AlertCenter,
     pub credentials: Vec<CredentialHit>,
     pub scan: ScanState,
     pub replay: ReplayState,
@@ -570,7 +573,8 @@ impl App {
             credentials: Vec::new(),
             scan: ScanState::new(),
             replay: ReplayState::default(),
-            security_tab: SecuritySubTab::Ids,
+            security_tab: SecuritySubTab::Alerts,
+            alert_center: AlertCenter::default(),
             security_scroll: 0,
             scanner_scroll: 0,
             replay_editing:      false,
@@ -1437,6 +1441,15 @@ impl App {
         // explicit operator review; lower severities remain in the Security tab.
         let ids_before = self.security.ids_alerts.len();
         self.security.update(&pkt);
+        for alert in &self.security.ids_alerts[ids_before..] {
+            self.alert_center.record(
+                alert.pkt_no,
+                "IDS",
+                alert.severity.to_string(),
+                alert.signature,
+                &alert.detail,
+            );
+        }
         let critical_ids: Vec<(String, String)> = self.security.ids_alerts[ids_before..]
             .iter()
             .filter(|alert| matches!(alert.severity, crate::net::security::Severity::Critical))
@@ -1464,14 +1477,48 @@ impl App {
         self.quic_scope.ingest(&pkt);
 
         // VLAN intelligence
+        let vlan_before = self.vlan_intel.alerts.len();
         self.vlan_intel.ingest(&pkt);
+        for alert in &self.vlan_intel.alerts[vlan_before..] {
+            self.alert_center.record(
+                alert.pkt_no,
+                "VLAN",
+                alert.severity.to_string(),
+                &alert.category,
+                &alert.detail,
+            );
+        }
 
         // IOC matching
+        let ioc_before = self.ioc_engine.hits.len();
         self.ioc_engine.check_packet(&pkt);
+        for hit in &self.ioc_engine.hits[ioc_before..] {
+            self.alert_center.record(
+                hit.pkt_no,
+                "IOC",
+                "HIGH",
+                format!("{} match", hit.ioc.kind),
+                format!("{} matched {} ({})", hit.context, hit.ioc.value, hit.ioc.description),
+            );
+        }
 
         // Critical alert actions in user rules share the same review workflow.
         let rule_hits_before = self.rule_engine.hits.len();
         self.rule_engine.evaluate(&pkt);
+        for hit in &self.rule_engine.hits[rule_hits_before..] {
+            let severity = match &hit.action {
+                RuleAction::Alert { severity, .. } => severity.to_string(),
+                RuleAction::Tag { .. } => "INFO".to_string(),
+                RuleAction::Log { .. } => "LOW".to_string(),
+            };
+            self.alert_center.record(
+                hit.pkt_no,
+                "RULE",
+                severity,
+                &hit.rule_name,
+                &hit.message,
+            );
+        }
         let critical_rule_hits: Vec<(String, String, String, bool)> = self.rule_engine.hits[rule_hits_before..]
             .iter()
             .filter(|hit| matches!(&hit.action, RuleAction::Alert { severity: EvidenceSeverity::Critical, .. }))
@@ -1489,6 +1536,15 @@ impl App {
         // Credential extraction
         let new_creds = crate::net::inspector::extract_credentials(&pkt);
         if !new_creds.is_empty() {
+            for credential in &new_creds {
+                self.alert_center.record(
+                    credential.pkt_no,
+                    "CREDENTIAL",
+                    "HIGH",
+                    credential.kind,
+                    format!("Exposed credential value: {}", credential.value),
+                );
+            }
             self.credentials.extend(new_creds);
             if self.credentials.len() > 1000 { self.credentials.drain(0..100); }
         }
@@ -1833,6 +1889,7 @@ impl App {
         self.stream_overlay = None;
         self.packet_comparison = None;
         self.security.clear();
+        self.alert_center.clear();
         self.credentials.clear();
         self.hosts.clear();
         self.streams.clear();
@@ -2428,6 +2485,7 @@ impl App {
 
     pub fn security_subtab_next(&mut self) {
         self.security_tab = match self.security_tab {
+            SecuritySubTab::Alerts        => SecuritySubTab::ProcessScope,
             SecuritySubTab::Ids           => SecuritySubTab::Credentials,
             SecuritySubTab::Credentials   => SecuritySubTab::OsFingerprint,
             SecuritySubTab::OsFingerprint => SecuritySubTab::ArpWatch,
@@ -2443,13 +2501,14 @@ impl App {
             SecuritySubTab::RoutePolicy   => SecuritySubTab::WirePulse,
             SecuritySubTab::WirePulse     => SecuritySubTab::NetRegistry,
             SecuritySubTab::NetRegistry   => SecuritySubTab::Replay,
-            SecuritySubTab::Replay        => SecuritySubTab::Ids,
+            SecuritySubTab::Replay        => SecuritySubTab::Alerts,
         };
     }
 
     pub fn security_subtab_prev(&mut self) {
         self.security_tab = match self.security_tab {
-            SecuritySubTab::Ids           => SecuritySubTab::Replay,
+            SecuritySubTab::Alerts        => SecuritySubTab::Replay,
+            SecuritySubTab::Ids           => SecuritySubTab::Alerts,
             SecuritySubTab::Credentials   => SecuritySubTab::Ids,
             SecuritySubTab::OsFingerprint => SecuritySubTab::Credentials,
             SecuritySubTab::ArpWatch      => SecuritySubTab::OsFingerprint,

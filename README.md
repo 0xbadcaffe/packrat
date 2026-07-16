@@ -401,13 +401,21 @@ The Diff tab shows three side-by-side delta columns:
 
 ## Security Inspection
 
-Passive real-time security analysis across 12 sub-panels. Navigate with `[` / `]` or the letter shortcuts below.
+Defense opens on a unified Alert Center that combines IDS, IOC, user-rule,
+credential-exposure, and VLAN findings into one review queue. Each finding keeps
+its packet number, source, severity, explanation, and operator disposition.
+Use `j`/`k` to select, `f` to filter severity, `Enter` to begin review, `C` to
+confirm, `z` to mark benign, `K` to mark contained, or `x` to close.
+
+Specialist telemetry remains available through the Defense views. Navigate
+operational views with `[` / `]` or use the direct keys below.
 
 ### Sub-panels
 
 | Key | Panel | What it detects |
 |-----|-------|-----------------|
-| `a` | **IDS Alerts** | EternalBlue (MS17-010), BlueKeep (CVE-2019-0708), Log4Shell (CVE-2021-44228), Heartbleed, PrintNightmare, NOP sleds, directory traversal (`../`), SQL injection, XSS, LLMNR/NBNS poisoning, Pass-the-Hash, SMB null sessions |
+| `a` | **Alert Center** | Unified, stateful queue for detector and policy findings |
+| `e` | **Raw IDS Alerts** | EternalBlue (MS17-010), BlueKeep (CVE-2019-0708), Log4Shell (CVE-2021-44228), Heartbleed, PrintNightmare, NOP sleds, directory traversal (`../`), SQL injection, XSS, LLMNR/NBNS poisoning, Pass-the-Hash, SMB null sessions |
 | `c` | **Credentials** | Cleartext usernames and passwords from HTTP Basic Auth, FTP, Telnet, SMTP AUTH, LDAP bind |
 | `o` | **OS Fingerprint** | Passive TTL + TCP window size matching — identifies Windows, Linux, macOS, iOS, Android, Cisco, FreeBSD |
 | `w` | **ARP Watch** | IP→MAC mapping table; fires alert on any MAC change (ARP spoofing / MITM) |
