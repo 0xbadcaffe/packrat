@@ -19,7 +19,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_sections(f: &mut Frame, app: &App, area: Rect) {
-    let sections = ["Appearance", "Capture", "Analysis", "Defense", "Keys"];
+    let sections = ["Appearance", "Capture", "Analysis", "Automation", "Defense", "Keys"];
     let rows = sections.iter().enumerate().map(|(index, section)| {
         let selected = app.settings_cursor == index;
         let style = if selected {
@@ -60,6 +60,14 @@ fn draw_details(f: &mut Frame, app: &App, area: Rect) {
             Line::from(format!("Reputation helper: {}", path_state(app.reputation_helper_path.as_ref()))),
         ],
         3 => vec![
+            Line::from(vec![Span::styled("Alert Automation", heading())]),
+            Line::from(format!("Mode: {}", app.alert_center.automation_mode)),
+            Line::from("Off: findings enter the Alert Center for manual review."),
+            Line::from("Watch: high/critical findings are pinned to the investigation tray."),
+            Line::from("Triage: Watch behavior plus deterministic priority and next-step advice."),
+            Line::from("Enter: cycle mode. No automation mode changes firewall policy."),
+        ],
+        4 => vec![
             Line::from(vec![Span::styled("Defense", heading())]),
             Line::from(format!("TrafficLatch mode: {}", app.traffic_latch.mode)),
             Line::from(format!("Containment timeout: {}s", app.traffic_latch.expires_seconds)),

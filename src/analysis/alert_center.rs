@@ -5,6 +5,29 @@ use std::collections::HashSet;
 const MAX_ALERTS: usize = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutomationMode {
+    Off,
+    Watch,
+    Triage,
+}
+
+impl AutomationMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Off => Self::Watch,
+            Self::Watch => Self::Triage,
+            Self::Triage => Self::Off,
+        }
+    }
+}
+
+impl std::fmt::Display for AutomationMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertDisposition {
     New,
     Reviewing,
@@ -64,6 +87,8 @@ pub struct AlertItem {
     pub title: String,
     pub detail: String,
     pub disposition: AlertDisposition,
+    pub priority: u8,
+    pub recommendation: Option<String>,
 }
 
 #[derive(Debug)]
@@ -71,8 +96,10 @@ pub struct AlertCenter {
     pub items: Vec<AlertItem>,
     pub selected: usize,
     pub severity_filter: AlertSeverityFilter,
+    pub automation_mode: AutomationMode,
     next_id: u64,
     fingerprints: HashSet<String>,
+    pending_pins: Vec<u64>,
 }
 
 impl Default for AlertCenter {
@@ -81,8 +108,10 @@ impl Default for AlertCenter {
             items: Vec::new(),
             selected: 0,
             severity_filter: AlertSeverityFilter::All,
+            automation_mode: AutomationMode::Off,
             next_id: 0,
             fingerprints: HashSet::new(),
+            pending_pins: Vec::new(),
         }
     }
 }
@@ -104,6 +133,9 @@ impl AlertCenter {
             return false;
         }
         self.next_id += 1;
+        let priority = priority_for(&severity);
+        let recommendation = (self.automation_mode == AutomationMode::Triage)
+            .then(|| recommendation_for(&source, &severity));
         self.items.push(AlertItem {
             id: self.next_id,
             packet_no,
@@ -112,7 +144,12 @@ impl AlertCenter {
             title,
             detail: detail.into(),
             disposition: AlertDisposition::New,
+            priority,
+            recommendation,
         });
+        if self.automation_mode != AutomationMode::Off && priority >= 80 {
+            self.pending_pins.push(self.next_id);
+        }
         if self.items.len() > MAX_ALERTS {
             self.items.remove(0);
             self.selected = self.selected.saturating_sub(1);
@@ -152,6 +189,14 @@ impl AlertCenter {
         self.selected = 0;
     }
 
+    pub fn cycle_automation_mode(&mut self) {
+        self.automation_mode = self.automation_mode.cycle();
+    }
+
+    pub fn drain_pending_pins(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.pending_pins)
+    }
+
     pub fn set_selected_disposition(&mut self, disposition: AlertDisposition) -> bool {
         let Some(index) = self.visible_indices().get(self.selected).copied() else {
             return false;
@@ -164,6 +209,30 @@ impl AlertCenter {
         self.items.clear();
         self.fingerprints.clear();
         self.selected = 0;
+        self.pending_pins.clear();
+    }
+}
+
+fn priority_for(severity: &str) -> u8 {
+    match severity {
+        "CRITICAL" | "CRIT" => 100,
+        "HIGH" => 80,
+        "MEDIUM" | "WARN" => 50,
+        _ => 20,
+    }
+}
+
+fn recommendation_for(source: &str, severity: &str) -> String {
+    if severity == "CRITICAL" || severity == "CRIT" {
+        "Review the triggering packet and retained conversation; require an independent signal before containment".into()
+    } else if source == "IOC" {
+        "Validate indicator provenance, then inspect related hosts and conversations".into()
+    } else if source == "CREDENTIAL" {
+        "Confirm exposure, identify the affected identity, and rotate the credential through the owning system".into()
+    } else if source == "VLAN" {
+        "Inspect tag stack and switch-port policy before escalating as VLAN penetration".into()
+    } else {
+        "Inspect packet fields and surrounding stream, then confirm or mark benign".into()
     }
 }
 
@@ -192,5 +261,20 @@ mod tests {
         assert_eq!(center.selected_item().unwrap().packet_no, 2);
         center.next();
         assert_eq!(center.selected, 0);
+    }
+
+    #[test]
+    fn watch_pins_high_findings_and_triage_adds_deterministic_advice() {
+        let mut center = AlertCenter::default();
+        center.automation_mode = AutomationMode::Watch;
+        center.record(1, "IDS", "LOW", "Low", "detail");
+        center.record(2, "IDS", "HIGH", "High", "detail");
+        assert_eq!(center.drain_pending_pins(), vec![2]);
+        assert!(center.items[1].recommendation.is_none());
+
+        center.automation_mode = AutomationMode::Triage;
+        center.record(3, "IOC", "HIGH", "Indicator", "detail");
+        assert_eq!(center.items[2].priority, 80);
+        assert!(center.items[2].recommendation.as_deref().unwrap().contains("provenance"));
     }
 }

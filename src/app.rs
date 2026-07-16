@@ -1596,6 +1596,10 @@ impl App {
             if self.credentials.len() > 1000 { self.credentials.drain(0..100); }
         }
 
+        for alert_id in self.alert_center.drain_pending_pins() {
+            self.worklist.add(InvestigationItem::Alert(alert_id));
+        }
+
         if self.recording {
             if let Some(ref mut writer) = self.pcap_writer { let _ = writer.write_packet(&pkt); }
         }
@@ -2081,10 +2085,12 @@ impl App {
                     title: alert.title.clone(),
                     details: vec![
                         ("Severity".into(), alert.severity.clone()),
+                        ("Priority".into(), alert.priority.to_string()),
                         ("State".into(), alert.disposition.to_string()),
                         ("Source".into(), alert.source.clone()),
                         ("Packet".into(), format!("#{}", alert.packet_no)),
                         ("Reason".into(), alert.detail.clone()),
+                        ("Recommendation".into(), alert.recommendation.clone().unwrap_or_else(|| "manual review".into())),
                     ],
                     available: true,
                 }).unwrap_or_else(|| missing("Alert", format!("Alert #{id}"))),
@@ -2490,6 +2496,10 @@ impl App {
                 self.set_status(if self.capturing { "Capture started" } else { "Capture stopped" });
             }
             3 => {
+                self.alert_center.cycle_automation_mode();
+                self.set_status(format!("Alert automation mode set to {}", self.alert_center.automation_mode));
+            }
+            4 => {
                 self.traffic_latch.mode = match self.traffic_latch.mode {
                     LatchMode::Monitor => LatchMode::Preview,
                     LatchMode::Preview => LatchMode::Manual,

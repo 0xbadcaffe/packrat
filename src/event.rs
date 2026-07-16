@@ -305,7 +305,7 @@ fn handle_settings(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char(',') | KeyCode::Char('q') => app.close_settings(),
         KeyCode::Down | KeyCode::Char('j') => {
-            app.settings_cursor = (app.settings_cursor + 1).min(4);
+            app.settings_cursor = (app.settings_cursor + 1).min(5);
         }
         KeyCode::Up | KeyCode::Char('k') => {
             app.settings_cursor = app.settings_cursor.saturating_sub(1);
