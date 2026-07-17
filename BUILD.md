@@ -23,6 +23,24 @@ and restart the terminal after installation.
 
 ## Build Modes
 
+### Memory and CPU profiling
+
+Packrat includes a finite headless workload that traverses the production
+packet-ingestion path. Build it with symbols and run it directly under local
+profiling tools:
+
+```bash
+cargo build --locked --profile profiling --bin packrat-profile
+./target/profiling/packrat-profile --packets 50000
+valgrind --error-exitcode=1 --leak-check=full \
+  ./target/profiling/packrat-profile --packets 2000
+cargo flamegraph --profile profiling --bin packrat-profile -- \
+  --packets 100000
+```
+
+Linux CI runs the Valgrind gate and publishes the flamegraph plus a ranked
+`perf` symbol report as the `packrat-linux-profile` artifact.
+
 ### Analyzer with explicit simulation
 
 The default Cargo feature set has no libpcap dependency:

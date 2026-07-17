@@ -82,3 +82,61 @@ jobs:
 
       - name: cross check
         run: cross check --locked --target ${{ matrix.target }}
+
+  instrumentation:
+    name: linux-memory-and-cpu-profile
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -C link-arg=-Wl,--no-rosegment
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@cargo-flamegraph
+
+      - name: Install memory and CPU instrumentation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind linux-tools-common linux-tools-generic
+          sudo ln -sf "$(find /usr/lib/linux-tools -type f -name perf | sort -V | tail -1)" /usr/local/bin/perf
+
+      - name: Build symbolized profiling workload
+        run: cargo build --locked --profile profiling --bin packrat-profile
+
+      - name: Valgrind memory safety and leak check
+        run: |
+          valgrind \
+            --error-exitcode=1 \
+            --leak-check=full \
+            --show-leak-kinds=definite,indirect \
+            --errors-for-leak-kinds=definite,indirect \
+            --track-origins=yes \
+            --log-file=target/profiling/valgrind.txt \
+            target/profiling/packrat-profile --packets 2000
+
+      - name: Capture CPU profile
+        run: |
+          echo -1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+          cargo flamegraph --profile profiling --bin packrat-profile \
+            --freq 99 --no-inline \
+            --output target/profiling/packrat-flamegraph.svg -- \
+            --packets 100000
+          perf record --freq 99 --call-graph dwarf \
+            --output target/profiling/packrat.perf.data -- \
+            target/profiling/packrat-profile --packets 50000
+          perf report --stdio --no-children --sort overhead,symbol \
+            --input target/profiling/packrat.perf.data \
+            > target/profiling/hot-symbols.txt
+
+      - name: Publish profiling triage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packrat-linux-profile
+          if-no-files-found: error
+          path: |
+            target/profiling/valgrind.txt
+            target/profiling/hot-symbols.txt
+            target/profiling/packrat-flamegraph.svg

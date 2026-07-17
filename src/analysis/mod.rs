@@ -13,6 +13,7 @@ pub mod rules;
 pub mod carving;
 pub mod yara;
 pub mod protocol_workbench;
+pub mod profile_workload;
 pub mod diff;
 pub mod jobs;
 pub mod operator_graph;
