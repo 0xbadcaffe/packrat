@@ -68,8 +68,8 @@ views. Press `Tab` or `F2` to open the current workspace's view drawer, and
 `Esc` to return from a detail view to its workspace home.
 
 The navigation header shows `Workspace > Screen`. Press `Alt+Left` to return
-through recently visited screens, `Ctrl+P` to open the command palette, and `,`
-to open Settings as a global window without leaving the current investigation.
+through recently visited screens, `Ctrl+P` to search packets, hosts, and
+findings, and `,` to open Preferences without leaving the current investigation.
 
 | Key | Workspace | Included views |
 |---|---|---|
@@ -80,9 +80,36 @@ to open Settings as a global window without leaving the current investigation.
 | `5` | Case | Notebook, Dynamic |
 
 Expert shortcuts such as `H`, `N`, `T`, `O`, `R`, `W`, `G`, and `D` remain
-available. Press `h` for the keyboard reference. Press `\` to choose among
+available. Press `h` for the keyboard reference; scroll it with `j`/`k` or
+`PgUp`/`PgDn`. Press `\` to choose among
 Dark Pro, White Classic, Matrix Green, VSCode Dark, VSCode Light, Accessible
 Dark, Soft Light, and High Contrast themes.
+
+## Preferences
+
+Press `,` from any workspace. Use `j`/`k` to select a preference,
+`Left`/`Right` to change it, and `Enter` to toggle or edit it. Preferences
+include the theme, whether the packet cursor follows new traffic, startup
+workspace, deterministic alert assistance, Guard mode, block timeout, active
+block limit, and kill-switch reset.
+
+Theme, packet following, startup workspace, and alert assistance are saved in
+the platform configuration directory's `packrat/prefs.json`. Guard starts from
+the command-line policy on each launch; changing Guard controls in Preferences
+affects the current process only.
+
+## Projects and Recovery
+
+Press `P` to create or open an investigation project and `Ctrl+S` to update the
+current project. Projects preserve notebook and tag state, the active filter,
+Alert Center findings and analyst dispositions, automation mode, investigation
+tray items, the last Guard simulation, and the active view.
+
+Choose **Portable** to embed the retained packet snapshots needed to restore
+packet and stream investigation context on another machine. Choose
+**Lightweight** for a smaller operational-state file that does not embed packet
+bytes. Project loading clears the current capture state before restoring the
+saved investigation, preventing evidence from two cases from being mixed.
 
 ## First Investigation
 
@@ -190,8 +217,11 @@ and NDJSON beneath the platform data directory's `packrat/evidence` folder.
 
 ## Alert Center
 
-Defense > Security opens on the Alert Center. It combines IDS, IOC, user-rule,
-credential-exposure, and VLAN findings without discarding their source data.
+Defense > Security opens on the Alert Center. It combines IDS, ARP, exposure,
+authentication, DNS, TLS, IOC, user-rule, credential-exposure, and VLAN
+findings without discarding their specialist source data. Repeated output from
+the same detector and conversation is correlated into one finding with a hit
+count and first/last packet evidence.
 
 | Key | Action |
 |---|---|
@@ -211,7 +241,7 @@ overlay and TrafficLatch policy gates described below.
 
 ### Watch and Triage modes
 
-Open Settings > Automation to cycle these deterministic modes:
+Open Preferences and select Alert assistance to cycle these deterministic modes:
 
 | Mode | Behavior |
 |---|---|
@@ -265,20 +295,31 @@ Press `r` in the Alert Center to evaluate all pending critical incidents as if
 Guard were enabled. The simulation applies the same independent-signal gate,
 address validation, protection list, expiry, and maximum-active-block policy,
 but never calls nftables or a latch helper. The status line reports eligible,
-pending, and rejected decisions; Settings > Defense shows the report size.
+pending, and rejected decisions.
 
 Press `!` from any screen to engage the Guard kill switch. This immediately
-forces TrafficLatch back to `monitor` and rejects future automatic actions.
-Already-applied nftables entries keep their configured short expiry; Packrat
-does not hide that limitation by claiming they were synchronously removed.
+forces TrafficLatch back to `monitor`, rejects future automatic or manually
+approved actions, and asks the active backend to remove every unexpired block.
+Successful revocations are audited as revoked. Failed revocations remain
+visibly active until their configured expiry and continue to consume the active
+block limit. Reset the switch explicitly from Preferences; reset does not
+restore the previous Guard mode.
 
 By default, Packrat applies approved Linux blocks with nftables from the TUI
 process. For stricter privilege separation, start it with `--latch-helper PATH`.
 The helper receives a JSON request on stdin and returns a JSON response on
 stdout:
 
+Block request:
+
 ```json
 { "address": "203.0.113.9", "expires_seconds": 300 }
+```
+
+Immediate revocation request:
+
+```json
+{ "address": "203.0.113.9", "expires_seconds": 300, "operation": "unblock" }
 ```
 
 ```json
@@ -286,7 +327,9 @@ stdout:
 ```
 
 The helper should be a small local program with only the firewall privileges it
-needs. Packrat records the helper result in the incident action history.
+needs and must support both operations if immediate emergency revocation is
+required. Packrat records successful and failed helper results in incident
+action history.
 
 Containment only affects traffic controlled by the host running Packrat. An
 endpoint can constrain its own traffic; a gateway can constrain forwarded
