@@ -23,6 +23,7 @@ struct CaseBundle<'a> {
     rule_hits:  Vec<RuleHitRecord<'a>>,
     yara:       Vec<YaraRecord<'a>>,
     alerts:     Vec<AlertRecord>,
+    findings:   Vec<FindingRecord<'a>>,
     creds:      Vec<CredRecord<'a>>,
     notebook:   Vec<NoteRecord>,
     incidents:  Vec<IncidentRecord<'a>>,
@@ -89,6 +90,23 @@ struct AlertRecord {
     signature: String,
     severity:  String,
     pkt_no:    u64,
+}
+
+#[derive(serde::Serialize)]
+struct FindingRecord<'a> {
+    id: u64,
+    source: &'a str,
+    title: &'a str,
+    severity: &'a str,
+    disposition: String,
+    priority: u8,
+    hit_count: u64,
+    first_packet: u64,
+    last_packet: u64,
+    first_seen: f64,
+    last_seen: f64,
+    detail: &'a str,
+    recommendation: Option<&'a str>,
 }
 
 #[derive(serde::Serialize)]
@@ -285,6 +303,22 @@ fn build(app: &App) -> CaseBundle<'_> {
         pkt_no:    a.pkt_no,
     }).collect();
 
+    let findings = app.alert_center.items.iter().map(|item| FindingRecord {
+        id: item.id,
+        source: &item.source,
+        title: &item.title,
+        severity: &item.severity,
+        disposition: item.disposition.to_string(),
+        priority: item.priority,
+        hit_count: item.hit_count,
+        first_packet: item.first_packet,
+        last_packet: item.last_packet,
+        first_seen: item.first_seen,
+        last_seen: item.last_seen,
+        detail: &item.detail,
+        recommendation: item.recommendation.as_deref(),
+    }).collect();
+
     // Credentials (redacted — only protocol and kind, no values)
     let creds: Vec<CredRecord<'_>> = app.credentials.iter().map(|c| CredRecord {
         proto: &c.proto,
@@ -380,5 +414,5 @@ fn build(app: &App) -> CaseBundle<'_> {
         top_scored: top,
     };
 
-    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, creds, notebook, incidents, evidence, processes, route_drift, containment, latency, network_identity, graph_meta }
+    CaseBundle { meta, hosts, ioc_hits, rule_hits, yara, alerts, findings, creds, notebook, incidents, evidence, processes, route_drift, containment, latency, network_identity, graph_meta }
 }

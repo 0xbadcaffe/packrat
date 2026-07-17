@@ -90,7 +90,21 @@ pub struct AlertItem {
     pub disposition: AlertDisposition,
     pub priority: u8,
     pub recommendation: Option<String>,
+    #[serde(default)]
+    pub correlation_key: String,
+    #[serde(default = "one")]
+    pub hit_count: u64,
+    #[serde(default)]
+    pub first_packet: u64,
+    #[serde(default)]
+    pub last_packet: u64,
+    #[serde(default)]
+    pub first_seen: f64,
+    #[serde(default)]
+    pub last_seen: f64,
 }
+
+fn one() -> u64 { 1 }
 
 #[derive(Debug)]
 pub struct AlertCenter {
@@ -123,9 +137,11 @@ impl AlertCenter {
             items.drain(..items.len() - MAX_ALERTS);
         }
         self.next_id = items.iter().map(|item| item.id).max().unwrap_or(0);
-        self.fingerprints = items.iter().map(|item| {
-            format!("{}\0{}\0{}", item.packet_no, item.source, item.title)
-        }).collect();
+        for item in &mut items {
+            if item.first_packet == 0 { item.first_packet = item.packet_no; }
+            if item.last_packet == 0 { item.last_packet = item.packet_no; }
+        }
+        self.fingerprints = items.iter().map(fingerprint_for).collect();
         self.items = items;
         self.selected = 0;
         self.automation_mode = automation_mode;
@@ -140,11 +156,49 @@ impl AlertCenter {
         title: impl Into<String>,
         detail: impl Into<String>,
     ) -> bool {
+        let detail = detail.into();
+        self.record_correlated(
+            packet_no,
+            packet_no as f64,
+            source,
+            severity,
+            title,
+            &detail,
+            "",
+        )
+    }
+
+    pub fn record_correlated(
+        &mut self,
+        packet_no: u64,
+        timestamp: f64,
+        source: impl Into<String>,
+        severity: impl Into<String>,
+        title: impl Into<String>,
+        detail: impl Into<String>,
+        correlation_key: impl Into<String>,
+    ) -> bool {
         let source = source.into();
         let severity = severity.into().to_uppercase();
         let title = title.into();
-        let fingerprint = format!("{packet_no}\0{source}\0{title}");
+        let detail = detail.into();
+        let correlation_key = correlation_key.into();
+        let fingerprint = format!("{source}\0{title}\0{correlation_key}");
         if !self.fingerprints.insert(fingerprint) {
+            if let Some(item) = self.items.iter_mut().find(|item| {
+                item.source == source && item.title == title && item.correlation_key == correlation_key
+            }) {
+                item.packet_no = packet_no;
+                item.last_packet = packet_no;
+                item.last_seen = timestamp;
+                item.hit_count = item.hit_count.saturating_add(1);
+                item.detail = detail;
+                let priority = priority_for(&severity);
+                if priority > item.priority {
+                    item.priority = priority;
+                    item.severity = severity;
+                }
+            }
             return false;
         }
         self.next_id += 1;
@@ -157,10 +211,16 @@ impl AlertCenter {
             source,
             severity,
             title,
-            detail: detail.into(),
+            detail,
             disposition: AlertDisposition::New,
             priority,
             recommendation,
+            correlation_key,
+            hit_count: 1,
+            first_packet: packet_no,
+            last_packet: packet_no,
+            first_seen: timestamp,
+            last_seen: timestamp,
         });
         if self.automation_mode != AutomationMode::Off && priority >= 80 {
             self.pending_pins.push(self.next_id);
@@ -228,6 +288,10 @@ impl AlertCenter {
     }
 }
 
+fn fingerprint_for(item: &AlertItem) -> String {
+    format!("{}\0{}\0{}", item.source, item.title, item.correlation_key)
+}
+
 fn priority_for(severity: &str) -> u8 {
     match severity {
         "CRITICAL" | "CRIT" => 100,
@@ -259,9 +323,23 @@ mod tests {
     fn deduplicates_findings_and_preserves_disposition() {
         let mut center = AlertCenter::default();
         assert!(center.record(7, "IDS", "CRITICAL", "Probe", "first"));
-        assert!(!center.record(7, "IDS", "CRITICAL", "Probe", "duplicate"));
+        assert!(!center.record(8, "IDS", "CRITICAL", "Probe", "duplicate"));
+        assert_eq!(center.items[0].hit_count, 2);
+        assert_eq!(center.items[0].first_packet, 7);
+        assert_eq!(center.items[0].last_packet, 8);
         assert!(center.set_selected_disposition(AlertDisposition::Reviewing));
         assert_eq!(center.selected_item().unwrap().disposition, AlertDisposition::Reviewing);
+    }
+
+    #[test]
+    fn correlation_keys_keep_distinct_conversations_separate() {
+        let mut center = AlertCenter::default();
+        assert!(center.record_correlated(1, 1.0, "IDS", "HIGH", "Probe", "first host", "host-a"));
+        assert!(center.record_correlated(2, 2.0, "IDS", "HIGH", "Probe", "second host", "host-b"));
+        assert!(!center.record_correlated(3, 3.0, "IDS", "HIGH", "Probe", "first host again", "host-a"));
+        assert_eq!(center.items.len(), 2);
+        assert_eq!(center.items[0].hit_count, 2);
+        assert_eq!(center.items[0].last_seen, 3.0);
     }
 
     #[test]
@@ -302,7 +380,8 @@ mod tests {
         let mut restored = AlertCenter::default();
         restored.restore(original.items.clone(), AutomationMode::Triage);
         assert!(!restored.record(7, "IDS", "HIGH", "Probe", "duplicate"));
-        assert!(restored.record(8, "IDS", "HIGH", "Probe", "new packet"));
+        assert_eq!(restored.items[0].hit_count, 2);
+        assert!(restored.record(8, "IDS", "HIGH", "Different probe", "new finding"));
         assert_eq!(restored.items[1].id, 2);
         assert_eq!(restored.items[0].disposition, AlertDisposition::Reviewing);
     }

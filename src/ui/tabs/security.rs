@@ -76,7 +76,7 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
     let start = app.alert_center.selected.saturating_sub(visible_rows.saturating_sub(1));
     let header = Row::new(vec![
         cell_hdr("ID"), cell_hdr("Pkt"), cell_hdr("Severity"), cell_hdr("State"),
-        cell_hdr("Priority"), cell_hdr("Source"), cell_hdr("Finding"),
+        cell_hdr("Hits"), cell_hdr("Priority"), cell_hdr("Source"), cell_hdr("Finding"),
     ]).height(1);
     let rows = visible_indices.iter().skip(start).take(visible_rows).enumerate().map(|(offset, index)| {
         let item = &app.alert_center.items[*index];
@@ -92,6 +92,7 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
             Cell::from(item.packet_no.to_string()),
             Cell::from(Span::styled(&item.severity, Style::default().fg(severity_color))),
             Cell::from(item.disposition.to_string()),
+            Cell::from(item.hit_count.to_string()),
             Cell::from(item.priority.to_string()),
             Cell::from(item.source.as_str()),
             Cell::from(item.title.as_str()),
@@ -108,7 +109,7 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
     let table = Table::new(
         std::iter::once(header).chain(rows).collect::<Vec<_>>(),
         [Constraint::Length(6), Constraint::Length(8), Constraint::Length(10),
-         Constraint::Length(11), Constraint::Length(9), Constraint::Length(12), Constraint::Min(20)],
+         Constraint::Length(11), Constraint::Length(6), Constraint::Length(9), Constraint::Length(12), Constraint::Min(20)],
     ).block(block_titled(&title)).style(Style::default().bg(C_BG()));
     f.render_widget(table, chunks[0]);
 
@@ -116,7 +117,10 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
         vec![
             Line::from(vec![
                 Span::styled(format!("{} / {}", item.source, item.title), Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("  packet #{}", item.packet_no), Style::default().fg(C_FG3())),
+                Span::styled(
+                    format!("  {} hits, packets #{}..#{}", item.hit_count, item.first_packet, item.last_packet),
+                    Style::default().fg(C_FG3()),
+                ),
             ]),
             Line::from(Span::styled(&item.detail, Style::default().fg(C_FG()))),
             Line::from(Span::styled(

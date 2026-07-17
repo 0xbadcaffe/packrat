@@ -1507,14 +1507,84 @@ impl App {
         // Security analysis. Critical built-in signatures open an incident for
         // explicit operator review; lower severities remain in the Security tab.
         let ids_before = self.security.ids_alerts.len();
+        let arp_before = self.security.arp_anomalies.len();
+        let vuln_before = self.security.vuln_hits.len();
+        let brute_before = self.security.brute_force.len();
+        let tls_before = self.security.tls_weaknesses.len();
+        let dns_before: std::collections::HashMap<String, u64> = self.security.dns_suspects.iter()
+            .map(|suspect| (suspect.apex.clone(), suspect.query_count))
+            .collect();
         self.security.update(&pkt);
         for alert in &self.security.ids_alerts[ids_before..] {
-            self.alert_center.record(
+            self.alert_center.record_correlated(
                 alert.pkt_no,
+                pkt.timestamp,
                 "IDS",
                 alert.severity.to_string(),
                 alert.signature,
                 &alert.detail,
+                format!("{}>{}", pkt.src, pkt.dst),
+            );
+        }
+        for anomaly in &self.security.arp_anomalies[arp_before..] {
+            self.alert_center.record_correlated(
+                anomaly.pkt_no,
+                pkt.timestamp,
+                "ARP",
+                "HIGH",
+                "ARP binding changed",
+                format!("{} moved from {} to {}", anomaly.ip, anomaly.old_mac, anomaly.new_mac),
+                &anomaly.ip,
+            );
+        }
+        for hit in &self.security.vuln_hits[vuln_before..] {
+            self.alert_center.record_correlated(
+                hit.pkt_no,
+                pkt.timestamp,
+                "EXPOSURE",
+                "HIGH",
+                hit.kind,
+                &hit.detail,
+                format!("{}>{}", pkt.src, pkt.dst),
+            );
+        }
+        for alert in &self.security.brute_force[brute_before..] {
+            self.alert_center.record_correlated(
+                pkt.no,
+                pkt.timestamp,
+                "AUTH",
+                "HIGH",
+                format!("{} authentication burst", alert.service),
+                format!("{} attempts from {} to {}:{}", alert.attempts, alert.src_ip, alert.dst_ip, alert.port),
+                format!("{}>{}:{}", alert.src_ip, alert.dst_ip, alert.port),
+            );
+        }
+        for weakness in &self.security.tls_weaknesses[tls_before..] {
+            self.alert_center.record_correlated(
+                weakness.pkt_no,
+                pkt.timestamp,
+                "TLS",
+                "MEDIUM",
+                weakness.kind,
+                &weakness.detail,
+                format!("{}>{}", weakness.src_ip, weakness.dst_ip),
+            );
+        }
+        for suspect in self.security.dns_suspects.iter().filter(|suspect| {
+            suspect.score >= 8.0
+                && dns_before.get(&suspect.apex).copied().unwrap_or(0) < suspect.query_count
+        }) {
+            self.alert_center.record_correlated(
+                pkt.no,
+                pkt.timestamp,
+                "DNS",
+                if suspect.score > 12.0 { "HIGH" } else { "MEDIUM" },
+                "DNS tunnel behavior",
+                format!(
+                    "{} queries to {}, entropy {:.2}, {} unique labels, score {:.1}",
+                    suspect.query_count, suspect.apex, suspect.max_entropy, suspect.unique_subdomains, suspect.score,
+                ),
+                &suspect.apex,
             );
         }
         let critical_ids: Vec<(String, String)> = self.security.ids_alerts[ids_before..]
@@ -1547,12 +1617,14 @@ impl App {
         let vlan_before = self.vlan_intel.alerts.len();
         self.vlan_intel.ingest(&pkt);
         for alert in &self.vlan_intel.alerts[vlan_before..] {
-            self.alert_center.record(
+            self.alert_center.record_correlated(
                 alert.pkt_no,
+                pkt.timestamp,
                 "VLAN",
                 alert.severity.to_string(),
                 &alert.category,
                 &alert.detail,
+                format!("{}>{}", pkt.src, pkt.dst),
             );
         }
 
@@ -1560,12 +1632,14 @@ impl App {
         let ioc_before = self.ioc_engine.hits.len();
         self.ioc_engine.check_packet(&pkt);
         for hit in &self.ioc_engine.hits[ioc_before..] {
-            self.alert_center.record(
+            self.alert_center.record_correlated(
                 hit.pkt_no,
+                pkt.timestamp,
                 "IOC",
                 "HIGH",
                 format!("{} match", hit.ioc.kind),
                 format!("{} matched {} ({})", hit.context, hit.ioc.value, hit.ioc.description),
+                &hit.ioc.value,
             );
         }
 
@@ -1578,12 +1652,14 @@ impl App {
                 RuleAction::Tag { .. } => "INFO".to_string(),
                 RuleAction::Log { .. } => "LOW".to_string(),
             };
-            self.alert_center.record(
+            self.alert_center.record_correlated(
                 hit.pkt_no,
+                pkt.timestamp,
                 "RULE",
                 severity,
                 &hit.rule_name,
                 &hit.message,
+                format!("{}:{}>{}", hit.rule_id, pkt.src, pkt.dst),
             );
         }
         let critical_rule_hits: Vec<(String, String, String, bool)> = self.rule_engine.hits[rule_hits_before..]
@@ -1604,12 +1680,14 @@ impl App {
         let new_creds = crate::net::inspector::extract_credentials(&pkt);
         if !new_creds.is_empty() {
             for credential in &new_creds {
-                self.alert_center.record(
+                self.alert_center.record_correlated(
                     credential.pkt_no,
+                    pkt.timestamp,
                     "CREDENTIAL",
                     "HIGH",
                     credential.kind,
                     format!("Exposed credential value: {}", credential.value),
+                    format!("{}:{}>{}", credential.kind, pkt.src, pkt.dst),
                 );
             }
             self.credentials.extend(new_creds);
