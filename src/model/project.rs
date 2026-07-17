@@ -205,6 +205,12 @@ mod tests {
             disposition: AlertDisposition::Reviewing,
             priority: 80,
             recommendation: Some("Inspect the stream".into()),
+            correlation_key: "203.0.113.9>10.0.0.5".into(),
+            hit_count: 3,
+            first_packet: 40,
+            last_packet: 42,
+            first_seen: 1.0,
+            last_seen: 3.0,
         });
         state.investigation_items = vec![
             SavedInvestigationItem::Packet(42),
