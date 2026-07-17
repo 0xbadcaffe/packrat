@@ -109,8 +109,11 @@ struct TlsDecryptResponse {
 
 impl TlsTracker {
     pub fn ingest(&mut self, pkt: &Packet) {
-        let flow_id = make_flow_id(pkt);
+        if !is_tls_candidate(pkt) {
+            return;
+        }
         if let Some(profile) = parse_client_hello(&pkt.bytes, 't') {
+            let flow_id = make_flow_id(pkt);
             let key_material = self.key_shelf.has_client_random(&profile.client_random);
             let session = self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
                 flow_id: flow_id.clone(),
@@ -125,6 +128,7 @@ impl TlsTracker {
             session.ech_offered = profile.ech_offered;
             session.key_material = key_material;
         } else if let Some((version, cipher)) = parse_server_hello(&pkt.bytes) {
+            let flow_id = make_flow_id(pkt);
             let session = self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
                 flow_id: flow_id.clone(),
                 first_seen: pkt.timestamp,
@@ -133,6 +137,7 @@ impl TlsTracker {
             if session.tls_version.is_none() { session.tls_version = Some(tls_version_code(version)); }
             session.cipher_suite = Some(cipher);
         } else if let Some(position) = pkt.bytes.windows(7).position(|window| window[0] == 0x15 && window[1] == 0x03) {
+            let flow_id = make_flow_id(pkt);
             let session = self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
                 flow_id: flow_id.clone(),
                 first_seen: pkt.timestamp,
@@ -141,6 +146,7 @@ impl TlsTracker {
             session.alert_level = pkt.bytes.get(position + 5).copied();
             session.alert_desc = pkt.bytes.get(position + 6).copied();
         } else if let Some(record) = find_tls_record(&pkt.bytes, TLS_APPLICATION_DATA) {
+            let flow_id = make_flow_id(pkt);
             if let Some(decoded) = self.decrypt_record_with_helper(&flow_id, pkt.no, record) {
                 if let Some(session) = self.sessions.get_mut(&flow_id) {
                     session.decrypted_records.push(decoded);
@@ -244,6 +250,45 @@ fn make_flow_id(pkt: &Packet) -> String {
     let a = format!("{}:{}", pkt.src, sp);
     let b = format!("{}:{}", pkt.dst, dp);
     if a < b { format!("{a}-{b}") } else { format!("{b}-{a}") }
+}
+
+fn is_tls_candidate(pkt: &Packet) -> bool {
+    matches!(pkt.protocol.as_str(), "TLS" | "HTTPS")
+        || pkt.bytes.windows(2).any(|window| {
+            matches!(window[0], TLS_HANDSHAKE | TLS_APPLICATION_DATA | 0x15)
+                && window[1] == 0x03
+        })
+}
+
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+
+    fn packet(protocol: &str, bytes: Vec<u8>) -> Packet {
+        Packet {
+            no: 1,
+            timestamp: 1.0,
+            src: "192.0.2.1".into(),
+            dst: "198.51.100.2".into(),
+            protocol: protocol.into(),
+            length: bytes.len() as u16,
+            info: String::new(),
+            src_port: Some(50_000),
+            dst_port: Some(443),
+            vlan_id: None,
+            vlan_pcp: None,
+            vlan_dei: None,
+            outer_vlan_id: None,
+            bytes,
+        }
+    }
+
+    #[test]
+    fn tls_candidate_gate_keeps_named_and_raw_record_traffic() {
+        assert!(is_tls_candidate(&packet("TLS", vec![0; 64])));
+        assert!(is_tls_candidate(&packet("TCP", vec![0, 0x16, 0x03, 0x03, 0])));
+        assert!(!is_tls_candidate(&packet("HTTP", b"GET / HTTP/1.1".to_vec())));
+    }
 }
 
 fn tls_version_str(major: u8, minor: u8) -> String {

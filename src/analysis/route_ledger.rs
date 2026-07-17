@@ -76,17 +76,25 @@ impl RouteLedger {
             protocol: packet.protocol.clone(),
             authority: extract_authority(&packet.info),
         };
-        self.observed.insert(route.clone());
         match self.mode {
-            RouteMode::Observe => {}
-            RouteMode::Learn => { self.baseline.insert(route); }
-            RouteMode::Enforce if !self.baseline.contains(&route) => {
-                if self.drift.last().is_none_or(|last| last.packet_no != packet.no) {
+            RouteMode::Observe => { self.observed.insert(route); }
+            RouteMode::Learn => {
+                self.observed.insert(route.clone());
+                self.baseline.insert(route);
+            }
+            RouteMode::Enforce => {
+                self.observed.insert(route.clone());
+                if !self.baseline.contains(&route)
+                    && self.drift.last().is_none_or(|last| last.packet_no != packet.no)
+                {
                     if self.drift.len() >= 1_000 { self.drift.remove(0); }
-                    self.drift.push(RouteDrift { packet_no: packet.no, timestamp: packet.timestamp, route });
+                    self.drift.push(RouteDrift {
+                        packet_no: packet.no,
+                        timestamp: packet.timestamp,
+                        route,
+                    });
                 }
             }
-            RouteMode::Enforce => {}
         }
     }
 

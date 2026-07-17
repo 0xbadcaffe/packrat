@@ -102,19 +102,19 @@ pub struct VlanIntel {
 impl VlanIntel {
     pub fn ingest(&mut self, pkt: &Packet) {
         // ── Extract Ethernet src MAC from raw bytes ──────────────────────────
-        let mac_src = if pkt.bytes.len() >= 12 {
-            format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                pkt.bytes[6], pkt.bytes[7], pkt.bytes[8],
-                pkt.bytes[9], pkt.bytes[10], pkt.bytes[11])
-        } else {
-            String::new()
-        };
-
         let mac_dst = if pkt.bytes.len() >= 6 {
             [pkt.bytes[0], pkt.bytes[1], pkt.bytes[2],
              pkt.bytes[3], pkt.bytes[4], pkt.bytes[5]]
         } else {
             [0u8; 6]
+        };
+        let needs_source_mac = mac_dst == DTP_DST_MAC || pkt.vlan_id.is_some();
+        let mac_src = if needs_source_mac && pkt.bytes.len() >= 12 {
+            format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                pkt.bytes[6], pkt.bytes[7], pkt.bytes[8],
+                pkt.bytes[9], pkt.bytes[10], pkt.bytes[11])
+        } else {
+            String::new()
         };
 
         // ── DTP detection ────────────────────────────────────────────────────
