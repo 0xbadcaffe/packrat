@@ -10,10 +10,11 @@ use crate::app::App;
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
+    let banner_height = if area.height >= 16 { 9 } else { 3 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(10), // banner
+            Constraint::Length(banner_height), // banner
             Constraint::Length(2),  // header
             Constraint::Min(0),     // list
             Constraint::Length(1),  // hint
@@ -27,16 +28,67 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_banner(f: &mut Frame, area: Rect) {
+    if area.height < 8 {
+        let banner = Paragraph::new(vec![
+            Line::raw(""),
+            Line::from(Span::styled(
+                crate::ui::ascii::COMPACT_STARTUP_MARK,
+                Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
+            )),
+        ]).style(Style::default().bg(C_BG()));
+        f.render_widget(banner, area);
+        return;
+    }
     let mut banner = vec![Line::raw("")];
-    banner.extend(crate::ui::ascii::STARTUP_MARK.iter().map(|line| {
-        Line::from(Span::styled(*line, Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)))
+    banner.extend(crate::ui::ascii::STARTUP_MARK.iter().enumerate().map(|(index, line)| {
+        let color = match index {
+            0 => C_CYAN(),
+            1 => C_GREEN(),
+            2 => C_YELLOW(),
+            3 => C_ORANGE(),
+            4 => C_MAGENTA(),
+            _ => C_FG2(),
+        };
+        Line::from(Span::styled(*line, Style::default().fg(color).add_modifier(Modifier::BOLD)))
     }));
-    banner.push(Line::raw(""));
     banner.push(Line::from(Span::styled(
-        " network investigation / deterministic detection / controlled response  v0.4.0",
+        format!(" deep packet inspection / penetration detection / controlled response  v{}", env!("CARGO_PKG_VERSION")),
         Style::default().fg(C_FG3()),
     )));
     f.render_widget(Paragraph::new(banner).style(Style::default().bg(C_BG())), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn render(width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new_for_test();
+        app.iface_list = vec!["eth0".into(), "simulated".into()];
+        terminal.draw(|frame| {
+            let area = frame.area();
+            draw(frame, &app, area);
+        }).unwrap();
+        terminal.backend().buffer().content.iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn selector_keeps_banner_interface_and_controls_visible() {
+        let normal = render(100, 24);
+        assert!(normal.contains("deep packet inspection"));
+        assert!(normal.contains("eth0"));
+        assert!(normal.contains("start capture"));
+
+        let compact = render(60, 14);
+        assert!(compact.contains("PACKRAT //"));
+        assert!(compact.contains("eth0"));
+        assert!(compact.contains("start capture"));
+    }
 }
 
 fn draw_header(f: &mut Frame, area: Rect) {
