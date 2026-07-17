@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use crate::analysis::helper_process::spawn_stdin_stdout_helper;
 use crate::analysis::incident::Incident;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LatchMode {
     Monitor,
     Preview,
@@ -41,7 +41,7 @@ impl std::fmt::Display for LatchMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LatchStatus {
     Observed,
     Previewed,
@@ -70,7 +70,7 @@ impl std::fmt::Display for LatchStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LatchAction {
     pub incident_id: u64,
     pub address: Option<IpAddr>,
