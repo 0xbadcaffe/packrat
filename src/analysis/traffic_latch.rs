@@ -47,6 +47,9 @@ pub enum LatchStatus {
     Previewed,
     PendingApproval,
     Applied,
+    Expired,
+    Revoked,
+    RevokeFailed,
     Rejected,
     Failed,
 }
@@ -58,6 +61,9 @@ impl std::fmt::Display for LatchStatus {
             Self::Previewed => "previewed",
             Self::PendingApproval => "pending approval",
             Self::Applied => "applied",
+            Self::Expired => "expired",
+            Self::Revoked => "revoked",
+            Self::RevokeFailed => "revoke failed",
             Self::Rejected => "rejected",
             Self::Failed => "failed",
         })
@@ -75,14 +81,43 @@ pub struct LatchAction {
     pub created_at: f64,
 }
 
+impl LatchAction {
+    fn expires_at(&self) -> f64 {
+        self.created_at + self.expires_seconds as f64
+    }
+
+    fn is_active_at(&self, timestamp: f64) -> bool {
+        matches!(self.status, LatchStatus::Applied | LatchStatus::RevokeFailed)
+            && timestamp < self.expires_at()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LatchOperation {
+    #[default]
+    Block,
+    Unblock,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LatchRequest {
     pub address: IpAddr,
     pub expires_seconds: u64,
+    #[serde(default, skip_serializing_if = "is_block_operation")]
+    pub operation: LatchOperation,
+}
+
+fn is_block_operation(operation: &LatchOperation) -> bool {
+    *operation == LatchOperation::Block
 }
 
 pub trait LatchBackend {
     fn block(&self, request: &LatchRequest) -> Result<String, String>;
+
+    fn unblock(&self, _request: &LatchRequest) -> Result<String, String> {
+        Err("containment backend does not support immediate revocation".into())
+    }
 }
 
 #[derive(Debug)]
@@ -104,6 +139,16 @@ impl CommandLatch {
 
 impl LatchBackend for CommandLatch {
     fn block(&self, request: &LatchRequest) -> Result<String, String> {
+        self.execute(request)
+    }
+
+    fn unblock(&self, request: &LatchRequest) -> Result<String, String> {
+        self.execute(request)
+    }
+}
+
+impl CommandLatch {
+    fn execute(&self, request: &LatchRequest) -> Result<String, String> {
         let mut child = spawn_stdin_stdout_helper(&self.program, "latch")?;
         let input = serde_json::to_vec(request)
             .map_err(|error| format!("encode latch helper request: {error}"))?;
@@ -143,6 +188,30 @@ impl LatchBackend for NftablesLatch {
                 return Err(format!("nft {family} block failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
             }
             Ok(format!("blocked {} traffic for {} seconds", request.address, request.expires_seconds))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = request;
+            Err("TrafficLatch nftables backend is available only on Linux".into())
+        }
+    }
+
+
+    fn unblock(&self, request: &LatchRequest) -> Result<String, String> {
+        #[cfg(target_os = "linux")]
+        {
+            let set = match request.address {
+                IpAddr::V4(_) => "blocked_v4",
+                IpAddr::V6(_) => "blocked_v6",
+            };
+            let output = Command::new("nft")
+                .args(["delete", "element", "inet", "packrat_latch", set, "{", &request.address.to_string(), "}"])
+                .output()
+                .map_err(|error| format!("run nft: {error}"))?;
+            if !output.status.success() {
+                return Err(format!("nft unblock failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
+            }
+            Ok(format!("removed {} from the TrafficLatch set", request.address))
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -220,6 +289,7 @@ impl TrafficLatch {
         backend: &dyn LatchBackend,
         automatic_allowed: bool,
     ) -> &LatchAction {
+        self.reconcile_expired();
         if let Some(index) = self.actions.iter().position(|action| action.incident_id == incident.id) {
             return &self.actions[index];
         }
@@ -232,20 +302,20 @@ impl TrafficLatch {
                 LatchMode::Monitor => (LatchStatus::Observed, "monitor mode; no firewall change".into()),
                 LatchMode::Preview => (LatchStatus::Previewed, preview(address, self.expires_seconds)),
                 LatchMode::Manual => (LatchStatus::PendingApproval, preview(address, self.expires_seconds)),
-                LatchMode::Automatic if !automatic_allowed => (
-                    LatchStatus::PendingApproval,
-                    format!("automatic gate not satisfied; {}", preview(address, self.expires_seconds)),
-                ),
                 LatchMode::Automatic if self.emergency_stop => (
                     LatchStatus::Rejected,
                     "Guard kill switch is engaged; no firewall change".into(),
                 ),
-                LatchMode::Automatic if self.applied_count() >= self.max_active_blocks => (
+                LatchMode::Automatic if !automatic_allowed => (
+                    LatchStatus::PendingApproval,
+                    format!("automatic gate not satisfied; {}", preview(address, self.expires_seconds)),
+                ),
+                LatchMode::Automatic if self.active_count() >= self.max_active_blocks => (
                     LatchStatus::Rejected,
                     format!("Guard maximum of {} active blocks reached", self.max_active_blocks),
                 ),
                 LatchMode::Automatic => {
-                    match backend.block(&LatchRequest { address, expires_seconds: self.expires_seconds }) {
+                    match backend.block(&LatchRequest::block(address, self.expires_seconds)) {
                         Ok(detail) => (LatchStatus::Applied, detail),
                         Err(error) => (LatchStatus::Failed, error),
                     }
@@ -265,13 +335,20 @@ impl TrafficLatch {
     }
 
     pub fn approve(&mut self, incident_id: u64, backend: &dyn LatchBackend) -> Result<&LatchAction, String> {
+        self.reconcile_expired();
+        if self.emergency_stop {
+            return Err("Guard kill switch is engaged".into());
+        }
+        if self.active_count() >= self.max_active_blocks {
+            return Err(format!("Guard maximum of {} active blocks reached", self.max_active_blocks));
+        }
         let action = self.actions.iter_mut().find(|action| action.incident_id == incident_id)
             .ok_or("no TrafficLatch action for this incident")?;
         if action.status != LatchStatus::PendingApproval {
             return Err(format!("action is {}, not pending approval", action.status));
         }
         let address = action.address.ok_or("incident has no blockable address")?;
-        match backend.block(&LatchRequest { address, expires_seconds: action.expires_seconds }) {
+        match backend.block(&LatchRequest::block(address, action.expires_seconds)) {
             Ok(detail) => {
                 action.status = LatchStatus::Applied;
                 action.detail = detail;
@@ -289,13 +366,54 @@ impl TrafficLatch {
         self.actions.clear();
     }
 
-    pub fn applied_count(&self) -> usize {
-        self.actions.iter().filter(|action| action.status == LatchStatus::Applied).count()
+    pub fn active_count(&self) -> usize {
+        self.active_count_at(now())
     }
 
-    pub fn engage_kill_switch(&mut self) {
+    fn active_count_at(&self, timestamp: f64) -> usize {
+        self.actions.iter().filter(|action| action.is_active_at(timestamp)).count()
+    }
+
+    pub fn reconcile_expired(&mut self) {
+        self.reconcile_expired_at(now());
+    }
+
+    fn reconcile_expired_at(&mut self, timestamp: f64) {
+        for action in &mut self.actions {
+            if action.is_active_at(timestamp) || !matches!(action.status, LatchStatus::Applied | LatchStatus::RevokeFailed) {
+                continue;
+            }
+            action.status = LatchStatus::Expired;
+            action.detail = format!("containment expired after {} seconds", action.expires_seconds);
+        }
+    }
+
+    pub fn engage_kill_switch(&mut self, backend: &dyn LatchBackend) -> (usize, usize) {
         self.emergency_stop = true;
         self.mode = LatchMode::Monitor;
+        self.reconcile_expired();
+        let mut revoked = 0;
+        let mut failed = 0;
+        for action in &mut self.actions {
+            if !matches!(action.status, LatchStatus::Applied | LatchStatus::RevokeFailed) {
+                continue;
+            }
+            let Some(address) = action.address else { continue };
+            let request = LatchRequest::unblock(address, action.expires_seconds);
+            match backend.unblock(&request) {
+                Ok(detail) => {
+                    action.status = LatchStatus::Revoked;
+                    action.detail = detail;
+                    revoked += 1;
+                }
+                Err(error) => {
+                    action.status = LatchStatus::RevokeFailed;
+                    action.detail = error;
+                    failed += 1;
+                }
+            }
+        }
+        (revoked, failed)
     }
 
     pub fn clear_kill_switch(&mut self) {
@@ -310,7 +428,7 @@ impl TrafficLatch {
             Some(address) if !is_blockable(address) => (LatchStatus::Rejected, "special-purpose address is protected".into()),
             Some(address) if self.protected_addresses.contains(&address) => (LatchStatus::Rejected, "address is on the operator protection list".into()),
             Some(_) if self.emergency_stop => (LatchStatus::Rejected, "Guard kill switch is engaged".into()),
-            Some(_) if self.applied_count() >= self.max_active_blocks => (
+            Some(_) if self.active_count() >= self.max_active_blocks => (
                 LatchStatus::Rejected,
                 format!("Guard maximum of {} active blocks reached", self.max_active_blocks),
             ),
@@ -329,6 +447,16 @@ impl TrafficLatch {
             detail,
             created_at: now(),
         }
+    }
+}
+
+impl LatchRequest {
+    fn block(address: IpAddr, expires_seconds: u64) -> Self {
+        Self { address, expires_seconds, operation: LatchOperation::Block }
+    }
+
+    fn unblock(address: IpAddr, expires_seconds: u64) -> Self {
+        Self { address, expires_seconds, operation: LatchOperation::Unblock }
     }
 }
 
@@ -358,6 +486,11 @@ mod tests {
     impl LatchBackend for MemoryLatch {
         fn block(&self, request: &LatchRequest) -> Result<String, String> {
             Ok(format!("memory block {}", request.address))
+        }
+
+        fn unblock(&self, request: &LatchRequest) -> Result<String, String> {
+            assert_eq!(request.operation, LatchOperation::Unblock);
+            Ok(format!("memory unblock {}", request.address))
         }
     }
 
@@ -470,10 +603,48 @@ mod tests {
     #[test]
     fn guard_kill_switch_forces_monitor_and_rejects_future_actions() {
         let mut latch = TrafficLatch { mode: LatchMode::Automatic, ..Default::default() };
-        latch.engage_kill_switch();
+        latch.engage_kill_switch(&MemoryLatch);
         assert_eq!(latch.mode, LatchMode::Monitor);
         assert!(latch.emergency_stop);
         assert_eq!(latch.simulate_incident(&incident("203.0.113.9"), true).status, LatchStatus::Rejected);
+    }
+
+    #[test]
+    fn kill_switch_prevents_manual_approval() {
+        let mut latch = TrafficLatch { mode: LatchMode::Manual, ..Default::default() };
+        latch.on_incident(&incident("203.0.113.9"), &MemoryLatch);
+        latch.engage_kill_switch(&MemoryLatch);
+        assert_eq!(latch.approve(1, &ForbiddenLatch).unwrap_err(), "Guard kill switch is engaged");
+    }
+
+    #[test]
+    fn expired_blocks_do_not_consume_the_active_limit() {
+        let mut latch = TrafficLatch { mode: LatchMode::Automatic, max_active_blocks: 1, expires_seconds: 10, ..Default::default() };
+        latch.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, true);
+        let expired_at = latch.actions[0].created_at + 11.0;
+        assert_eq!(latch.active_count_at(expired_at), 0);
+        latch.reconcile_expired_at(expired_at);
+        assert_eq!(latch.actions[0].status, LatchStatus::Expired);
+    }
+
+    #[test]
+    fn kill_switch_revokes_active_blocks_and_audits_them() {
+        let mut latch = TrafficLatch { mode: LatchMode::Automatic, ..Default::default() };
+        latch.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, true);
+        let (revoked, failed) = latch.engage_kill_switch(&MemoryLatch);
+        assert_eq!((revoked, failed), (1, 0));
+        assert_eq!(latch.actions[0].status, LatchStatus::Revoked);
+        assert_eq!(latch.active_count(), 0);
+    }
+
+    #[test]
+    fn failed_revocation_remains_active_until_expiry() {
+        let mut latch = TrafficLatch { mode: LatchMode::Automatic, expires_seconds: 60, ..Default::default() };
+        latch.on_incident_with_auto_gate(&incident("203.0.113.9"), &MemoryLatch, true);
+        let (revoked, failed) = latch.engage_kill_switch(&FailingLatch);
+        assert_eq!((revoked, failed), (0, 1));
+        assert_eq!(latch.actions[0].status, LatchStatus::RevokeFailed);
+        assert_eq!(latch.active_count(), 1);
     }
 
     #[test]
@@ -506,6 +677,7 @@ mod tests {
         let detail = backend.block(&LatchRequest {
             address: "203.0.113.9".parse().unwrap(),
             expires_seconds: 60,
+            operation: LatchOperation::Block,
         }).unwrap();
         assert_eq!(detail, "helper block accepted");
         let _ = std::fs::remove_file(path);

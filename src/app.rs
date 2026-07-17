@@ -1735,8 +1735,19 @@ impl App {
     }
 
     pub fn engage_guard_kill_switch(&mut self) {
-        self.traffic_latch.engage_kill_switch();
-        self.set_status("Guard kill switch engaged; TrafficLatch forced to monitor mode");
+        let (revoked, failed) = if let Some(path) = self.latch_helper_path.as_ref() {
+            self.traffic_latch.engage_kill_switch(&CommandLatch::new(path))
+        } else {
+            self.traffic_latch.engage_kill_switch(&NftablesLatch)
+        };
+        self.set_status(format!(
+            "Guard stopped: monitor mode, {revoked} active blocks revoked, {failed} revocations failed",
+        ));
+    }
+
+    pub fn clear_guard_kill_switch(&mut self) {
+        self.traffic_latch.clear_kill_switch();
+        self.set_status("Guard kill switch reset; containment remains in monitor mode");
     }
 
     /// Open the retained incident packet history and record that it was reviewed.

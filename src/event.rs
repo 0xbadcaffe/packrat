@@ -322,6 +322,7 @@ fn handle_settings(app: &mut App, key: KeyEvent) {
             app.theme_picker_cursor = THEME_NAMES.iter().position(|&n| n == cur).unwrap_or(0);
         }
         KeyCode::Enter => app.activate_settings_selection(),
+        KeyCode::Char('c') if app.settings_cursor == 4 => app.clear_guard_kill_switch(),
         _ => {}
     }
 }
