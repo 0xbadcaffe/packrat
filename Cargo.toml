@@ -68,5 +68,10 @@ rstest  = "0.22"
 opt-level = 3
 strip = true
 
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+
 [profile.dev]
 opt-level = 1
