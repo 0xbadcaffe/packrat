@@ -101,8 +101,12 @@ jobs:
       - name: Install memory and CPU instrumentation
         run: |
           sudo apt-get update
-          sudo apt-get install -y valgrind linux-tools-common linux-tools-generic
-          sudo ln -sf "$(find /usr/lib/linux-tools -type f -name perf | sort -V | tail -1)" /usr/local/bin/perf
+          sudo apt-get install -y valgrind "linux-tools-$(uname -r)"
+          perf_path="/usr/lib/linux-tools/$(uname -r)/perf"
+          test -x "$perf_path"
+          sudo ln -sf "$perf_path" /usr/local/bin/perf
+          valgrind --version
+          perf --version
 
       - name: Build symbolized profiling workload
         run: cargo build --locked --profile profiling --bin packrat-profile
