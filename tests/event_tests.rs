@@ -434,12 +434,25 @@ async fn comma_opens_settings_window() {
 }
 
 #[tokio::test]
-async fn settings_enter_toggles_capture_from_capture_section() {
+async fn settings_enter_toggles_packet_following() {
     let mut app = App::new_for_test();
     event::handle(&mut app, key(KeyCode::Char(',')));
     event::handle(&mut app, key(KeyCode::Char('j')));
     event::handle(&mut app, key(KeyCode::Enter));
-    assert!(app.capturing);
+    assert!(app.auto_scroll);
+}
+
+#[test]
+fn packet_following_keeps_selection_on_newest_match() {
+    let mut app = App::new_for_test();
+    app.auto_scroll = true;
+    app.inject_packet(packet(1));
+    app.inject_packet(packet(2));
+    assert_eq!(app.selected, Some(1));
+
+    app.auto_scroll = false;
+    app.inject_packet(packet(3));
+    assert_eq!(app.selected, Some(1));
 }
 
 #[tokio::test]
@@ -467,6 +480,31 @@ async fn settings_cycles_alert_automation_without_enabling_containment() {
         packrat_tui::analysis::alert_center::AutomationMode::Watch,
     );
     assert_eq!(app.traffic_latch.mode, LatchMode::Monitor);
+}
+
+#[tokio::test]
+async fn settings_adjust_guard_timeout_with_arrow_keys() {
+    let mut app = App::new_for_test();
+    event::handle(&mut app, key(KeyCode::Char(',')));
+    for _ in 0..5 {
+        event::handle(&mut app, key(KeyCode::Char('j')));
+    }
+    let initial = app.traffic_latch.expires_seconds;
+    event::handle(&mut app, key(KeyCode::Right));
+    assert_eq!(app.traffic_latch.expires_seconds, initial + 60);
+    event::handle(&mut app, key(KeyCode::Left));
+    assert_eq!(app.traffic_latch.expires_seconds, initial);
+}
+
+#[tokio::test]
+async fn help_navigation_scrolls_without_closing() {
+    let mut app = App::new_for_test();
+    app.show_help = true;
+    event::handle(&mut app, key(KeyCode::PageDown));
+    assert!(app.show_help);
+    assert_eq!(app.help_scroll, 10);
+    event::handle(&mut app, key(KeyCode::PageUp));
+    assert_eq!(app.help_scroll, 0);
 }
 
 #[test]
