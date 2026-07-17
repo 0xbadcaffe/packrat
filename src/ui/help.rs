@@ -1,15 +1,20 @@
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
+use crate::app::App;
 use crate::ui::theme::*;
 
-pub fn draw(f: &mut Frame) {
-    let area = centered_rect(70, 42, f.area());
+pub fn draw(f: &mut Frame, app: &App) {
+    let terminal = f.area();
+    let width = terminal.width.saturating_sub(2).min(104);
+    let height = terminal.height.saturating_sub(2);
+    if width < 20 || height < 6 { return; }
+    let area = centered_rect(width, height, terminal);
 
     f.render_widget(Clear, area);
 
@@ -109,6 +114,8 @@ pub fn draw(f: &mut Frame) {
         lines.push(Line::raw(""));
     }
 
+    let visible_lines = area.height.saturating_sub(2) as usize;
+    let max_scroll = lines.len().saturating_sub(visible_lines) as u16;
     let popup = Paragraph::new(lines)
         .block(Block::default()
             .borders(Borders::ALL)
@@ -116,32 +123,55 @@ pub fn draw(f: &mut Frame) {
             .border_style(Style::default().fg(C_CYAN()).bg(C_BG2()))
             .style(Style::default().bg(C_BG2()))
             .title(Span::styled(
-                " Keyboard Shortcuts — h / Esc to close ",
+                " Keyboard Reference  [j/k/PgUp/PgDn scroll]  [h/Esc close] ",
                 Style::default().fg(C_CYAN()).bg(C_BG2()).add_modifier(Modifier::BOLD),
             ))
             .title_alignment(Alignment::Center))
-        .style(Style::default().bg(C_BG2()));
+        .style(Style::default().bg(C_BG2()))
+        .scroll((app.help_scroll.min(max_scroll), 0));
 
     f.render_widget(popup, area);
 }
 
-/// Return a centered Rect with the given percentage width and fixed height (in lines).
-fn centered_rect(width_pct: u16, height: u16, r: Rect) -> Rect {
-    let vert = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(height),
-            Constraint::Min(0),
-        ])
-        .split(r);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
 
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - width_pct) / 2),
-            Constraint::Percentage(width_pct),
-            Constraint::Percentage((100 - width_pct) / 2),
-        ])
-        .split(vert[1])[1]
+    fn rendered_help(width: u16, height: u16, scroll: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new_for_test();
+        app.help_scroll = scroll;
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        terminal.backend().buffer().content.iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn help_renders_and_scrolls_at_small_terminal_size() {
+        let top = rendered_help(80, 24, 0);
+        assert!(top.contains("Navigation"));
+        let bottom = rendered_help(80, 24, u16::MAX);
+        assert!(bottom.contains("General"));
+        assert!(bottom.contains("Quit"));
+    }
+
+    #[test]
+    fn help_renders_at_wide_terminal_size() {
+        let output = rendered_help(160, 48, 0);
+        assert!(output.contains("Keyboard Reference"));
+        assert!(output.contains("Capture & Recording"));
+    }
+}
+
+/// Return a centered Rect with the given percentage width and fixed height (in lines).
+fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
+    Rect::new(
+        r.x + r.width.saturating_sub(width) / 2,
+        r.y + r.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
 }

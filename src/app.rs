@@ -53,10 +53,11 @@ use crate::dissector::DissectorDef;
 use crate::net::packet::TreeSection;
 use crate::tabs::{Tab, Workspace};
 use crate::traceroute::TracerouteState;
-use crate::analysis::alert_center::AlertCenter;
+use crate::analysis::alert_center::{AlertCenter, AutomationMode};
 
 const MAX_PACKETS: usize = 10_000;
 pub const INCIDENT_ANALYSIS_SECTION: usize = 11;
+pub const SETTINGS_COUNT: usize = 8;
 
 /// Sub-sections within the Security tab
 #[derive(Debug, Clone, PartialEq)]
@@ -432,6 +433,7 @@ pub struct App {
     pub pcap_path: String,
     pcap_writer: Option<PcapWriter>,
     pub show_help: bool,
+    pub help_scroll: u16,
     pub dissectors: Vec<DissectorDef>,
     pub strings_search_active: bool,
     pub strings_selected: Option<usize>,
@@ -549,6 +551,9 @@ pub struct App {
     pub header_search:        String,
     pub settings_open:        bool,
     pub settings_cursor:      usize,
+    pub auto_scroll:          bool,
+    pub preferred_workspace:  Workspace,
+    persist_preferences:      bool,
     // ─── Project management ────────────────────────────────────────────────────
     /// Name of the currently open project (None = ad-hoc workspace).
     pub current_project_name: Option<String>,
@@ -570,10 +575,17 @@ impl App {
     }
 
     pub fn new_with_mode(packet_tx: Sender<Packet>, startup_mode: StartupMode) -> Self {
+        let preferences = theme_store::load();
         let iface_list = list_interfaces(startup_mode == StartupMode::Simulation);
         let selected_iface = iface_list.first().cloned().unwrap_or_default();
+        let mut alert_center = AlertCenter::default();
+        alert_center.automation_mode = match preferences.alert_automation {
+            1 => AutomationMode::Watch,
+            2 => AutomationMode::Triage,
+            _ => AutomationMode::Off,
+        };
         let mut app = Self {
-            active_tab: Tab::Packets,
+            active_tab: Workspace::from_index(preferences.startup_workspace).home(),
             navigation_history: Vec::new(),
             packets: VecDeque::new(),
             filtered: Vec::new(),
@@ -600,6 +612,7 @@ impl App {
             pcap_path: String::new(),
             pcap_writer: None,
             show_help: false,
+            help_scroll: 0,
             dissectors: crate::dissector::load(),
             strings_search_active: false,
             strings_selected: None,
@@ -622,7 +635,7 @@ impl App {
             scan: ScanState::new(),
             replay: ReplayState::default(),
             security_tab: SecuritySubTab::Alerts,
-            alert_center: AlertCenter::default(),
+            alert_center,
             security_scroll: 0,
             scanner_scroll: 0,
             replay_editing:      false,
@@ -696,7 +709,7 @@ impl App {
             search_results:  Vec::new(),
             search_selected: 0,
             autopsy_state:    None,
-            selected_theme_name:  theme_store::load_theme_name(),
+            selected_theme_name:  preferences.theme,
             theme_picker_open:    false,
             theme_picker_cursor:  0,
             view_menu_open:       false,
@@ -710,6 +723,9 @@ impl App {
             header_search:        String::new(),
             settings_open:        false,
             settings_cursor:      0,
+            auto_scroll:          preferences.auto_scroll,
+            preferred_workspace: Workspace::from_index(preferences.startup_workspace),
+            persist_preferences: true,
             current_project_name: None,
             current_project_path: None,
             project_dirty:        false,
@@ -913,6 +929,11 @@ impl App {
         let mut app = App::new(tx);
         app.picking_iface = false;
         app.selected_iface = "simulated".to_string();
+        app.active_tab = Tab::Packets;
+        app.auto_scroll = false;
+        app.preferred_workspace = Workspace::Traffic;
+        app.alert_center.automation_mode = AutomationMode::Off;
+        app.persist_preferences = false;
         app
     }
 
@@ -928,7 +949,7 @@ impl App {
     /// Apply a theme by name, set it as current, and persist the choice.
     pub fn apply_theme(&mut self, name: &str) {
         self.selected_theme_name = name.to_string();
-        let _ = theme_store::save_theme_name(name);
+        self.save_preferences();
     }
 
     // ─── Project save / load ──────────────────────────────────────────────────
@@ -1708,7 +1729,11 @@ impl App {
 
         if Self::packet_matches_filter(&self.display_filter, &self.filter.input, &pkt) {
             self.filtered.push(self.packets.len());
-            if self.selected.is_none() { self.selected = Some(0); }
+            if self.auto_scroll {
+                self.selected = Some(self.filtered.len().saturating_sub(1));
+            } else if self.selected.is_none() {
+                self.selected = Some(0);
+            }
         }
 
         self.packets.push_back(pkt);
@@ -2624,13 +2649,12 @@ impl App {
 
     pub fn activate_settings_selection(&mut self) {
         match self.settings_cursor {
-            1 => {
-                self.toggle_capture();
-                self.set_status(if self.capturing { "Capture started" } else { "Capture stopped" });
+            1 => self.auto_scroll = !self.auto_scroll,
+            2 => {
+                self.preferred_workspace = Workspace::from_index((self.preferred_workspace.index() + 1) % Workspace::COUNT);
             }
             3 => {
                 self.alert_center.cycle_automation_mode();
-                self.set_status(format!("Alert automation mode set to {}", self.alert_center.automation_mode));
             }
             4 => {
                 self.traffic_latch.mode = match self.traffic_latch.mode {
@@ -2639,10 +2663,51 @@ impl App {
                     LatchMode::Manual => LatchMode::Automatic,
                     LatchMode::Automatic => LatchMode::Monitor,
                 };
-                self.set_status(format!("TrafficLatch mode set to {}", self.traffic_latch.mode));
+            }
+            5 => self.traffic_latch.expires_seconds = (self.traffic_latch.expires_seconds + 60).min(86_400),
+            6 => self.traffic_latch.max_active_blocks = (self.traffic_latch.max_active_blocks + 1).min(1_024),
+            7 => self.clear_guard_kill_switch(),
+            _ => {}
+        }
+        self.save_preferences();
+        self.set_status("Preferences updated");
+    }
+
+    pub fn adjust_settings_selection(&mut self, increase: bool) {
+        match self.settings_cursor {
+            1 | 2 | 3 | 4 | 7 => self.activate_settings_selection(),
+            5 => {
+                self.traffic_latch.expires_seconds = if increase {
+                    (self.traffic_latch.expires_seconds + 60).min(86_400)
+                } else {
+                    self.traffic_latch.expires_seconds.saturating_sub(60).max(60)
+                };
+            }
+            6 => {
+                self.traffic_latch.max_active_blocks = if increase {
+                    (self.traffic_latch.max_active_blocks + 1).min(1_024)
+                } else {
+                    self.traffic_latch.max_active_blocks.saturating_sub(1).max(1)
+                };
             }
             _ => {}
         }
+        self.save_preferences();
+    }
+
+    fn save_preferences(&self) {
+        if !self.persist_preferences { return; }
+        let automation = match self.alert_center.automation_mode {
+            AutomationMode::Off => 0,
+            AutomationMode::Watch => 1,
+            AutomationMode::Triage => 2,
+        };
+        let _ = theme_store::save(&theme_store::Preferences {
+            theme: self.selected_theme_name.clone(),
+            auto_scroll: self.auto_scroll,
+            alert_automation: automation,
+            startup_workspace: self.preferred_workspace.index(),
+        });
     }
 
     pub fn current_rate(&self) -> u32 { *self.rate_history.last().unwrap_or(&0) }

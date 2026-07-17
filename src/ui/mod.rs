@@ -49,7 +49,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_statusbar(f, app, chunks[4]);
 
     if app.show_help {
-        help::draw(f);
+        help::draw(f, app);
     }
 
     if let Some(overlay) = &app.stream_overlay {

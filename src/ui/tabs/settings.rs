@@ -11,100 +11,73 @@ use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(24), Constraint::Min(0)])
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(10), Constraint::Length(7)])
         .split(area);
-    draw_sections(f, app, chunks[0]);
-    draw_details(f, app, chunks[1]);
-}
 
-fn draw_sections(f: &mut Frame, app: &App, area: Rect) {
-    let sections = ["Appearance", "Capture", "Analysis", "Automation", "Defense", "Keys"];
-    let rows = sections.iter().enumerate().map(|(index, section)| {
+    let entries = [
+        ("Theme", app.selected_theme_name.clone()),
+        ("Follow new packets", on_off(app.auto_scroll)),
+        ("Startup workspace", app.preferred_workspace.label().into()),
+        ("Alert assistance", app.alert_center.automation_mode.to_string()),
+        ("Guard mode", app.traffic_latch.mode.to_string()),
+        ("Guard block timeout", format!("{} seconds", app.traffic_latch.expires_seconds)),
+        ("Guard active limit", app.traffic_latch.max_active_blocks.to_string()),
+        ("Guard kill switch", if app.traffic_latch.emergency_stop { "ENGAGED".into() } else { "Ready".into() }),
+    ];
+    let rows = entries.into_iter().enumerate().map(|(index, (label, value))| {
         let selected = app.settings_cursor == index;
         let style = if selected {
             Style::default().fg(C_BG()).bg(C_CYAN()).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(C_FG())
         };
-        Row::new([Cell::from(*section).style(style)]).style(if selected { Style::default().bg(C_CYAN()) } else { Style::default().bg(C_BG()) })
+        Row::new([
+            Cell::from(if selected { format!("> {label}") } else { format!("  {label}") }),
+            Cell::from(value),
+        ]).style(style)
     });
-    let table = Table::new(rows, [Constraint::Percentage(100)])
-        .block(panel("Settings"))
+    let table = Table::new(rows, [Constraint::Percentage(50), Constraint::Percentage(50)])
+        .header(Row::new(["Preference", "Current value"]).style(
+            Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
+        ))
+        .block(panel("Preferences"))
         .style(Style::default().bg(C_BG()));
-    f.render_widget(table, area);
+    f.render_widget(table, chunks[0]);
+
+    let detail = setting_detail(app);
+    let footer = Paragraph::new(vec![
+        Line::from(Span::styled(detail, Style::default().fg(C_FG2()))),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("j/k", key()), Span::raw(" select   "),
+            Span::styled("Left/Right", key()), Span::raw(" change   "),
+            Span::styled("Enter", key()), Span::raw(" edit/toggle   "),
+            Span::styled("Esc", key()), Span::raw(" close"),
+        ]),
+    ]).block(panel("Selected Setting")).wrap(Wrap { trim: true });
+    f.render_widget(footer, chunks[1]);
 }
 
-fn draw_details(f: &mut Frame, app: &App, area: Rect) {
-    let lines = match app.settings_cursor {
-        0 => vec![
-            Line::from(vec![Span::styled("Appearance", heading())]),
-            Line::from(format!("Theme: {}", app.selected_theme_name)),
-            Line::from("Enter: open theme picker.  \\ also opens it from anywhere."),
-            Line::from("Future: compact density, timestamp format, packet color rules."),
-        ],
-        1 => vec![
-            Line::from(vec![Span::styled("Capture", heading())]),
-            Line::from(format!("Interface: {}", app.selected_iface)),
-            Line::from(format!("Capturing: {}", if app.capturing { "yes" } else { "no" })),
-            Line::from(format!("Visible packets: {} / total {}", app.filtered.len(), app.packets.len())),
-            Line::from("Enter: toggle capture."),
-            Line::from("Future: default interface, capture buffer limits, auto-scroll."),
-        ],
-        2 => vec![
-            Line::from(vec![Span::styled("Analysis Helpers", heading())]),
-            Line::from(format!("TLS decrypt helper: {}", path_state(app.tls_tracker.decrypt_helper_path.as_ref()))),
-            Line::from(format!("QUIC decode helper: {}", path_state(app.quic_scope.decode_helper_path.as_ref()))),
-            Line::from(format!("Capture helper: {}", path_state(app.capture_helper_path.as_ref()))),
-            Line::from(format!("Latch helper: {}", path_state(app.latch_helper_path.as_ref()))),
-            Line::from(format!("Reputation helper: {}", path_state(app.reputation_helper_path.as_ref()))),
-        ],
-        3 => vec![
-            Line::from(vec![Span::styled("Alert Automation", heading())]),
-            Line::from(format!("Mode: {}", app.alert_center.automation_mode)),
-            Line::from("Off: findings enter the Alert Center for manual review."),
-            Line::from("Watch: high/critical findings are pinned to the investigation tray."),
-            Line::from("Triage: Watch behavior plus deterministic priority and next-step advice."),
-            Line::from("Enter: cycle mode. No automation mode changes firewall policy."),
-        ],
-        4 => vec![
-            Line::from(vec![Span::styled("Defense", heading())]),
-            Line::from(format!("TrafficLatch mode: {}", app.traffic_latch.mode)),
-            Line::from(format!("Containment timeout: {}s", app.traffic_latch.expires_seconds)),
-            Line::from(format!("Protected addresses: {}", app.traffic_latch.protected_addresses.len())),
-            Line::from(format!("Active blocks: {} / {}", app.traffic_latch.active_count(), app.traffic_latch.max_active_blocks)),
-            Line::from(format!("Kill switch: {}", if app.traffic_latch.emergency_stop { "ENGAGED" } else { "ready" })),
-            Line::from(format!("Last Guard simulation entries: {}", app.response_preview.len())),
-            Line::from("Enter: cycle TrafficLatch mode."),
-            Line::from("Auto containment still requires the policy gate."),
-            Line::from("!: revoke active blocks and force monitor mode."),
-            Line::from("c: reset the kill switch; mode remains monitor."),
-        ],
-        _ => vec![
-            Line::from(vec![Span::styled("Keys", heading())]),
-            Line::from("1-5: top-level modes"),
-            Line::from("[ / ]: local screen inside Investigate"),
-            Line::from("Tab/F2: view drawer"),
-            Line::from("m: add packet/alert  M: pin active context to tray"),
-            Line::from("Enter: investigate selected packet"),
-            Line::from("w: investigation tray / recording outside Investigate"),
-            Line::from(",: settings  Esc: close/back"),
-        ],
-    };
-    let hint = Line::from(vec![
-        Span::styled(" [j/k] section  [Enter] action  [Esc] close  [,] close ", Style::default().fg(C_FG3())),
-    ]);
-    let mut content = lines;
-    content.push(Line::raw(""));
-    content.push(hint);
-    f.render_widget(Paragraph::new(content).block(panel("Configuration")).wrap(Wrap { trim: false }), area);
+fn setting_detail(app: &App) -> String {
+    match app.settings_cursor {
+        0 => "Open the theme gallery. Theme changes are applied immediately and saved globally.".into(),
+        1 => "Keep the packet cursor on the newest matching packet while traffic arrives.".into(),
+        2 => "Choose the workspace Packrat opens on the next launch.".into(),
+        3 => "Off is manual. Watch pins urgent findings. Triage also adds deterministic priorities and advice.".into(),
+        4 => "Monitor and preview do not alter the firewall. Manual and automatic modes require Guard policy gates.".into(),
+        5 => "Set the expiry for newly applied firewall blocks. Range: 60 seconds to 24 hours.".into(),
+        6 => format!("Limit concurrent, unexpired blocks. Currently active: {}.", app.traffic_latch.active_count()),
+        _ if app.traffic_latch.emergency_stop => "Reset the emergency stop. Guard remains in monitor mode after reset.".into(),
+        _ => "The emergency stop is ready. Press ! globally to revoke active blocks and force monitor mode.".into(),
+    }
 }
 
-fn path_state(path: Option<&std::path::PathBuf>) -> String {
-    path.map(|path| path.display().to_string()).unwrap_or_else(|| "not configured".into())
+fn on_off(value: bool) -> String {
+    if value { "On".into() } else { "Off".into() }
 }
 
-fn heading() -> Style {
+fn key() -> Style {
     Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)
 }
 
@@ -115,4 +88,26 @@ fn panel(title: &'static str) -> Block<'static> {
         .border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(format!(" {title} "), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)))
         .style(Style::default().bg(C_BG()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn preferences_render_at_compact_and_normal_sizes() {
+        for (width, height) in [(60, 18), (96, 26)] {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let app = App::new_for_test();
+            terminal.draw(|frame| draw(frame, &app, frame.area())).unwrap();
+            let output = terminal.backend().buffer().content.iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(output.contains("Preferences"));
+            assert!(output.contains("Theme"));
+            assert!(output.contains("Guard"));
+        }
+    }
 }

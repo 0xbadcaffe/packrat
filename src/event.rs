@@ -55,8 +55,18 @@ pub fn handle(app: &mut App, event: Event) -> bool {
     }
 
     if app.show_help {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q')) {
-            app.show_help = false;
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q') => {
+                app.show_help = false;
+                app.help_scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => app.help_scroll = app.help_scroll.saturating_add(1),
+            KeyCode::Up | KeyCode::Char('k') => app.help_scroll = app.help_scroll.saturating_sub(1),
+            KeyCode::PageDown => app.help_scroll = app.help_scroll.saturating_add(10),
+            KeyCode::PageUp => app.help_scroll = app.help_scroll.saturating_sub(10),
+            KeyCode::Home | KeyCode::Char('g') => app.help_scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => app.help_scroll = u16::MAX,
+            _ => {}
         }
         return false;
     }
@@ -310,7 +320,7 @@ fn handle_settings(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char(',') | KeyCode::Char('q') => app.close_settings(),
         KeyCode::Down | KeyCode::Char('j') => {
-            app.settings_cursor = (app.settings_cursor + 1).min(5);
+            app.settings_cursor = (app.settings_cursor + 1).min(crate::app::SETTINGS_COUNT - 1);
         }
         KeyCode::Up | KeyCode::Char('k') => {
             app.settings_cursor = app.settings_cursor.saturating_sub(1);
@@ -322,7 +332,8 @@ fn handle_settings(app: &mut App, key: KeyEvent) {
             app.theme_picker_cursor = THEME_NAMES.iter().position(|&n| n == cur).unwrap_or(0);
         }
         KeyCode::Enter => app.activate_settings_selection(),
-        KeyCode::Char('c') if app.settings_cursor == 4 => app.clear_guard_kill_switch(),
+        KeyCode::Left | KeyCode::Char('h') => app.adjust_settings_selection(false),
+        KeyCode::Right | KeyCode::Char('l') => app.adjust_settings_selection(true),
         _ => {}
     }
 }
