@@ -1133,7 +1133,6 @@ impl SecurityEngine {
 
     fn check_dns_abuse_and_lateral_movement(&mut self, pkt: &Packet) {
         let mut alerts = Vec::new();
-        let info_lower = pkt.info.to_ascii_lowercase();
         let is_dns = pkt.protocol.eq_ignore_ascii_case("DNS")
             || pkt.src_port == Some(53)
             || pkt.dst_port == Some(53);
@@ -1151,7 +1150,7 @@ impl SecurityEngine {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 300.0
         });
 
-        if is_dns && info_lower.contains("nxdomain") {
+        if is_dns && Self::contains_str_ci(pkt.info.as_bytes(), b"nxdomain") {
             let client = if pkt.src_port == Some(53) { pkt.dst.clone() } else { pkt.src.clone() };
             if self.nxdomain_clients.len() < MAX_SCAN_STATES || self.nxdomain_clients.contains_key(&client) {
                 let state = self.nxdomain_clients.entry(client.clone()).or_default();
@@ -1174,7 +1173,7 @@ impl SecurityEngine {
             }
         }
 
-        if is_dns && info_lower.contains("txt") && pkt.length > 512 {
+        if is_dns && Self::contains_str_ci(pkt.info.as_bytes(), b"txt") && pkt.length > 512 {
             alerts.push((
                 "Oversized DNS TXT traffic",
                 Severity::Medium,
@@ -1438,8 +1437,6 @@ impl SecurityEngine {
         let dst_port = pkt.dst_port.unwrap_or(0);
         let src_port = pkt.src_port.unwrap_or(0);
         let bytes = &pkt.bytes;
-        let info_lower = pkt.info.to_lowercase();
-        let proto_lower = pkt.protocol.to_lowercase();
 
         // ── EternalBlue ─────────────────────────────────────────────────────
         if dst_port == 445 {
@@ -1489,7 +1486,9 @@ impl SecurityEngine {
 
         // ── LLMNR poisoning ─────────────────────────────────────────────────
         if dst_port == 5355 || pkt.dst == "224.0.0.252" {
-            if proto_lower.contains("udp") || proto_lower.contains("llmnr") {
+            if Self::contains_str_ci(pkt.protocol.as_bytes(), b"udp")
+                || Self::contains_str_ci(pkt.protocol.as_bytes(), b"llmnr")
+            {
                 self.push_ids(IdsAlert {
                     pkt_no: pkt.no,
                     signature: "LLMNR Poisoning",
@@ -1500,7 +1499,10 @@ impl SecurityEngine {
         }
 
         // ── NBNS poisoning ──────────────────────────────────────────────────
-        if dst_port == 137 && (proto_lower.contains("udp") || proto_lower.contains("nbns")) {
+        if dst_port == 137
+            && (Self::contains_str_ci(pkt.protocol.as_bytes(), b"udp")
+                || Self::contains_str_ci(pkt.protocol.as_bytes(), b"nbns"))
+        {
             let nbns_sig: &[u8] = &[0x00, 0x20, 0x43, 0x4b];
             if Self::contains_bytes(bytes, nbns_sig) {
                 self.push_ids(IdsAlert {
@@ -1589,7 +1591,7 @@ impl SecurityEngine {
         if dst_port == 445 {
             let has_ntlm = Self::contains_str_ci(bytes, b"NTLMSSP");
             let has_kerb = Self::contains_str_ci(bytes, b"Kerberos")
-                || info_lower.contains("kerberos");
+                || Self::contains_str_ci(pkt.info.as_bytes(), b"kerberos");
             if has_ntlm && !has_kerb {
                 // Heuristic: NTLM auth on SMB without Kerberos ticket
                 self.push_ids(IdsAlert {
@@ -1602,8 +1604,11 @@ impl SecurityEngine {
         }
 
         // ── CVE-2021-44228 via DNS ───────────────────────────────────────────
-        if dst_port == 53 || src_port == 53 || proto_lower.contains("dns") {
-            if info_lower.contains("jndi") {
+        if dst_port == 53
+            || src_port == 53
+            || Self::contains_str_ci(pkt.protocol.as_bytes(), b"dns")
+        {
+            if Self::contains_str_ci(pkt.info.as_bytes(), b"jndi") {
                 self.push_ids(IdsAlert {
                     pkt_no: pkt.no,
                     signature: "Log4Shell via DNS (CVE-2021-44228)",
@@ -2115,10 +2120,9 @@ impl SecurityEngine {
         if needle.is_empty() || haystack.len() < needle.len() {
             return false;
         }
-        let n_lower: Vec<u8> = needle.iter().map(|b| b.to_ascii_lowercase()).collect();
         haystack
             .windows(needle.len())
-            .any(|w| w.iter().map(|b| b.to_ascii_lowercase()).collect::<Vec<_>>() == n_lower)
+            .any(|window| window.eq_ignore_ascii_case(needle))
     }
 
     fn nop_sled_16(data: &[u8]) -> bool {

