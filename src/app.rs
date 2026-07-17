@@ -409,6 +409,7 @@ pub struct App {
     /// Recently visited screens, newest last. Modal overlays are not included.
     pub navigation_history: Vec<Tab>,
     pub packets: VecDeque<Packet>,
+    packet_index_base: usize,
     pub filtered: Vec<usize>,
     pub selected: Option<usize>,
     pub total_bytes: u64,
@@ -588,6 +589,7 @@ impl App {
             active_tab: Workspace::from_index(preferences.startup_workspace).home(),
             navigation_history: Vec::new(),
             packets: VecDeque::new(),
+            packet_index_base: 0,
             filtered: Vec::new(),
             selected: None,
             total_bytes: 0,
@@ -1743,7 +1745,7 @@ impl App {
         }
 
         if Self::packet_matches_filter(&self.display_filter, &self.filter.input, &pkt) {
-            self.filtered.push(self.packets.len());
+            self.filtered.push(self.packet_index_base.saturating_add(self.packets.len()));
             if self.auto_scroll {
                 self.selected = Some(self.filtered.len().saturating_sub(1));
             } else if self.selected.is_none() {
@@ -1754,7 +1756,12 @@ impl App {
         self.packets.push_back(pkt);
         if self.packets.len() > MAX_PACKETS {
             self.packets.pop_front();
-            self.rebuild_filtered();
+            self.packet_index_base = self.packet_index_base.saturating_add(1);
+            let stale = self.filtered.partition_point(|index| *index < self.packet_index_base);
+            if stale > 0 {
+                self.filtered.drain(..stale);
+                self.selected = self.selected.map(|selected| selected.saturating_sub(stale));
+            }
         }
     }
 
@@ -2100,6 +2107,7 @@ impl App {
     pub fn clear_packets(&mut self) {
         self.capturing = false;
         self.packets.clear();
+        self.packet_index_base = 0;
         self.filtered.clear();
         self.selected = None;
         self.worklist = InvestigationTray::default();
@@ -2173,7 +2181,7 @@ impl App {
 
         self.filtered = self.packets.iter().enumerate()
             .filter(|(_, p)| Self::packet_matches_filter(&self.display_filter, &self.filter.input, p))
-            .map(|(i, _)| i)
+            .map(|(i, _)| self.packet_index_base.saturating_add(i))
             .collect();
         if let Some(sel) = self.selected {
             if sel >= self.filtered.len() {
@@ -2199,7 +2207,13 @@ impl App {
     }
 
     pub fn selected_packet(&self) -> Option<&Packet> {
-        self.selected.and_then(|i| self.filtered.get(i)).and_then(|&pi| self.packets.get(pi))
+        self.selected
+            .and_then(|i| self.filtered.get(i))
+            .and_then(|&index| self.retained_packet_at(index))
+    }
+
+    pub fn retained_packet_at(&self, index: usize) -> Option<&Packet> {
+        self.packets.get(index.checked_sub(self.packet_index_base)?)
     }
 
     pub fn active_investigation_packet(&self) -> Option<&Packet> {

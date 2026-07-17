@@ -10,6 +10,8 @@ use crate::sim::scenario;
 pub struct ProfileSummary {
     pub packets: usize,
     pub retained_packets: usize,
+    pub first_retained_packet: Option<u64>,
+    pub selected_packet: Option<u64>,
     pub alerts: usize,
     pub elapsed: Duration,
 }
@@ -30,6 +32,8 @@ pub fn run(packet_count: usize) -> ProfileSummary {
     ProfileSummary {
         packets: packet_count,
         retained_packets: app.packets.len(),
+        first_retained_packet: app.packets.front().map(|packet| packet.no),
+        selected_packet: app.selected_packet().map(|packet| packet.no),
         alerts: app.alert_center.items.len(),
         elapsed: started.elapsed(),
     }
@@ -60,6 +64,8 @@ mod tests {
         let summary = run(10_250);
         assert_eq!(summary.packets, 10_250);
         assert_eq!(summary.retained_packets, 10_000);
+        assert_eq!(summary.first_retained_packet, Some(251));
+        assert_eq!(summary.selected_packet, Some(251));
         assert!(summary.alerts <= 2_000);
     }
 }
