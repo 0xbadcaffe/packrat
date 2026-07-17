@@ -1523,17 +1523,16 @@ impl App {
         self.net_registry.observe(&pkt.dst);
 
         // Graph ingestion — extract before pkt is moved
-        {
-            let src   = pkt.src.clone();
-            let dst   = pkt.dst.clone();
-            let proto = pkt.protocol.clone();
-            let sport = pkt.src_port;
-            let dport = pkt.dst_port;
-            let ts    = pkt.timestamp;
-            let bytes = pkt.length as u64;
-            let no    = pkt.no;
-            self.operator_graph.on_packet(&src, &dst, &proto, sport, dport, ts, bytes, no);
-        }
+        self.operator_graph.on_packet(
+            &pkt.src,
+            &pkt.dst,
+            &pkt.protocol,
+            pkt.src_port,
+            pkt.dst_port,
+            pkt.timestamp,
+            pkt.length as u64,
+            pkt.no,
+        );
 
         // Security analysis. Critical built-in signatures open an incident for
         // explicit operator review; lower severities remain in the Security tab.
