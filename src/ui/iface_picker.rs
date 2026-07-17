@@ -10,7 +10,7 @@ use crate::app::App;
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
-    let banner_height = if area.height >= 16 { 9 } else { 3 };
+    let banner_height = if area.height >= 17 { 10 } else { 3 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -28,7 +28,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_banner(f: &mut Frame, area: Rect) {
-    if area.height < 8 {
+    if area.height < 9 {
         let banner = Paragraph::new(vec![
             Line::raw(""),
             Line::from(Span::styled(
@@ -47,12 +47,13 @@ fn draw_banner(f: &mut Frame, area: Rect) {
             2 => C_YELLOW(),
             3 => C_ORANGE(),
             4 => C_MAGENTA(),
+            5 => C_CYAN(),
             _ => C_FG2(),
         };
         Line::from(Span::styled(*line, Style::default().fg(color).add_modifier(Modifier::BOLD)))
     }));
     banner.push(Line::from(Span::styled(
-        format!(" deep packet inspection / penetration detection / controlled response  v{}", env!("CARGO_PKG_VERSION")),
+        format!(" PACKRAT // network evidence console  v{}", env!("CARGO_PKG_VERSION")),
         Style::default().fg(C_FG3()),
     )));
     f.render_widget(Paragraph::new(banner).style(Style::default().bg(C_BG())), area);
@@ -80,7 +81,7 @@ mod tests {
     #[test]
     fn selector_keeps_banner_interface_and_controls_visible() {
         let normal = render(100, 24);
-        assert!(normal.contains("deep packet inspection"));
+        assert!(normal.contains("network evidence console"));
         assert!(normal.contains("eth0"));
         assert!(normal.contains("start capture"));
 
