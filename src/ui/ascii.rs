@@ -1,12 +1,15 @@
 //! Compact ASCII presentation used only for startup and meaningful empty states.
 
 pub const STARTUP_MARK: &[&str] = &[
-    " ____   _   ____ _  ______    _  _____",
-    "|  _ \\ / \\ / ___| |/ /  _ \\  / \\|_   _|",
-    "| |_) / _ \\ |   | ' /| |_) |/ _ \\ | |",
-    "|  __/ ___ \\ |___| . \\|  _ </ ___ \\| |",
-    "|_| /_/   \\_\\____|_|\\_\\_| \\_/_/   \\_\\_|",
+    " ____    _     ____  _  __ ____      _  _____",
+    "|  _ \\  / \\   / ___|| |/ /|  _ \\    / \\|_   _|",
+    "| |_) |/ _ \\ | |    | ' / | |_) |  / _ \\ | |",
+    "|  __// ___ \\| |___ | . \\ |  _ <  / ___ \\| |",
+    "|_|  /_/   \\_\\____||_|\\_\\|_| \\_\\/_/   \\_\\_|",
+    "       capture > decode > correlate > respond",
 ];
+
+pub const COMPACT_STARTUP_MARK: &str = "PACKRAT // PACKETS > EVIDENCE > ACTION";
 
 pub const EMPTY_CAPTURE: &[&str] = &[
     "        .----------------.",
@@ -27,6 +30,7 @@ mod tests {
             assert!(line.len() <= 64);
             assert!(!line.chars().any(char::is_control));
         }
+        assert!(COMPACT_STARTUP_MARK.is_ascii());
         assert!(INCIDENT_MARK.is_ascii());
     }
 }
