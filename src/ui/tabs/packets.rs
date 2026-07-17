@@ -78,7 +78,7 @@ fn draw_packet_list(f: &mut Frame, app: &App, area: Rect) {
     let mut prev_ts: Option<f64> = None;
     let mut rows: Vec<Row> = Vec::new();
     for (fi, &pi) in app.filtered.iter().enumerate().skip(offset).take(visible_h) {
-        let Some(p) = app.packets.get(pi) else { continue };
+        let Some(p) = app.retained_packet_at(pi) else { continue };
         let delta_ms = if let Some(prev) = prev_ts {
             format!("{:.1}", (p.timestamp - prev) * 1000.0)
         } else {
