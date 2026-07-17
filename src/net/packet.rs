@@ -1,5 +1,5 @@
 /// Core packet data model.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Packet {
     pub no: u64,
     pub timestamp: f64,

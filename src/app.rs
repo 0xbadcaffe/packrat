@@ -965,6 +965,7 @@ impl App {
     fn snapshot_project(&self, name: &str, mode: ProjectSaveMode) -> crate::model::project::ProjectState {
         use crate::model::project::ProjectState;
         use crate::storage::case_bundle::ObjectEntry;
+        let portable = mode == ProjectSaveMode::Portable;
         let mut state = ProjectState::new(name, mode);
         // Clone notebook
         state.notebook = self.notebook.clone();
@@ -989,6 +990,9 @@ impl App {
         state.investigation_tray_open = self.worklist.open;
         state.guard_simulation = self.response_preview.clone();
         state.active_tab = self.active_tab.index();
+        if portable {
+            state.embedded_packets = self.packets.iter().cloned().collect();
+        }
         state
     }
 
@@ -1020,6 +1024,10 @@ impl App {
             Ok(state) => {
                 let name = state.metadata.name.clone();
                 let mode = state.metadata.save_mode.clone();
+                self.clear_packets();
+                for packet in state.embedded_packets.iter().cloned() {
+                    self.inject_packet(packet);
+                }
                 // Restore notebook
                 self.notebook = state.notebook;
                 // Restore tag store
@@ -3051,4 +3059,36 @@ fn printable_line(data: &[u8]) -> String {
     data.iter().map(|&b| {
         if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }
     }).collect()
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+
+    #[test]
+    fn portable_snapshot_embeds_packets_but_lightweight_does_not() {
+        let mut app = App::new_for_test();
+        app.inject_packet(Packet {
+            no: 1,
+            timestamp: 1.0,
+            src: "192.0.2.1".into(),
+            dst: "198.51.100.2".into(),
+            protocol: "UDP".into(),
+            length: 4,
+            info: "project test".into(),
+            src_port: Some(50000),
+            dst_port: Some(53),
+            vlan_id: None,
+            vlan_pcp: None,
+            vlan_dei: None,
+            outer_vlan_id: None,
+            bytes: vec![1, 2, 3, 4],
+        });
+
+        let portable = app.snapshot_project("portable", ProjectSaveMode::Portable);
+        assert_eq!(portable.embedded_packets.len(), 1);
+        assert_eq!(portable.embedded_packets[0].bytes, vec![1, 2, 3, 4]);
+        let lightweight = app.snapshot_project("light", ProjectSaveMode::Lightweight);
+        assert!(lightweight.embedded_packets.is_empty());
+    }
 }

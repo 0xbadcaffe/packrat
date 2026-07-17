@@ -11,8 +11,9 @@ use crate::analysis::alert_center::{AlertItem, AutomationMode};
 use crate::analysis::traffic_latch::LatchAction;
 use crate::model::tags::TagStore;
 use crate::storage::case_bundle::ObjectEntry;
+use crate::net::packet::Packet;
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum SavedInvestigationItem {
@@ -83,6 +84,9 @@ pub struct ProjectState {
     /// Embedded raw PCAP bytes (portable mode, optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pcap_data:      Option<Vec<u8>>,
+    /// Parsed packet snapshots included only by Portable projects.
+    #[serde(default)]
+    pub embedded_packets: Vec<Packet>,
     #[serde(default)]
     pub alert_items: Vec<AlertItem>,
     #[serde(default)]
@@ -110,6 +114,7 @@ impl ProjectState {
             carved_objects: Vec::new(),
             pcap_refs:      Vec::new(),
             pcap_data:      None,
+            embedded_packets: Vec::new(),
             alert_items: Vec::new(),
             alert_automation: AutomationMode::Off,
             investigation_items: Vec::new(),
@@ -179,6 +184,7 @@ mod tests {
             "investigation_tray_open",
             "guard_simulation",
             "active_tab",
+            "embedded_packets",
         ] {
             object.remove(field);
         }
@@ -219,6 +225,22 @@ mod tests {
         state.active_investigation = Some(1);
         state.investigation_tray_open = true;
         state.active_tab = 9;
+        state.embedded_packets.push(Packet {
+            no: 42,
+            timestamp: 3.0,
+            src: "203.0.113.9".into(),
+            dst: "10.0.0.5".into(),
+            protocol: "TCP".into(),
+            length: 4,
+            info: "portable evidence".into(),
+            src_port: Some(40000),
+            dst_port: Some(443),
+            vlan_id: None,
+            vlan_pcp: None,
+            vlan_dei: None,
+            outer_vlan_id: None,
+            bytes: vec![1, 2, 3, 4],
+        });
 
         let restored: ProjectState = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
         assert_eq!(restored.alert_items[0].disposition, AlertDisposition::Reviewing);
@@ -227,5 +249,7 @@ mod tests {
         assert_eq!(restored.active_investigation, Some(1));
         assert!(restored.investigation_tray_open);
         assert_eq!(restored.active_tab, 9);
+        assert_eq!(restored.embedded_packets.len(), 1);
+        assert_eq!(restored.embedded_packets[0].bytes, vec![1, 2, 3, 4]);
     }
 }
