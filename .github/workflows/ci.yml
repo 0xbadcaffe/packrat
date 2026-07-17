@@ -94,7 +94,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: taiki-e/install-action@cargo-flamegraph
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: flamegraph
 
       - name: Install memory and CPU instrumentation
         run: |
