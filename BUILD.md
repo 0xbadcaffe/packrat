@@ -1,88 +1,82 @@
-# 🐀 packrat — Build Instructions
+# Building Packrat
 
-## Prerequisites
+This guide describes the build and runtime combinations supported by the
+current source tree. The authoritative CLI option list for a built binary is:
 
-### 1. Install Rust
+```bash
+packrat --help
+```
 
-All platforms — run this once:
+## Toolchain
+
+Packrat requires Rust 1.85 or newer.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env   # Linux / macOS
-# Windows: restart your terminal after the installer finishes
-```
-
-Verify:
-```bash
-rustc --version   # should print rustc 1.85.0 or newer
+source "$HOME/.cargo/env"
+rustc --version
 cargo --version
 ```
 
----
+On Windows, use rustup from a Visual Studio Build Tools developer environment
+and restart the terminal after installation.
 
-## Supported Targets
+## Build Modes
 
-`packrat` is a hosted Rust TUI application. In practice that means:
+### Analyzer with explicit simulation
 
-- `rustc` is the compiler; `gcc`, `clang`, `arm-gcc`, and MSVC are linker / toolchain choices underneath Rust.
-- QEMU is a way to run supported operating system targets in emulation. It is not a Cargo target by itself.
-- Bare-metal STM32 / `thumb*` targets are out of scope for this codebase because it depends on `std`, `tokio`, `crossterm`, filesystem access, and a terminal UI.
-
-| Target family | Simulated mode | Real capture | CI coverage | Notes |
-|---------------|----------------|--------------|-------------|-------|
-| Linux `x86_64` / `i686` | ✅ | ✅ | Native + target matrix | Good default for GCC or Clang builds |
-| Linux `aarch64` / `armv7` | ✅ | Best effort | Target matrix | Good fit for ARM SBCs and cross builds |
-| Linux `powerpc64le` | ✅ | Best effort | Target matrix | Useful for PPC server-class Linux |
-| macOS `x86_64` / `aarch64` | ✅ | ✅ | Native + target matrix | Intel + Apple Silicon |
-| Windows `x86_64` MSVC | ✅ | ✅ | Native + target matrix | Visual Studio / `cl` toolchain environment |
-| Windows `x86_64` GNU | ✅ | Best effort | Target matrix | MinGW-style cross builds |
-| QEMU Linux guests | ✅ | Best effort | Manual | Run a supported Linux target inside QEMU |
-| STM32 / bare-metal `thumb*` | ❌ | ❌ | None | Requires a separate no-std embedded app |
-
----
-
-## Simulated Mode (no libpcap needed)
-
-Simulation is opt-in. No extra dependencies are required:
+The default Cargo feature set has no libpcap dependency:
 
 ```bash
-cd packrat
-cargo run -- --simulation    # dev build (fast compile, slower binary)
-cargo build --release        # optimised binary
-./target/release/packrat --simulation     # Linux / macOS
-.\target\release\packrat.exe --simulation # Windows
+cargo build --locked --release
+./target/release/packrat --simulation
 ```
 
----
+`--simulation` is a runtime option, not a Cargo feature. Without it, Packrat
+starts in capture mode and opens the real interface selector. A binary built
+without `real-capture` can inspect imported data and run simulation, but cannot
+open a live interface.
 
-## Real Capture Mode (requires libpcap / Npcap)
+### Live packet capture
 
-Enable with the `real-capture` feature flag. Requires installing the packet
-capture library for your OS first.
-
----
-
-### Linux
+Build with the optional capture feature after installing the platform capture
+library:
 
 ```bash
-# Debian / Ubuntu
-sudo apt install libpcap-dev
+cargo build --locked --release --features real-capture
+./target/release/packrat
+```
 
-# Fedora / RHEL / CentOS
-sudo dnf install libpcap-devel
+The feature also builds `packrat-capture-helper`.
 
-# Arch
-sudo pacman -S libpcap
+### Linux eBPF socket collector
 
-# Build packrat with real capture
-cargo build --release --features real-capture
+The Aya loader is a separate Linux binary:
 
-# Run with direct capture — requires root for raw socket access
+```bash
+cargo build --locked --release --features ebpf-sockets \
+  --bin packrat-socket-collector
+```
+
+The kernel object is built separately with Clang; see [eBPF collector](#ebpf-collector).
+
+## Platform Dependencies
+
+### Debian and Ubuntu
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config libpcap-dev
+cargo build --locked --release --features real-capture
+```
+
+Direct capture normally requires elevated network privileges:
+
+```bash
 sudo ./target/release/packrat
 ```
 
-For privilege separation, grant only the capture helper `cap_net_raw`; keep the
-TUI binary unprivileged:
+Prefer the dedicated helper when possible:
 
 ```bash
 sudo setcap cap_net_raw=eip ./target/release/packrat-capture-helper
@@ -90,28 +84,111 @@ sudo setcap cap_net_raw=eip ./target/release/packrat-capture-helper
   --capture-helper ./target/release/packrat-capture-helper
 ```
 
-The helper opens libpcap and emits bounded timestamped Ethernet frames. Packet
-parsing, detection, case storage, UI rendering, and response policy remain in
-the unprivileged Packrat process. Stopping capture terminates the helper.
+The TUI performs parsing, detection, storage, and rendering without capture
+privileges. Stopping capture terminates the helper.
 
-### Short-lived socket eBPF collector
-
-Linux 5.8 or newer can run the optional socket collector. It records outbound
-TCP connection attempts, accepted inbound TCP sockets, and UDP send/receive
-activity, including sockets that disappear before `/proc` polling sees them.
-The TUI remains unprivileged and incrementally imports the collector output.
-
-Install Clang and LLVM, then build both the BPF object and loader:
+Other Linux package names:
 
 ```bash
-sudo apt install clang llvm
+# Fedora / RHEL
+sudo dnf install gcc pkgconf-pkg-config libpcap-devel
+
+# Arch Linux
+sudo pacman -S base-devel libpcap
+```
+
+### macOS
+
+macOS includes libpcap. Install the compiler tools, then build:
+
+```bash
+xcode-select --install
+cargo build --locked --release --features real-capture
+sudo ./target/release/packrat
+```
+
+Capture permission is controlled by macOS BPF device policy. Systems using the
+`access_bpf` group must log out and back in after membership changes.
+
+### Windows
+
+The analyzer and simulation build natively with the MSVC Rust target:
+
+```powershell
+cargo build --locked --release
+.\target\release\packrat.exe --simulation
+```
+
+Live capture requires Npcap and the Npcap SDK:
+
+1. Install Npcap in WinPcap API-compatible mode.
+2. Install the Npcap SDK.
+3. Point `LIB` at the SDK's x64 library directory.
+4. Build with `real-capture` from a Visual Studio developer shell.
+
+```powershell
+$env:LIB = "C:\npcap-sdk\Lib\x64"
+cargo build --locked --release --features real-capture
+.\target\release\packrat.exe
+```
+
+Run the terminal with the privileges required by the selected Npcap interface.
+
+## Supported and Checked Targets
+
+| Target | Default build | Live capture | CI |
+|---|---:|---:|---:|
+| Linux x86-64 | Yes | Yes | Native, capture, eBPF loader |
+| Linux i686 | Yes | Requires target libpcap | `cross check` |
+| Linux ARM64 | Yes | Deployment-specific | `cross check` |
+| Linux ARMv7 hard-float | Yes | Deployment-specific | `cross check` |
+| Linux PowerPC64LE | Yes | Deployment-specific | `cross check` |
+| macOS hosted runner | Yes | Yes | Native |
+| Windows x86-64 MSVC | Yes | Manual Npcap SDK setup | Native default build |
+
+Apple targets are compiled on Apple hosts and MSVC targets on Windows hosts.
+The Linux cross matrix uses `cross`; it does not attempt to compile Apple or
+MSVC targets from Ubuntu without their SDKs.
+
+Bare-metal and `thumb*` targets are not supported. Packrat requires `std`, a
+host filesystem, Tokio, and a terminal.
+
+## Linux Cross-Compilation
+
+Install `cross` and build a default-feature Linux binary:
+
+```bash
+cargo install cross
+cross build --locked --release --target aarch64-unknown-linux-gnu
+cross build --locked --release --target armv7-unknown-linux-gnueabihf
+cross build --locked --release --target powerpc64le-unknown-linux-gnu
+cross build --locked --release --target i686-unknown-linux-gnu
+```
+
+Cross-building `real-capture` also requires libpcap headers and libraries for
+the destination architecture inside the build image. Validate live capture on
+the deployment kernel and interface; a successful link does not grant capture
+permission.
+
+QEMU can run a matching Linux guest after the binary is built. It is a runtime
+environment, not a Rust target.
+
+## eBPF Collector
+
+The optional collector observes short-lived TCP connect/accept and UDP
+send/receive socket activity that `/proc` polling may miss. It requires Linux
+5.8 or newer; TCP accept and UDP hooks also require BTF and the expected kernel
+symbols.
+
+Install Clang and LLVM, then build the kernel object and loader:
+
+```bash
+sudo apt-get install -y clang llvm
 ./scripts/build-ebpf-socket-collector.sh
 ./target/release/packrat-socket-collector --check
 ```
 
-The compatibility check verifies the minimum kernel version, socket tracepoint,
-and BTF availability without loading a program. Install the hardened systemd
-unit and start it:
+Install the hardened service:
 
 ```bash
 sudo ./scripts/install-ebpf-socket-collector.sh
@@ -120,192 +197,70 @@ sudo systemctl enable --now packrat-socket-collector.service
 systemctl status packrat-socket-collector.service
 ```
 
-Run Packrat against the live event stream:
+Start Packrat with the event stream:
 
 ```bash
-./target/release/packrat --socket-events /run/packrat/socket-events.csv
+./target/release/packrat \
+  --socket-events /run/packrat/socket-events.csv
 ```
 
-The service is granted only `CAP_BPF` and `CAP_PERFMON`. The loader drops both
-after attaching and enables `no_new_privs`. SocketScope displays kernel ring
-buffer losses so overloaded or undersized deployments are visible. TCP accept
-and UDP hooks require kernel BTF and the `inet_csk_accept`, `udp_sendmsg`, and
-`udp_recvmsg` symbols. The build script supports x86-64 and arm64.
-
-Run the privileged loopback integration test on the deployment kernel:
+The service receives `CAP_BPF` and `CAP_PERFMON` for loading, drops capabilities
+after attachment, enables `no_new_privs`, and reports kernel ring-buffer losses.
+Run the privileged deployment test on each supported kernel:
 
 ```bash
 sudo ./scripts/test-ebpf-socket-collector.sh
 ```
 
-It loads the object, generates TCP connect/accept and UDP send/receive traffic,
-verifies process attribution, and detaches the programs when finished.
+## Runtime Options
 
----
-
-### macOS
-
-libpcap ships with macOS. You just need the Xcode Command Line Tools:
-
-```bash
-xcode-select --install   # if not already installed
-
-# Build
-cargo build --release --features real-capture
-
-# Run — requires root
-sudo ./target/release/packrat
+```text
+-s, --simulation           run the built-in simulated traffic scenario
+    --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets
+    --tls-decrypt-helper P delegate authenticated TLS record decode to helper
+    --quic-decode-helper P delegate protected QUIC/HTTP3 decode to helper
+    --socket-events PATH   import socket ownership CSV from an external helper
+    --capture-helper PATH  delegate packet capture to a privileged helper
+    --latch-helper PATH    delegate TrafficLatch blocks to a JSON helper command
+    --reputation-helper P  delegate explicit reputation refreshes to a helper
+    --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)
+    --traffic-latch MODE   monitor, preview, manual, or auto (default: monitor)
+    --latch-seconds N      automatic firewall expiry (default: 900)
+    --protect-address IP   never contain this address; may be repeated
+    --sandbox              restrict filesystem writes with Linux Landlock
+-h, --help                 show this help
 ```
 
-To avoid sudo on macOS, add yourself to the `access_bpf` group:
+Example:
 
 ```bash
-sudo dseditgroup -o edit -a $(whoami) -t user access_bpf
-# Log out and back in, then run without sudo
-./target/release/packrat
+./target/release/packrat \
+  --telemetry-listen 127.0.0.1:9477 \
+  --traffic-latch preview \
+  --latch-seconds 300 \
+  --protect-address 192.0.2.10
 ```
 
----
+## Verification
 
-### Windows
-
-Windows does not have libpcap built-in. You need **Npcap**:
-
-1. **Install Npcap** (the WinPcap-compatible packet capture driver):
-   - Download from https://npcap.com/#download
-   - Run the installer — tick **"Install Npcap in WinPcap API-compatible Mode"**
-
-2. **Install the Npcap SDK** (needed to compile):
-   - Download the SDK zip from https://npcap.com/#download
-   - Extract it, e.g. to `C:\npcap-sdk`
-
-3. **Set the LIB environment variable** so the Rust linker can find it:
-
-   ```powershell
-   # PowerShell — adjust path if you extracted elsewhere
-   $env:LIB = "C:\npcap-sdk\Lib\x64"
-   ```
-
-   Or set it permanently in System → Advanced → Environment Variables.
-
-4. **Build**:
-
-   ```powershell
-   cargo build --release --features real-capture
-   ```
-
-5. **Run as Administrator** (required for raw packet access):
-
-   ```powershell
-   # Right-click Windows Terminal → "Run as administrator", then:
-   .\target\release\packrat.exe
-   ```
-
----
-
-## Selecting a Network Interface
-
-By default packrat starts in capture mode and prompts you to choose a real
-network interface. To use generated demo traffic instead, run with
-`--simulation`.
-
-To pick a specific real interface outside the TUI, set the `PACKRAT_IFACE`
-environment variable:
+Run the same core checks used by CI:
 
 ```bash
-PACKRAT_IFACE=eth0 ./target/release/packrat         # Linux
-PACKRAT_IFACE=en0  ./target/release/packrat         # macOS (Wi-Fi)
-$env:PACKRAT_IFACE="Ethernet"; .\packrat.exe        # Windows PowerShell
+cargo test --locked
+cargo check --locked --features real-capture
+cargo check --locked --features ebpf-sockets --bin packrat-socket-collector
 ```
 
-List available interfaces:
+The eBPF loopback test requires root and a compatible kernel, so it is a
+deployment test rather than an unprivileged unit test.
 
-```bash
-# Linux / macOS
-ip link show        # or: ifconfig
+## Common Failures
 
-# Windows
-Get-NetAdapter      # PowerShell
-```
-
----
-
-## Cross-Compilation
-
-Build for multiple platforms from a single machine using
-[cross](https://github.com/cross-rs/cross):
-
-```bash
-cargo install cross
-
-# Linux x86_64 (from any host)
-cross build --release --target x86_64-unknown-linux-gnu
-
-# Linux ARM64
-cross build --release --target aarch64-unknown-linux-gnu
-
-# Linux ARMv7 hard-float
-cross build --release --target armv7-unknown-linux-gnueabihf
-
-# Linux PowerPC64 little-endian
-cross build --release --target powerpc64le-unknown-linux-gnu
-
-# Linux x86 (32-bit)
-cross build --release --target i686-unknown-linux-gnu
-
-# Windows GNU (from Linux/macOS) — simulated mode only
-cross build --release --target x86_64-pc-windows-gnu
-
-# macOS arm64 (Apple Silicon) — requires macOS host
-cargo build --release --target aarch64-apple-darwin
-
-# macOS x86_64 — requires macOS host
-cargo build --release --target x86_64-apple-darwin
-```
-
-For automated multi-platform releases, see
-[cargo-dist](https://opensource.axo.dev/cargo-dist/).
-
-If you need explicit linker settings for `arm-gcc`-style cross builds, copy
-`.cargo/config.toml.example` to `.cargo/config.toml` and adjust the linker
-paths for your toolchains. For Windows MSVC builds, use a Visual Studio
-Developer Command Prompt or Build Tools environment rather than hard-coding
-`cl.exe` in the repo.
-
----
-
-## QEMU
-
-QEMU is useful for running or smoke-testing supported Linux targets after you
-build them, especially `aarch64`, `armv7`, and `powerpc64le`. Treat it as a
-runtime environment:
-
-1. Build a normal Linux target with `cargo` or `cross`
-2. Boot a matching Linux guest in QEMU
-3. Copy the binary into the guest and run it there
-
-For packet capture inside QEMU, you still need a guest OS with terminal support
-and libpcap available.
-
----
-
-## Common Build Errors
-
-| Error | Fix |
-|-------|-----|
-| `cannot find -lpcap` | Install libpcap-dev (Linux) or Npcap SDK (Windows) |
-| `Permission denied (os error 13)` | Run with `sudo` or grant `cap_net_raw` |
-| `No such device` | Check interface name with `ip link` / `ifconfig` |
-| `VCRUNTIME140.dll not found` | Install [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) |
-| `linker 'cc' not found` | `sudo apt install build-essential` (Linux) or `xcode-select --install` (macOS) |
-
----
-
-## Running Tests
-
-```bash
-cargo test
-cargo test --features real-capture   # include capture module tests
-cargo test --test socket_ebpf_tests  # event ABI and incremental import
-cargo check --features ebpf-sockets --bin packrat-socket-collector
-```
+| Error | Resolution |
+|---|---|
+| `cannot find -lpcap` | Install the platform libpcap development package or configure the Npcap SDK |
+| capture permission denied | Use the capture helper, capabilities, BPF policy, or required administrator privileges |
+| `No such device` | Select an interface shown by Packrat's interface selector |
+| `linker cc not found` | Install Linux build tools or Xcode Command Line Tools |
+| eBPF compatibility check fails | Verify kernel version, BTF, tracepoints, symbols, and service capabilities |
+| `--sandbox` rejected | Landlock sandboxing is Linux-only |
