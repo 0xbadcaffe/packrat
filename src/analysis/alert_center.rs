@@ -4,8 +4,9 @@ use std::collections::HashSet;
 
 const MAX_ALERTS: usize = 2_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum AutomationMode {
+    #[default]
     Off,
     Watch,
     Triage,
@@ -27,7 +28,7 @@ impl std::fmt::Display for AutomationMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AlertDisposition {
     New,
     Reviewing,
@@ -78,7 +79,7 @@ impl std::fmt::Display for AlertSeverityFilter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AlertItem {
     pub id: u64,
     pub packet_no: u64,
@@ -117,6 +118,20 @@ impl Default for AlertCenter {
 }
 
 impl AlertCenter {
+    pub fn restore(&mut self, mut items: Vec<AlertItem>, automation_mode: AutomationMode) {
+        if items.len() > MAX_ALERTS {
+            items.drain(..items.len() - MAX_ALERTS);
+        }
+        self.next_id = items.iter().map(|item| item.id).max().unwrap_or(0);
+        self.fingerprints = items.iter().map(|item| {
+            format!("{}\0{}\0{}", item.packet_no, item.source, item.title)
+        }).collect();
+        self.items = items;
+        self.selected = 0;
+        self.automation_mode = automation_mode;
+        self.pending_pins.clear();
+    }
+
     pub fn record(
         &mut self,
         packet_no: u64,
@@ -276,5 +291,19 @@ mod tests {
         center.record(3, "IOC", "HIGH", "Indicator", "detail");
         assert_eq!(center.items[2].priority, 80);
         assert!(center.items[2].recommendation.as_deref().unwrap().contains("provenance"));
+    }
+
+    #[test]
+    fn restored_alerts_continue_with_unique_ids_and_deduplication() {
+        let mut original = AlertCenter::default();
+        original.record(7, "IDS", "HIGH", "Probe", "detail");
+        original.items[0].disposition = AlertDisposition::Reviewing;
+
+        let mut restored = AlertCenter::default();
+        restored.restore(original.items.clone(), AutomationMode::Triage);
+        assert!(!restored.record(7, "IDS", "HIGH", "Probe", "duplicate"));
+        assert!(restored.record(8, "IDS", "HIGH", "Probe", "new packet"));
+        assert_eq!(restored.items[1].id, 2);
+        assert_eq!(restored.items[0].disposition, AlertDisposition::Reviewing);
     }
 }

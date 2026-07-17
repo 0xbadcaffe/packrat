@@ -7,10 +7,23 @@
 use std::collections::HashMap;
 
 use crate::analysis::notebook::Notebook;
+use crate::analysis::alert_center::{AlertItem, AutomationMode};
+use crate::analysis::traffic_latch::LatchAction;
 use crate::model::tags::TagStore;
 use crate::storage::case_bundle::ObjectEntry;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum SavedInvestigationItem {
+    Packet(u64),
+    Stream(String),
+    Host(String),
+    Alert(u64),
+    Object(u64),
+    GraphNode(String),
+    Note(u64),
+}
 
 // ─── Core types ───────────────────────────────────────────────────────────────
 
@@ -70,6 +83,20 @@ pub struct ProjectState {
     /// Embedded raw PCAP bytes (portable mode, optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pcap_data:      Option<Vec<u8>>,
+    #[serde(default)]
+    pub alert_items: Vec<AlertItem>,
+    #[serde(default)]
+    pub alert_automation: AutomationMode,
+    #[serde(default)]
+    pub investigation_items: Vec<SavedInvestigationItem>,
+    #[serde(default)]
+    pub active_investigation: Option<usize>,
+    #[serde(default)]
+    pub investigation_tray_open: bool,
+    #[serde(default)]
+    pub guard_simulation: Vec<LatchAction>,
+    #[serde(default)]
+    pub active_tab: usize,
 }
 
 impl ProjectState {
@@ -83,6 +110,13 @@ impl ProjectState {
             carved_objects: Vec::new(),
             pcap_refs:      Vec::new(),
             pcap_data:      None,
+            alert_items: Vec::new(),
+            alert_automation: AutomationMode::Off,
+            investigation_items: Vec::new(),
+            active_investigation: None,
+            investigation_tray_open: false,
+            guard_simulation: Vec::new(),
+            active_tab: 0,
         }
     }
 }
@@ -125,4 +159,67 @@ fn now() -> f64 {
 
 fn gen_id() -> u64 {
     (now() * 1_000.0) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::alert_center::{AlertDisposition, AlertItem};
+
+    #[test]
+    fn older_projects_load_with_empty_operational_state() {
+        let state = ProjectState::new("legacy", ProjectSaveMode::Lightweight);
+        let mut json = serde_json::to_value(state).unwrap();
+        let object = json.as_object_mut().unwrap();
+        for field in [
+            "alert_items",
+            "alert_automation",
+            "investigation_items",
+            "active_investigation",
+            "investigation_tray_open",
+            "guard_simulation",
+            "active_tab",
+        ] {
+            object.remove(field);
+        }
+
+        let restored: ProjectState = serde_json::from_value(json).unwrap();
+        assert!(restored.alert_items.is_empty());
+        assert_eq!(restored.alert_automation, AutomationMode::Off);
+        assert!(restored.investigation_items.is_empty());
+        assert!(restored.guard_simulation.is_empty());
+        assert_eq!(restored.active_tab, 0);
+    }
+
+    #[test]
+    fn operational_investigation_state_round_trips() {
+        let mut state = ProjectState::new("case", ProjectSaveMode::Portable);
+        state.alert_automation = AutomationMode::Triage;
+        state.alert_items.push(AlertItem {
+            id: 7,
+            packet_no: 42,
+            source: "IDS".into(),
+            severity: "HIGH".into(),
+            title: "Probe".into(),
+            detail: "Repeated connection attempts".into(),
+            disposition: AlertDisposition::Reviewing,
+            priority: 80,
+            recommendation: Some("Inspect the stream".into()),
+        });
+        state.investigation_items = vec![
+            SavedInvestigationItem::Packet(42),
+            SavedInvestigationItem::Host("203.0.113.9".into()),
+        ];
+        state.active_investigation = Some(1);
+        state.investigation_tray_open = true;
+        state.active_tab = 9;
+
+        let restored: ProjectState = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        assert_eq!(restored.alert_items[0].disposition, AlertDisposition::Reviewing);
+        assert_eq!(restored.alert_automation, AutomationMode::Triage);
+        assert_eq!(restored.investigation_items, state.investigation_items);
+        assert_eq!(restored.active_investigation, Some(1));
+        assert!(restored.investigation_tray_open);
+        assert_eq!(restored.active_tab, 9);
+    }
 }

@@ -4,7 +4,7 @@ use tokio::task::JoinHandle;
 
 use crate::analysis::carving::{Carver, CarvedObject};
 use crate::analysis::yara::YaraEngine;
-use crate::model::project::ProjectSaveMode;
+use crate::model::project::{ProjectSaveMode, SavedInvestigationItem};
 use crate::model::evidence::Severity as EvidenceSeverity;
 use crate::storage::project_store;
 use crate::storage::theme_store;
@@ -961,6 +961,13 @@ impl App {
         }
         // Carved object metadata
         state.carved_objects = self.carved_objects.iter().map(ObjectEntry::from).collect();
+        state.alert_items = self.alert_center.items.clone();
+        state.alert_automation = self.alert_center.automation_mode;
+        state.investigation_items = self.worklist.items.iter().map(saved_investigation_item).collect();
+        state.active_investigation = self.worklist.active;
+        state.investigation_tray_open = self.worklist.open;
+        state.guard_simulation = self.response_preview.clone();
+        state.active_tab = self.active_tab.index();
         state
     }
 
@@ -1004,6 +1011,17 @@ impl App {
                 // Restore host tags (seeds entries; traffic will fill the rest)
                 for (ip, tags) in state.host_tags {
                     self.hosts.seed_tags(&ip, tags);
+                }
+                self.alert_center.restore(state.alert_items, state.alert_automation);
+                self.worklist.items = state.investigation_items.into_iter()
+                    .map(restored_investigation_item)
+                    .collect();
+                self.worklist.active = state.active_investigation
+                    .filter(|index| *index < self.worklist.items.len());
+                self.worklist.open = state.investigation_tray_open && !self.worklist.items.is_empty();
+                self.response_preview = state.guard_simulation;
+                if state.active_tab < Tab::COUNT {
+                    self.active_tab = Tab::from_index(state.active_tab);
                 }
                 // Update project tracking state
                 let _ = project_store::add_to_recent(
@@ -2858,6 +2876,30 @@ impl App {
             )),
             Err(error) => self.set_status(format!("Reputation error: {error}")),
         }
+    }
+}
+
+fn saved_investigation_item(item: &InvestigationItem) -> SavedInvestigationItem {
+    match item {
+        InvestigationItem::Packet(value) => SavedInvestigationItem::Packet(*value),
+        InvestigationItem::Stream(value) => SavedInvestigationItem::Stream(value.clone()),
+        InvestigationItem::Host(value) => SavedInvestigationItem::Host(value.clone()),
+        InvestigationItem::Alert(value) => SavedInvestigationItem::Alert(*value),
+        InvestigationItem::Object(value) => SavedInvestigationItem::Object(*value),
+        InvestigationItem::GraphNode(value) => SavedInvestigationItem::GraphNode(value.clone()),
+        InvestigationItem::Note(value) => SavedInvestigationItem::Note(*value),
+    }
+}
+
+fn restored_investigation_item(item: SavedInvestigationItem) -> InvestigationItem {
+    match item {
+        SavedInvestigationItem::Packet(value) => InvestigationItem::Packet(value),
+        SavedInvestigationItem::Stream(value) => InvestigationItem::Stream(value),
+        SavedInvestigationItem::Host(value) => InvestigationItem::Host(value),
+        SavedInvestigationItem::Alert(value) => InvestigationItem::Alert(value),
+        SavedInvestigationItem::Object(value) => InvestigationItem::Object(value),
+        SavedInvestigationItem::GraphNode(value) => InvestigationItem::GraphNode(value),
+        SavedInvestigationItem::Note(value) => InvestigationItem::Note(value),
     }
 }
 
