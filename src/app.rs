@@ -1540,9 +1540,16 @@ impl App {
         let vuln_before = self.security.vuln_hits.len();
         let brute_before = self.security.brute_force.len();
         let tls_before = self.security.tls_weaknesses.len();
-        let dns_before: std::collections::HashMap<String, u64> = self.security.dns_suspects.iter()
-            .map(|suspect| (suspect.apex.clone(), suspect.query_count))
-            .collect();
+        let is_dns = pkt.protocol.eq_ignore_ascii_case("DNS")
+            || pkt.src_port == Some(53)
+            || pkt.dst_port == Some(53);
+        let dns_before: std::collections::HashMap<String, u64> = if is_dns {
+            self.security.dns_suspects.iter()
+                .map(|suspect| (suspect.apex.clone(), suspect.query_count))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
         self.security.update(&pkt);
         for alert in &self.security.ids_alerts[ids_before..] {
             self.alert_center.record_correlated(
@@ -1600,7 +1607,7 @@ impl App {
             );
         }
         for suspect in self.security.dns_suspects.iter().filter(|suspect| {
-            suspect.score >= 8.0
+            is_dns && suspect.score >= 8.0
                 && dns_before.get(&suspect.apex).copied().unwrap_or(0) < suspect.query_count
         }) {
             self.alert_center.record_correlated(
