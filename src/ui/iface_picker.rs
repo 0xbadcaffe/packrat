@@ -42,38 +42,29 @@ fn draw_banner(f: &mut Frame, area: Rect) {
         };
         let banner = Paragraph::new(vec![
             Line::raw(""),
-            Line::from(Span::styled(
-                mark,
-                Style::default().fg(MATRIX_BRIGHT).add_modifier(Modifier::BOLD),
-            )),
+            Line::from(vec![
+                Span::raw(format!("{}  ", crate::ui::ascii::PACKRAT_EMOJI)),
+                Span::styled(
+                    mark,
+                    Style::default().fg(MATRIX_BRIGHT).add_modifier(Modifier::BOLD),
+                ),
+            ]),
         ]).style(Style::default().bg(Color::Black));
         f.render_widget(banner, area);
         return;
     }
-    let mut banner = vec![Line::raw("")];
-    let show_icon = area.width >= crate::ui::ascii::ICON_STARTUP_MIN_WIDTH;
-    for index in 0..crate::ui::ascii::PACKRAT_ICON.len() {
-        let mut spans = Vec::new();
-        if show_icon {
-            spans.push(Span::styled(
-                format!("{:<28}", crate::ui::ascii::PACKRAT_ICON[index]),
-                Style::default().fg(MATRIX_DIM),
-            ));
-            spans.push(Span::raw("  "));
-        }
-        if let Some(line) = crate::ui::ascii::STARTUP_MARK.get(index) {
-            let color = if index < 5 { MATRIX_BRIGHT } else { MATRIX_GREEN };
-            spans.push(Span::styled(
-                *line,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ));
-        }
-        banner.push(Line::from(spans));
-    }
-    banner.push(Line::from(Span::styled(
-        format!(" PACKRAT // network evidence console  v{}", env!("CARGO_PKG_VERSION")),
-        Style::default().fg(MATRIX_DIM),
-    )));
+    let mut banner = vec![Line::from(vec![
+        Span::raw(format!("{}  ", crate::ui::ascii::PACKRAT_EMOJI)),
+        Span::styled("PACKRAT", Style::default().fg(MATRIX_BRIGHT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" // network evidence console  v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(MATRIX_DIM),
+        ),
+    ]), Line::raw("")];
+    banner.extend(crate::ui::ascii::STARTUP_MARK.iter().enumerate().map(|(index, line)| {
+        let color = if index < 5 { MATRIX_BRIGHT } else { MATRIX_GREEN };
+        Line::from(Span::styled(*line, Style::default().fg(color).add_modifier(Modifier::BOLD)))
+    }));
     f.render_widget(Paragraph::new(banner).style(Style::default().bg(Color::Black)), area);
 }
 
@@ -99,20 +90,21 @@ mod tests {
     #[test]
     fn selector_keeps_banner_interface_and_controls_visible() {
         let normal = render(100, 24);
-        assert!(normal.contains(".--~~,__"));
+        assert!(normal.contains("🐀"));
         assert!(normal.contains("____  ___   ________"));
         assert!(normal.contains("network evidence console"));
         assert!(normal.contains("eth0"));
         assert!(normal.contains("start capture"));
 
         let compact = render(60, 14);
+        assert!(compact.contains("🐀"));
         assert!(compact.contains("PACKRAT //"));
         assert!(compact.contains("eth0"));
         assert!(compact.contains("start capture"));
 
         let medium = render(80, 24);
+        assert!(medium.contains("🐀"));
         assert!(medium.contains("____  ___   ________"));
-        assert!(!medium.contains(".--~~,__"));
         assert!(medium.contains("eth0"));
 
         let tall_and_narrow = render(28, 24);
