@@ -1,11 +1,11 @@
 //! ASCII presentation used only for startup and meaningful empty states.
 
 pub const STARTUP_MARK: &[&str] = &[
-    "    ____  ___   ________ ______  ___  ______",
-    "   / __ \\/   | / ____/ //_/ __ \\/   |/_  __/",
-    "  / /_/ / /| |/ /   / ,< / /_/ / /| | / /",
-    " / ____/ ___ / /___/ /| / _, _/ ___ |/ /",
-    "/_/   /_/  |_\\____/_/ |_/_/ |_/_/  |_/_/",
+    " ____   _    ____ _  ______      _  _____",
+    "|  _ \\ / \\  / ___| |/ /  _ \\    / \\|_   _|",
+    "| |_) / _ \\| |   | ' /| |_) |  / _ \\ | |",
+    "|  __/ ___ \\ |___| . \\|  _ <  / ___ \\| |",
+    "|_| /_/   \\_\\____|_|\\_\\_| \\_\\/_/   \\_\\_|",
     "  [ CAPTURE ]---[ INSPECT ]---[ CORRELATE ]---[ DETECT ]",
 ];
 
@@ -43,9 +43,9 @@ mod tests {
     fn startup_logo_spells_packrat_on_a_fixed_terminal_grid() {
         assert_eq!(STARTUP_MARK.len(), 6);
         assert!(STARTUP_MARK[..5].iter().all(|line| line.len() <= 52));
-        assert!(STARTUP_MARK[0].len() > STARTUP_MARK[4].len());
-        assert!(STARTUP_MARK[0].starts_with("    "));
-        assert!(STARTUP_MARK[4].starts_with("/_/"));
+        assert!(STARTUP_MARK[0].starts_with(" ____"));
+        assert!(STARTUP_MARK[1..5].iter().all(|line| line.starts_with('|')));
+        assert!(STARTUP_MARK[4].starts_with("|_|"));
         assert!(STARTUP_MARK[5].contains("CAPTURE"));
         assert!(STARTUP_MARK[5].contains("DETECT"));
     }
