@@ -1,16 +1,17 @@
 //! ASCII presentation used only for startup and meaningful empty states.
 
 pub const STARTUP_MARK: &[&str] = &[
-    "                                __                  __",
-    "______  _____     ____  |  | _________ _____   _/  |_",
-    "\\____ \\ \\__  \\  _/ ___\\ |  |/ /\\_  __ \\\\__  \\  \\   __\\",
-    "|  |_> > / __ \\_\\  \\___ |    <  |  | \\/ / __ \\_ |  |",
-    "|   __/ (____  / \\___  >|__|_ \\ |__|   (____  / |__|",
-    "|__|         \\/      \\/      \\/             \\/",
-    "       [ CAPTURE ]--[ INSPECT ]--[ DETECT ]--[ RESPOND ]",
+    " ____   _    ____ _  ______      _  _____",
+    "|  _ \\ / \\  / ___| |/ /  _ \\    / \\|_   _|",
+    "| |_) / _ \\| |   | ' /| |_) |  / _ \\ | |",
+    "|  __/ ___ \\ |___| . \\|  _ <  / ___ \\| |",
+    "|_| /_/   \\_\\____|_|\\_\\_| \\_\\/_/   \\_\\_|",
+    "  [ CAPTURE ]---[ INSPECT ]---[ CORRELATE ]---[ DETECT ]",
 ];
 
-pub const COMPACT_STARTUP_MARK: &str = "PACKRAT // DEEP WIRE OPS";
+pub const COMPACT_STARTUP_MARK: &str = "PACKRAT // NETWORK EVIDENCE CONSOLE";
+pub const NARROW_STARTUP_MARK: &str = "PACKRAT";
+pub const FULL_STARTUP_MIN_WIDTH: u16 = 61;
 
 pub const EMPTY_CAPTURE: &[&str] = &[
     "        .----------------.",
@@ -32,6 +33,15 @@ mod tests {
             assert!(!line.chars().any(char::is_control));
         }
         assert!(COMPACT_STARTUP_MARK.is_ascii());
+        assert!(NARROW_STARTUP_MARK.is_ascii());
         assert!(INCIDENT_MARK.is_ascii());
+    }
+
+    #[test]
+    fn startup_logo_spells_packrat_on_a_fixed_terminal_grid() {
+        assert_eq!(STARTUP_MARK.len(), 6);
+        assert!(STARTUP_MARK[..5].iter().all(|line| line.len() <= 47));
+        assert!(STARTUP_MARK[5].contains("CAPTURE"));
+        assert!(STARTUP_MARK[5].contains("DETECT"));
     }
 }
