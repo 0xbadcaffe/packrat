@@ -165,6 +165,7 @@ cargo check --locked --features ebpf-sockets --bin packrat-socket-collector
 
 - [User manual](docs/USER_MANUAL.md): investigations, filters, Alert Center, projects, evidence, and Guard
 - [Build guide](BUILD.md): dependencies, platform builds, permissions, eBPF, and cross targets
+- [Branding and licenses](docs/BRANDING_AND_LICENSES.md): emoji rendering and Matrix-effect license boundaries
 - `packrat --help`: authoritative startup option list for the installed version
 
 ## Safety Model

@@ -16,6 +16,7 @@ include = [
     "ebpf/**/*",
     "scripts/**/*",
     "packaging/**/*",
+    "docs/**/*",
     "Cargo.toml",
     "Cargo.lock",
     "README.md",
