@@ -9,20 +9,10 @@ pub const STARTUP_MARK: &[&str] = &[
     "  [ CAPTURE ]---[ INSPECT ]---[ CORRELATE ]---[ DETECT ]",
 ];
 
-pub const PACKRAT_ICON: &[&str] = &[
-    "        .--~~,__",
-    "   :-....,-------,",
-    "        `-,,,  ,_      ;",
-    "          _,-' ,'\\     ;",
-    "         (  ) .|  `-.-'",
-    "          `'   \\    /(",
-    "                `~~~~~'",
-];
-
+pub const PACKRAT_EMOJI: &str = "🐀";
 pub const COMPACT_STARTUP_MARK: &str = "PACKRAT // NETWORK EVIDENCE CONSOLE";
 pub const NARROW_STARTUP_MARK: &str = "PACKRAT";
 pub const FULL_STARTUP_MIN_WIDTH: u16 = 61;
-pub const ICON_STARTUP_MIN_WIDTH: u16 = 86;
 
 pub const EMPTY_CAPTURE: &[&str] = &[
     "        .----------------.",
@@ -38,11 +28,12 @@ mod tests {
 
     #[test]
     fn presentation_art_is_terminal_safe_and_compact() {
-        for line in STARTUP_MARK.iter().chain(PACKRAT_ICON).chain(EMPTY_CAPTURE) {
+        for line in STARTUP_MARK.iter().chain(EMPTY_CAPTURE) {
             assert!(line.is_ascii());
             assert!(line.len() <= 72);
             assert!(!line.chars().any(char::is_control));
         }
+        assert_eq!(PACKRAT_EMOJI, "🐀");
         assert!(COMPACT_STARTUP_MARK.is_ascii());
         assert!(NARROW_STARTUP_MARK.is_ascii());
         assert!(INCIDENT_MARK.is_ascii());
@@ -51,7 +42,6 @@ mod tests {
     #[test]
     fn startup_logo_spells_packrat_on_a_fixed_terminal_grid() {
         assert_eq!(STARTUP_MARK.len(), 6);
-        assert_eq!(PACKRAT_ICON.len(), 7);
         assert!(STARTUP_MARK[..5].iter().all(|line| line.len() <= 52));
         assert!(STARTUP_MARK[0].len() > STARTUP_MARK[4].len());
         assert!(STARTUP_MARK[0].starts_with("    "));
