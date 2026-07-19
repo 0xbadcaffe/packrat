@@ -10,7 +10,9 @@ use crate::app::App;
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
-    let banner_height = if area.height >= 17 { 10 } else { 3 };
+    let show_full_banner =
+        area.height >= 17 && area.width >= crate::ui::ascii::FULL_STARTUP_MIN_WIDTH;
+    let banner_height = if show_full_banner { 9 } else { 3 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -28,11 +30,16 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_banner(f: &mut Frame, area: Rect) {
-    if area.height < 9 {
+    if area.height < 8 || area.width < crate::ui::ascii::FULL_STARTUP_MIN_WIDTH {
+        let mark = if area.width >= crate::ui::ascii::COMPACT_STARTUP_MARK.len() as u16 {
+            crate::ui::ascii::COMPACT_STARTUP_MARK
+        } else {
+            crate::ui::ascii::NARROW_STARTUP_MARK
+        };
         let banner = Paragraph::new(vec![
             Line::raw(""),
             Line::from(Span::styled(
-                crate::ui::ascii::COMPACT_STARTUP_MARK,
+                mark,
                 Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
             )),
         ]).style(Style::default().bg(C_BG()));
@@ -41,15 +48,7 @@ fn draw_banner(f: &mut Frame, area: Rect) {
     }
     let mut banner = vec![Line::raw("")];
     banner.extend(crate::ui::ascii::STARTUP_MARK.iter().enumerate().map(|(index, line)| {
-        let color = match index {
-            0 => C_CYAN(),
-            1 => C_GREEN(),
-            2 => C_YELLOW(),
-            3 => C_ORANGE(),
-            4 => C_MAGENTA(),
-            5 => C_CYAN(),
-            _ => C_FG2(),
-        };
+        let color = if index < 5 { C_CYAN() } else { C_GREEN() };
         Line::from(Span::styled(*line, Style::default().fg(color).add_modifier(Modifier::BOLD)))
     }));
     banner.push(Line::from(Span::styled(
@@ -81,6 +80,7 @@ mod tests {
     #[test]
     fn selector_keeps_banner_interface_and_controls_visible() {
         let normal = render(100, 24);
+        assert!(normal.contains("____   _    ____"));
         assert!(normal.contains("network evidence console"));
         assert!(normal.contains("eth0"));
         assert!(normal.contains("start capture"));
@@ -89,6 +89,11 @@ mod tests {
         assert!(compact.contains("PACKRAT //"));
         assert!(compact.contains("eth0"));
         assert!(compact.contains("start capture"));
+
+        let tall_and_narrow = render(28, 24);
+        assert!(tall_and_narrow.contains("PACKRAT"));
+        assert!(!tall_and_narrow.contains("PACKRAT //"));
+        assert!(tall_and_narrow.contains("eth0"));
     }
 }
 
