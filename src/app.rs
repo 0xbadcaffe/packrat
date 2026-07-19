@@ -1984,6 +1984,10 @@ impl App {
         self.refresh_telemetry();
     }
 
+    pub(crate) fn animation_tick(&self) -> u32 {
+        self.rate_tick
+    }
+
     fn refresh_telemetry(&self) {
         self.telemetry.publish(TelemetrySnapshot {
             packets_total: self.packet_counter,
