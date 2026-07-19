@@ -61,10 +61,17 @@ fn draw_banner(f: &mut Frame, area: Rect) {
             Style::default().fg(MATRIX_DIM),
         ),
     ]), Line::raw("")];
-    banner.extend(crate::ui::ascii::STARTUP_MARK.iter().enumerate().map(|(index, line)| {
-        let color = if index < 5 { MATRIX_BRIGHT } else { MATRIX_GREEN };
-        Line::from(Span::styled(*line, Style::default().fg(color).add_modifier(Modifier::BOLD)))
+    banner.extend(crate::ui::ascii::STARTUP_MARK[..5].iter().map(|line| {
+        Line::from(Span::styled(
+            *line,
+            Style::default().fg(MATRIX_BRIGHT).add_modifier(Modifier::BOLD),
+        ))
     }));
+    banner.push(Line::raw(""));
+    banner.push(Line::from(Span::styled(
+        crate::ui::ascii::STARTUP_MARK[5],
+        Style::default().fg(MATRIX_GREEN).add_modifier(Modifier::BOLD),
+    )));
     f.render_widget(Paragraph::new(banner).style(Style::default().bg(Color::Black)), area);
 }
 
@@ -91,7 +98,7 @@ mod tests {
     fn selector_keeps_banner_interface_and_controls_visible() {
         let normal = render(100, 24);
         assert!(normal.contains("🐀"));
-        assert!(normal.contains("____  ___   ________"));
+        assert!(normal.contains("____   _    ____"));
         assert!(normal.contains("network evidence console"));
         assert!(normal.contains("eth0"));
         assert!(normal.contains("start capture"));
@@ -104,7 +111,7 @@ mod tests {
 
         let medium = render(80, 24);
         assert!(medium.contains("🐀"));
-        assert!(medium.contains("____  ___   ________"));
+        assert!(medium.contains("____   _    ____"));
         assert!(medium.contains("eth0"));
 
         let tall_and_narrow = render(28, 24);
