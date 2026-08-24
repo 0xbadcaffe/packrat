@@ -311,7 +311,7 @@ impl StreamAssembler {
         // Evict oldest stream if at cap
         if !self.streams.contains_key(&id) && self.streams.len() >= MAX_STREAMS {
             if let Some(oldest_id) = self.streams.iter()
-                .min_by(|a, b| a.1.last_seen.partial_cmp(&b.1.last_seen).unwrap())
+                .min_by(|a, b| a.1.last_seen.total_cmp(&b.1.last_seen))
                 .map(|(k, _)| k.clone())
             {
                 self.streams.remove(&oldest_id);
@@ -408,7 +408,7 @@ impl StreamAssembler {
 
     pub fn all(&self) -> Vec<&ReassembledStream> {
         let mut v: Vec<_> = self.streams.values().collect();
-        v.sort_by(|a, b| b.last_seen.partial_cmp(&a.last_seen).unwrap_or(std::cmp::Ordering::Equal));
+        v.sort_by(|a, b| b.last_seen.total_cmp(&a.last_seen));
         v
     }
 

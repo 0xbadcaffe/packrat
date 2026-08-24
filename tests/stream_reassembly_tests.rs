@@ -138,3 +138,17 @@ fn malformed_ip_and_tcp_headers_are_not_reassembled_as_payload() {
     packet.bytes[46] = 0x10;
     assert_eq!(tcp_payload_offset(&packet), packet.bytes.len());
 }
+
+#[test]
+fn non_finite_timestamps_do_not_crash_stream_sorting_or_eviction() {
+    let mut assembler = StreamAssembler::default();
+    for index in 0..520_u16 {
+        let mut packet = tcp_packet(u64::from(index), 100, 0x18, b"x");
+        packet.timestamp = if index % 2 == 0 { f64::NAN } else { f64::INFINITY };
+        packet.src_port = Some(index.saturating_add(1));
+        packet.bytes[34..36].copy_from_slice(&index.saturating_add(1).to_be_bytes());
+        assembler.ingest(&packet);
+    }
+    assert_eq!(assembler.len(), 500);
+    assert_eq!(assembler.all().len(), 500);
+}

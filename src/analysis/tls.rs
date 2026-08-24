@@ -162,7 +162,7 @@ impl TlsTracker {
         // Evict if over cap
         if self.sessions.len() > MAX_SESSIONS {
             if let Some(oldest) = self.sessions.iter()
-                .min_by(|a, b| a.1.first_seen.partial_cmp(&b.1.first_seen).unwrap())
+                .min_by(|a, b| a.1.first_seen.total_cmp(&b.1.first_seen))
                 .map(|(k, _)| k.clone())
             {
                 self.sessions.remove(&oldest);
@@ -181,7 +181,7 @@ impl TlsTracker {
 
     pub fn all(&self) -> Vec<&TlsSession> {
         let mut v: Vec<_> = self.sessions.values().collect();
-        v.sort_by(|a, b| b.first_seen.partial_cmp(&a.first_seen).unwrap_or(std::cmp::Ordering::Equal));
+        v.sort_by(|a, b| b.first_seen.total_cmp(&a.first_seen));
         v
     }
 

@@ -81,7 +81,7 @@ pub fn detect_xor(payload: &[u8]) -> Option<XorResult> {
     let (best_key, best_score) = (1u8..=255).map(|k| {
         let printable = sample.iter().filter(|&&b| { let x = b ^ k; x >= 32 && x < 127 }).count();
         (k, printable as f64 / sample.len() as f64)
-    }).max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())?;
+    }).max_by(|a, b| a.1.total_cmp(&b.1))?;
     if best_score > 0.70 { Some(XorResult { key: best_key, score: best_score }) } else { None }
 }
 
