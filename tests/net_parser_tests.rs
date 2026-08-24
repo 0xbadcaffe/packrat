@@ -21,6 +21,42 @@ fn tcp_header(src_port: u16, dst_port: u16) -> [u8; 20] {
     tcp
 }
 
+fn ipv4_tcp_frame(fragment_field: u16) -> Vec<u8> {
+    let mut frame = vec![0_u8; 14 + 20];
+    frame[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    frame[14] = 0x45;
+    frame[16..18].copy_from_slice(&40_u16.to_be_bytes());
+    frame[20..22].copy_from_slice(&fragment_field.to_be_bytes());
+    frame[23] = 6;
+    frame[26..30].copy_from_slice(&[192, 0, 2, 1]);
+    frame[30..34].copy_from_slice(&[198, 51, 100, 2]);
+    frame.extend_from_slice(&tcp_header(23_456, 443));
+    frame
+}
+
+#[test]
+fn validates_ipv4_header_lengths_before_transport_parsing() {
+    let valid = parse_ethernet(&ipv4_tcp_frame(0), 1, 1.0);
+    assert_eq!(valid.protocol, "HTTPS");
+    assert_eq!(valid.src_port, Some(23_456));
+
+    let mut short_ihl = ipv4_tcp_frame(0);
+    short_ihl[14] = 0x44;
+    assert_eq!(parse_ethernet(&short_ihl, 2, 2.0).protocol, "RAW");
+
+    let mut oversized = ipv4_tcp_frame(0);
+    oversized[16..18].copy_from_slice(&100_u16.to_be_bytes());
+    assert_eq!(parse_ethernet(&oversized, 3, 3.0).protocol, "RAW");
+}
+
+#[test]
+fn does_not_parse_non_initial_ipv4_fragment_as_tcp() {
+    let fragment = parse_ethernet(&ipv4_tcp_frame(1), 1, 1.0);
+    assert_eq!(fragment.protocol, "IPv4-FRAG");
+    assert_eq!(fragment.src_port, None);
+    assert_eq!(fragment.dst_port, None);
+}
+
 #[test]
 fn parses_tcp_after_ipv6_extension_headers() {
     let mut payload = vec![43, 0, 0, 0, 0, 0, 0, 0];

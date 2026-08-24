@@ -142,17 +142,37 @@ fn parse_pppoe(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan: VlanCtx, kind
 // ─── Layer-3 ──────────────────────────────────────────────────────────────────
 
 fn parse_ipv4(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan: VlanCtx) -> Packet {
-    if payload.len() < 20 {
+    if payload.len() < 20 || payload[0] >> 4 != 4 {
         return unknown(raw, no, ts);
     }
     let ihl = ((payload[0] & 0x0F) as usize) * 4;
+    let packet_len = u16::from_be_bytes([payload[2], payload[3]]) as usize;
+    if ihl < 20 || packet_len < ihl || packet_len > payload.len() {
+        return unknown(raw, no, ts);
+    }
     let proto_num = payload[9];
     let src_ip = fmt_ip(&payload[12..16]);
     let dst_ip = fmt_ip(&payload[16..20]);
-    if payload.len() < ihl {
-        return unknown(raw, no, ts);
+    let fragment_field = u16::from_be_bytes([payload[6], payload[7]]);
+    if fragment_field & 0x1fff != 0 {
+        return Packet {
+            no,
+            timestamp: ts,
+            src: src_ip,
+            dst: dst_ip,
+            protocol: "IPv4-FRAG".into(),
+            length: raw.len() as u16,
+            info: "IPv4 non-initial fragment".into(),
+            src_port: None,
+            dst_port: None,
+            vlan_id: vlan.id,
+            vlan_pcp: vlan.pcp,
+            vlan_dei: vlan.dei,
+            outer_vlan_id: vlan.outer_id,
+            bytes: raw.to_vec(),
+        };
     }
-    parse_transport(&payload[ihl..], raw, no, ts, proto_num, src_ip, dst_ip, vlan)
+    parse_transport(&payload[ihl..packet_len], raw, no, ts, proto_num, src_ip, dst_ip, vlan)
 }
 
 fn parse_ipv6(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan: VlanCtx) -> Packet {
