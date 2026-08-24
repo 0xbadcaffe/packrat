@@ -1,5 +1,5 @@
 #[cfg(feature = "real-capture")]
-use pcap::Capture;
+use pcap::{Active, Capture};
 
 use std::time::Instant;
 use tokio::sync::mpsc::Sender;
@@ -20,17 +20,9 @@ impl CaptureSource for LiveCapture {
         tokio::task::spawn_blocking(move || {
             #[cfg(feature = "real-capture")]
             {
-                let mut cap = Capture::from_device(self.iface.as_str())
-                    .expect("device not found")
-                    .promisc(true)
-                    .snaplen(65535)
-                    .timeout(100)
-                    .open()
-                    .expect("failed to open device (root / Administrator required)");
-
-                if let Some(ref f) = self.filter {
-                    cap.filter(f, true).expect("invalid BPF filter");
-                }
+                let Ok(mut cap) = open_capture(&self) else {
+                    return;
+                };
 
                 let start = Instant::now();
                 let mut counter = 0u64;
@@ -50,5 +42,36 @@ impl CaptureSource for LiveCapture {
                 let _ = (self, tx);
             }
         })
+    }
+}
+
+#[cfg(feature = "real-capture")]
+fn open_capture(source: &LiveCapture) -> Result<Capture<Active>, String> {
+    let mut capture = Capture::from_device(source.iface.as_str())
+        .map_err(|error| format!("capture device '{}': {error}", source.iface))?
+        .promisc(true)
+        .snaplen(65535)
+        .timeout(100)
+        .open()
+        .map_err(|error| format!("open capture device '{}': {error}", source.iface))?;
+    if let Some(filter) = source.filter.as_deref() {
+        capture
+            .filter(filter, true)
+            .map_err(|error| format!("invalid BPF filter '{filter}': {error}"))?;
+    }
+    Ok(capture)
+}
+
+#[cfg(all(test, feature = "real-capture"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_capture_device_returns_an_error_without_panicking() {
+        let source = LiveCapture {
+            iface: "packrat-device-that-does-not-exist".into(),
+            filter: None,
+        };
+        assert!(open_capture(&source).is_err());
     }
 }
