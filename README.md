@@ -1,14 +1,5 @@
 # 🐀 PACKRAT
 
-```text
- ____   _    ____ _  ______      _  _____
-|  _ \ / \  / ___| |/ /  _ \    / \|_   _|
-| |_) / _ \| |   | ' /| |_) |  / _ \ | |
-|  __/ ___ \ |___| . \|  _ <  / ___ \| |
-|_| /_/   \_\____|_|\_\_| \_\/_/   \_\_|
-
-  [ CAPTURE ]---[ INSPECT ]---[ CORRELATE ]---[ DETECT ]
-```
 
 **Terminal-native deep packet inspection, deterministic penetration detection,
 and evidence-driven network response.**
