@@ -9,7 +9,7 @@ from live traffic into decoded headers, reconstructed conversations, correlated
 security findings, retained evidence, and controlled containment. The workflow
 is keyboard-first and works on local consoles or remote shells.
 
-Packrat has no AI or LLM analysis mode. Every finding, priority, recommendation,
+Every finding, priority, recommendation,
 and response gate comes from inspectable protocol logic, deterministic windows,
 IOC/YARA matches, or operator-authored rules.
 
