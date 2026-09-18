@@ -52,7 +52,7 @@ selected artifact or stopping capture.
 | **Preserve** | Retained attacker traffic, notebook, project state, PCAP/JSON/NDJSON evidence, case export |
 | **Respond** | Monitor, preview, approved manual, or policy-gated automatic Linux nftables containment |
 
-## Start in Two Commands
+## Simulation Mode
 
 Simulation is explicit and needs no packet-capture library:
 
@@ -60,6 +60,8 @@ Simulation is explicit and needs no packet-capture library:
 cargo build --release
 ./target/release/packrat --simulation
 ```
+
+## Live Capture Mode
 
 Live capture is the default runtime mode and requires the `real-capture` build
 feature plus libpcap or Npcap:
