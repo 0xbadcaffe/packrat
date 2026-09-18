@@ -4,7 +4,7 @@
 **Terminal-native deep packet inspection, deterministic penetration detection,
 and evidence-driven network response.**
 
-Packrat goes beyond packet viewing. It carries the same investigation context
+Packrat carries the same investigation context
 from live traffic into decoded headers, reconstructed conversations, correlated
 security findings, retained evidence, and controlled containment. The workflow
 is keyboard-first and works on local consoles or remote shells.
