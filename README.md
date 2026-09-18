@@ -17,7 +17,7 @@ IOC/YARA matches, or operator-authored rules.
   <img src="https://raw.githubusercontent.com/0xbadcaffe/packrat/master/assets/packrat-screenshot.svg" alt="Packrat terminal network analysis interface" />
 </p>
 
-## One Investigation, Not Twenty Disconnected Views
+## Workflow:
 
 ```text
 LIVE TRAFFIC
