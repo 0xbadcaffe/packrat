@@ -105,8 +105,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y valgrind "linux-tools-$(uname -r)"
-          perf_path="/usr/lib/linux-tools/$(uname -r)/perf"
-          test -x "$perf_path"
+          perf_path=$(bash scripts/select-perf.sh "$(uname -r)")
           sudo ln -sf "$perf_path" /usr/local/bin/perf
           valgrind --version
           perf --version
