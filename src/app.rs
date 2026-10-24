@@ -488,6 +488,7 @@ pub struct App {
     pub strings_filter: String,
     pub _hex_scroll: u16,
     pub recording: bool,
+    restoring_project: bool,
     pub pcap_path: String,
     pcap_writer: Option<PcapNgWriter<std::io::BufWriter<std::fs::File>>>,
     pub show_help: bool,
@@ -673,6 +674,7 @@ impl App {
             strings_filter: String::new(),
             _hex_scroll: 0,
             recording: false,
+            restoring_project: false,
             pcap_path: String::new(),
             pcap_writer: None,
             show_help: false,
@@ -1060,6 +1062,8 @@ impl App {
         state.investigation_tray_open = self.worklist.open;
         state.pinned_packets = self.worklist.packet_nos().into_iter()
             .filter_map(|no| self.packet_by_no(no).cloned()).collect();
+        state.incident_state = Some(self.incidents.snapshot());
+        state.endpoint_evidence = self.endpoint_evidence.clone();
         state.guard_simulation = self.response_preview.clone();
         state.active_tab = self.active_tab.index();
         if portable {
@@ -1094,42 +1098,17 @@ impl App {
     pub fn load_project(&mut self, path: &str) {
         match project_store::load(std::path::Path::new(path)) {
             Ok(state) => {
-                let tray = match restore_investigation_tray(&state) {
-                    Ok(tray) => tray,
-                    Err(error) => {
-                        self.project_manager.status = Some(format!("Load failed: {error}"));
-                        return;
-                    }
-                };
                 let name = state.metadata.name.clone();
                 let mode = state.metadata.save_mode.clone();
-                self.clear_packets();
-                for packet in state.embedded_packets.iter().cloned() {
-                    self.inject_packet(packet);
-                }
-                // Restore notebook
-                self.notebook = state.notebook;
-                // Restore tag store
-                self.tag_store = state.tag_store;
-                // Restore active filter
-                if !state.active_filter.is_empty() {
-                    self.filter.input = state.active_filter;
-                    self.rebuild_filtered();
-                }
-                // Restore host tags (seeds entries; traffic will fill the rest)
-                for (ip, tags) in state.host_tags {
-                    self.hosts.seed_tags(&ip, tags);
-                }
-                self.alert_center.restore(state.alert_items, state.alert_automation);
-                self.worklist = tray;
-                self.response_preview = state.guard_simulation;
-                if state.active_tab < Tab::COUNT {
-                    self.active_tab = Tab::from_index(state.active_tab);
+                let description = state.metadata.description.clone();
+                if let Err(error) = self.apply_project_state(state) {
+                    self.project_manager.status = Some(format!("Load failed: {error}"));
+                    return;
                 }
                 // Update project tracking state
                 let _ = project_store::add_to_recent(
                     &name, std::path::Path::new(path),
-                    state.metadata.description.as_deref(),
+                    description.as_deref(),
                     mode,
                 );
                 self.current_project_name = Some(name.clone());
@@ -1142,6 +1121,38 @@ impl App {
                 self.project_manager.status = Some(format!("Load failed: {e}"));
             }
         }
+    }
+
+    fn apply_project_state(&mut self, mut state: crate::model::project::ProjectState) -> Result<(), String> {
+        // Validate before replacing the active investigation.
+        let tray = restore_investigation_tray(&state)?;
+        let incidents = state.incident_state.take().map(IncidentStore::from_snapshot).transpose()?;
+        if state.endpoint_evidence.len() > 10_000
+            || serde_json::to_vec(&state.endpoint_evidence).map_err(|error| error.to_string())?.len() > 8 * 1024 * 1024 {
+            return Err("Saved endpoint evidence exceeds limits".into());
+        }
+        self.clear_packets();
+        self.restoring_project = true;
+        for packet in state.embedded_packets {
+            self.inject_packet(packet);
+        }
+        self.restoring_project = false;
+        // Saved evidence is historical even when the project contains no frames.
+        self.live_response_eligible = false;
+        self.live_response_incidents.clear();
+        if let Some(incidents) = incidents { self.incidents = incidents; }
+        self.endpoint_evidence = state.endpoint_evidence;
+        self.notebook = state.notebook;
+        self.tag_store = state.tag_store;
+        self.filter.input = state.active_filter;
+        self.rebuild_filtered();
+        for (ip, tags) in state.host_tags { self.hosts.seed_tags(&ip, tags); }
+        self.alert_center.restore(state.alert_items, state.alert_automation);
+        self.worklist = tray;
+        self.response_preview = state.guard_simulation;
+        if state.active_tab < Tab::COUNT { self.active_tab = Tab::from_index(state.active_tab); }
+        self.alert_overlay_open = self.incidents.active().is_some();
+        Ok(())
     }
 
     /// Quick-save the current project if one is open; otherwise open Save As dialog.
@@ -1649,7 +1660,8 @@ impl App {
             self.live_response_incidents.clear();
         }
         self.processing_live_packet = live && self.live_response_eligible;
-        if let Some(error) = self.packet_archive.as_ref().and_then(|archive| archive.record(&pkt).err()) {
+        if let Some(error) = self.packet_archive.as_ref().filter(|_| !self.restoring_project)
+            .and_then(|archive| archive.record(&pkt).err()) {
             self.abort_capture();
             self.capturing = false;
             self.set_status(format!("Capture stopped: {error}"));
@@ -1885,7 +1897,7 @@ impl App {
     }
 
     fn retain_packet_display(&mut self, pkt: Packet) {
-        if self.recording {
+        if self.recording && !self.restoring_project {
             if let Some(error) = self.pcap_writer.as_mut().and_then(|writer| writer.write_packet(&pkt).err()) {
                 self.recording = false;
                 self.pcap_writer.take();
@@ -1927,9 +1939,11 @@ impl App {
             packet,
             self.packets.iter().cloned(),
         );
-        self.freeze_incident_evidence(id);
-        if self.processing_live_packet { self.live_response_incidents.insert(id); }
-        self.evaluate_traffic_latch(id, false);
+        if !self.restoring_project {
+            self.freeze_incident_evidence(id);
+            if self.processing_live_packet { self.live_response_incidents.insert(id); }
+            self.evaluate_traffic_latch(id, false);
+        }
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {signature}"));
     }
@@ -1950,9 +1964,11 @@ impl App {
             packet,
             self.packets.iter().cloned(),
         );
-        self.freeze_incident_evidence(id);
-        if self.processing_live_packet { self.live_response_incidents.insert(id); }
-        self.evaluate_traffic_latch(id, auto_contain);
+        if !self.restoring_project {
+            self.freeze_incident_evidence(id);
+            if self.processing_live_packet { self.live_response_incidents.insert(id); }
+            self.evaluate_traffic_latch(id, auto_contain);
+        }
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {rule_name}"));
     }
@@ -3400,5 +3416,66 @@ mod project_tests {
         assert_eq!(app.traffic_latch.actions[0].status, crate::analysis::traffic_latch::LatchStatus::Observed);
         app.approve_active_latch();
         assert_eq!(app.traffic_latch.actions[0].status, crate::analysis::traffic_latch::LatchStatus::Observed);
+    }
+
+    #[test]
+    fn cases_restore_reviewed_incidents_and_correlated_impact_without_side_effects() {
+        use crate::analysis::impact::{EndpointCategory, EndpointEvidence, ImpactConfidence};
+        let mut source = App::new_for_test();
+        source.inject_packet(packet(1));
+        source.open_user_rule_incident(&packet(1), "rule", "rule", "finding", true);
+        let id = source.incidents.active().unwrap().id;
+        source.incidents.mark_active_reviewed();
+        source.incidents.acknowledge_active().unwrap();
+        source.endpoint_evidence.push(EndpointEvidence {
+            incident_id: id, target: "198.51.100.2".into(), source: "audit".into(),
+            evidence_id: "event-17".into(), category: EndpointCategory::File,
+            subject: "/srv/private.csv".into(), action: "read".into(), successful: true,
+        });
+
+        for mode in [ProjectSaveMode::Lightweight, ProjectSaveMode::Portable] {
+            let state = source.snapshot_project("case", mode);
+            let json = serde_json::to_vec(&state).unwrap();
+            let directory = std::env::temp_dir().join(format!("packrat-restore-{}", rand::random::<u64>()));
+            let mut restored = App::new_for_test();
+            restored.packet_archive = Some(crate::storage::packet_archive::ArchiveWorker::open(&directory).unwrap());
+            restored.evidence_vault = EvidenceVault::new(directory.join("evidence"));
+            restored.traffic_latch.mode = LatchMode::Automatic;
+            restored.latch_helper_path = Some("/must-not-run".into());
+            restored.filter.input = "stale filter".into();
+            restored.apply_project_state(serde_json::from_slice(&json).unwrap()).unwrap();
+            assert!(restored.filter.input.is_empty());
+            assert!(restored.incidents.active().is_none());
+            assert_eq!(restored.incidents.incidents[0].id, id);
+            assert!(restored.incidents.incidents[0].reviewed);
+            assert_eq!(restored.incidents.incidents[0].packet_history[0].bytes, [1, 2, 3, 4]);
+            let report = crate::analysis::impact::correlate(&restored.incidents.incidents[0], &restored.endpoint_evidence);
+            assert!(!report.compromise_confirmed);
+            assert!(report.evidence.iter().any(|entry| entry.subject == "/srv/private.csv"
+                && entry.confidence == ImpactConfidence::Observed));
+            assert!(restored.traffic_latch.actions.is_empty());
+            assert!(restored.evidence_vault.exports.is_empty());
+            assert!(!directory.join("evidence").exists());
+            restored.packet_archive.as_mut().unwrap().finish().unwrap();
+            let archive = crate::storage::packet_archive::PacketArchive::open_readonly(&directory).unwrap();
+            assert_eq!(archive.count().unwrap(), 0);
+            drop(archive);
+            let new_id = restored.incidents.open_or_update(IncidentSource::UserRule, "new", "new",
+                EvidenceSeverity::Critical, &packet(2), std::iter::empty());
+            assert!(new_id > id);
+            assert!(!restored.live_response_eligible);
+            drop(restored);
+            std::fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn invalid_saved_incidents_do_not_replace_the_open_investigation() {
+        let mut app = App::new_for_test();
+        app.inject_packet(packet(99));
+        let mut state = app.snapshot_project("bad", ProjectSaveMode::Portable);
+        state.incident_state.as_mut().unwrap().last_id = u64::MAX;
+        assert!(app.apply_project_state(state).is_err());
+        assert_eq!(app.packets[0].no, 99);
     }
 }

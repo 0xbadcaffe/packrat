@@ -11,7 +11,7 @@ const MAX_INCIDENTS: usize = 250;
 const MAX_HISTORY_PACKETS: usize = 2_000;
 const INITIAL_HISTORY_PACKETS: usize = 500;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum IncidentSource {
     IndustrySignature,
     UserRule,
@@ -26,7 +26,7 @@ impl std::fmt::Display for IncidentSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IncidentStatus {
     PendingReview,
     Acknowledged,
@@ -41,7 +41,7 @@ impl std::fmt::Display for IncidentStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Incident {
     pub id: u64,
     pub source: IncidentSource,
@@ -59,6 +59,12 @@ pub struct Incident {
     pub packet_history: Vec<Packet>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IncidentSnapshot {
+    pub incidents: Vec<Incident>,
+    pub last_id: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct IncidentStore {
     pub incidents: Vec<Incident>,
@@ -67,6 +73,35 @@ pub struct IncidentStore {
 }
 
 impl IncidentStore {
+    pub fn snapshot(&self) -> IncidentSnapshot {
+        IncidentSnapshot { incidents: self.incidents.clone(), last_id: self.next_id }
+    }
+
+    pub fn from_snapshot(snapshot: IncidentSnapshot) -> Result<Self, String> {
+        if snapshot.incidents.len() > MAX_INCIDENTS || snapshot.last_id > i64::MAX as u64 {
+            return Err("Invalid saved incident count or identifier range".into());
+        }
+        let mut ids = std::collections::HashSet::new();
+        let mut bytes = 0usize;
+        for incident in &snapshot.incidents {
+            if incident.id == 0 || incident.id > snapshot.last_id || !ids.insert(incident.id)
+                || !incident.first_seen.is_finite() || !incident.last_seen.is_finite()
+                || incident.packet_history.len() > MAX_HISTORY_PACKETS {
+                return Err("Invalid saved incident metadata".into());
+            }
+            for packet in &incident.packet_history {
+                bytes = bytes.saturating_add(packet.bytes.len());
+                if packet.bytes.len() > 1_048_576 || !packet.timestamp.is_finite()
+                    || bytes > 256 * 1024 * 1024 {
+                    return Err("Saved incident packet history exceeds limits".into());
+                }
+            }
+        }
+        let active_incident_id = snapshot.incidents.iter()
+            .find(|incident| incident.status == IncidentStatus::PendingReview).map(|incident| incident.id);
+        Ok(Self { incidents: snapshot.incidents, active_incident_id, next_id: snapshot.last_id })
+    }
+
     pub fn active(&self) -> Option<&Incident> {
         self.active_incident_id
             .and_then(|id| self.incidents.iter().find(|incident| incident.id == id))
@@ -245,5 +280,21 @@ mod tests {
 
         assert_eq!(store.incidents.len(), 1);
         assert_eq!(store.active().unwrap().last_packet, 2);
+    }
+
+    #[test]
+    fn saved_incidents_validate_identifiers_and_restore_pending_review() {
+        let mut store = IncidentStore::default();
+        let packet = packet(1, "203.0.113.7", "10.0.0.5");
+        let id = store.open_or_update(IncidentSource::UserRule, "rule", "finding",
+            Severity::Critical, &packet, std::iter::empty());
+        let snapshot = store.snapshot();
+        assert_eq!(IncidentStore::from_snapshot(snapshot.clone()).unwrap().active().unwrap().id, id);
+        let mut duplicate = snapshot.clone();
+        duplicate.incidents.push(duplicate.incidents[0].clone());
+        assert!(IncidentStore::from_snapshot(duplicate).is_err());
+        let mut invalid = snapshot;
+        invalid.last_id = 0;
+        assert!(IncidentStore::from_snapshot(invalid).is_err());
     }
 }

@@ -13,7 +13,7 @@ use crate::model::tags::TagStore;
 use crate::storage::case_bundle::ObjectEntry;
 use crate::net::packet::Packet;
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum SavedInvestigationItem {
@@ -91,6 +91,10 @@ pub struct ProjectState {
     #[serde(default)]
     pub pinned_packets: Vec<Packet>,
     #[serde(default)]
+    pub incident_state: Option<crate::analysis::incident::IncidentSnapshot>,
+    #[serde(default)]
+    pub endpoint_evidence: Vec<crate::analysis::impact::EndpointEvidence>,
+    #[serde(default)]
     pub alert_items: Vec<AlertItem>,
     #[serde(default)]
     pub alert_automation: AutomationMode,
@@ -119,6 +123,8 @@ impl ProjectState {
             pcap_data:      None,
             embedded_packets: Vec::new(),
             pinned_packets: Vec::new(),
+            incident_state: None,
+            endpoint_evidence: Vec::new(),
             alert_items: Vec::new(),
             alert_automation: AutomationMode::Off,
             investigation_items: Vec::new(),
@@ -190,6 +196,8 @@ mod tests {
             "active_tab",
             "embedded_packets",
             "pinned_packets",
+            "incident_state",
+            "endpoint_evidence",
         ] {
             object.remove(field);
         }
