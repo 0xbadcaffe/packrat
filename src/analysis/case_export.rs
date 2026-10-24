@@ -124,6 +124,7 @@ struct NoteRecord {
 
 #[derive(serde::Serialize)]
 struct IncidentRecord<'a> {
+    impact: crate::analysis::impact::ImpactReport,
     id: u64,
     source: String,
     detector: &'a str,
@@ -333,6 +334,7 @@ fn build(app: &App) -> CaseBundle<'_> {
     }).collect();
 
     let incidents = app.incidents.incidents.iter().map(|incident| IncidentRecord {
+        impact: crate::analysis::impact::correlate(incident, &app.endpoint_evidence),
         id: incident.id,
         source: incident.source.to_string(),
         detector: &incident.detector,

@@ -50,6 +50,9 @@ async fn main() -> Result<()> {
         Some(address) => Some(analysis::telemetry::bind(address).await?),
         None => None,
     };
+    let packet_archive = options.archive_path.as_ref()
+        .map(|path| storage::packet_archive::ArchiveWorker::open(path))
+        .transpose().map_err(anyhow::Error::msg)?;
 
     if options.sandbox {
         let paths = analysis::runtime_guard::default_write_paths()
@@ -65,12 +68,19 @@ async fn main() -> Result<()> {
 
     let (packet_tx, mut packet_rx) = tokio::sync::mpsc::channel::<Packet>(10_000);
     let mut app = App::new_with_mode(packet_tx, options.mode);
+    app.packet_archive = packet_archive;
     app.traffic_latch.mode = options.latch_mode;
     app.traffic_latch.expires_seconds = options.latch_expiry_seconds;
     app.traffic_latch.protected_addresses = options.protected_addresses;
     app.latch_helper_path = options.latch_helper_path;
     app.reputation_helper_path = options.reputation_helper_path;
     app.capture_helper_path = options.capture_helper_path;
+    if let Some(path) = options.endpoint_evidence_path {
+        match analysis::impact::read_endpoint_evidence(&path) {
+            Ok(events) => app.endpoint_evidence = events,
+            Err(error) => app.set_status(format!("Endpoint evidence import failed: {error}")),
+        }
+    }
     app.tls_tracker.decrypt_helper_path = options.tls_decrypt_helper_path;
     app.quic_scope.decode_helper_path = options.quic_decode_helper_path;
     if let Some(path) = options
@@ -97,6 +107,9 @@ async fn main() -> Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+    if let Some(archive) = app.packet_archive.as_mut() {
+        archive.finish().map_err(anyhow::Error::msg)?;
+    }
 
     result
 }

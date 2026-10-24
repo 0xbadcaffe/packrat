@@ -48,6 +48,10 @@ impl EvidenceVault {
     /// Persist an incident once. Repeated signature hits update the in-memory
     /// incident but do not create duplicate evidence sets.
     pub fn freeze(&mut self, incident: &Incident) -> Result<Option<&EvidenceExport>, String> {
+        self.freeze_with_endpoint_evidence(incident, &[])
+    }
+
+    pub fn freeze_with_endpoint_evidence(&mut self, incident: &Incident, events: &[crate::analysis::impact::EndpointEvidence]) -> Result<Option<&EvidenceExport>, String> {
         if !self.enabled || self.frozen_incidents.contains(&incident.id) {
             return Ok(None);
         }
@@ -64,7 +68,7 @@ impl EvidenceVault {
         let ndjson_path = self.directory.join(format!("{base}.ndjson"));
 
         write_pcap(&pcap_path, incident)?;
-        write_metadata(&metadata_path, incident)?;
+        write_metadata_with_events(&metadata_path, incident, events)?;
         write_ndjson(&ndjson_path, incident)?;
 
         self.frozen_incidents.insert(incident.id);
@@ -94,6 +98,7 @@ fn write_pcap(path: &Path, incident: &Incident) -> Result<(), String> {
 
 #[derive(serde::Serialize)]
 struct IncidentMetadata<'a> {
+    impact: crate::analysis::impact::ImpactReport,
     schema: &'static str,
     incident_id: u64,
     source: String,
@@ -111,6 +116,7 @@ struct IncidentMetadata<'a> {
 
 fn metadata(incident: &Incident) -> IncidentMetadata<'_> {
     IncidentMetadata {
+        impact: crate::analysis::impact::assess(incident),
         schema: "packrat.evidence.v1",
         incident_id: incident.id,
         source: incident.source.to_string(),
@@ -127,10 +133,13 @@ fn metadata(incident: &Incident) -> IncidentMetadata<'_> {
     }
 }
 
-fn write_metadata(path: &Path, incident: &Incident) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(&metadata(incident))
-        .map_err(|error| format!("serialize metadata: {error}"))?;
-    std::fs::write(path, json).map_err(|error| format!("write metadata: {error}"))
+fn write_metadata_with_events(path: &Path, incident: &Incident, events: &[crate::analysis::impact::EndpointEvidence]) -> Result<(), String> {
+    let mut record = metadata(incident);
+    record.impact = crate::analysis::impact::correlate(incident, events);
+    let file = File::create(path).map_err(|error| format!("create evidence metadata: {error}"))?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, &record).map_err(|error| format!("write evidence metadata: {error}"))?;
+    writer.flush().map_err(|error| format!("flush evidence metadata: {error}"))
 }
 
 #[derive(serde::Serialize)]

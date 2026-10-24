@@ -438,6 +438,10 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 ("Packet window", format!("#{} - #{}", incident.first_packet, incident.last_packet)),
                 ("Retained packets", incident.packet_history.len().to_string()),
             ];
+            let impact = crate::analysis::impact::correlate(incident, &app.endpoint_evidence);
+            for entry in impact.evidence.iter().filter(|entry| entry.category != "network_activity") {
+                rows.push(("Impact", format!("{}: {:?} - {}", entry.category, entry.confidence, entry.explanation)));
+            }
             if let Some(action) = app.traffic_latch.actions.iter()
                 .find(|action| action.incident_id == incident.id)
             {

@@ -287,9 +287,17 @@ pub struct StartupOptions {
     pub latch_helper_path: Option<std::path::PathBuf>,
     pub reputation_helper_path: Option<std::path::PathBuf>,
     pub capture_helper_path: Option<std::path::PathBuf>,
+    pub endpoint_evidence_path: Option<std::path::PathBuf>,
+    pub archive_path: Option<std::path::PathBuf>,
 }
 
-pub fn usage() -> &'static str {
+pub fn usage() -> String {
+    let endpoint_help = "      --endpoint-evidence PATH import endpoint impact evidence as NDJSON\n";
+    let base = usage_base();
+    base.replace("      --socket-events", &format!("{endpoint_help}      --archive PATH           retain packets and SQLite index in directory\n      --socket-events"))
+}
+
+fn usage_base() -> &'static str {
     "Usage: packrat [OPTIONS]\n\nOptions:\n  -s, --simulation           run the built-in simulated traffic scenario\n      --key-log PATH         load NSS/SSLKEYLOGFILE TLS and QUIC secrets\n      --tls-decrypt-helper P delegate authenticated TLS record decode to helper\n      --quic-decode-helper P delegate protected QUIC/HTTP3 decode to helper\n      --socket-events PATH   import socket ownership CSV from an external helper\n      --capture-helper PATH  delegate packet capture to a privileged helper\n      --latch-helper PATH    delegate TrafficLatch blocks to a JSON helper command\n      --reputation-helper P  delegate explicit reputation refreshes to a helper\n      --telemetry-listen A   expose /metrics and /health (example: 127.0.0.1:9477)\n      --traffic-latch MODE   monitor, preview, manual, or auto (default: monitor)\n      --latch-seconds N      automatic firewall expiry (default: 900)\n      --protect-address IP   never contain this address; may be repeated\n      --sandbox              restrict filesystem writes with Linux Landlock\n  -h, --help                 show this help"
 }
 
@@ -313,10 +321,22 @@ where
         latch_helper_path: None,
         reputation_helper_path: None,
         capture_helper_path: None,
+        endpoint_evidence_path: None,
+        archive_path: None,
     };
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--archive" => {
+                index += 1;
+                let value = args.get(index).ok_or("--archive requires a directory")?;
+                options.archive_path = Some(value.into());
+            }
+            "--endpoint-evidence" => {
+                index += 1;
+                let value = args.get(index).ok_or("--endpoint-evidence requires an NDJSON path")?;
+                options.endpoint_evidence_path = Some(value.into());
+            }
             "-s" | "--simulation" => options.mode = StartupMode::Simulation,
             "-h" | "--help" => return Ok(CliAction::Help),
             "--telemetry-listen" => {
@@ -472,6 +492,8 @@ pub struct App {
     pub ioc_engine:      IocEngine,
     pub rule_engine:     RuleEngine,
     pub incidents:       IncidentStore,
+    pub endpoint_evidence: Vec<crate::analysis::impact::EndpointEvidence>,
+    pub packet_archive: Option<crate::storage::packet_archive::ArchiveWorker>,
     pub evidence_vault:  EvidenceVault,
     pub telemetry:       TelemetryHub,
     pub socket_scope:    SocketScope,
@@ -662,6 +684,8 @@ impl App {
                 e
             },
             incidents:        IncidentStore::default(),
+            endpoint_evidence: Vec::new(),
+            packet_archive: None,
             evidence_vault:   EvidenceVault::default(),
             telemetry:        TelemetryHub::default(),
             socket_scope:     SocketScope::default(),
@@ -1511,6 +1535,11 @@ impl App {
     }
 
     fn ingest_packet_inner(&mut self, pkt: Packet) {
+        if let Some(error) = self.packet_archive.as_ref().and_then(|archive| archive.record(&pkt).err()) {
+            self.abort_capture();
+            self.capturing = false;
+            self.set_status(format!("Capture stopped: {error}"));
+        }
         self.packet_counter += 1;
         self.total_bytes += pkt.length as u64;
         self.rate_this_sec += 1;
@@ -1805,7 +1834,7 @@ impl App {
             .find(|incident| incident.id == incident_id)
             .cloned();
         let Some(incident) = incident else { return; };
-        if let Err(error) = self.evidence_vault.freeze(&incident) {
+        if let Err(error) = self.evidence_vault.freeze_with_endpoint_evidence(&incident, &self.endpoint_evidence) {
             self.set_status(format!("Incident #{incident_id} retained in memory; evidence export failed: {error}"));
         }
     }
@@ -1928,6 +1957,11 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        if let Some(error) = self.packet_archive.as_mut().and_then(|archive| archive.poll_error()) {
+            self.abort_capture();
+            self.capturing = false;
+            self.set_status(format!("Capture stopped: archive write failed: {error}"));
+        }
         if let Some(result) = self.capture_handle.as_mut().and_then(|task| task.result()) {
             self.capture_handle = None;
             self.capturing = false;

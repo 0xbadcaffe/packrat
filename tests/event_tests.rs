@@ -97,7 +97,7 @@ fn parse_startup_args_defaults_to_capture() {
         CliAction::Run(StartupOptions {
             mode: StartupMode::Capture, telemetry_listen: None, key_log_path: None, tls_decrypt_helper_path: None, quic_decode_helper_path: None,
             latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
-            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None, capture_helper_path: None,
+            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None, capture_helper_path: None, endpoint_evidence_path: None, archive_path: None,
         })
     );
 }
@@ -109,7 +109,7 @@ fn parse_startup_args_enables_simulation() {
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None, tls_decrypt_helper_path: None, quic_decode_helper_path: None,
             latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
-            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None, capture_helper_path: None,
+            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None, capture_helper_path: None, endpoint_evidence_path: None, archive_path: None,
         })
     );
     assert_eq!(
@@ -117,7 +117,7 @@ fn parse_startup_args_enables_simulation() {
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation, telemetry_listen: None, key_log_path: None, tls_decrypt_helper_path: None, quic_decode_helper_path: None,
             latch_mode: LatchMode::Monitor, latch_expiry_seconds: 900, protected_addresses: vec![],
-            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None, capture_helper_path: None,
+            sandbox: false, socket_events_path: None, latch_helper_path: None, reputation_helper_path: None, capture_helper_path: None, endpoint_evidence_path: None, archive_path: None,
         })
     );
 }
@@ -125,6 +125,14 @@ fn parse_startup_args_enables_simulation() {
 #[test]
 fn parse_startup_args_rejects_unknown_flags() {
     assert!(app::parse_startup_args(["--real-capture"]).is_err());
+}
+
+#[test]
+fn endpoint_evidence_cli_requires_a_path_and_is_discoverable() {
+    assert!(app::parse_startup_args(["--endpoint-evidence"]).is_err());
+    let CliAction::Run(options) = app::parse_startup_args(["--endpoint-evidence", "audit.ndjson"]).unwrap() else { panic!("expected startup options") };
+    assert_eq!(options.endpoint_evidence_path, Some("audit.ndjson".into()));
+    assert!(app::usage().contains("--endpoint-evidence"));
 }
 
 #[test]
@@ -146,6 +154,8 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             latch_helper_path: None,
             reputation_helper_path: None,
             capture_helper_path: None,
+            endpoint_evidence_path: None,
+            archive_path: None,
         })
     );
 }
@@ -169,6 +179,8 @@ fn parse_startup_args_accepts_key_log_path() {
             latch_helper_path: None,
             reputation_helper_path: None,
             capture_helper_path: None,
+            endpoint_evidence_path: None,
+            archive_path: None,
         })
     );
 }
