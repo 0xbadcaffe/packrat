@@ -70,6 +70,15 @@ pub fn parse_ethernet(data: &[u8], no: u64, ts: f64) -> Packet {
         }
         let etype = u16::from_be_bytes([data[offset], data[offset + 1]]);
         if etype == 0x8100 || etype == 0x88a8 {
+            if tag_count == 2 {
+                let mut packet = unknown(data, no, ts);
+                packet.info = "VLAN stack exceeds supported depth; raw frame retained".into();
+                packet.vlan_id = vlan.id;
+                packet.vlan_pcp = vlan.pcp;
+                packet.vlan_dei = vlan.dei;
+                packet.outer_vlan_id = vlan.outer_id;
+                return packet;
+            }
             if offset + 4 > data.len() {
                 return unknown(data, no, ts);
             }
