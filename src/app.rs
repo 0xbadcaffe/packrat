@@ -205,9 +205,41 @@ pub struct InvestigationTray {
     pub items: Vec<InvestigationItem>,
     pub active: Option<usize>,
     pub open: bool,
+    retained_packets: std::collections::HashMap<u64, Packet>,
+    retained_bytes: usize,
 }
 
 impl InvestigationTray {
+    const MAX_RETAINED_PACKETS: usize = 1024;
+    const MAX_RETAINED_BYTES: usize = 64 * 1024 * 1024;
+
+    fn packet_cost(packet: &Packet) -> usize {
+        let metadata = packet.capture.as_ref().map(|capture| {
+            capture.interface_name.as_ref().map_or(0, String::len)
+                + capture.comments.iter().map(String::len).sum::<usize>()
+        }).unwrap_or(0);
+        std::mem::size_of::<Packet>() + packet.bytes.len() + packet.src.len()
+            + packet.dst.len() + packet.protocol.len() + packet.info.len() + metadata
+    }
+
+    pub fn pin_packet(&mut self, packet: &Packet) -> Result<bool, String> {
+        if !self.retained_packets.contains_key(&packet.no) {
+            let cost = Self::packet_cost(packet);
+            if self.retained_packets.len() >= Self::MAX_RETAINED_PACKETS
+                || cost > Self::MAX_RETAINED_BYTES.saturating_sub(self.retained_bytes)
+            {
+                return Err("Investigation retention limit reached; remove a pinned packet first".into());
+            }
+            self.retained_packets.insert(packet.no, packet.clone());
+            self.retained_bytes += cost;
+        }
+        Ok(self.add_packet(packet.no))
+    }
+
+    pub fn retained_packet(&self, no: u64) -> Option<&Packet> {
+        self.retained_packets.get(&no)
+    }
+
     pub fn add(&mut self, item: InvestigationItem) -> bool {
         if let Some(index) = self.items.iter().position(|existing| *existing == item) {
             self.active = Some(index);
@@ -226,6 +258,11 @@ impl InvestigationTray {
         let index = self.active?;
         if index >= self.items.len() { return None; }
         let removed = self.items.remove(index);
+        if let InvestigationItem::Packet(no) = &removed {
+            if let Some(packet) = self.retained_packets.remove(no) {
+                self.retained_bytes -= Self::packet_cost(&packet);
+            }
+        }
         self.active = if self.items.is_empty() {
             None
         } else {
@@ -1014,6 +1051,8 @@ impl App {
         state.investigation_items = self.worklist.items.iter().map(saved_investigation_item).collect();
         state.active_investigation = self.worklist.active;
         state.investigation_tray_open = self.worklist.open;
+        state.pinned_packets = self.worklist.packet_nos().into_iter()
+            .filter_map(|no| self.packet_by_no(no).cloned()).collect();
         state.guard_simulation = self.response_preview.clone();
         state.active_tab = self.active_tab.index();
         if portable {
@@ -1048,6 +1087,13 @@ impl App {
     pub fn load_project(&mut self, path: &str) {
         match project_store::load(std::path::Path::new(path)) {
             Ok(state) => {
+                let tray = match restore_investigation_tray(&state) {
+                    Ok(tray) => tray,
+                    Err(error) => {
+                        self.project_manager.status = Some(format!("Load failed: {error}"));
+                        return;
+                    }
+                };
                 let name = state.metadata.name.clone();
                 let mode = state.metadata.save_mode.clone();
                 self.clear_packets();
@@ -1068,12 +1114,7 @@ impl App {
                     self.hosts.seed_tags(&ip, tags);
                 }
                 self.alert_center.restore(state.alert_items, state.alert_automation);
-                self.worklist.items = state.investigation_items.into_iter()
-                    .map(restored_investigation_item)
-                    .collect();
-                self.worklist.active = state.active_investigation
-                    .filter(|index| *index < self.worklist.items.len());
-                self.worklist.open = state.investigation_tray_open && !self.worklist.items.is_empty();
+                self.worklist = tray;
                 self.response_preview = state.guard_simulation;
                 if state.active_tab < Tab::COUNT {
                     self.active_tab = Tab::from_index(state.active_tab);
@@ -1506,7 +1547,8 @@ impl App {
 
     /// Look up a packet by its frame number (pkt.no).
     pub fn packet_by_no(&self, no: u64) -> Option<&Packet> {
-        self.packets.iter().find(|p| p.no == no)
+        self.worklist.retained_packet(no)
+            .or_else(|| self.packets.iter().find(|p| p.no == no))
     }
 
     /// Build the protocol dissection tree for `pkt`, then apply any custom
@@ -2513,17 +2555,24 @@ impl App {
             self.set_status("No packet selected to add to worklist");
             return;
         };
-        let added = self.worklist.add_packet(packet_no);
-        self.set_status(if added {
-            format!("Added packet #{packet_no} to worklist")
-        } else {
-            format!("Packet #{packet_no} is already in worklist")
-        });
+        self.pin_investigation_item(InvestigationItem::Packet(packet_no));
     }
 
     pub fn pin_investigation_item(&mut self, item: InvestigationItem) -> bool {
         let label = item.label();
-        let added = self.worklist.add(item);
+        let added = if let InvestigationItem::Packet(no) = &item {
+            let Some(packet) = self.packet_by_no(*no).cloned() else {
+                self.set_status(format!("Packet #{no} is no longer available to pin"));
+                return false;
+            };
+            match self.worklist.pin_packet(&packet) {
+                Ok(added) => added,
+                Err(error) => { self.set_status(error); return false; }
+            }
+        } else {
+            self.worklist.add(item)
+        };
+        self.project_dirty |= added;
         self.set_status(if added {
             format!("Pinned {label} to investigation tray")
         } else {
@@ -2592,8 +2641,9 @@ impl App {
             self.set_status("No packet selected to investigate");
             return;
         };
-        self.worklist.add_packet(packet_no);
-        self.active_tab = Tab::Investigate;
+        self.pin_investigation_item(InvestigationItem::Packet(packet_no));
+        if self.worklist.retained_packet(packet_no).is_none() { return; }
+        self.navigate_to(Tab::Investigate);
         self.investigation_scroll = 0;
         self.reset_header_focus();
     }
@@ -2620,7 +2670,10 @@ impl App {
 
     pub fn remove_active_worklist_packet(&mut self) {
         match self.worklist.remove_active() {
-            Some(item) => self.set_status(format!("Removed {} from investigation tray", item.label())),
+            Some(item) => {
+                self.project_dirty = true;
+                self.set_status(format!("Removed {} from investigation tray", item.label()));
+            }
             None => self.set_status("Worklist is empty"),
         }
         self.reset_header_focus();
@@ -3173,6 +3226,21 @@ fn saved_investigation_item(item: &InvestigationItem) -> SavedInvestigationItem 
     }
 }
 
+fn restore_investigation_tray(state: &crate::model::project::ProjectState) -> Result<InvestigationTray, String> {
+    let mut tray = InvestigationTray::default();
+    tray.items = state.investigation_items.iter().cloned()
+        .map(restored_investigation_item).collect();
+    let packet_nos: std::collections::HashSet<u64> = tray.packet_nos().into_iter().collect();
+    for packet in state.pinned_packets.iter().chain(&state.embedded_packets) {
+        if packet_nos.contains(&packet.no) {
+            tray.pin_packet(packet)?;
+        }
+    }
+    tray.active = state.active_investigation.filter(|index| *index < tray.items.len());
+    tray.open = state.investigation_tray_open && !tray.items.is_empty();
+    Ok(tray)
+}
+
 fn restored_investigation_item(item: SavedInvestigationItem) -> InvestigationItem {
     match item {
         SavedInvestigationItem::Packet(value) => InvestigationItem::Packet(value),
@@ -3196,11 +3264,9 @@ fn printable_line(data: &[u8]) -> String {
 mod project_tests {
     use super::*;
 
-    #[test]
-    fn portable_snapshot_embeds_packets_but_lightweight_does_not() {
-        let mut app = App::new_for_test();
-        app.inject_packet(Packet { capture: None,
-            no: 1,
+    fn packet(no: u64) -> Packet {
+        Packet { capture: None,
+            no,
             timestamp: 1.0,
             src: "192.0.2.1".into(),
             dst: "198.51.100.2".into(),
@@ -3214,12 +3280,72 @@ mod project_tests {
             vlan_dei: None,
             outer_vlan_id: None,
             bytes: vec![1, 2, 3, 4],
-        });
+        }
+    }
+
+    #[test]
+    fn portable_snapshot_embeds_packets_but_lightweight_does_not() {
+        let mut app = App::new_for_test();
+        app.inject_packet(packet(1));
 
         let portable = app.snapshot_project("portable", ProjectSaveMode::Portable);
         assert_eq!(portable.embedded_packets.len(), 1);
         assert_eq!(portable.embedded_packets[0].bytes, vec![1, 2, 3, 4]);
         let lightweight = app.snapshot_project("light", ProjectSaveMode::Lightweight);
         assert!(lightweight.embedded_packets.is_empty());
+    }
+
+    #[test]
+    fn pinned_packet_survives_live_eviction_and_both_project_modes() {
+        let mut app = App::new_for_test();
+        app.retain_packet_display(packet(1));
+        app.mark_selected_packet_for_investigation();
+        for no in 2..=MAX_PACKETS as u64 + 1 {
+            app.retain_packet_display(packet(no));
+        }
+        assert!(app.packets.iter().all(|packet| packet.no != 1));
+        assert_eq!(app.active_investigation_packet().unwrap().bytes, [1, 2, 3, 4]);
+        for mode in [ProjectSaveMode::Lightweight, ProjectSaveMode::Portable] {
+            let state = app.snapshot_project("retained", mode);
+            let serialized = serde_json::to_vec(&state).unwrap();
+            let restored = serde_json::from_slice(&serialized).unwrap();
+            let tray = restore_investigation_tray(&restored).unwrap();
+            assert_eq!(tray.active_packet_no(), Some(1));
+            assert_eq!(tray.retained_packet(1).unwrap().bytes, [1, 2, 3, 4]);
+        }
+        app.remove_active_worklist_packet();
+        assert!(app.packet_by_no(1).is_none());
+        assert_eq!(app.worklist.retained_bytes, 0);
+    }
+
+    #[test]
+    fn pin_limits_fail_without_losing_or_silently_evicting_evidence() {
+        let mut tray = InvestigationTray::default();
+        for no in 0..InvestigationTray::MAX_RETAINED_PACKETS as u64 {
+            assert!(tray.pin_packet(&packet(no)).unwrap());
+        }
+        let used = tray.retained_bytes;
+        assert!(!tray.pin_packet(&packet(0)).unwrap());
+        assert_eq!(tray.retained_bytes, used);
+        assert!(tray.pin_packet(&packet(2048)).is_err());
+        assert!(tray.retained_packet(0).is_some());
+        tray.remove_active();
+        assert!(tray.pin_packet(&packet(2048)).unwrap());
+
+        let mut full = InvestigationTray::default();
+        full.retained_bytes = InvestigationTray::MAX_RETAINED_BYTES;
+        assert!(full.pin_packet(&packet(1)).is_err());
+        assert!(full.items.is_empty());
+    }
+
+    #[test]
+    fn legacy_portable_projects_restore_pins_before_live_ring_eviction() {
+        let mut state = crate::model::project::ProjectState::new("old", ProjectSaveMode::Portable);
+        state.investigation_items = vec![SavedInvestigationItem::Packet(1)];
+        state.active_investigation = Some(0);
+        state.embedded_packets = vec![packet(1), packet(2)];
+        let tray = restore_investigation_tray(&state).unwrap();
+        assert_eq!(tray.retained_packet(1).unwrap().no, 1);
+        assert!(tray.retained_packet(2).is_none());
     }
 }
