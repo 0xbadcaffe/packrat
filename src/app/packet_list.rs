@@ -22,6 +22,7 @@ impl App {
         self.pending_analysis_events.clear();
         self.packet_effects.clear();
         self.analysis_updates.clear();
+        self.reset_inspection();
         self.capturing = false;
         self.packets.clear();
         self.packet_index_base = 0;

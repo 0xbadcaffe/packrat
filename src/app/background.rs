@@ -55,6 +55,7 @@ impl App {
             && self.pending_analysis_events.is_empty()
             && self.packet_effects.is_empty()
             && self.analysis_updates.is_empty()
+            && !self.inspection_pending()
             && self.analysis_generation_ready()
     }
 
@@ -208,6 +209,7 @@ impl App {
                 }
             }
         }
+        self.poll_inspection();
     }
 
     fn handle_worker_event(&mut self, event: WorkerEvent) -> bool {
@@ -255,7 +257,13 @@ impl App {
                     }
                 }
             }
-            WorkerEvent::Inspection { .. } => (),
+            WorkerEvent::Inspection {
+                generation,
+                request_id,
+                result,
+            } => {
+                self.receive_inspection(generation, request_id, result);
+            }
         }
         true
     }

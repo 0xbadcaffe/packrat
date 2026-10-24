@@ -43,6 +43,7 @@ impl App {
         self.pending_analysis_bytes = 0;
         self.pending_analysis_events.clear();
         self.packet_effects.clear();
+        self.reset_inspection();
         self.core = ReadCore::new(core);
     }
 }

@@ -2,19 +2,41 @@ use super::*;
 use crate::analysis::transactions::{HttpMessage, MessageState, MultiplexedMessage, is_http2};
 
 pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
-    let Some(stream) = app.active_investigation_stream() else {
+    let snapshot = app.transaction_inspection();
+    let stream = if app.background_analysis_enabled() {
+        snapshot.map(|snapshot| snapshot.stream.as_ref())
+    } else {
+        app.active_investigation_stream()
+    };
+    let Some(stream) = stream else {
         f.render_widget(
-            Paragraph::new("No retained TCP stream for this selection.")
-                .block(panel("HTTP Transactions")),
+            Paragraph::new(if app.background_analysis_enabled() {
+                "Transaction snapshot pending or no retained TCP stream."
+            } else {
+                "No retained TCP stream for this selection."
+            })
+            .block(panel("HTTP Transactions")),
             area,
         );
         return;
     };
     if is_http2(stream) {
-        draw_http2(f, app, stream, area);
+        let report = if app.background_analysis_enabled() {
+            snapshot.and_then(|snapshot| snapshot.http2.clone())
+        } else {
+            app.core.http2_transactions(&stream.key.id())
+        };
+        if let Some(report) = report {
+            draw_http2(f, app, stream, &report, area);
+        }
         return;
     }
-    let Some(report) = app.core.http_transactions(&stream.key.id()) else {
+    let report = if app.background_analysis_enabled() {
+        snapshot.and_then(|snapshot| snapshot.http1.clone())
+    } else {
+        app.core.http_transactions(&stream.key.id())
+    };
+    let Some(report) = report else {
         return;
     };
     let packet_no = app.active_investigation_packet().map(|packet| packet.no);
@@ -74,10 +96,13 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_http2(f: &mut Frame, app: &App, stream: &ReassembledStream, area: Rect) {
-    let Some(report) = app.core.http2_transactions(&stream.key.id()) else {
-        return;
-    };
+fn draw_http2(
+    f: &mut Frame,
+    app: &App,
+    stream: &ReassembledStream,
+    report: &crate::analysis::transactions::MultiplexedConversation,
+    area: Rect,
+) {
     let mut lines = vec![Line::styled(
         format!("{} HTTP/2 exchanges", report.transactions.len()),
         heading(),
@@ -155,7 +180,13 @@ fn multiplexed_lines(
     if let Some(span) = message.body.first() {
         lines.push(Line::from(format!(
             "    Body: {}",
-            printable_bytes(&span.direction.bytes(stream)[span.start..span.end], 128)
+            printable_bytes(
+                span.direction
+                    .bytes(stream)
+                    .get(span.start..span.end)
+                    .unwrap_or_default(),
+                128
+            )
         )));
     }
     for header in &message.trailers {
@@ -219,7 +250,13 @@ fn message_lines(
         )));
     }
     if let Some(span) = message.body.first() {
-        let preview = printable_bytes(&span.direction.bytes(stream)[span.start..span.end], 128);
+        let preview = printable_bytes(
+            span.direction
+                .bytes(stream)
+                .get(span.start..span.end)
+                .unwrap_or_default(),
+            128,
+        );
         lines.push(Line::from(format!("    Body: {preview}")));
     }
     for trailer in &message.trailers {

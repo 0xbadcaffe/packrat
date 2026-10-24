@@ -62,6 +62,7 @@ pub use graph_state::{GraphUiModeState, GraphUiState};
 mod header_inspection;
 mod incidents;
 mod ingest;
+mod inspection_snapshot;
 mod inspection_tools;
 mod investigation;
 mod live_dispatch;
@@ -90,6 +91,7 @@ pub struct App {
     pending_analysis_events: VecDeque<WorkerEvent>,
     packet_effects: std::collections::HashMap<u64, bool>,
     preferences_dirty: std::cell::Cell<bool>,
+    inspection: inspection_snapshot::InspectionState,
     pub active_tab: Tab,
     /// Recently visited screens, newest last. Modal overlays are not included.
     pub navigation_history: Vec<Tab>,

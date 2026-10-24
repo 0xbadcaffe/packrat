@@ -166,3 +166,58 @@ fn live_dispatch_keeps_the_rejected_packet_and_unread_capture_tail() {
     );
     app.stop_background_analysis().unwrap();
 }
+
+#[test]
+fn transaction_snapshot_is_revision_bound_and_never_reused_for_another_packet() {
+    use packrat_tui::app::InvestigationView;
+    let mut app = App::new_for_test();
+    app.start_background_analysis().unwrap();
+    app.inject_packet(packets::tcp(
+        1,
+        100,
+        0x18,
+        b"GET /one HTTP/1.1\r\nHost: local\r\n\r\n",
+    ));
+    drain(&mut app);
+    app.open_selected_packet_investigation();
+    app.investigation_view = InvestigationView::Transactions;
+    app.poll_analysis();
+    drain(&mut app);
+    let snapshot = app.transaction_inspection().unwrap().clone();
+    assert_eq!(
+        snapshot.http1.as_ref().unwrap().transactions[0]
+            .request
+            .target
+            .as_deref(),
+        Some("/one")
+    );
+    let mut other = packets::tcp(2, 200, 0x18, b"GET /two HTTP/1.1\r\nHost: local\r\n\r\n");
+    other.src = "192.0.2.99".into();
+    app.inject_packet(other);
+    drain(&mut app);
+    app.worklist.items.clear();
+    app.worklist.active = None;
+    app.selected = Some(1);
+    assert!(app.transaction_inspection().is_none());
+    app.poll_analysis();
+    drain(&mut app);
+    assert_ne!(
+        app.transaction_inspection().unwrap().stream.key.id(),
+        snapshot.stream.key.id()
+    );
+    assert_eq!(
+        snapshot.http1.as_ref().unwrap().transactions[0]
+            .request
+            .target
+            .as_deref(),
+        Some("/one")
+    );
+    loop {
+        if app.try_clear_packets().is_ok() {
+            break;
+        }
+        app.poll_analysis();
+    }
+    assert!(app.transaction_inspection().is_none());
+    drain(&mut app);
+}

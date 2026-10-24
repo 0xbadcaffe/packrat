@@ -22,6 +22,7 @@ impl App {
             core: ReadCore::new(core),
             analysis_worker: None,
             preferences_dirty: std::cell::Cell::new(false),
+            inspection: Default::default(),
             analysis_updates: Default::default(),
             analysis_update_id: 0,
             pending_analysis: VecDeque::new(),
