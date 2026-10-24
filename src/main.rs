@@ -104,11 +104,9 @@ async fn run_loop(
     packet_rx: &mut tokio::sync::mpsc::Receiver<Packet>,
     event_reader: &mut crossterm::event::EventStream,
 ) -> Result<()> {
+    let dispatch = packrat_tui::capture::dispatch::DispatchBudget::default();
     loop {
-        // Drain every packet already queued — non-blocking so tick never starves.
-        while let Ok(pkt) = packet_rx.try_recv() {
-            app.ingest_packet(pkt);
-        }
+        dispatch.drain(packet_rx, |packet| app.ingest_packet(packet));
 
         terminal.draw(|f| ui::draw(f, app))?;
 

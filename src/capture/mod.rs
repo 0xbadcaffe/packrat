@@ -38,6 +38,7 @@ impl Drop for CaptureTask {
 pub mod live;
 pub mod helper;
 pub mod pcapng;
+pub mod dispatch;
 
 /// Anything that can deliver packets onto a channel.
 pub trait CaptureSource: Send + 'static {
