@@ -61,7 +61,7 @@ async fn dropping_capture_task_signals_blocking_worker_to_stop() {
     }).await.unwrap();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "terminal-ui"))]
 #[test]
 fn archive_is_opened_only_after_filesystem_sandbox_activation() {
     let root = std::env::temp_dir().join(format!("packrat-sandbox-{}", rand::random::<u64>()));
