@@ -336,7 +336,7 @@ impl App {
 
         if Self::packet_matches_filter(&self.display_filter, &self.filter.input, &pkt) {
             self.filtered
-                .push(self.packet_index_base.saturating_add(self.packets.len()));
+                .push_back(self.packet_index_base.saturating_add(self.packets.len()));
             if self.auto_scroll {
                 self.selected = Some(self.filtered.len().saturating_sub(1));
             } else if self.selected.is_none() {

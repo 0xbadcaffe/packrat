@@ -20,7 +20,7 @@ impl App {
             navigation_history: Vec::new(),
             packets: VecDeque::new(),
             packet_index_base: 0,
-            filtered: Vec::new(),
+            filtered: VecDeque::new(),
             selected: None,
             total_bytes: 0,
             packet_counter: 0,

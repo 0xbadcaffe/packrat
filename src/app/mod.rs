@@ -87,7 +87,7 @@ pub struct App {
     pub navigation_history: Vec<Tab>,
     pub packets: VecDeque<Packet>,
     packet_index_base: usize,
-    pub filtered: Vec<usize>,
+    pub filtered: VecDeque<usize>,
     pub selected: Option<usize>,
     pub total_bytes: u64,
     pub packet_counter: u64,
