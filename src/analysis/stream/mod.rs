@@ -75,6 +75,11 @@ pub struct StreamKey {
     pub ep_a: String, // "ip:port"
     pub ep_b: String,
     pub proto: String,
+    pub vlan_id: Option<u16>,
+    pub outer_vlan_id: Option<u16>,
+    pub interface: Option<String>,
+    pub interface_id: u32,
+    pub section: u32,
 }
 
 impl StreamKey {
@@ -92,11 +97,42 @@ impl StreamKey {
             ep_a,
             ep_b,
             proto: "TCP".into(),
+            vlan_id: pkt.vlan_id,
+            outer_vlan_id: pkt.outer_vlan_id,
+            interface: pkt
+                .capture
+                .as_ref()
+                .and_then(|capture| capture.interface_name.clone()),
+            interface_id: pkt
+                .capture
+                .as_ref()
+                .map_or(0, |capture| capture.interface_id),
+            section: pkt.capture.as_ref().map_or(0, |capture| capture.section_id),
         })
     }
 
     pub fn id(&self) -> String {
-        format!("{}-{}", self.ep_a, self.ep_b)
+        if self.vlan_id.is_none()
+            && self.outer_vlan_id.is_none()
+            && self.interface.is_none()
+            && self.section == 0
+            && self.interface_id == 0
+        {
+            return format!("{}-{}", self.ep_a, self.ep_b);
+        }
+        let interface = self.interface.as_deref().unwrap_or("");
+        format!(
+            "{}-{}|{}:{}:{}:{}|{}|{:?}|{:?}",
+            self.ep_a,
+            self.ep_b,
+            self.interface.is_some(),
+            self.interface_id,
+            interface.len(),
+            interface,
+            self.section,
+            self.outer_vlan_id,
+            self.vlan_id
+        )
     }
 }
 
@@ -114,6 +150,8 @@ pub struct ReassembledStream {
     pub first_seen: f64,
     pub last_seen: f64,
     pub closed: bool,
+    /// At least one contributing TCP segment has missing capture bytes.
+    pub truncated: bool,
     /// Combined interleaved segment metadata.
     pub segments: Vec<StreamSegment>,
     /// Next expected TCP sequence number for each direction.
@@ -164,6 +202,11 @@ impl Default for StreamKey {
             ep_a: String::new(),
             ep_b: String::new(),
             proto: String::new(),
+            vlan_id: None,
+            outer_vlan_id: None,
+            interface: None,
+            interface_id: 0,
+            section: 0,
         }
     }
 }

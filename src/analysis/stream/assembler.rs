@@ -16,13 +16,10 @@ impl StreamAssembler {
             None => return,
         };
         let raw = &pkt.bytes;
-        let Some(tp_off) = tcp_transport_offset(pkt) else {
+        let Some(view) = tcp_view(pkt) else {
             return;
         };
-        let Some(payload_start) = tcp_payload_offset_checked(pkt) else {
-            return;
-        };
-        let Some(tcp_header) = raw.get(tp_off..payload_start) else {
+        let Some(tcp_header) = raw.get(view.header..view.payload) else {
             return;
         };
         let id = key.id();
@@ -44,6 +41,7 @@ impl StreamAssembler {
             .entry(id)
             .or_insert_with(|| ReassembledStream::new(key.clone(), pkt.timestamp));
         stream.last_seen = pkt.timestamp.max(stream.last_seen);
+        stream.truncated |= view.truncated;
 
         // Determine direction: is pkt.src the A-side?
         let sport = pkt.src_port.unwrap_or(0);
@@ -60,7 +58,7 @@ impl StreamAssembler {
             u32::from_be_bytes([tcp_header[4], tcp_header[5], tcp_header[6], tcp_header[7]]);
 
         // Extract payload using the correctly computed offset
-        let payload = &raw[payload_start..];
+        let payload = &raw[view.payload..view.end];
 
         if is_rst {
             stream.closed = true;
@@ -96,7 +94,6 @@ impl StreamAssembler {
         }
 
         if is_syn && payload.is_empty() {
-            *next_seq_slot = Some(tcp_seq.wrapping_add(1));
             if is_fin {
                 *next_seq_slot = next_seq_slot.map(|sequence| sequence.wrapping_add(1));
                 stream.closed = true;
