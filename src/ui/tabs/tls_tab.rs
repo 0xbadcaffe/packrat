@@ -274,6 +274,7 @@ fn draw_quic(f: &mut Frame, app: &App, area: Rect) {
         let flags = [
             (!connection.fixed_bit_valid).then_some("INVALID-FIXED"),
             connection.migration_observed().then_some("MIGRATION"),
+            connection.addresses_truncated.then_some("ADDR-LIMIT"),
         ].into_iter().flatten().collect::<Vec<_>>().join(",");
         Row::new(vec![
             Cell::from(connection.id.clone()).style(Style::default().fg(C_CYAN())),
@@ -297,6 +298,6 @@ fn draw_quic(f: &mut Frame, app: &App, area: Rect) {
         .title(Span::styled(format!(" QUIC Scope - {} connections ", connections.len()), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))))
         .style(Style::default().bg(C_BG()));
     f.render_widget(table, chunks[0]);
-    f.render_widget(Paragraph::new(" QUIC invariant headers plus authenticated helper frames when configured  [[/]] TLS/QUIC")
+    f.render_widget(Paragraph::new(format!(" QUIC inventory: {} evicted, {} decode errors  [[/]] TLS/QUIC", app.core.quic_scope.evicted_connections, app.core.quic_scope.decode_errors))
         .style(Style::default().fg(C_FG3()).bg(C_BG2())), chunks[1]);
 }

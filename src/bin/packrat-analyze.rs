@@ -101,6 +101,7 @@ fn analyze(
         "http1_exchanges": exchanges, "http2_exchanges": http2_exchanges,
         "http3_exchanges": http3_exchanges, "quic_decode_errors": core.quic_scope.decode_errors,
         "quic_last_decode_error": core.quic_scope.last_decode_error,
+        "evicted_quic_connections": core.quic_scope.evicted_connections,
         "retained_streams": core.streams.len(), "evicted_streams": core.streams.evicted_streams(),
         "incidents": core.incidents.incidents.len(), "containment": "disabled",
         "graph_nodes": core.operator_graph.node_count(), "graph_edges": core.operator_graph.edge_count(),

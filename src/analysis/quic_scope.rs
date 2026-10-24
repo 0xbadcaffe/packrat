@@ -1,6 +1,6 @@
 //! QUIC connection inventory from version-independent header fields.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use crate::analysis::encrypted_insight::parse_quic_header;
@@ -24,6 +24,7 @@ pub struct QuicConnection {
     pub ratq: String,
     pub packet_types: HashSet<String>,
     pub addresses: HashSet<String>,
+    pub addresses_truncated: bool,
     pub packets: u64,
     pub bytes: u64,
     pub first_seen: f64,
@@ -45,6 +46,8 @@ pub struct QuicScope {
     pub http3: Http3Tracker,
     pub decode_errors: u64,
     pub last_decode_error: Option<String>,
+    pub evicted_connections: u64,
+    connection_order: VecDeque<String>,
 }
 
 impl Default for QuicScope {
@@ -56,6 +59,8 @@ impl Default for QuicScope {
             http3: Http3Tracker::default(),
             decode_errors: 0,
             last_decode_error: None,
+            evicted_connections: 0,
+            connection_order: VecDeque::new(),
         }
     }
 }
@@ -99,6 +104,17 @@ impl QuicScope {
         } else {
             flow_id(packet)
         };
+        if !self.connections.contains_key(&id) {
+            while self.connections.len() >= 1024 {
+                let Some(oldest) = self.connection_order.pop_front() else {
+                    break;
+                };
+                if self.connections.remove(&oldest).is_some() {
+                    self.evicted_connections = self.evicted_connections.saturating_add(1);
+                }
+            }
+            self.connection_order.push_back(id.clone());
+        }
         let connection = self
             .connections
             .entry(id.clone())
@@ -110,6 +126,7 @@ impl QuicScope {
                 ratq: header.ratq.clone(),
                 packet_types: HashSet::new(),
                 addresses: HashSet::new(),
+                addresses_truncated: false,
                 packets: 0,
                 bytes: 0,
                 first_seen: packet.timestamp,
@@ -118,8 +135,13 @@ impl QuicScope {
                 decoded_frames: Vec::new(),
             });
         connection.packet_types.insert(header.packet_type.into());
-        connection.addresses.insert(packet.src.clone());
-        connection.addresses.insert(packet.dst.clone());
+        for address in [&packet.src, &packet.dst] {
+            if connection.addresses.len() < 32 {
+                connection.addresses.insert(address.clone());
+            } else if !connection.addresses.contains(address) {
+                connection.addresses_truncated = true;
+            }
+        }
         connection.packets += 1;
         connection.bytes += packet.length as u64;
         connection.last_seen = packet.timestamp;
@@ -162,6 +184,8 @@ impl QuicScope {
         self.decode_helper = None;
         self.decode_errors = 0;
         self.last_decode_error = None;
+        self.evicted_connections = 0;
+        self.connection_order.clear();
     }
 
     fn decode_packet(
