@@ -15,7 +15,7 @@ use ratatui::{
     widgets::{Paragraph},
 };
 use crate::app::App;
-use crate::analysis::operator_graph::GraphUiModeState;
+use crate::app::GraphUiModeState;
 use crate::ui::theme::*;
 use super::graph_panels;
 

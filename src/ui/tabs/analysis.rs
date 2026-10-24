@@ -74,7 +74,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             let ioc_loaded = app.core.ioc_engine.ioc_count();
             let rule_hits = app.core.rule_engine.hits.len();
             let rule_loaded = app.core.rule_engine.rules.len();
-            let yara_hits = app.yara_engine.total_matches();
+            let yara_hits = app.core.yara_engine.total_matches();
             let rows: Vec<(&str, String)> = vec![
                 ("Total Packets",    app.packets.len().to_string()),
                 ("Total Bytes",      fmt_bytes(app.total_bytes)),

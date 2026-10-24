@@ -46,6 +46,7 @@ fn analyze(path: &Path, output: &mut impl Write) -> Result<(), String> {
         Ok(())
     })?;
     let mut exchanges = 0usize;
+    core.refresh_graph();
     for stream in core.streams.all() {
         let id = stream.key.id();
         let report = core
@@ -68,6 +69,7 @@ fn analyze(path: &Path, output: &mut impl Write) -> Result<(), String> {
         "analyzed": analyzed, "skipped": skipped, "http_exchanges": exchanges,
         "retained_streams": core.streams.len(), "evicted_streams": core.streams.evicted_streams(),
         "incidents": core.incidents.incidents.len(), "containment": "disabled",
+        "graph_nodes": core.operator_graph.node_count(), "graph_edges": core.operator_graph.edge_count(),
         "transaction_scope": "retained_streams_only", "incident_history_limit": 256}),
     )?;
     output.flush().map_err(|error| error.to_string())

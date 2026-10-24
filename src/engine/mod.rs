@@ -2,6 +2,7 @@
 //! policy are adapters; this module never operates a terminal or firewall.
 
 use crate::analysis::alert_center::AlertCenter;
+use crate::analysis::carving::{CarvedObject, Carver};
 use crate::analysis::impact::EndpointEvidence;
 use crate::analysis::incident::{IncidentSource, IncidentStore};
 use crate::analysis::ioc::IocEngine;
@@ -12,6 +13,7 @@ use crate::analysis::stream::StreamAssembler;
 use crate::analysis::timeline::ProtocolTimelines;
 use crate::analysis::tls::TlsTracker;
 use crate::analysis::vlan::VlanIntel;
+use crate::analysis::yara::YaraEngine;
 use crate::model::evidence::Severity as EvidenceSeverity;
 use crate::model::hosts::HostInventory;
 use crate::net::flow::FlowTracker;
@@ -19,7 +21,10 @@ use crate::net::inspector::CredentialHit;
 use crate::net::packet::Packet;
 use crate::net::security::SecurityEngine;
 
+mod artifacts;
+mod graph;
 mod inspect;
+mod maintenance;
 mod transactions;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
@@ -47,6 +52,11 @@ pub struct PacketAnalysis {
 
 pub struct AnalysisCore {
     transaction_cache: transactions::TransactionCache,
+    maintenance_ticks: u32,
+    pub carver: Carver,
+    pub carved_objects: Vec<CarvedObject>,
+    pub yara_engine: YaraEngine,
+    pub yara_scan_cursor: usize,
     pub flow_tracker: FlowTracker,
     pub security: SecurityEngine,
     pub alert_center: AlertCenter,
@@ -68,6 +78,11 @@ impl Default for AnalysisCore {
     fn default() -> Self {
         Self {
             transaction_cache: Default::default(),
+            maintenance_ticks: 0,
+            carver: Carver::default(),
+            carved_objects: Vec::new(),
+            yara_engine: YaraEngine::default(),
+            yara_scan_cursor: 0,
             flow_tracker: FlowTracker::new(),
             security: SecurityEngine::default(),
             alert_center: AlertCenter::default(),
@@ -122,6 +137,10 @@ impl AnalysisCore {
     /// Clear observed traffic without discarding configured rules or keys.
     pub fn clear(&mut self) {
         self.transaction_cache = Default::default();
+        self.maintenance_ticks = 0;
+        self.carver = Carver::default();
+        self.carved_objects.clear();
+        self.reset_object_scan();
         self.flow_tracker.clear();
         self.security.clear();
         self.alert_center.clear();

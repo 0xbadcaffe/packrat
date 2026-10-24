@@ -35,7 +35,7 @@ impl App {
             }
         }
         // Carved object metadata
-        state.carved_objects = self.carved_objects.iter().map(ObjectEntry::from).collect();
+        state.carved_objects = self.core.carved_objects.iter().map(ObjectEntry::from).collect();
         state.alert_items = self.core.alert_center.items.clone();
         state.alert_automation = self.core.alert_center.automation_mode;
         state.investigation_items = self

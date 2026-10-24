@@ -31,11 +31,7 @@ impl App {
         self.wire_pulse.clear();
         self.net_registry.clear_session();
         self.alert_overlay_open = false;
-        self.carved_objects.clear();
-        self.yara_engine.clear_results();
-        self.yara_scan_cursor = 0;
         self.graph_ui = GraphUiState::default();
-        self.graph_tick_counter = 0;
     }
 
     pub fn toggle_recording(&mut self) {

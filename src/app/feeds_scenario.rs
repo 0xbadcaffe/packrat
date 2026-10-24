@@ -180,7 +180,7 @@ impl App {
         self.core.security.cred_hit_count = self.core.credentials.len();
 
         // ── Objects tab ──────────────────────────────────────────────────────
-        self.carved_objects.extend(scenario::carved_objects());
+        self.core.carved_objects.extend(scenario::carved_objects());
 
         // ── Rules tab ────────────────────────────────────────────────────────
         for (rule, _hits) in scenario::rules() {
@@ -192,6 +192,7 @@ impl App {
             self.core.rule_engine.evaluate(pkt);
         }
 
+        self.core.rebuild_retained_graph(self.packets.iter());
         self.set_status("Scenario loaded: Operation Quiet Beacon — all tabs populated");
     }
 

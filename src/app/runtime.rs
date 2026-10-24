@@ -95,8 +95,7 @@ impl App {
             }
         }
 
-        self.yara_scan_new_objects();
-        self.graph_tick();
+        self.core.maintenance();
         self.refresh_telemetry();
     }
 
@@ -131,99 +130,4 @@ impl App {
         });
     }
 
-    /// Incrementally sync all analysis subsystems into the operator graph,
-    /// then recompute scores / paths / clusters on a throttled schedule.
-    pub(super) fn graph_tick(&mut self) {
-        self.graph_tick_counter = self.graph_tick_counter.wrapping_add(1);
-
-        // ── Sync IDS alerts ──────────────────────────────────────────────────
-        let new_alerts = self.core.security.ids_alerts.len();
-        if new_alerts > self.graph_ui.synced_alerts {
-            for alert in &self.core.security.ids_alerts[self.graph_ui.synced_alerts..new_alerts] {
-                self.core.operator_graph.on_ids_alert(
-                    alert.signature,
-                    &alert.severity.to_string(),
-                    "", // IdsAlert doesn't carry src/dst IP here — use empty
-                    "",
-                    alert.pkt_no,
-                    0.0, // no timestamp on IdsAlert
-                );
-            }
-            self.graph_ui.synced_alerts = new_alerts;
-        }
-
-        // ── Sync IOC hits ────────────────────────────────────────────────────
-        let new_ioc = self.core.ioc_engine.hits.len();
-        if new_ioc > self.graph_ui.synced_ioc_hits {
-            for hit in &self.core.ioc_engine.hits[self.graph_ui.synced_ioc_hits..new_ioc] {
-                self.core.operator_graph.on_ioc_hit(
-                    &hit.ioc.value,
-                    &hit.ioc.kind.to_string(),
-                    &hit.context,
-                    hit.pkt_no,
-                    hit.ts,
-                    "",
-                );
-            }
-            self.graph_ui.synced_ioc_hits = new_ioc;
-        }
-
-        // ── Sync credentials ─────────────────────────────────────────────────
-        let new_creds = self.core.credentials.len();
-        if new_creds > self.graph_ui.synced_creds {
-            for cred in &self.core.credentials[self.graph_ui.synced_creds..new_creds] {
-                // CredentialHit: proto, kind, value, pkt_no — no IP fields
-                self.core.operator_graph.on_credential(
-                    Some(cred.kind),
-                    &cred.proto,
-                    true,
-                    "",
-                    "",
-                    0.0,
-                    cred.pkt_no,
-                );
-            }
-            self.graph_ui.synced_creds = new_creds;
-        }
-
-        // ── Sync rule hits ───────────────────────────────────────────────────
-        let new_rules = self.core.rule_engine.hits.len();
-        if new_rules > self.graph_ui.synced_rule_hits {
-            for hit in &self.core.rule_engine.hits[self.graph_ui.synced_rule_hits..new_rules] {
-                self.core.operator_graph.on_rule_hit(
-                    &hit.rule_id,
-                    &hit.rule_name,
-                    &hit.message,
-                    hit.pkt_no,
-                    hit.ts,
-                );
-            }
-            self.graph_ui.synced_rule_hits = new_rules;
-        }
-
-        // ── Sync carved objects ──────────────────────────────────────────────
-        let new_objects = self.carved_objects.len();
-        if new_objects > self.graph_ui.synced_objects {
-            for obj in &self.carved_objects[self.graph_ui.synced_objects..new_objects] {
-                self.core.operator_graph.on_carved_object(
-                    obj.id,
-                    &obj.kind,
-                    &obj.sha256,
-                    &obj.source,
-                    obj.data.len(),
-                    0.0,
-                );
-            }
-            self.graph_ui.synced_objects = new_objects;
-        }
-
-        // ── Periodic recomputation (every 30 ticks ≈ 3s at 10Hz) ─────────────
-        if self.graph_tick_counter % 30 == 0 {
-            self.core.operator_graph.recompute_scores();
-        }
-        if self.graph_tick_counter % 60 == 0 {
-            self.core.operator_graph.recompute_paths();
-            self.core.operator_graph.recompute_clusters();
-        }
-    }
 }

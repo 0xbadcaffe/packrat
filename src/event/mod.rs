@@ -1,4 +1,4 @@
-use crate::analysis::operator_graph::GraphUiModeState;
+use crate::app::GraphUiModeState;
 use crate::app::{App, InvestigationView, ObjectsSubTab, SecuritySubTab};
 use crate::model::project::ProjectSaveMode;
 use crate::scan::{ScanField, ScanMode};

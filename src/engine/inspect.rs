@@ -43,6 +43,14 @@ impl AnalysisCore {
         };
         let findings = self.security.inspect(pkt);
         for alert in &findings.ids {
+            self.operator_graph.on_ids_alert(
+                alert.signature,
+                &alert.severity.to_string(),
+                &pkt.src,
+                &pkt.dst,
+                alert.pkt_no,
+                pkt.timestamp,
+            );
             self.alert_center.record_correlated(
                 alert.pkt_no,
                 pkt.timestamp,
@@ -180,6 +188,14 @@ impl AnalysisCore {
         let ioc_before = self.ioc_engine.hits.len();
         self.ioc_engine.check_packet(pkt);
         for hit in &self.ioc_engine.hits[ioc_before..] {
+            self.operator_graph.on_ioc_hit(
+                &hit.ioc.value,
+                &hit.ioc.kind.to_string(),
+                &hit.context,
+                hit.pkt_no,
+                hit.ts,
+                &pkt.src,
+            );
             self.alert_center.record_correlated(
                 hit.pkt_no,
                 pkt.timestamp,
@@ -198,6 +214,13 @@ impl AnalysisCore {
         let rule_hits_before = self.rule_engine.hits.len();
         self.rule_engine.evaluate(pkt);
         for hit in &self.rule_engine.hits[rule_hits_before..] {
+            self.operator_graph.on_rule_hit(
+                &hit.rule_id,
+                &hit.rule_name,
+                &hit.message,
+                hit.pkt_no,
+                hit.ts,
+            );
             let severity = match &hit.action {
                 RuleAction::Alert { severity, .. } => severity.to_string(),
                 RuleAction::Tag { .. } => "INFO".to_string(),
@@ -271,6 +294,15 @@ impl AnalysisCore {
         let new_creds = crate::net::inspector::extract_credentials(pkt);
         if !new_creds.is_empty() {
             for credential in &new_creds {
+                self.operator_graph.on_credential(
+                    Some(credential.kind),
+                    &credential.proto,
+                    true,
+                    &pkt.src,
+                    &pkt.dst,
+                    pkt.timestamp,
+                    credential.pkt_no,
+                );
                 self.alert_center.record_correlated(
                     credential.pkt_no,
                     pkt.timestamp,

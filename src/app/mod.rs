@@ -3,7 +3,6 @@ use std::collections::VecDeque;
 use tokio::sync::mpsc::Sender;
 
 use crate::analysis::alert_center::AutomationMode;
-use crate::analysis::carving::{CarvedObject, Carver};
 use crate::analysis::diff::DiffEngine;
 use crate::analysis::display_filter::DisplayFilter;
 use crate::analysis::evidence_vault::EvidenceVault;
@@ -11,7 +10,6 @@ use crate::analysis::incident::{IncidentSource, IncidentStore};
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::net_registry::NetRegistry;
 use crate::analysis::notebook::Notebook;
-use crate::analysis::operator_graph::GraphUiState;
 use crate::analysis::packet_compare::{self, PacketComparison};
 use crate::analysis::packet_fields::{self, PacketField};
 use crate::analysis::protocol_workbench::ProtocolWorkbench;
@@ -23,7 +21,6 @@ use crate::analysis::traffic_latch::{
     CommandLatch, LatchAction, LatchMode, NftablesLatch, TrafficLatch,
 };
 use crate::analysis::wire_pulse::WirePulse;
-use crate::analysis::yara::YaraEngine;
 use crate::capture::CaptureSource;
 use crate::craft::CraftState;
 use crate::dissector::DissectorDef;
@@ -54,6 +51,8 @@ pub const SETTINGS_COUNT: usize = 8;
 mod capture_control;
 mod constructor;
 mod feeds_scenario;
+mod graph_state;
+pub use graph_state::{GraphUiModeState, GraphUiState};
 mod header_inspection;
 mod incidents;
 mod ingest;
@@ -147,8 +146,6 @@ pub struct App {
     pub capture_helper_path: Option<std::path::PathBuf>,
     /// Visible only while an unreviewed critical incident needs attention.
     pub alert_overlay_open: bool,
-    pub carver: Carver,
-    pub carved_objects: Vec<CarvedObject>,
     pub workbench: ProtocolWorkbench,
     pub diff_engine: DiffEngine,
     pub diff_scroll: usize,
@@ -177,16 +174,10 @@ pub struct App {
     pub objects_subtab: ObjectsSubTab,
     pub yara_rules_scroll: usize,
     pub yara_matches_scroll: usize,
-    // YARA engine
-    pub yara_engine: YaraEngine,
-    /// High-water mark: next carved object index to scan.
-    pub yara_scan_cursor: usize,
     // Rules UI state
     pub rules_scroll: usize,
     // ─── Operator graph ────────────────────────────────────────────────────────
     pub graph_ui: GraphUiState,
-    /// Tick counter used to throttle graph recomputation.
-    graph_tick_counter: u32,
     // ─── Global command palette ────────────────────────────────────────────────
     pub search_open: bool,
     pub search_query: String,

@@ -137,7 +137,7 @@ impl App {
         }
 
         // ── YARA matches ──────────────────────────────────────────────────────
-        for (idx, result) in self.yara_engine.results.iter().enumerate() {
+        for (idx, result) in self.core.yara_engine.results.iter().enumerate() {
             let label = result.target_label.clone();
             let detail = result.rule_names().join(", ");
             let haystack = format!("{} {}", label, detail).to_lowercase();
@@ -157,7 +157,7 @@ impl App {
         }
 
         // ── Carved objects ────────────────────────────────────────────────────
-        for (idx, obj) in self.carved_objects.iter().enumerate() {
+        for (idx, obj) in self.core.carved_objects.iter().enumerate() {
             let label = format!("#{} {}", obj.id, obj.kind);
             let detail = obj.source.clone();
             let haystack = format!("{} {} {}", label, detail, obj.sha256).to_lowercase();

@@ -113,7 +113,7 @@ impl App {
                     available: true,
                 })
                 .unwrap_or_else(|| missing("Alert", format!("Alert #{id}"))),
-            InvestigationItem::Object(id) => self
+            InvestigationItem::Object(id) => self.core
                 .carved_objects
                 .iter()
                 .find(|object| object.id == *id)
@@ -374,7 +374,7 @@ impl App {
                 .alert_center
                 .selected_item()
                 .map(|alert| InvestigationItem::Alert(alert.id)),
-            Tab::Objects if self.objects_subtab == ObjectsSubTab::Objects => self
+            Tab::Objects if self.objects_subtab == ObjectsSubTab::Objects => self.core
                 .carved_objects
                 .get(self.objects_scroll)
                 .map(|object| InvestigationItem::Object(object.id)),

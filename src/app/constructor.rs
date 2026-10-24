@@ -12,6 +12,7 @@ impl App {
         let mut core = AnalysisCore::default();
         core.ioc_engine.load_from_dir();
         core.rule_engine.load_from_dir();
+        core.yara_engine = crate::analysis::yara::YaraEngine::new();
         core.alert_center.automation_mode = match preferences.alert_automation {
             1 => AutomationMode::Watch,
             2 => AutomationMode::Triage,
@@ -92,8 +93,6 @@ impl App {
             reputation_helper_path: None,
             capture_helper_path: None,
             alert_overlay_open: false,
-            carver: Carver::default(),
-            carved_objects: Vec::new(),
             workbench: ProtocolWorkbench::default(),
             diff_engine: DiffEngine::default(),
             diff_scroll: 0,
@@ -117,11 +116,8 @@ impl App {
             objects_subtab: ObjectsSubTab::Objects,
             yara_rules_scroll: 0,
             yara_matches_scroll: 0,
-            yara_engine: YaraEngine::new(),
-            yara_scan_cursor: 0,
             rules_scroll: 0,
             graph_ui: GraphUiState::default(),
-            graph_tick_counter: 0,
             search_open: false,
             search_query: String::new(),
             search_results: Vec::new(),

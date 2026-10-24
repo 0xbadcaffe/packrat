@@ -65,7 +65,7 @@ fn draw_subtab_bar(f: &mut Frame, app: &App, area: Rect) {
 // ─── Objects panel ────────────────────────────────────────────────────────────
 
 fn draw_objects_panel(f: &mut Frame, app: &App, area: Rect) {
-    let objects = &app.carved_objects;
+    let objects = &app.core.carved_objects;
 
     let header = Row::new(vec![
         Cell::from("ID").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
@@ -77,9 +77,9 @@ fn draw_objects_panel(f: &mut Frame, app: &App, area: Rect) {
     ]).style(Style::default().bg(C_BG2())).height(1);
 
     let scan_pct = if objects.is_empty() { 0 } else {
-        app.yara_scan_cursor * 100 / objects.len()
+        app.core.yara_scan_cursor * 100 / objects.len()
     };
-    let scanning_badge = if app.yara_scan_cursor < objects.len() && !app.yara_engine.rules.is_empty() {
+    let scanning_badge = if app.core.yara_scan_cursor < objects.len() && !app.core.yara_engine.rules.is_empty() {
         format!(" [scanning…{scan_pct}%]")
     } else {
         String::new()
@@ -141,7 +141,7 @@ fn draw_objects_panel(f: &mut Frame, app: &App, area: Rect) {
 // ─── YARA Rules panel ─────────────────────────────────────────────────────────
 
 fn draw_rules_panel(f: &mut Frame, app: &App, area: Rect) {
-    let engine = &app.yara_engine;
+    let engine = &app.core.yara_engine;
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -224,7 +224,7 @@ fn draw_rules_panel(f: &mut Frame, app: &App, area: Rect) {
 // ─── YARA Matches panel ───────────────────────────────────────────────────────
 
 fn draw_matches_panel(f: &mut Frame, app: &App, area: Rect) {
-    let engine = &app.yara_engine;
+    let engine = &app.core.yara_engine;
     let scroll = app.yara_matches_scroll;
 
     let header = Row::new(vec![

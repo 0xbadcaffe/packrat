@@ -291,7 +291,7 @@ fn build(app: &App) -> CaseBundle<'_> {
     }).collect();
 
     // YARA results
-    let yara: Vec<YaraRecord<'_>> = app.yara_engine.results.iter().map(|r| YaraRecord {
+    let yara: Vec<YaraRecord<'_>> = app.core.yara_engine.results.iter().map(|r| YaraRecord {
         target:    &r.target_label,
         rules_hit: r.rule_names(),
         matches:   r.matches.len(),
