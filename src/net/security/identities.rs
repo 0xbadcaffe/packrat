@@ -17,12 +17,14 @@ impl SecurityEngine {
                     if self.arp_anomalies.len() >= MAX_ENTRIES {
                         self.arp_anomalies.remove(0);
                     }
-                    self.arp_anomalies.push(ArpAnomaly {
+                    let anomaly = ArpAnomaly {
                         pkt_no: pkt.no,
                         ip: ip.clone(),
                         old_mac: known_mac,
                         new_mac: mac.clone(),
-                    });
+                    };
+                    self.findings.arp.push(anomaly.clone());
+                    self.arp_anomalies.push(anomaly);
                 }
             }
             self.ip_to_mac.insert(ip, mac);

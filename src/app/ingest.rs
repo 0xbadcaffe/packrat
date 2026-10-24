@@ -72,11 +72,6 @@ impl App {
 
         // Security analysis. Critical built-in signatures open an incident for
         // explicit operator review; lower severities remain in the Security tab.
-        let ids_before = self.security.ids_alerts.len();
-        let arp_before = self.security.arp_anomalies.len();
-        let vuln_before = self.security.vuln_hits.len();
-        let brute_before = self.security.brute_force.len();
-        let tls_before = self.security.tls_weaknesses.len();
         let is_dns = pkt.protocol.eq_ignore_ascii_case("DNS")
             || pkt.src_port == Some(53)
             || pkt.dst_port == Some(53);
@@ -89,8 +84,8 @@ impl App {
         } else {
             std::collections::HashMap::new()
         };
-        self.security.update(&pkt);
-        for alert in &self.security.ids_alerts[ids_before..] {
+        let findings = self.security.inspect(&pkt);
+        for alert in &findings.ids {
             self.alert_center.record_correlated(
                 alert.pkt_no,
                 pkt.timestamp,
@@ -101,7 +96,7 @@ impl App {
                 format!("{}>{}", pkt.src, pkt.dst),
             );
         }
-        for anomaly in &self.security.arp_anomalies[arp_before..] {
+        for anomaly in &findings.arp {
             self.alert_center.record_correlated(
                 anomaly.pkt_no,
                 pkt.timestamp,
@@ -115,7 +110,7 @@ impl App {
                 &anomaly.ip,
             );
         }
-        for hit in &self.security.vuln_hits[vuln_before..] {
+        for hit in &findings.vulnerabilities {
             self.alert_center.record_correlated(
                 hit.pkt_no,
                 pkt.timestamp,
@@ -126,7 +121,7 @@ impl App {
                 format!("{}>{}", pkt.src, pkt.dst),
             );
         }
-        for alert in &self.security.brute_force[brute_before..] {
+        for alert in &findings.authentication {
             self.alert_center.record_correlated(
                 pkt.no,
                 pkt.timestamp,
@@ -140,7 +135,7 @@ impl App {
                 format!("{}>{}:{}", alert.src_ip, alert.dst_ip, alert.port),
             );
         }
-        for weakness in &self.security.tls_weaknesses[tls_before..] {
+        for weakness in &findings.tls {
             self.alert_center.record_correlated(
                 weakness.pkt_no,
                 pkt.timestamp,
@@ -177,7 +172,7 @@ impl App {
                 &suspect.apex,
             );
         }
-        let critical_ids: Vec<(String, String)> = self.security.ids_alerts[ids_before..]
+        let critical_ids: Vec<(String, String)> = findings.ids
             .iter()
             .filter(|alert| matches!(alert.severity, crate::net::security::Severity::Critical))
             .map(|alert| (alert.signature.to_string(), alert.detail.clone()))

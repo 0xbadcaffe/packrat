@@ -108,6 +108,8 @@ mod behavior;
 mod control_plane;
 mod dns;
 mod engine;
+mod findings;
+pub use findings::DetectionBatch;
 mod fragments;
 mod http_policy;
 mod http_tls;
@@ -131,6 +133,7 @@ pub use types::{
 };
 
 pub struct SecurityEngine {
+    findings: DetectionBatch,
     // Results
     pub ids_alerts: Vec<IdsAlert>,
     pub arp_anomalies: Vec<ArpAnomaly>,

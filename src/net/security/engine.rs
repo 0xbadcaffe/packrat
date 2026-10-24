@@ -3,6 +3,7 @@ use super::*;
 impl SecurityEngine {
     pub fn new() -> Self {
         Self {
+            findings: DetectionBatch::default(),
             ids_alerts: Vec::new(),
             arp_anomalies: Vec::new(),
             os_guesses: Vec::new(),
@@ -38,6 +39,7 @@ impl SecurityEngine {
     }
 
     pub fn clear(&mut self) {
+        self.findings = DetectionBatch::default();
         self.ids_alerts.clear();
         self.arp_anomalies.clear();
         self.os_guesses.clear();
@@ -103,6 +105,7 @@ impl SecurityEngine {
 
     /// Process a single packet through all detection engines.
     pub fn update(&mut self, pkt: &Packet) {
+        self.findings = DetectionBatch::default();
         self.check_ipv4_fragments(pkt);
         self.check_tcp_integrity(pkt);
         self.check_scan_activity(pkt);
@@ -125,9 +128,15 @@ impl SecurityEngine {
         self.check_dns_tunnel(pkt);
     }
 
+    pub fn inspect(&mut self, pkt: &Packet) -> DetectionBatch {
+        self.update(pkt);
+        std::mem::take(&mut self.findings)
+    }
+
     // ─── IDS Signatures ──────────────────────────────────────────────────────
 
     pub(super) fn push_ids(&mut self, alert: IdsAlert) {
+        self.findings.ids.push(alert.clone());
         debug_assert!(
             DETECTOR_SIGNATURES.contains(&alert.signature),
             "detector signature lacks replay coverage registration: {}",

@@ -82,6 +82,7 @@ impl SecurityEngine {
     // ─── TLS/SSL Weakness ─────────────────────────────────────────────────────
 
     pub(super) fn push_tls(&mut self, w: TlsWeakness) {
+        self.findings.tls.push(w.clone());
         if self.tls_weaknesses.len() >= MAX_ENTRIES {
             self.tls_weaknesses.remove(0);
         }

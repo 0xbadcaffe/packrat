@@ -4,6 +4,7 @@ impl SecurityEngine {
     // ─── Vulnerability Patterns ───────────────────────────────────────────────
 
     pub(super) fn push_vuln(&mut self, v: VulnHit) {
+        self.findings.vulnerabilities.push(v.clone());
         if self.vuln_hits.len() >= MAX_ENTRIES {
             self.vuln_hits.remove(0);
         }
@@ -168,13 +169,15 @@ impl SecurityEngine {
                 if self.brute_force.len() >= MAX_ENTRIES {
                     self.brute_force.remove(0);
                 }
-                self.brute_force.push(BruteForceAlert {
+                let alert = BruteForceAlert {
                     src_ip: key.src,
                     dst_ip: key.dst,
                     port: key.port,
                     attempts,
                     service: svc_static,
-                });
+                };
+                self.findings.authentication.push(alert.clone());
+                self.brute_force.push(alert);
             }
         }
     }
