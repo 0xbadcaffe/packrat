@@ -9,6 +9,7 @@ const MAX_SEGMENT_METADATA: usize = 8192;
 pub struct StreamAssembler {
     streams: HashMap<String, ReassembledStream>,
     revision: u64,
+    evicted_streams: u64,
 }
 
 impl StreamAssembler {
@@ -35,6 +36,7 @@ impl StreamAssembler {
                 .map(|(k, _)| k.clone())
             {
                 self.streams.remove(&oldest_id);
+                self.evicted_streams += 1;
             }
         }
 
@@ -200,7 +202,12 @@ impl StreamAssembler {
         self.streams.is_empty()
     }
 
+    pub fn evicted_streams(&self) -> u64 {
+        self.evicted_streams
+    }
+
     pub fn clear(&mut self) {
         self.streams.clear();
+        self.evicted_streams = 0;
     }
 }
