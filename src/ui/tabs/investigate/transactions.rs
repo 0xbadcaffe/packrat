@@ -1,5 +1,5 @@
 use super::*;
-use crate::analysis::transactions::{HttpMessage, MessageState};
+use crate::analysis::transactions::{HttpMessage, MessageState, MultiplexedMessage, is_http2};
 
 pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
     let Some(stream) = app.active_investigation_stream() else {
@@ -10,6 +10,10 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
         );
         return;
     };
+    if is_http2(stream) {
+        draw_http2(f, app, stream, area);
+        return;
+    }
     let Some(report) = app.core.http_transactions(&stream.key.id()) else {
         return;
     };
@@ -68,6 +72,99 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
             .block(panel("HTTP Transactions")),
         area,
     );
+}
+
+fn draw_http2(f: &mut Frame, app: &App, stream: &ReassembledStream, area: Rect) {
+    let Some(report) = app.core.http2_transactions(&stream.key.id()) else {
+        return;
+    };
+    let mut lines = vec![Line::styled(
+        format!("{} HTTP/2 exchanges", report.transactions.len()),
+        heading(),
+    )];
+    for limitation in &report.limitations {
+        lines.push(Line::styled(
+            limitation.clone(),
+            Style::default().fg(C_YELLOW()),
+        ));
+    }
+    if let Some(last) = report.goaway_stream {
+        lines.push(Line::from(format!("GOAWAY last stream: {last}")));
+    }
+    for transaction in &report.transactions {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            format!(
+                "Stream #{}  Reset: {:?}  Promised by: {:?}",
+                transaction.stream_id, transaction.reset_code, transaction.promised_by
+            ),
+            heading(),
+        ));
+        if let Some(request) = &transaction.request {
+            multiplexed_lines(&mut lines, request, "Request", stream);
+        }
+        for interim in &transaction.interim_responses {
+            multiplexed_lines(&mut lines, interim, "Interim", stream);
+        }
+        if let Some(response) = &transaction.response {
+            multiplexed_lines(&mut lines, response, "Response", stream);
+        }
+    }
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((app.investigation_scroll.min(u16::MAX as usize) as u16, 0))
+            .block(panel("HTTP/2 Transactions")),
+        area,
+    );
+}
+
+fn multiplexed_lines(
+    lines: &mut Vec<Line<'static>>,
+    message: &MultiplexedMessage,
+    role: &str,
+    stream: &ReassembledStream,
+) {
+    let state = match message.state {
+        MessageState::Complete => C_GREEN(),
+        MessageState::Ambiguous => C_RED(),
+        _ => C_YELLOW(),
+    };
+    lines.push(Line::styled(
+        format!(
+            "  {role} [{:?}]  Body: {} bytes  Packets {:?}",
+            message.state,
+            message.body_bytes(),
+            message.packet_numbers
+        ),
+        Style::default().fg(state),
+    ));
+    for header in &message.headers {
+        lines.push(Line::from(format!(
+            "    {}: {}",
+            header.name,
+            printable_bytes(&header.value, 256)
+        )));
+    }
+    for diagnostic in &message.diagnostics {
+        lines.push(Line::styled(
+            diagnostic.clone(),
+            Style::default().fg(C_YELLOW()),
+        ));
+    }
+    if let Some(span) = message.body.first() {
+        lines.push(Line::from(format!(
+            "    Body: {}",
+            printable_bytes(&span.direction.bytes(stream)[span.start..span.end], 128)
+        )));
+    }
+    for header in &message.trailers {
+        lines.push(Line::from(format!(
+            "    Trailer {}: {}",
+            header.name,
+            printable_bytes(&header.value, 256)
+        )));
+    }
 }
 
 fn message_lines(

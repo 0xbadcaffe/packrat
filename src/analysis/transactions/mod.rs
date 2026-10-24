@@ -17,6 +17,11 @@ pub use multiplexed::{
 pub use http::reconstruct_http;
 pub use http2::reconstruct_http2;
 
+pub fn is_http2(stream: &ReassembledStream) -> bool {
+    stream.client_data.starts_with(http2_wire::PREFACE)
+        || stream.server_data.starts_with(http2_wire::PREFACE)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum Direction {
     AtoB,

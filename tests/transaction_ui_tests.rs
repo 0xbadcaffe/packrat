@@ -1,5 +1,7 @@
 #![cfg(feature = "terminal-ui")]
 
+#[path = "support/http2.rs"]
+mod http2;
 #[path = "support/http.rs"]
 mod support;
 
@@ -104,5 +106,30 @@ fn transaction_screen_handles_tiny_and_short_terminals() {
 fn all_investigation_views_have_stable_index_round_trips() {
     for index in 0..InvestigationView::COUNT {
         assert_eq!(InvestigationView::from_index(index).index(), index);
+    }
+}
+
+#[test]
+fn multiplexed_exchange_headers_render_in_the_same_investigation_context() {
+    let mut app = App::new_for_test();
+    let stream = http2::stream(
+        &http2::frame(1, 5, 1, &http2::request(b"/h2")),
+        &http2::frame(1, 5, 1, &[0x88]),
+    );
+    app.inject_packet(support::tcp(1, 100, 0x18, &stream.client_data, false));
+    app.inject_packet(support::tcp(2, 500, 0x18, &stream.server_data, true));
+    app.worklist.items = vec![InvestigationItem::Packet(1)];
+    app.worklist.active = Some(0);
+    app.active_tab = Tab::Investigate;
+    app.investigation_view = InvestigationView::Transactions;
+    let text = screen(&app, 140, 40);
+    for label in [
+        "HTTP/2",
+        "Stream #1",
+        ":method: GET",
+        ":path: /h2",
+        ":status: 200",
+    ] {
+        assert!(text.contains(label), "{text}");
     }
 }

@@ -1,3 +1,5 @@
+#[path = "support/http2.rs"]
+mod http2;
 #[path = "support/http.rs"]
 mod support;
 
@@ -76,6 +78,37 @@ fn capture_to_transactions_runs_without_a_terminal_or_user_config() {
     assert_eq!(summary["http_exchanges"], 1);
     assert_eq!(summary["containment"], "disabled");
     assert_eq!(summary["transaction_scope"], "retained_streams_only");
+}
+
+#[test]
+fn cleartext_http2_capture_is_exported_as_multiplexed_exchanges() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("http2.pcapng");
+    let stream = http2::stream(
+        &http2::frame(1, 5, 1, &http2::request(b"/h2")),
+        &http2::frame(1, 5, 1, &[0x88]),
+    );
+    let mut writer = PcapNgWriter::create(&path).unwrap();
+    writer
+        .write_packet(&support::tcp(1, 100, 0x18, &stream.client_data, false))
+        .unwrap();
+    writer
+        .write_packet(&support::tcp(2, 500, 0x18, &stream.server_data, true))
+        .unwrap();
+    writer.flush().unwrap();
+    let events = events(&run(&path));
+    let event = events
+        .iter()
+        .find(|event| event["type"] == "http2_conversation")
+        .unwrap();
+    let transaction = &event["conversation"]["transactions"][0];
+    assert_eq!(transaction["stream_id"], 1);
+    assert_eq!(transaction["response"]["state"], "Complete");
+    assert_eq!(
+        transaction["request"]["packet_numbers"],
+        serde_json::json!([1])
+    );
+    assert_eq!(events.last().unwrap()["http2_exchanges"], 1);
 }
 
 #[test]

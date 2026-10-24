@@ -46,9 +46,22 @@ fn analyze(path: &Path, output: &mut impl Write) -> Result<(), String> {
         Ok(())
     })?;
     let mut exchanges = 0usize;
+    let mut http2_exchanges = 0usize;
     core.refresh_graph();
     for stream in core.streams.all() {
         let id = stream.key.id();
+        if packrat_tui::analysis::transactions::is_http2(stream) {
+            let report = core
+                .http2_transactions(&id)
+                .ok_or("Retained stream disappeared")?;
+            http2_exchanges += report.transactions.len();
+            event(
+                output,
+                &json!({"type": "http2_conversation", "stream_id": id,
+                "endpoint_a": stream.key.ep_a, "endpoint_b": stream.key.ep_b, "conversation": report.as_ref()}),
+            )?;
+            continue;
+        }
         let report = core
             .http_transactions(&id)
             .ok_or("Retained stream disappeared")?;
@@ -66,7 +79,8 @@ fn analyze(path: &Path, output: &mut impl Write) -> Result<(), String> {
     event(
         output,
         &json!({"type": "summary", "packets": packets,
-        "analyzed": analyzed, "skipped": skipped, "http_exchanges": exchanges,
+        "analyzed": analyzed, "skipped": skipped, "http_exchanges": exchanges + http2_exchanges,
+        "http1_exchanges": exchanges, "http2_exchanges": http2_exchanges,
         "retained_streams": core.streams.len(), "evicted_streams": core.streams.evicted_streams(),
         "incidents": core.incidents.incidents.len(), "containment": "disabled",
         "graph_nodes": core.operator_graph.node_count(), "graph_edges": core.operator_graph.edge_count(),
@@ -82,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("Usage: packrat-analyze CAPTURE.pcap[ng]")?;
     if input == "--help" || input == "-h" {
         println!(
-            "Usage: packrat-analyze CAPTURE.pcap[ng]\nPassive offline analysis as newline-delimited JSON. No terminal, user config, or containment.\nHTTP/1 reconstruction covers retained TCP streams; eviction and decoding limits are reported."
+            "Usage: packrat-analyze CAPTURE.pcap[ng]\nPassive offline analysis as newline-delimited JSON. No terminal, user config, or containment.\nHTTP/1 and cleartext HTTP/2 reconstruction cover retained TCP streams; eviction and decoding limits are reported."
         );
         return Ok(());
     }
