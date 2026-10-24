@@ -10,6 +10,17 @@ use std::path::Path;
 pub struct PacketArchive {
     db: Connection,
     bytes: File,
+    _writer_guard: Option<File>,
+}
+
+fn private_file(path: &Path) -> Result<File, String> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)] {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path).map_err(|error| error.to_string())
 }
 
 impl PacketArchive {
@@ -20,17 +31,26 @@ impl PacketArchive {
         )
         .map_err(|error| error.to_string())?;
         let bytes = File::open(directory.join("packets.bin")).map_err(|error| error.to_string())?;
-        Ok(Self { db, bytes })
+        Ok(Self { db, bytes, _writer_guard: None })
     }
 
     pub fn open(directory: &Path) -> Result<Self, String> {
-        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(directory).map_err(|error| error.to_string())?;
+        let guard = private_file(&directory.join("writer.lock"))?;
+        fs2::FileExt::try_lock_exclusive(&guard).map_err(|error| format!("Archive already has a writer: {error}"))?;
+        drop(private_file(&directory.join("index.sqlite"))?);
         let db =
             Connection::open(directory.join("index.sqlite")).map_err(|error| error.to_string())?;
         db.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|error| error.to_string())?;
         db.execute_batch(
-            "PRAGMA locking_mode=EXCLUSIVE; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS packets (
                 id INTEGER PRIMARY KEY, frame_number TEXT NOT NULL,
                 timestamp REAL NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL,
@@ -41,13 +61,7 @@ impl PacketArchive {
             CREATE INDEX IF NOT EXISTS packet_destination ON packets(destination, timestamp);",
         )
         .map_err(|error| error.to_string())?;
-        let bytes = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(directory.join("packets.bin"))
-            .map_err(|error| error.to_string())?;
+        let bytes = private_file(&directory.join("packets.bin"))?;
         let end: i64 = db
             .query_row(
                 "SELECT COALESCE(MAX(byte_offset + byte_length), 0) FROM packets",
@@ -61,7 +75,7 @@ impl PacketArchive {
         }
         // A crash before the SQLite commit can leave an unindexed tail.
         bytes.set_len(end).map_err(|error| error.to_string())?;
-        Ok(Self { db, bytes })
+        Ok(Self { db, bytes, _writer_guard: Some(guard) })
     }
 
     pub fn append(&mut self, packets: &[Packet]) -> Result<(), String> {
@@ -99,6 +113,15 @@ impl PacketArchive {
             .query_row("SELECT COUNT(*) FROM packets", [], |row| row.get(0))
             .map_err(|error| error.to_string())?;
         u64::try_from(count).map_err(|_| "Invalid archive count".into())
+    }
+
+    pub fn find_host(&self, address: &str, after_id: i64, limit: usize) -> Result<Vec<i64>, String> {
+        let mut statement = self.db.prepare(
+            "SELECT id FROM packets WHERE (source=?1 OR destination=?1) AND id>?2 ORDER BY id LIMIT ?3"
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map(params![address, after_id, limit.clamp(1, 1000) as i64], |row| row.get(0))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<i64>>>().map_err(|error| error.to_string())
     }
 
     pub fn packet(&mut self, id: i64) -> Result<Packet, String> {
@@ -196,6 +219,21 @@ mod tests {
     use crate::net::parser::parse_ethernet;
 
     #[test]
+    fn active_archive_allows_readers_and_rejects_another_writer() {
+        let path = std::env::temp_dir().join(format!("packrat-concurrent-{}", rand::random::<u64>()));
+        let mut writer = PacketArchive::open(&path).unwrap();
+        let reader = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(reader.count().unwrap(), 0);
+        writer.append(&[parse_ethernet(&[1, 2, 3], 1, 1.0)]).unwrap();
+        assert_eq!(reader.count().unwrap(), 1);
+        assert!(PacketArchive::open(&path).is_err());
+        drop(reader);
+        drop(writer);
+        assert!(PacketArchive::open(&path).is_ok());
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
     fn background_worker_flushes_all_accepted_records_before_shutdown() {
         let path = std::env::temp_dir().join(format!("packrat-worker-{}", rand::random::<u64>()));
         let mut worker = ArchiveWorker::open(&path).unwrap();
@@ -206,6 +244,8 @@ mod tests {
         let mut archive = PacketArchive::open_readonly(&path).unwrap();
         assert_eq!(archive.count().unwrap(), 100);
         assert_eq!(archive.packet(100).unwrap().no, 100);
+        assert_eq!(archive.find_host("?.?.?.?", 98, 10).unwrap(), vec![99, 100]);
+        assert!(archive.find_host("' OR 1=1 --", 0, 10).unwrap().is_empty());
         drop(archive);
         std::fs::remove_dir_all(path).unwrap();
     }
