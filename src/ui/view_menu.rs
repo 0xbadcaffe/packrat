@@ -27,7 +27,9 @@ pub fn draw(f: &mut Frame, app: &App) {
     if popup.width == 0 || popup.height == 0 { return; }
 
     f.render_widget(Clear, popup);
-    let items = views.iter().enumerate().map(|(index, view)| {
+    let visible = popup.height.saturating_sub(2) as usize;
+    let start = app.view_menu_cursor.saturating_add(1).saturating_sub(visible);
+    let items = views.iter().enumerate().skip(start).take(visible).map(|(index, view)| {
         let selected = index == app.view_menu_cursor;
         let current = *view == app.active_tab;
         let marker = if selected { ">" } else if current { "*" } else { " " };

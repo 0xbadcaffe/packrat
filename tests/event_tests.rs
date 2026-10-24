@@ -356,7 +356,7 @@ async fn automatic_latch_requires_policy_gate_for_default_critical_signal() {
 #[rstest]
 #[case(KeyCode::Char('1'), Tab::Packets)]
 #[case(KeyCode::Char('2'), Tab::Investigate)]
-#[case(KeyCode::Char('3'), Tab::Security)]
+#[case(KeyCode::Char('3'), Tab::Notebook)]
 #[case(KeyCode::Char('4'), Tab::Scanner)]
 #[case(KeyCode::Char('5'), Tab::Notebook)]
 #[tokio::test]
@@ -389,7 +389,7 @@ async fn escape_returns_to_workspace_home() {
 #[tokio::test]
 async fn alt_left_returns_to_previous_screen_across_workspaces() {
     let mut app = App::new_for_test();
-    event::handle(&mut app, key(KeyCode::Char('3')));
+    event::handle(&mut app, key(KeyCode::Char('S')));
     event::handle(&mut app, key(KeyCode::Char('N')));
     assert_eq!(app.active_tab, Tab::Notebook);
 
@@ -1329,7 +1329,66 @@ fn tab_index_roundtrip(#[case] tab: Tab) {
 #[test]
 fn tab_count_matches_variants() {
     assert_eq!(Tab::COUNT, 19);
-    assert_eq!(Workspace::Case.views(), &[Tab::Notebook, Tab::Dynamic]);
+    assert_eq!(Workspace::COUNT, 3);
+    assert!(Workspace::Case.views().contains(&Tab::Notebook));
+    assert!(Workspace::Case.views().contains(&Tab::Craft));
+}
+
+#[test]
+fn every_specialist_view_is_reachable_from_the_three_workspaces() {
+    let views: Vec<_> = (0..Workspace::COUNT).flat_map(|index| Workspace::from_index(index).views()).collect();
+    assert_eq!(views.len(), Tab::COUNT);
+    for index in 0..Tab::COUNT {
+        assert_eq!(views.iter().filter(|view| ***view == Tab::from_index(index)).count(), 1);
+    }
+}
+
+#[test]
+fn command_palette_preserves_the_investigation_context_and_history() {
+    let mut app = App::new_for_test();
+    app.inject_packet(packet(1));
+    app.mark_selected_packet_for_investigation();
+    let context = app.worklist.active_packet_no();
+    app.open_search();
+    app.search_query = "scanner".into();
+    app.run_search();
+    app.search_selected = app.search_results.iter().position(|result| result.source == "View" && result.jump_tab == Tab::Scanner).unwrap();
+    app.search_jump();
+    assert_eq!(app.active_tab, Tab::Scanner);
+    assert_eq!(app.worklist.active_packet_no(), context);
+    assert!(app.navigate_back());
+    assert_eq!(app.active_tab, Tab::Packets);
+}
+
+#[tokio::test]
+async fn escape_returns_through_context_without_creating_a_navigation_loop() {
+    let mut app = App::new_for_test();
+    app.navigate_to(Tab::Hosts);
+    app.navigate_to(Tab::Objects);
+    event::handle(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.active_tab, Tab::Hosts);
+    event::handle(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.active_tab, Tab::Packets);
+    event::handle(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.active_tab, Tab::Packets);
+}
+
+#[test]
+fn packet_search_reveals_filtered_evidence_by_packet_identity() {
+    let mut app = App::new_for_test();
+    app.inject_packet(packet(1));
+    let mut second = packet(2);
+    second.src = "203.0.113.55".into();
+    app.inject_packet(second);
+    app.filter.input = "192.0.2.10".into();
+    app.rebuild_filtered();
+    assert_eq!(app.filtered.len(), 1);
+    app.open_search();
+    app.search_query = "203.0.113.55".into();
+    app.run_search();
+    app.search_selected = app.search_results.iter().position(|result| result.packet_no == Some(2)).unwrap();
+    app.search_jump();
+    assert_eq!(app.selected_packet().unwrap().no, 2);
 }
 
 // ─── Global search palette ────────────────────────────────────────────────────

@@ -309,8 +309,8 @@ fn handle_view_menu(app: &mut App, key: KeyEvent) {
         KeyCode::Enter | KeyCode::Char(' ') => app.activate_view_menu_selection(),
         KeyCode::Char('1') => app.select_workspace(Workspace::Traffic),
         KeyCode::Char('2') => app.select_workspace(Workspace::Inspect),
-        KeyCode::Char('3') => app.select_workspace(Workspace::Defense),
-        KeyCode::Char('4') => app.select_workspace(Workspace::Actions),
+        KeyCode::Char('3') => app.select_workspace(Workspace::Case),
+        KeyCode::Char('4') => { app.navigate_to(Tab::Scanner); app.view_menu_open = false; }
         KeyCode::Char('5') => app.select_workspace(Workspace::Case),
         _ => {}
     }
@@ -347,10 +347,11 @@ fn global_tab_switch(app: &mut App, key: &KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('1') => { app.select_workspace(Workspace::Traffic); true }
         KeyCode::Char('2') => { app.select_workspace(Workspace::Inspect); true }
-        KeyCode::Char('3') => { app.select_workspace(Workspace::Defense); true }
-        KeyCode::Char('4') => { app.select_workspace(Workspace::Actions); true }
+        KeyCode::Char('3') => { app.select_workspace(Workspace::Case); true }
+        KeyCode::Char('4') => { app.navigate_to(Tab::Scanner); true }
         KeyCode::Char('5') => { app.select_workspace(Workspace::Case); true }
         KeyCode::Char('H') => { app.navigate_to(Tab::Hosts);       true }
+        KeyCode::Char('S') => { app.navigate_to(Tab::Security); true }
         KeyCode::Char('N') => { app.navigate_to(Tab::Notebook);    true }
         KeyCode::Char('T') => { app.navigate_to(Tab::TlsAnalysis); true }
         KeyCode::Char('O') => { app.navigate_to(Tab::Objects);     true }

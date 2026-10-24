@@ -54,7 +54,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(C_CYAN()))
         .title(Span::styled(
-            " Search  [Esc] close  [↑↓/jk] navigate  [Enter] jump ",
+            " Commands & Evidence  [Esc] close  [Enter] open ",
             Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD),
         ));
     f.render_widget(block, popup);
@@ -134,7 +134,7 @@ pub fn draw(f: &mut Frame, app: &App) {
 
 fn source_color(source: &str) -> ratatui::style::Color {
     match source {
-        "Packet"   => C_CYAN(),
+        "Packet" | "View" => C_CYAN(),
         "Host"     => C_GREEN(),
         "IOC Hit"  => C_RED(),
         "Rule Hit" => C_ORANGE(),

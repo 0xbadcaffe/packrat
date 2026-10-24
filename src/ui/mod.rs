@@ -36,7 +36,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(1), // titlebar
             Constraint::Length(1), // filter bar
-            Constraint::Length(2), // tabs
+            Constraint::Length(3), // breadcrumb, workspaces, separator
             Constraint::Min(0),    // workspace
             Constraint::Length(1), // statusbar
         ])
@@ -396,7 +396,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!("│ {} ", msg), Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD))
     } else {
         Span::styled(
-            "1-5:modes  Tab/F2:views  m:mark  Enter:investigate  [/]:screen  ,:settings  ?:search  h:help  q:quit",
+            "1-3:workspaces  Tab/F2:views  m:mark  Enter:investigate  [/]:screen  ,:settings  ?:search  h:help  q:quit",
             Style::default().fg(C_FG3()),
         )
     };

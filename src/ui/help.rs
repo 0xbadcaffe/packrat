@@ -26,10 +26,10 @@ pub fn draw(f: &mut Frame, app: &App) {
             ("G",            "Jump to bottom"),
             ("PgDn / PgUp",  "Page down / up"),
             ("Tab / F2",     "Open workspace view drawer"),
-            ("1–5",          "Traffic / Inspect / Defense / Actions / Case"),
+            ("1-3",          "Traffic / Investigation / Case"),
             ("Esc",          "Return from a detail view to workspace home"),
             (",",            "Open settings window"),
-            ("H N T O R W G D",  "Direct expert shortcuts remain available"),
+            ("H S N T O R W G D",  "Direct specialist views"),
         ]),
         ("Capture & Recording", &[
             ("Space",  "Toggle capture on/off"),

@@ -15,6 +15,8 @@ pub struct Preferences {
     pub alert_automation: usize,
     #[serde(default)]
     pub startup_workspace: usize,
+    #[serde(default)]
+    pub navigation_version: u8,
 }
 
 impl Default for Preferences {
@@ -24,6 +26,20 @@ impl Default for Preferences {
             auto_scroll: false,
             alert_automation: 0,
             startup_workspace: 0,
+            navigation_version: 1,
+        }
+    }
+}
+
+impl Preferences {
+    pub fn migrate_navigation(&mut self) {
+        if self.navigation_version == 0 {
+            self.startup_workspace = match self.startup_workspace {
+                1 => 1,
+                3 | 4 => 2,
+                _ => 0,
+            };
+            self.navigation_version = 1;
         }
     }
 }
@@ -42,7 +58,9 @@ pub fn load_theme_name() -> String {
 pub fn load() -> Preferences {
     let Some(path) = prefs_path() else { return Preferences::default(); };
     let Ok(data) = std::fs::read_to_string(&path) else { return Preferences::default(); };
-    serde_json::from_str(&data).unwrap_or_default()
+    let mut preferences: Preferences = serde_json::from_str(&data).unwrap_or_default();
+    preferences.migrate_navigation();
+    preferences
 }
 
 /// Persist the selected theme name.
@@ -64,6 +82,17 @@ pub fn save(preferences: &Preferences) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_workspace_preferences_migrate_to_three_screen_navigation() {
+        for (old, new) in [(0, 0), (1, 1), (2, 0), (3, 2), (4, 2)] {
+            let mut preferences: Preferences = serde_json::from_str(&format!("{{\"startup_workspace\":{old}}}")).unwrap();
+            preferences.migrate_navigation();
+            assert_eq!(preferences.startup_workspace, new);
+            preferences.migrate_navigation();
+            assert_eq!(preferences.startup_workspace, new);
+        }
+    }
 
     #[test]
     fn legacy_theme_only_preferences_receive_safe_defaults() {

@@ -83,6 +83,7 @@ pub enum SecuritySubTab {
 /// A single result from the global command palette search.
 #[derive(Debug, Clone)]
 pub struct SearchResult {
+    pub packet_no: Option<u64>,
     /// Short category label (e.g., "Packet", "Host", "IOC Hit", "Rule").
     pub source:   &'static str,
     /// Primary display label shown in the list.
@@ -1240,6 +1241,27 @@ impl App {
     pub fn run_search(&mut self) {
         let q = self.search_query.to_lowercase();
         let mut results: Vec<SearchResult> = Vec::new();
+        for index in 0..Tab::COUNT {
+            let view = Tab::from_index(index);
+            let aliases = match view {
+                Tab::Security => "alerts detections security",
+                Tab::Scanner => "scan scanner service discovery",
+                Tab::Traceroute => "traceroute network path",
+                Tab::Craft => "craft packet generator",
+                Tab::TlsAnalysis => "tls dtls quic encrypted",
+                _ => "",
+            };
+            let label = format!("Open {}", view.label());
+            if q.is_empty() || format!("{label} {aliases}").to_lowercase().contains(&q) {
+                results.push(SearchResult {
+                    packet_no: None,
+                    source: "View", label,
+                    detail: view.workspace().label().into(),
+                    jump_tab: view, scroll: 0,
+                });
+            }
+        }
+        let mut packet_results = 0;
 
         // ── Packets ──────────────────────────────────────────────────────────
         for (idx, pkt) in self.packets.iter().enumerate().take(500) {
@@ -1251,10 +1273,12 @@ impl App {
                 .to_lowercase();
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
+                    packet_no: Some(pkt.no),
                     source: "Packet", label, detail,
                     jump_tab: Tab::Packets, scroll: idx,
                 });
-                if results.len() >= 20 { break; }
+                packet_results += 1;
+                if packet_results >= 20 { break; }
             }
         }
 
@@ -1267,6 +1291,7 @@ impl App {
             let haystack = format!("{} {}", label, detail).to_lowercase();
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
+                    packet_no: None,
                     source: "Host", label, detail,
                     jump_tab: Tab::Hosts, scroll: idx,
                 });
@@ -1281,6 +1306,7 @@ impl App {
             let haystack = format!("{} {}", label, detail).to_lowercase();
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
+                    packet_no: None,
                     source: "IOC Hit", label, detail,
                     jump_tab: Tab::Security, scroll: idx,
                 });
@@ -1295,6 +1321,7 @@ impl App {
             let haystack = format!("{} {}", label, detail).to_lowercase();
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
+                    packet_no: None,
                     source: "Rule Hit", label, detail,
                     jump_tab: Tab::Rules, scroll: idx,
                 });
@@ -1309,6 +1336,7 @@ impl App {
             let haystack = format!("{} {}", label, detail).to_lowercase();
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
+                    packet_no: None,
                     source: "YARA",
                     label,
                     detail,
@@ -1326,6 +1354,7 @@ impl App {
             let haystack = format!("{} {} {}", label, detail, obj.sha256).to_lowercase();
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
+                    packet_no: None,
                     source: "Object", label, detail,
                     jump_tab: Tab::Objects, scroll: idx,
                 });
@@ -1342,7 +1371,28 @@ impl App {
     /// Apply the currently selected search result (navigate to it).
     pub fn search_jump(&mut self) {
         if let Some(result) = self.search_results.get(self.search_selected).cloned() {
-            self.active_tab = result.jump_tab.clone();
+            if result.source == "View" {
+                self.navigate_to(result.jump_tab);
+                self.close_search();
+                return;
+            }
+            if let Some(no) = result.packet_no {
+                let Some(index) = self.packets.iter().position(|packet| packet.no == no) else {
+                    self.set_status(format!("Packet #{no} is no longer retained in the live window"));
+                    self.close_search();
+                    return;
+                };
+                let absolute = self.packet_index_base.saturating_add(index);
+                if !self.filtered.contains(&absolute) {
+                    self.filter.input.clear();
+                    self.rebuild_filtered();
+                }
+                self.selected = self.filtered.iter().position(|entry| *entry == absolute);
+                self.navigate_to(Tab::Packets);
+                self.close_search();
+                return;
+            }
+            self.navigate_to(result.jump_tab);
             // Apply scroll hints depending on destination
             match result.jump_tab {
                 Tab::Packets  => { self.selected = Some(result.scroll); }
@@ -2792,6 +2842,7 @@ impl App {
             auto_scroll: self.auto_scroll,
             alert_automation: automation,
             startup_workspace: self.preferred_workspace.index(),
+            navigation_version: 1,
         });
     }
 
@@ -2979,12 +3030,15 @@ impl App {
         self.view_menu_open = false;
     }
 
-    /// Return from a detail view to the workspace's primary view.
+    /// Return through screen history, falling back to the workspace home.
     pub fn return_to_workspace_home(&mut self) -> bool {
+        if self.navigate_back() {
+            return true;
+        }
         if self.active_tab.is_workspace_home() {
             return false;
         }
-        self.navigate_to(self.active_tab.workspace().home());
+        self.active_tab = self.active_tab.workspace().home();
         true
     }
 

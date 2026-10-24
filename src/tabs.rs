@@ -23,17 +23,15 @@ pub enum Tab {
 }
 
 /// Top-level investigation workspaces. Individual views remain lightweight
-/// enum values, but are presented through these five operator-focused groups.
+/// enum values, but are presented through three investigation workspaces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Workspace {
     Traffic,
     Inspect,
-    Defense,
-    Actions,
     Case,
 }
 
-const TRAFFIC_VIEWS: &[Tab] = &[Tab::Packets, Tab::Flows, Tab::Hosts, Tab::TlsAnalysis];
+const TRAFFIC_VIEWS: &[Tab] = &[Tab::Packets, Tab::Flows, Tab::Hosts, Tab::TlsAnalysis, Tab::Security];
 const INSPECT_VIEWS: &[Tab] = &[
     Tab::Investigate,
     Tab::Analysis,
@@ -42,30 +40,25 @@ const INSPECT_VIEWS: &[Tab] = &[
     Tab::Workbench,
     Tab::Objects,
     Tab::Diff,
+    Tab::OperatorGraph,
 ];
-const DEFENSE_VIEWS: &[Tab] = &[Tab::Security, Tab::Rules, Tab::OperatorGraph];
-const ACTION_VIEWS: &[Tab] = &[Tab::Scanner, Tab::Traceroute, Tab::Craft];
-const CASE_VIEWS: &[Tab] = &[Tab::Notebook, Tab::Dynamic];
+const CASE_VIEWS: &[Tab] = &[Tab::Notebook, Tab::Dynamic, Tab::Rules, Tab::Scanner, Tab::Traceroute, Tab::Craft];
 
 impl Workspace {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 3;
 
     pub fn index(self) -> usize {
         match self {
             Self::Traffic => 0,
             Self::Inspect => 1,
-            Self::Defense => 2,
-            Self::Actions => 3,
-            Self::Case => 4,
+            Self::Case => 2,
         }
     }
 
     pub fn from_index(index: usize) -> Self {
         match index {
             1 => Self::Inspect,
-            2 => Self::Defense,
-            3 => Self::Actions,
-            4 => Self::Case,
+            2 => Self::Case,
             _ => Self::Traffic,
         }
     }
@@ -73,9 +66,7 @@ impl Workspace {
     pub fn label(self) -> &'static str {
         match self {
             Self::Traffic => "Traffic",
-            Self::Inspect => "Inspect",
-            Self::Defense => "Defense",
-            Self::Actions => "Actions",
+            Self::Inspect => "Investigation",
             Self::Case => "Case",
         }
     }
@@ -88,8 +79,6 @@ impl Workspace {
         match self {
             Self::Traffic => TRAFFIC_VIEWS,
             Self::Inspect => INSPECT_VIEWS,
-            Self::Defense => DEFENSE_VIEWS,
-            Self::Actions => ACTION_VIEWS,
             Self::Case => CASE_VIEWS,
         }
     }
@@ -181,8 +170,9 @@ impl Tab {
             | Tab::Workbench
             | Tab::Objects
             | Tab::Diff => Workspace::Inspect,
-            Tab::Security | Tab::Rules | Tab::OperatorGraph => Workspace::Defense,
-            Tab::Scanner | Tab::Traceroute | Tab::Craft => Workspace::Actions,
+            Tab::Security => Workspace::Traffic,
+            Tab::OperatorGraph => Workspace::Inspect,
+            Tab::Rules | Tab::Scanner | Tab::Traceroute | Tab::Craft => Workspace::Case,
             Tab::Notebook | Tab::Dynamic => Workspace::Case,
         }
     }
