@@ -141,6 +141,8 @@ impl StreamKey {
 #[derive(Debug, Clone, Default)]
 pub struct ReassembledStream {
     pub key: StreamKey,
+    /// Changes on every ingested segment, including FIN, RST, and gap fills.
+    pub revision: u64,
     /// Bytes from canonical endpoint A (not necessarily the client).
     pub client_data: Vec<u8>,
     /// Bytes from canonical endpoint B (not necessarily the server).

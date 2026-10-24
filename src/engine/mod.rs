@@ -20,6 +20,7 @@ use crate::net::packet::Packet;
 use crate::net::security::SecurityEngine;
 
 mod inspect;
+mod transactions;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub enum PacketDisposition {
@@ -45,6 +46,7 @@ pub struct PacketAnalysis {
 }
 
 pub struct AnalysisCore {
+    transaction_cache: transactions::TransactionCache,
     pub flow_tracker: FlowTracker,
     pub security: SecurityEngine,
     pub alert_center: AlertCenter,
@@ -65,6 +67,7 @@ pub struct AnalysisCore {
 impl Default for AnalysisCore {
     fn default() -> Self {
         Self {
+            transaction_cache: Default::default(),
             flow_tracker: FlowTracker::new(),
             security: SecurityEngine::default(),
             alert_center: AlertCenter::default(),
@@ -118,6 +121,7 @@ impl AnalysisCore {
 
     /// Clear observed traffic without discarding configured rules or keys.
     pub fn clear(&mut self) {
+        self.transaction_cache = Default::default();
         self.flow_tracker.clear();
         self.security.clear();
         self.alert_center.clear();

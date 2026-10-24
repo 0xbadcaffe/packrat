@@ -6,6 +6,7 @@ pub mod packet_compare;
 pub mod geo;
 pub mod notebook;
 pub mod stream;
+pub mod transactions;
 pub mod timeline;
 pub mod tls;
 pub mod ioc;

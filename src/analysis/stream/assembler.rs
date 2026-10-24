@@ -8,6 +8,7 @@ const MAX_SEGMENT_METADATA: usize = 8192;
 #[derive(Debug, Default)]
 pub struct StreamAssembler {
     streams: HashMap<String, ReassembledStream>,
+    revision: u64,
 }
 
 impl StreamAssembler {
@@ -37,10 +38,12 @@ impl StreamAssembler {
             }
         }
 
+        self.revision = self.revision.wrapping_add(1);
         let stream = self
             .streams
             .entry(id)
             .or_insert_with(|| ReassembledStream::new(key.clone(), pkt.timestamp));
+        stream.revision = self.revision;
         stream.last_seen = pkt.timestamp.max(stream.last_seen);
         stream.truncated |= view.truncated;
 
