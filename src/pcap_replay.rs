@@ -126,14 +126,23 @@ impl ReplayState {
 
 /// Minimal classic-PCAP reader. PCAPNG and non-Ethernet link types are rejected.
 pub fn read_pcap(path: &std::path::Path) -> Result<Vec<Packet>, String> {
-    use std::io::Read;
-    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    let mut packets = Vec::new();
+    stream_pcap(path, |packet| {
+        if packets.len() >= 100_000 {
+            return Err("Replay exceeds 100000 packets; use streaming archive import".into());
+        }
+        packets.push(packet);
+        Ok(())
+    })?;
+    Ok(packets)
+}
 
-    if buf.len() < 24 {
-        return Err("File too small to be a valid PCAP".into());
-    }
+/// Decode one record at a time without retaining the input file in memory.
+pub fn stream_pcap(path: &std::path::Path, mut consume: impl FnMut(Packet) -> Result<(), String>) -> Result<u64, String> {
+    use std::io::Read;
+    let mut f = std::io::BufReader::new(std::fs::File::open(path).map_err(|e| e.to_string())?);
+    let mut buf = [0u8; 24];
+    f.read_exact(&mut buf).map_err(|_| "File too small to be a valid PCAP")?;
 
     // Global header: magic(4), version_major(2), version_minor(2), thiszone(4),
     //               sigfigs(4), snaplen(4), network(4) = 24 bytes
@@ -172,44 +181,37 @@ pub fn read_pcap(path: &std::path::Path) -> Result<Vec<Packet>, String> {
         return Err("Unsupported PCAP link type (only Ethernet is supported)".into());
     }
 
-    let mut packets = Vec::new();
-    let mut offset = 24usize;
+    let snaplen = read_u32(16);
     let mut counter = 1u64;
-    while offset < buf.len() {
-        if buf.len() - offset < 16 {
-            return Err("Truncated PCAP packet header".into());
+    loop {
+        let mut header = [0u8; 16];
+        match f.read(&mut header[..1]).map_err(|error| error.to_string())? {
+            0 => break,
+            _ => f.read_exact(&mut header[1..]).map_err(|_| "Truncated PCAP packet header")?,
         }
-        let ts_sec = read_u32(offset);
-        let ts_fraction = read_u32(offset + 4);
-        let incl_len = read_u32(offset + 8) as usize;
-        let _orig_len = read_u32(offset + 12);
-        offset += 16;
-
-        if incl_len == 0 || incl_len > usize::from(u16::MAX) {
+        let number = |offset| {
+            let bytes = [header[offset], header[offset + 1], header[offset + 2], header[offset + 3]];
+            if be { u32::from_be_bytes(bytes) } else { u32::from_le_bytes(bytes) }
+        };
+        let ts_sec = number(0);
+        let ts_fraction = number(4);
+        let incl_len = number(8);
+        let orig_len = number(12);
+        if incl_len == 0 || incl_len > u32::from(u16::MAX) || incl_len > orig_len || (snaplen != 0 && incl_len > snaplen) {
             return Err("PCAP packet length is invalid or unsupported".into());
         }
-        let end = offset
-            .checked_add(incl_len)
-            .ok_or("PCAP packet length overflow")?;
-        if end > buf.len() {
-            return Err("Truncated PCAP packet payload".into());
+        if ts_fraction as f64 >= timestamp_divisor {
+            return Err("PCAP fractional timestamp is invalid".into());
         }
-        let raw = &buf[offset..end];
-        offset = end;
-
+        let mut raw = vec![0; incl_len as usize];
+        f.read_exact(&mut raw).map_err(|_| "Truncated PCAP packet payload")?;
         let timestamp = ts_sec as f64 + ts_fraction as f64 / timestamp_divisor;
-        let pkt = parse_ethernet(raw, counter, timestamp);
-        packets.push(pkt);
+        consume(parse_ethernet(&raw, counter, timestamp))?;
         counter += 1;
-
-        if packets.len() >= 100_000 {
-            break;
-        } // safety cap
     }
-
-    if packets.is_empty() {
+    if counter == 1 {
         Err("No packets found in PCAP".into())
     } else {
-        Ok(packets)
+        Ok(counter - 1)
     }
 }

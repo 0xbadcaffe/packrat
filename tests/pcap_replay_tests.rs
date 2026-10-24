@@ -66,3 +66,50 @@ fn imported_pcap_rejects_unsupported_links_and_truncation() {
     assert!(read_pcap(&truncated).unwrap_err().contains("Truncated"));
     let _ = std::fs::remove_file(truncated);
 }
+
+#[test]
+fn streaming_reader_stops_on_consumer_error() {
+    let mut bytes = pcap(&ipv6_tcp_frame(), 1, false);
+    let record = bytes[24..].to_vec();
+    bytes.extend_from_slice(&record);
+    let path = write_temp(&bytes, "consumer-error");
+    let mut seen = 0;
+    let result = packrat_tui::pcap_replay::stream_pcap(&path, |_| {
+        seen += 1;
+        Err("archive full".into())
+    });
+    assert_eq!(seen, 1);
+    assert_eq!(result.unwrap_err(), "archive full");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn streaming_reader_rejects_invalid_timestamps_and_wire_lengths() {
+    for (offset, value, label) in [(28, 1_000_000u32, "fraction"), (36, 1u32, "wire-length")] {
+        let mut bytes = pcap(&ipv6_tcp_frame(), 1, false);
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        let path = write_temp(&bytes, label);
+        assert!(read_pcap(&path).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn archive_cli_imports_and_recovers_captured_packets() {
+    let path = write_temp(&pcap(&ipv6_tcp_frame(), 1, true), "archive-cli");
+    let archive = std::env::temp_dir().join(format!("packrat-cli-{}-{}", std::process::id(), rand::random::<u64>()));
+    let binary = env!("CARGO_BIN_EXE_packrat-archive");
+    let result = std::process::Command::new(binary).arg(&archive).arg("--import").arg(&path).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert!(String::from_utf8_lossy(&result.stdout).contains("Imported 1 packets"));
+    let result = std::process::Command::new(binary).arg(&archive).arg("1").output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let packet: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(packet["protocol"], "HTTPS");
+    assert_eq!(packet["bytes"].as_array().unwrap().len(), ipv6_tcp_frame().len());
+    let result = std::process::Command::new(binary).arg(&archive).arg("--host").arg("2001:0db8:0000:0000:0000:0000:0000:0001").output().unwrap();
+    assert!(result.status.success());
+    assert_eq!(serde_json::from_slice::<Vec<i64>>(&result.stdout).unwrap(), vec![1]);
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir_all(archive).unwrap();
+}
