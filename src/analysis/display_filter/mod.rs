@@ -1,0 +1,425 @@
+//! Display filter engine — packet inspection expressions.
+//!
+//! Supports:
+//!   tcp                          protocol existence
+//!   ip.src == 192.168.1.1        field comparison
+//!   tcp.dstport == 443
+//!   frame.len > 100
+//!   not udp
+//!   tcp and ip.src == 10.0.0.1
+//!   http.host ~ "api"            regex/contains
+//!   dns.qname contains "corp"
+//!   tcp.port in [80,443,8080]    set membership
+//!   tag == "suspicious"
+//!   marked == true
+
+use crate::net::packet::Packet;
+
+// ─── AST ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub enum Expr {
+    /// A bare protocol name: `tcp`, `http`, `dns`
+    Proto(String),
+    /// `marked == true/false`
+    Marked(bool),
+    /// `tag == "label"`
+    HasTag(String),
+    /// `field op value`
+    Cmp {
+        field: String,
+        op: CmpOp,
+        value: Value,
+    },
+    /// `field ~ "pattern"` or `field contains "string"`
+    Contains {
+        field: String,
+        pattern: String,
+        regex: bool,
+    },
+    /// `field in [v1, v2, ...]`
+    In { field: String, values: Vec<Value> },
+    /// `not expr`
+    Not(Box<Expr>),
+    /// `a and b`
+    And(Box<Expr>, Box<Expr>),
+    /// `a or b`
+    Or(Box<Expr>, Box<Expr>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+}
+
+#[derive(Debug, Clone)]
+pub enum Value {
+    Str(String),
+    Num(f64),
+    Bool(bool),
+}
+
+// ─── Parser ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct ParseError(pub String);
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+struct Tokens<'a> {
+    src: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Tokens<'a> {
+    fn new(s: &'a str) -> Self {
+        Self {
+            src: s.as_bytes(),
+            pos: 0,
+        }
+    }
+
+    fn skip_ws(&mut self) {
+        while self.pos < self.src.len() && self.src[self.pos] == b' ' {
+            self.pos += 1;
+        }
+    }
+
+    fn peek(&mut self) -> Option<u8> {
+        self.skip_ws();
+        self.src.get(self.pos).copied()
+    }
+
+    fn eat_while(&mut self, f: impl Fn(u8) -> bool) -> &'a str {
+        let start = self.pos;
+        while self.pos < self.src.len() && f(self.src[self.pos]) {
+            self.pos += 1;
+        }
+        std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("")
+    }
+
+    fn eat_word(&mut self) -> String {
+        self.skip_ws();
+        self.eat_while(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'_' || c == b':')
+            .to_string()
+    }
+
+    fn eat_str(&mut self) -> Result<String, ParseError> {
+        self.skip_ws();
+        if self.peek() != Some(b'"') {
+            return Err(ParseError("expected quoted string".into()));
+        }
+        self.pos += 1;
+        let mut s = String::new();
+        while self.pos < self.src.len() {
+            let c = self.src[self.pos];
+            self.pos += 1;
+            if c == b'"' {
+                return Ok(s);
+            }
+            if c == b'\\' && self.pos < self.src.len() {
+                s.push(self.src[self.pos] as char);
+                self.pos += 1;
+            } else {
+                s.push(c as char);
+            }
+        }
+        Err(ParseError("unterminated string".into()))
+    }
+
+    fn eat_num(&mut self) -> Option<f64> {
+        self.skip_ws();
+        let s = self.eat_while(|c| c.is_ascii_digit() || c == b'.');
+        s.parse().ok()
+    }
+
+    fn try_eat(&mut self, s: &str) -> bool {
+        self.skip_ws();
+        let bytes = s.as_bytes();
+        if self.src[self.pos..].starts_with(bytes) {
+            self.pos += bytes.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_eof(&mut self) -> bool {
+        self.skip_ws();
+        self.pos >= self.src.len()
+    }
+}
+
+/// Parse a filter expression string into an AST.
+pub fn parse(input: &str) -> Result<Expr, ParseError> {
+    let mut t = Tokens::new(input);
+    let expr = parse_or(&mut t)?;
+    if !t.is_eof() {
+        return Err(ParseError(format!(
+            "unexpected token at position {}",
+            t.pos
+        )));
+    }
+    Ok(expr)
+}
+
+fn parse_or(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
+    let mut left = parse_and(t)?;
+    while {
+        t.skip_ws();
+        t.try_eat("or") || t.try_eat("||")
+    } {
+        let right = parse_and(t)?;
+        left = Expr::Or(Box::new(left), Box::new(right));
+    }
+    Ok(left)
+}
+
+fn parse_and(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
+    let mut left = parse_not(t)?;
+    while {
+        t.skip_ws();
+        t.try_eat("and") || t.try_eat("&&")
+    } {
+        let right = parse_not(t)?;
+        left = Expr::And(Box::new(left), Box::new(right));
+    }
+    Ok(left)
+}
+
+fn parse_not(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
+    t.skip_ws();
+    if t.try_eat("not ") || t.try_eat("!") {
+        let inner = parse_not(t)?;
+        return Ok(Expr::Not(Box::new(inner)));
+    }
+    parse_atom(t)
+}
+
+fn parse_atom(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
+    t.skip_ws();
+    // Parenthesised
+    if t.peek() == Some(b'(') {
+        t.pos += 1;
+        let inner = parse_or(t)?;
+        t.skip_ws();
+        if t.peek() != Some(b')') {
+            return Err(ParseError("expected ')'".into()));
+        }
+        t.pos += 1;
+        return Ok(inner);
+    }
+
+    let word = t.eat_word();
+    if word.is_empty() {
+        return Err(ParseError("expected expression".into()));
+    }
+
+    // Special bare keywords
+    match word.as_str() {
+        "marked" => {
+            t.skip_ws();
+            if t.try_eat("==") || t.try_eat("!=") {
+                t.skip_ws();
+                let w2 = t.eat_word();
+                let v = w2 == "true";
+                return Ok(Expr::Marked(v));
+            }
+            return Ok(Expr::Marked(true));
+        }
+        "tag" => {
+            t.skip_ws();
+            t.try_eat("==");
+            t.skip_ws();
+            let s = t.eat_str()?;
+            return Ok(Expr::HasTag(s));
+        }
+        _ => {}
+    }
+
+    // Check for operator following the field name
+    t.skip_ws();
+
+    // `field contains "str"` or `field ~ "re"`
+    if t.try_eat("contains ") {
+        t.skip_ws();
+        let s = t.eat_str()?;
+        return Ok(Expr::Contains {
+            field: word,
+            pattern: s,
+            regex: false,
+        });
+    }
+    if t.try_eat("~") {
+        t.skip_ws();
+        let s = t.eat_str()?;
+        return Ok(Expr::Contains {
+            field: word,
+            pattern: s,
+            regex: true,
+        });
+    }
+
+    // `field in [v1,v2,...]`
+    if t.try_eat("in ") || t.try_eat("in[") {
+        t.skip_ws();
+        if t.peek() == Some(b'[') {
+            t.pos += 1;
+        }
+        let mut vals = Vec::new();
+        loop {
+            t.skip_ws();
+            if t.peek() == Some(b']') {
+                t.pos += 1;
+                break;
+            }
+            if t.peek() == Some(b'"') {
+                vals.push(Value::Str(t.eat_str()?));
+            } else if let Some(n) = t.eat_num() {
+                vals.push(Value::Num(n));
+            }
+            t.skip_ws();
+            if t.peek() == Some(b',') {
+                t.pos += 1;
+            }
+        }
+        return Ok(Expr::In {
+            field: word,
+            values: vals,
+        });
+    }
+
+    // Comparison operator
+    let op = if t.try_eat("==") {
+        CmpOp::Eq
+    } else if t.try_eat("!=") {
+        CmpOp::Ne
+    } else if t.try_eat(">=") {
+        CmpOp::Ge
+    } else if t.try_eat("<=") {
+        CmpOp::Le
+    } else if t.try_eat(">") {
+        CmpOp::Gt
+    } else if t.try_eat("<") {
+        CmpOp::Lt
+    } else {
+        // Bare word = protocol existence: `tcp`, `http`, `dns`
+        return Ok(Expr::Proto(word));
+    };
+
+    t.skip_ws();
+    let value = if t.peek() == Some(b'"') {
+        Value::Str(t.eat_str()?)
+    } else {
+        let w = t.eat_word();
+        if w == "true" {
+            Value::Bool(true)
+        } else if w == "false" {
+            Value::Bool(false)
+        } else if let Ok(n) = w.parse::<f64>() {
+            Value::Num(n)
+        } else {
+            Value::Str(w)
+        }
+    };
+
+    Ok(Expr::Cmp {
+        field: word,
+        op,
+        value,
+    })
+}
+
+// ─── Evaluator ────────────────────────────────────────────────────────────────
+
+/// Context passed to the evaluator — holds references to supporting data.
+pub struct EvalCtx<'a> {
+    pub pkt: &'a Packet,
+    pub marked: bool,
+    pub tags: &'a [String],
+}
+
+// ─── Compiled filter ──────────────────────────────────────────────────────────
+
+/// A parsed and ready-to-evaluate display filter.
+pub struct DisplayFilter {
+    pub input: String,
+    pub expr: Option<Expr>,
+    pub error: Option<String>,
+}
+
+impl Default for DisplayFilter {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            expr: None,
+            error: None,
+        }
+    }
+}
+
+impl DisplayFilter {
+    pub fn set(&mut self, input: impl Into<String>) {
+        self.input = input.into();
+        if self.input.trim().is_empty() {
+            self.expr = None;
+            self.error = None;
+            return;
+        }
+        match parse(&self.input) {
+            Ok(e) => {
+                self.expr = Some(e);
+                self.error = None;
+            }
+            Err(e) => {
+                self.expr = None;
+                self.error = Some(e.0);
+            }
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.expr.is_some()
+    }
+    pub fn has_error(&self) -> bool {
+        self.error.is_some()
+    }
+
+    pub fn matches(&self, pkt: &Packet, marked: bool, tags: &[String]) -> bool {
+        match &self.expr {
+            None => true,
+            Some(e) => eval(e, &EvalCtx { pkt, marked, tags }),
+        }
+    }
+
+    /// Simple legacy text-match fallback (protocol / src / dst / info).
+    pub fn matches_simple(q: &str, pkt: &Packet) -> bool {
+        if q.is_empty() {
+            return true;
+        }
+        let q = q.to_lowercase();
+        pkt.protocol.to_lowercase().contains(&q)
+            || pkt.src.contains(&q)
+            || pkt.dst.contains(&q)
+            || pkt.info.to_lowercase().contains(&q)
+    }
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "../../../tests/unit/analysis_display_filter_tests.rs"]
+mod tests;
+
+mod evaluation;
+pub use evaluation::eval;
+
