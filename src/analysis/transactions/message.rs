@@ -102,7 +102,17 @@ fn finish(
                 stream.server_finished
             };
             let eof = finished && !stream.reset && !stream.has_gaps();
-            let body = if strict_crlf(&data[start..message.header_end]) {
+            let body = if !request
+                && !message
+                    .status
+                    .is_some_and(|status| (100..600).contains(&status))
+            {
+                Body {
+                    state: MessageState::Ambiguous,
+                    diagnostic: Some("HTTP status code is outside 100..599".into()),
+                    ..Body::complete(message.header_end)
+                }
+            } else if strict_crlf(&data[start..message.header_end]) {
                 frame_body(data, message.header_end, headers, no_body, request, eof)
             } else {
                 Body {

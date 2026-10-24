@@ -177,6 +177,14 @@ fn chunked(data: &[u8], start: usize) -> Body {
                 return body;
             }
         };
+        if line[..prefix.saturating_sub(2)]
+            .iter()
+            .any(|byte| *byte < 0x20 && *byte != b'\t' || *byte == 0x7f)
+        {
+            body.state = MessageState::Ambiguous;
+            body.diagnostic = Some("Control character in chunk-size line".into());
+            return body;
+        }
         body.end += prefix;
         if size == 0 {
             return trailers(data, body);

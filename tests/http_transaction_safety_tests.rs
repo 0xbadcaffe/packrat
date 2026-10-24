@@ -64,6 +64,32 @@ fn unsupported_transfer_codings_are_explicit() {
 }
 
 #[test]
+fn invalid_status_codes_and_hidden_chunk_controls_are_ambiguous() {
+    for status in ["000", "099", "600", "999"] {
+        let response = format!("HTTP/1.1 {status} Invalid\r\nContent-Length: 0\r\n\r\n");
+        let report = conversation(b"GET / HTTP/1.1\r\n\r\n", response.as_bytes());
+        assert_eq!(
+            report.transactions[0].response.as_ref().unwrap().state,
+            MessageState::Ambiguous
+        );
+    }
+    for extension in [
+        &b"kind=bad\nhidden"[..],
+        &b"kind=\0bad"[..],
+        &b"kind=\x7fbad"[..],
+    ] {
+        let mut response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;".to_vec();
+        response.extend_from_slice(extension);
+        response.extend_from_slice(b"\r\nx\r\n0\r\n\r\n");
+        let report = conversation(b"GET / HTTP/1.1\r\n\r\n", &response);
+        assert_eq!(
+            report.transactions[0].response.as_ref().unwrap().state,
+            MessageState::Ambiguous
+        );
+    }
+}
+
+#[test]
 fn incomplete_response_prevents_later_response_mispairing() {
     let report = conversation(
         b"GET /one HTTP/1.1\r\n\r\nGET /two HTTP/1.1\r\n\r\n",
