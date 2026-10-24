@@ -36,7 +36,7 @@ fn dns_packet(
     bytes[36..38].copy_from_slice(&destination_port.to_be_bytes());
     bytes[38..40].copy_from_slice(&((8 + dns.len()) as u16).to_be_bytes());
     bytes.extend_from_slice(&dns);
-    Packet {
+    Packet { capture: None,
         no,
         timestamp: no as f64,
         src: source.into(),
@@ -75,7 +75,7 @@ fn dns_ipv6_packet(
     bytes[56..58].copy_from_slice(&destination_port.to_be_bytes());
     bytes[58..60].copy_from_slice(&((8 + dns.len()) as u16).to_be_bytes());
     bytes.extend_from_slice(dns);
-    Packet {
+    Packet { capture: None,
         bytes,
         length: (14 + 40 + 8 + dns.len()) as u16,
         src_port: Some(source_port),

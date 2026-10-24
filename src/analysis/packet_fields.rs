@@ -65,12 +65,34 @@ struct TransportLayout {
 pub fn extract_fields(packet: &Packet) -> Vec<PacketField> {
     let mut fields = vec![
         PacketField::new("Frame", "frame.number", "Frame Number", packet.no.to_string(), None, None),
-        PacketField::new("Frame", "frame.time", "Relative Time", format!("{:.6}s", packet.timestamp), None, None),
-        PacketField::new("Frame", "frame.len", "Frame Length", packet.length.to_string(), None, None),
+        PacketField::new("Frame", "frame.time", "Capture Time", match &packet.capture {
+            Some(capture) => capture.timestamp.map_or_else(|| "Unavailable".into(), |time| format!("{} ns since Unix epoch", time.nanoseconds())),
+            None => format!("{:.6}s (legacy clock)", packet.timestamp),
+        }, None, None),
+        PacketField::new("Frame", "frame.len", "Wire Length", packet.capture.as_ref().map_or(u32::from(packet.length), |capture| capture.wire_length).to_string(), None, None),
         PacketField::new("Frame", "proto", "Protocol", packet.protocol.clone(), None, None),
     ];
 
     let bytes = packet.bytes.as_slice();
+    if let Some(capture) = &packet.capture {
+        for (path, label, value) in [
+            ("frame.cap_len", "Captured Length", capture.captured_length.to_string()),
+            ("frame.wire_len", "Wire Length", capture.wire_length.to_string()),
+            ("frame.interface_id", "Capture Interface", capture.interface_id.to_string()),
+            ("frame.link_type", "Capture Link Type", capture.link_type.to_string()),
+            ("frame.truncated", "Capture Truncated", capture.truncated().to_string()),
+        ] {
+            fields.push(PacketField::new("Frame", path, label, value, None, None));
+        }
+        if let Some(timestamp) = capture.timestamp {
+            fields.push(PacketField::new("Frame", "frame.time_epoch_ns", "Capture Time (ns)", timestamp.nanoseconds().to_string(), None, None));
+            fields.push(PacketField::new("Frame", "frame.time_ticks", "Original Clock Ticks", timestamp.ticks.to_string(), None, None));
+        }
+        if capture.link_type != 1 {
+            fields.push(PacketField::new("Bytes", "payload.len", "Undecoded Captured Bytes", bytes.len().to_string(), Some(0), Some(bytes.len())));
+            return fields;
+        }
+    }
     if let Some(eth) = ethernet_layout(bytes) {
         fields.push(PacketField::new("Ethernet", "eth.dst", "Destination MAC", mac(bytes, 0), Some(0), Some(6)));
         fields.push(PacketField::new("Ethernet", "eth.src", "Source MAC", mac(bytes, 6), Some(6), Some(6)));

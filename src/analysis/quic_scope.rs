@@ -175,7 +175,7 @@ mod tests {
         bytes.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         bytes.push(4);
         bytes.extend_from_slice(&[9, 10, 11, 12]);
-        Packet {
+        Packet { capture: None,
             no: 11,
             timestamp: 11.0,
             src: "192.0.2.10".into(),

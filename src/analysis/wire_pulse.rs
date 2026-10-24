@@ -237,7 +237,7 @@ mod tests {
         bytes[23] = 17;
         bytes[42..44].copy_from_slice(&0x1234_u16.to_be_bytes());
         if response { bytes[44] = 0x80; }
-        Packet {
+        Packet { capture: None,
             no,
             timestamp,
             src: if response { "8.8.8.8" } else { "10.0.0.5" }.into(),

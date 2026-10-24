@@ -223,7 +223,7 @@ impl CraftState {
             .unwrap_or_default()
             .as_secs_f64();
 
-        Ok(Packet {
+        Ok(Packet { capture: None,
             no:       counter,
             timestamp: ts,
             src,

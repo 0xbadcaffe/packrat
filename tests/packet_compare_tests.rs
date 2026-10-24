@@ -12,7 +12,7 @@ fn packet(no: u64, sequence: u32, payload: &[u8]) -> Packet {
     bytes[38..42].copy_from_slice(&sequence.to_be_bytes());
     bytes[46] = 0x50;
     bytes.extend_from_slice(payload);
-    Packet {
+    Packet { capture: None,
         no,
         timestamp: no as f64,
         src: "192.0.2.1".into(),

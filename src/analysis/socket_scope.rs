@@ -384,7 +384,7 @@ mod tests {
         ).unwrap();
         let mut scope = SocketScope::default();
         assert_eq!(scope.load_event_file(&path).unwrap(), 1);
-        let packet = Packet {
+        let packet = Packet { capture: None,
             no: 1,
             timestamp: 7.0,
             src: "192.0.2.10".into(),

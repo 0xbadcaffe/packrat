@@ -19,7 +19,7 @@ impl PcapWriter {
         // Global header (little-endian)
         // magic | ver_major | ver_minor | thiszone | sigfigs | snaplen | network
         let mut hdr = Vec::with_capacity(24);
-        hdr.extend_from_slice(&0xa1b2c3d4u32.to_le_bytes()); // magic
+        hdr.extend_from_slice(&0xa1b23c4du32.to_le_bytes()); // nanosecond precision
         hdr.extend_from_slice(&2u16.to_le_bytes());           // major version
         hdr.extend_from_slice(&4u16.to_le_bytes());           // minor version
         hdr.extend_from_slice(&0i32.to_le_bytes());           // UTC timezone
@@ -33,15 +33,27 @@ impl PcapWriter {
 
     /// Appends one packet record.
     pub fn write_packet(&mut self, pkt: &Packet) -> Result<()> {
-        let ts_sec = pkt.timestamp as u32;
-        let ts_usec = ((pkt.timestamp.fract()) * 1_000_000.0) as u32;
+        let timestamp_ns = if let Some(capture) = &pkt.capture {
+            anyhow::ensure!(capture.link_type == 1, "Classic export requires Ethernet packets; use PCAPNG for other link types");
+            anyhow::ensure!(capture.captured_length as usize == pkt.bytes.len(), "Captured length does not match packet bytes");
+            anyhow::ensure!(capture.wire_length >= capture.captured_length, "Invalid wire length");
+            capture.timestamp.ok_or_else(|| anyhow::anyhow!("Packet has no capture timestamp"))?.nanoseconds()
+        } else {
+            anyhow::ensure!(pkt.timestamp.is_finite() && pkt.timestamp >= 0.0, "Invalid packet timestamp");
+            (pkt.timestamp * 1_000_000_000.0).round() as i128
+        };
+        anyhow::ensure!(timestamp_ns >= 0 && timestamp_ns / 1_000_000_000 <= i128::from(u32::MAX), "Timestamp is outside classic PCAP range");
+        let ts_sec = (timestamp_ns / 1_000_000_000) as u32;
+        let ts_fraction = (timestamp_ns % 1_000_000_000) as u32;
+        anyhow::ensure!(pkt.bytes.len() <= 65535, "Packet exceeds classic export snapshot length");
         let cap_len = pkt.bytes.len() as u32;
+        let wire_len = pkt.capture.as_ref().map_or(cap_len, |capture| capture.wire_length);
 
         let mut rec = Vec::with_capacity(16 + pkt.bytes.len());
         rec.extend_from_slice(&ts_sec.to_le_bytes());
-        rec.extend_from_slice(&ts_usec.to_le_bytes());
+        rec.extend_from_slice(&ts_fraction.to_le_bytes());
         rec.extend_from_slice(&cap_len.to_le_bytes());
-        rec.extend_from_slice(&cap_len.to_le_bytes()); // orig_len == cap_len
+        rec.extend_from_slice(&wire_len.to_le_bytes());
         rec.extend_from_slice(&pkt.bytes);
         self.writer.write_all(&rec)?;
         Ok(())

@@ -13,7 +13,7 @@ fn tcp_packet(no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
     bytes[46] = 0x50;
     bytes[47] = flags;
     bytes.extend_from_slice(payload);
-    Packet {
+    Packet { capture: None,
         no,
         timestamp: no as f64,
         src: "10.0.0.1".into(),
@@ -54,7 +54,7 @@ fn ipv6_tcp_packet(no: u64, sequence: u32, payload: &[u8], hop_by_hop: bool) -> 
     bytes[tcp_offset + 12] = 0x50;
     bytes[tcp_offset + 13] = 0x18;
     bytes.extend_from_slice(payload);
-    Packet {
+    Packet { capture: None,
         no,
         timestamp: no as f64,
         src: "2001:db8::1".into(),

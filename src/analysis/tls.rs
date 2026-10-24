@@ -265,7 +265,7 @@ mod candidate_tests {
     use super::*;
 
     fn packet(protocol: &str, bytes: Vec<u8>) -> Packet {
-        Packet {
+        Packet { capture: None,
             no: 1,
             timestamp: 1.0,
             src: "192.0.2.1".into(),
@@ -420,7 +420,7 @@ mod tests {
     use super::*;
 
     fn packet(bytes: Vec<u8>) -> Packet {
-        Packet {
+        Packet { capture: None,
             no: 9,
             timestamp: 9.0,
             src: "192.0.2.10".into(),

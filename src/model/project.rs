@@ -225,7 +225,7 @@ mod tests {
         state.active_investigation = Some(1);
         state.investigation_tray_open = true;
         state.active_tab = 9;
-        state.embedded_packets.push(Packet {
+        state.embedded_packets.push(Packet { capture: None,
             no: 42,
             timestamp: 3.0,
             src: "203.0.113.9".into(),

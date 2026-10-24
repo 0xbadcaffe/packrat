@@ -34,7 +34,7 @@ fn alt(code: KeyCode) -> Event {
 }
 
 fn packet(no: u64) -> Packet {
-    Packet {
+    Packet { capture: None,
         no,
         timestamp: no as f64,
         src: "192.0.2.10".into(),
@@ -305,7 +305,7 @@ async fn q_does_not_quit_in_text_mode() {
 }
 
 fn critical_packet() -> packrat_tui::net::packet::Packet {
-    packrat_tui::net::packet::Packet {
+    packrat_tui::net::packet::Packet { capture: None,
         no: 77,
         timestamp: 12.5,
         src: "203.0.113.7".into(),
@@ -1138,7 +1138,7 @@ async fn diff_b_snapshots_baseline() {
     let mut app = App::new_for_test();
     // inject_packet bypasses the `capturing` guard, adding directly
     use packrat_tui::net::packet::Packet;
-    let p = Packet {
+    let p = Packet { capture: None,
         no: 1, timestamp: 0.0,
         src: "1.0.0.1".into(), dst: "2.0.0.2".into(),
         protocol: "TCP".into(), length: 60, info: "".into(),

@@ -4,7 +4,7 @@ use packrat_tui::analysis::ioc::{Ioc, IocEngine, IocKind};
 use packrat_tui::net::packet::Packet;
 
 fn make_pkt(no: u64, src: &str, dst: &str, proto: &str, info: &str) -> Packet {
-    Packet {
+    Packet { capture: None,
         no,
         timestamp: no as f64,
         src: src.into(),

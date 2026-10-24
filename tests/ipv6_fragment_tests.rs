@@ -19,7 +19,7 @@ fn fragment_packet(no: u64, identification: u32, offset: u16, more: bool, payloa
     bytes[56..58].copy_from_slice(&offset_flags.to_be_bytes());
     bytes[58..62].copy_from_slice(&identification.to_be_bytes());
     bytes.extend_from_slice(payload);
-    Packet {
+    Packet { capture: None,
         no,
         timestamp: no as f64,
         src: "2001:db8::1".into(),

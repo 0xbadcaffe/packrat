@@ -1,4 +1,4 @@
-use crate::net::packet::Packet;
+use crate::net::packet::{Packet, CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use crate::net::parser::parse_ethernet;
 /// PCAP file replay — load a .pcap and feed packets into the capture pipeline.
 use std::path::PathBuf;
@@ -127,9 +127,18 @@ impl ReplayState {
 /// Minimal classic-PCAP reader. PCAPNG and non-Ethernet link types are rejected.
 pub fn read_pcap(path: &std::path::Path) -> Result<Vec<Packet>, String> {
     let mut packets = Vec::new();
+    let mut retained_bytes = 0usize;
     stream_pcap(path, |packet| {
         if packets.len() >= 100_000 {
             return Err("Replay exceeds 100000 packets; use streaming archive import".into());
+        }
+        retained_bytes = retained_bytes.saturating_add(packet.bytes.len() + 512);
+        if let Some(capture) = &packet.capture {
+            retained_bytes = retained_bytes.saturating_add(capture.comments.iter().map(String::len).sum::<usize>());
+            retained_bytes = retained_bytes.saturating_add(capture.interface_name.as_ref().map_or(0, String::len));
+        }
+        if retained_bytes > 256 * 1024 * 1024 {
+            return Err("Replay exceeds the 256 MiB memory budget; use streaming archive import".into());
         }
         packets.push(packet);
         Ok(())
@@ -139,8 +148,11 @@ pub fn read_pcap(path: &std::path::Path) -> Result<Vec<Packet>, String> {
 
 /// Decode one record at a time without retaining the input file in memory.
 pub fn stream_pcap(path: &std::path::Path, mut consume: impl FnMut(Packet) -> Result<(), String>) -> Result<u64, String> {
-    use std::io::Read;
+    use std::io::{Read, BufRead};
     let mut f = std::io::BufReader::new(std::fs::File::open(path).map_err(|e| e.to_string())?);
+    if f.fill_buf().map_err(|error| error.to_string())?.starts_with(&[0x0a, 0x0d, 0x0d, 0x0a]) {
+        return crate::capture::pcapng::stream(f, consume);
+    }
     let mut buf = [0u8; 24];
     f.read_exact(&mut buf).map_err(|_| "File too small to be a valid PCAP")?;
 
@@ -206,7 +218,22 @@ pub fn stream_pcap(path: &std::path::Path, mut consume: impl FnMut(Packet) -> Re
         let mut raw = vec![0; incl_len as usize];
         f.read_exact(&mut raw).map_err(|_| "Truncated PCAP packet payload")?;
         let timestamp = ts_sec as f64 + ts_fraction as f64 / timestamp_divisor;
-        consume(parse_ethernet(&raw, counter, timestamp))?;
+        let mut packet = parse_ethernet(&raw, counter, timestamp);
+        packet.capture = Some(CaptureMetadata {
+            timestamp: Some(CaptureTimestamp {
+                ticks: u64::from(ts_sec) * timestamp_divisor as u64 + u64::from(ts_fraction),
+                resolution: TimestampResolution::Decimal(if timestamp_divisor == 1_000_000_000.0 { 9 } else { 6 }),
+                offset_seconds: 0,
+            }),
+            captured_length: incl_len,
+            wire_length: orig_len,
+            link_type: 1,
+            interface_id: 0,
+            section_id: 0,
+            interface_name: None,
+            comments: Vec::new(),
+        });
+        consume(packet)?;
         counter += 1;
     }
     if counter == 1 {

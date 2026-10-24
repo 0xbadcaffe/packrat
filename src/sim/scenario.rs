@@ -28,7 +28,7 @@ const INTRA_B: &str = "192.168.1.30";  // printer / service host
 
 fn pkt(no: u64, ts: f64, src: &str, dst: &str, proto: &str,
        sp: Option<u16>, dp: Option<u16>, info: &str, len: u16) -> Packet {
-    Packet {
+    Packet { capture: None,
         no,
         timestamp: ts,
         src: src.into(),

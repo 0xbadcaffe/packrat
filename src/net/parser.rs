@@ -93,7 +93,7 @@ fn parse_arp(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan: VlanCtx) -> Pac
     let dst = fmt_ip(&payload[24..28]);
     let opcode = u16::from_be_bytes([payload[6], payload[7]]);
     let op_str = if opcode == 1 { "request" } else { "reply" };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src: src.clone(), dst: dst.clone(),
         protocol: "ARP".into(),
         length: raw.len() as u16,
@@ -108,7 +108,7 @@ fn parse_mpls(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan: VlanCtx) -> Pa
     let label = if payload.len() >= 4 {
         (u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) >> 12) & 0xFFFFF
     } else { 0 };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src: "?.?.?.?".into(), dst: "?.?.?.?".into(),
         protocol: "MPLS".into(), length: raw.len() as u16,
         info: format!("MPLS Label={}", label),
@@ -130,7 +130,7 @@ fn parse_pppoe(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan: VlanCtx, kind
             0xa7 => "PPPoE PADT".into(), _ => format!("PPPoE code=0x{:02x}", code),
         }
     };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src: "?.?.?.?".into(), dst: "?.?.?.?".into(),
         protocol: "PPPoE".into(), length: raw.len() as u16, info,
         src_port: None, dst_port: None,
@@ -155,7 +155,7 @@ fn parse_ipv4(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan: VlanCtx) -> Pa
     let dst_ip = fmt_ip(&payload[16..20]);
     let fragment_field = u16::from_be_bytes([payload[6], payload[7]]);
     if fragment_field & 0x1fff != 0 {
-        return Packet {
+        return Packet { capture: None,
             no,
             timestamp: ts,
             src: src_ip,
@@ -210,7 +210,7 @@ fn parse_ipv6(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan: VlanCtx) -> Pa
                 next_header = header[0];
                 let fragment_field = u16::from_be_bytes([header[2], header[3]]);
                 if fragment_field & 0xfff8 != 0 {
-                    return Packet {
+                    return Packet { capture: None,
                         no,
                         timestamp: ts,
                         src: src_ip,
@@ -271,7 +271,7 @@ fn parse_transport(
         88  => parse_eigrp(transport, raw, no, ts, src_ip, dst_ip, vlan),
         103 => parse_pim(transport, raw, no, ts, src_ip, dst_ip, vlan),
         112 => parse_vrrp(transport, raw, no, ts, src_ip, dst_ip, vlan),
-        _ => Packet {
+        _ => Packet { capture: None,
             no, timestamp: ts, src: src_ip, dst: dst_ip,
             protocol: format!("IP({})", proto_num),
             length: raw.len() as u16,
@@ -293,7 +293,7 @@ fn parse_icmp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, 
             _  => format!("ICMP type={}", t[0]),
         }
     } else { "ICMP".into() };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "ICMP".into(),
         length: raw.len() as u16, info, src_port: None, dst_port: None,
         vlan_id: vlan.id, vlan_pcp: vlan.pcp, vlan_dei: vlan.dei, outer_vlan_id: vlan.outer_id,
@@ -310,7 +310,7 @@ fn parse_icmpv6(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String
             _   => format!("ICMPv6 type={}", t[0]),
         }
     } else { "ICMPv6".into() };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "ICMPv6".into(),
         length: raw.len() as u16, info, src_port: None, dst_port: None,
         vlan_id: vlan.id, vlan_pcp: vlan.pcp, vlan_dei: vlan.dei, outer_vlan_id: vlan.outer_id,
@@ -320,7 +320,7 @@ fn parse_icmpv6(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String
 
 fn parse_tcp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan: VlanCtx) -> Packet {
     if t.len() < 20 {
-        return Packet {
+        return Packet { capture: None,
             no, timestamp: ts, src, dst, protocol: "TCP".into(),
             length: raw.len() as u16, info: "TCP (truncated)".into(),
             src_port: None, dst_port: None,
@@ -333,7 +333,7 @@ fn parse_tcp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, v
     let seq = u32::from_be_bytes([t[4], t[5], t[6], t[7]]);
     let flags = t[13];
     let info = format!("{} → {} [{}] Seq={}", sp, dp, fmt_tcp_flags(flags), seq);
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: classify_tcp(sp, dp).into(),
         length: raw.len() as u16, info,
         src_port: Some(sp), dst_port: Some(dp),
@@ -344,7 +344,7 @@ fn parse_tcp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, v
 
 fn parse_udp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan: VlanCtx) -> Packet {
     if t.len() < 8 {
-        return Packet {
+        return Packet { capture: None,
             no, timestamp: ts, src, dst, protocol: "UDP".into(),
             length: raw.len() as u16, info: "UDP (truncated)".into(),
             src_port: None, dst_port: None,
@@ -360,7 +360,7 @@ fn parse_udp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, v
         let p = classify_udp(sp, dp);
         if p == "UDP" && t.len() >= 12 && (t[8] >> 6) == 2 { "RTP" } else { p }
     };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: proto.into(),
         length: raw.len() as u16, info: format!("{} → {} Len={}", sp, dp, payload_len),
         src_port: Some(sp), dst_port: Some(dp),
@@ -380,7 +380,7 @@ fn parse_igmp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, 
             _    => format!("IGMP type=0x{:02x}", t[0]),
         }
     } else { "IGMP".into() };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "IGMP".into(),
         length: raw.len() as u16, info, src_port: None, dst_port: None,
         vlan_id: vlan.id, vlan_pcp: vlan.pcp, vlan_dei: vlan.dei, outer_vlan_id: vlan.outer_id,
@@ -392,7 +392,7 @@ fn parse_gre(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, v
     let encap = if t.len() >= 4 {
         match u16::from_be_bytes([t[2], t[3]]) { 0x0800 => " (IPv4)", 0x86DD => " (IPv6)", _ => "" }
     } else { "" };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "GRE".into(),
         length: raw.len() as u16, info: format!("GRE Encapsulated{}", encap),
         src_port: None, dst_port: None,
@@ -405,7 +405,7 @@ fn parse_esp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, v
     let spi = if t.len() >= 4 {
         format!("SPI=0x{:08x}", u32::from_be_bytes([t[0], t[1], t[2], t[3]]))
     } else { "SPI=?".into() };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "ESP".into(),
         length: raw.len() as u16, info: format!("IPSec ESP {}", spi),
         src_port: None, dst_port: None,
@@ -418,7 +418,7 @@ fn parse_ah(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vl
     let spi = if t.len() >= 8 {
         format!("SPI=0x{:08x}", u32::from_be_bytes([t[4], t[5], t[6], t[7]]))
     } else { "SPI=?".into() };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "AH".into(),
         length: raw.len() as u16, info: format!("IPSec AH {}", spi),
         src_port: None, dst_port: None,
@@ -431,7 +431,7 @@ fn parse_vrrp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, 
     let info = if t.len() >= 4 {
         format!("VRRPv{} VRID={} Priority={}", t[0] >> 4, t[1], t[2])
     } else { "VRRP".into() };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "VRRP".into(),
         length: raw.len() as u16, info, src_port: None, dst_port: None,
         vlan_id: vlan.id, vlan_pcp: vlan.pcp, vlan_dei: vlan.dei, outer_vlan_id: vlan.outer_id,
@@ -443,7 +443,7 @@ fn parse_ospf(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, 
     let msg = if t.len() >= 2 {
         match t[1] { 1=>"Hello", 2=>"DBD", 3=>"LSR", 4=>"LSU", 5=>"LSAck", _=>"Unknown" }
     } else { "OSPF" };
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "OSPF".into(),
         length: raw.len() as u16, info: format!("OSPF {}", msg),
         src_port: None, dst_port: None,
@@ -454,7 +454,7 @@ fn parse_ospf(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, 
 
 fn parse_eigrp(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, vlan: VlanCtx) -> Packet {
     let op = t.get(1).copied().unwrap_or(0);
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "EIGRP".into(),
         length: raw.len() as u16, info: format!("EIGRP opcode={}", op),
         src_port: None, dst_port: None,
@@ -467,7 +467,7 @@ fn parse_pim(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, v
     let types = ["Hello","Register","Register-Stop","Join/Prune","Bootstrap","Assert","Graft","State-Refresh","Candidate-RP"];
     let mt    = (t.get(1).copied().unwrap_or(0) & 0x0F) as usize;
     let name  = types.get(mt).copied().unwrap_or("Unknown");
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts, src, dst, protocol: "PIM".into(),
         length: raw.len() as u16, info: format!("PIM {}", name),
         src_port: None, dst_port: None,
@@ -477,7 +477,7 @@ fn parse_pim(t: &[u8], raw: &[u8], no: u64, ts: f64, src: String, dst: String, v
 }
 
 fn unknown(raw: &[u8], no: u64, ts: f64) -> Packet {
-    Packet {
+    Packet { capture: None,
         no, timestamp: ts,
         src: "?.?.?.?".into(), dst: "?.?.?.?".into(),
         protocol: "RAW".into(), length: raw.len() as u16,

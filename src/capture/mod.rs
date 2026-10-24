@@ -37,6 +37,7 @@ impl Drop for CaptureTask {
 #[cfg(feature = "real-capture")]
 pub mod live;
 pub mod helper;
+pub mod pcapng;
 
 /// Anything that can deliver packets onto a channel.
 pub trait CaptureSource: Send + 'static {

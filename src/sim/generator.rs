@@ -353,7 +353,7 @@ pub fn generate_packet(counter: u64) -> Packet {
         }
     };
 
-    Packet {
+    Packet { capture: None,
         no: counter + 1,
         timestamp: ts,
         src,

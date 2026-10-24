@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use tokio::sync::mpsc::Sender;
 
 use crate::capture::{CaptureSource, CaptureTask};
-use crate::net::packet::Packet;
+use crate::net::packet::{Packet, CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use crate::net::parser::parse_ethernet;
 
 pub struct LiveCapture {
@@ -36,6 +36,23 @@ impl CaptureSource for LiveCapture {
                     };
                     let ts = raw.header.ts.tv_sec as f64 + raw.header.ts.tv_usec as f64 / 1_000_000.0;
                     let mut pkt = parse_ethernet(raw.data, counter + 1, ts);
+                    if !(0..1_000_000).contains(&raw.header.ts.tv_usec) || raw.header.len < raw.header.caplen {
+                        return Err("Invalid capture timestamp or packet length".into());
+                    }
+                    pkt.capture = Some(CaptureMetadata {
+                        timestamp: Some(CaptureTimestamp {
+                            ticks: raw.header.ts.tv_usec as u64,
+                            resolution: TimestampResolution::Decimal(6),
+                            offset_seconds: raw.header.ts.tv_sec as i64,
+                        }),
+                        captured_length: raw.header.caplen,
+                        wire_length: raw.header.len,
+                        link_type: 1,
+                        interface_id: 0,
+                        section_id: 0,
+                        interface_name: Some(self.iface.clone()),
+                        comments: Vec::new(),
+                    });
                     counter += 1;
                     loop {
                         match tx.try_send(pkt) {

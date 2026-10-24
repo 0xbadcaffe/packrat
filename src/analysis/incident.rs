@@ -196,7 +196,7 @@ mod tests {
     use super::*;
 
     fn packet(no: u64, src: &str, dst: &str) -> Packet {
-        Packet {
+        Packet { capture: None,
             no,
             timestamp: no as f64,
             src: src.into(),

@@ -61,7 +61,7 @@ fn field<'a>(fields: &'a [packrat_tui::analysis::packet_fields::PacketField], pa
 }
 
 fn packet(bytes: Vec<u8>, proto: &str) -> Packet {
-    Packet {
+    Packet { capture: None,
         no: 42,
         timestamp: 1.25,
         src: "192.0.2.10".into(),

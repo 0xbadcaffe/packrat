@@ -69,7 +69,7 @@ impl EvidenceVault {
 
         write_pcap(&pcap_path, incident)?;
         write_metadata_with_events(&metadata_path, incident, events)?;
-        write_ndjson(&ndjson_path, incident)?;
+        write_ndjson(&ndjson_path, incident, events)?;
 
         self.frozen_incidents.insert(incident.id);
         self.exports.push(EvidenceExport {
@@ -144,6 +144,8 @@ fn write_metadata_with_events(path: &Path, incident: &Incident, events: &[crate:
 
 #[derive(serde::Serialize)]
 struct PacketRecord<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capture: Option<&'a crate::net::packet::CaptureMetadata>,
     record: &'static str,
     incident_id: u64,
     packet_no: u64,
@@ -159,14 +161,17 @@ struct PacketRecord<'a> {
     info: &'a str,
 }
 
-fn write_ndjson(path: &Path, incident: &Incident) -> Result<(), String> {
+fn write_ndjson(path: &Path, incident: &Incident, events: &[crate::analysis::impact::EndpointEvidence]) -> Result<(), String> {
     let file = File::create(path).map_err(|error| format!("create NDJSON: {error}"))?;
     let mut writer = BufWriter::new(file);
-    serde_json::to_writer(&mut writer, &metadata(incident))
+    let mut header = metadata(incident);
+    header.impact = crate::analysis::impact::correlate(incident, events);
+    serde_json::to_writer(&mut writer, &header)
         .map_err(|error| format!("serialize NDJSON metadata: {error}"))?;
     writer.write_all(b"\n").map_err(|error| format!("write NDJSON: {error}"))?;
     for packet in &incident.packet_history {
         let record = PacketRecord {
+            capture: packet.capture.as_ref(),
             record: "packet",
             incident_id: incident.id,
             packet_no: packet.no,
@@ -210,7 +215,7 @@ mod tests {
             last_seen: 1.0,
             status: IncidentStatus::PendingReview,
             reviewed: false,
-            packet_history: vec![Packet {
+            packet_history: vec![Packet { capture: None,
                 no: 1,
                 timestamp: 1.0,
                 src: "203.0.113.9".into(),

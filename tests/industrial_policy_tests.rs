@@ -20,7 +20,7 @@ fn industrial_packet(protocol: &str, port: u16, tcp: bool, payload: &[u8]) -> Pa
         bytes[38..40].copy_from_slice(&((8 + payload.len()) as u16).to_be_bytes());
     }
     bytes.extend_from_slice(payload);
-    Packet {
+    Packet { capture: None,
         no: 1,
         timestamp: 1.0,
         src: "10.0.0.5".into(),

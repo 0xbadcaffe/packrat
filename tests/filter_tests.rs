@@ -6,7 +6,7 @@ use packrat_tui::net::packet::Packet;
 
 fn pkt(proto: &str, src: &str, dst: &str, sport: Option<u16>, dport: Option<u16>,
        info: &str, len: u16) -> Packet {
-    Packet {
+    Packet { capture: None,
         no: 1,
         timestamp: 0.0,
         src: src.into(),

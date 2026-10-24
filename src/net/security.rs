@@ -1333,7 +1333,7 @@ impl SecurityEngine {
                     58 => ("ICMPv6", None),
                     _ => ("IPv6-Reassembled", None),
                 };
-                let synthetic = Packet {
+                let synthetic = Packet { capture: None,
                     no: pkt.no,
                     timestamp: pkt.timestamp,
                     src: pkt.src.clone(),

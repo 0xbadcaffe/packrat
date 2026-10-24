@@ -6,7 +6,7 @@ use packrat_tui::net::security::SecurityEngine;
 use rstest::rstest;
 
 fn packet(protocol: &str, destination_port: u16, info: &str, bytes: Vec<u8>) -> Packet {
-    Packet {
+    Packet { capture: None,
         no: 1,
         timestamp: 1.0,
         src: "203.0.113.9".into(),
@@ -102,7 +102,7 @@ fn ethernet_packet(no: u64, src_mac: [u8; 6], dst_mac: [u8; 6], vlan_id: Option<
     bytes.extend_from_slice(&dst_mac);
     bytes.extend_from_slice(&src_mac);
     bytes.extend_from_slice(&[0x08, 0x00]);
-    Packet {
+    Packet { capture: None,
         no,
         timestamp: no as f64,
         src: "203.0.113.9".into(),

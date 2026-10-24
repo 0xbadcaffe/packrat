@@ -1543,6 +1543,10 @@ impl App {
         self.packet_counter += 1;
         self.total_bytes += pkt.length as u64;
         self.rate_this_sec += 1;
+        if pkt.capture.as_ref().is_some_and(|capture| capture.link_type != 1 || capture.timestamp.is_none()) {
+            self.retain_packet_display(pkt);
+            return;
+        }
         self.flow_tracker.update(&pkt);
         let process = self.socket_scope.observe(&pkt);
         self.route_ledger.observe(&pkt, process.as_deref());
@@ -1763,8 +1767,16 @@ impl App {
             self.worklist.add(InvestigationItem::Alert(alert_id));
         }
 
+        self.retain_packet_display(pkt);
+    }
+
+    fn retain_packet_display(&mut self, pkt: Packet) {
         if self.recording {
-            if let Some(ref mut writer) = self.pcap_writer { let _ = writer.write_packet(&pkt); }
+            if let Some(error) = self.pcap_writer.as_mut().and_then(|writer| writer.write_packet(&pkt).err()) {
+                self.recording = false;
+                self.pcap_writer.take();
+                self.set_status(format!("Recording stopped: {error}"));
+            }
         }
 
         if self.display_filter.input != self.filter.input {
@@ -3133,7 +3145,7 @@ mod project_tests {
     #[test]
     fn portable_snapshot_embeds_packets_but_lightweight_does_not() {
         let mut app = App::new_for_test();
-        app.inject_packet(Packet {
+        app.inject_packet(Packet { capture: None,
             no: 1,
             timestamp: 1.0,
             src: "192.0.2.1".into(),

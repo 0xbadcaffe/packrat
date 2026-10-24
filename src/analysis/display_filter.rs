@@ -502,7 +502,7 @@ mod tests {
     use crate::net::packet::Packet;
 
     fn make_pkt(proto: &str, src: &str, dst: &str, sport: u16, dport: u16, len: u16) -> Packet {
-        Packet {
+        Packet { capture: None,
             no: 1, timestamp: 0.0,
             src: src.into(), dst: dst.into(),
             protocol: proto.into(), length: len,
