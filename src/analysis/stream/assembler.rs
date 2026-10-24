@@ -3,6 +3,7 @@ use super::*;
 // ─── Assembler ────────────────────────────────────────────────────────────────
 
 const MAX_STREAMS: usize = 500;
+const MAX_SEGMENT_METADATA: usize = 8192;
 
 #[derive(Debug, Default)]
 pub struct StreamAssembler {
@@ -60,8 +61,34 @@ impl StreamAssembler {
         // Extract payload using the correctly computed offset
         let payload = &raw[view.payload..view.end];
 
+        let initial_syn = if from_client {
+            &mut stream.client_initial_syn
+        } else {
+            &mut stream.server_initial_syn
+        };
+        if is_syn {
+            let data_exists = if from_client {
+                !stream.client_data.is_empty()
+            } else {
+                !stream.server_data.is_empty()
+            };
+            if initial_syn.is_some_and(|initial| initial != tcp_seq)
+                || (initial_syn.is_none() && data_exists)
+            {
+                stream.epoch_ambiguous = true;
+            }
+            initial_syn.get_or_insert(tcp_seq);
+        }
+        if stream.epoch_ambiguous || stream.reset {
+            return;
+        }
+
         if is_rst {
             stream.closed = true;
+            stream.reset = true;
+            return;
+        }
+        if (from_client && stream.client_finished) || (!from_client && stream.server_finished) {
             return;
         }
 
@@ -84,6 +111,7 @@ impl StreamAssembler {
         };
         let payload_sequence = tcp_seq.wrapping_add(u32::from(is_syn));
         if next_seq_slot.is_none() {
+            stream.midstream |= !is_syn;
             *next_seq_slot = Some(payload_sequence);
         }
 
@@ -97,6 +125,13 @@ impl StreamAssembler {
             if is_fin {
                 *next_seq_slot = next_seq_slot.map(|sequence| sequence.wrapping_add(1));
                 stream.closed = true;
+                if from_client {
+                    stream.client_finished = true;
+                    stream.client_fin_packet = Some(pkt.no);
+                } else {
+                    stream.server_finished = true;
+                    stream.server_fin_packet = Some(pkt.no);
+                }
             }
             return;
         }
@@ -109,23 +144,39 @@ impl StreamAssembler {
             payload: payload.to_vec(),
             fin: is_fin,
             timestamp: pkt.timestamp,
+            packet_no: pkt.no,
         };
         if sequence_delta(segment.sequence, next_seq_slot.unwrap_or(segment.sequence)) > 0 {
-            buffer_pending(pending, segment);
+            if !buffer_pending(pending, segment) {
+                stream.dropped_segments += 1;
+            }
             return;
         }
 
-        let (emitted, fin_consumed) = consume_contiguous(data, next_seq_slot, pending, segment);
-        for (offset, length, timestamp) in emitted {
+        let progress = consume_contiguous(data, next_seq_slot, pending, segment);
+        stream.truncated |= progress.discarded_bytes > 0;
+        for emitted in progress.segments {
+            if stream.segments.len() >= MAX_SEGMENT_METADATA {
+                stream.provenance_truncated = true;
+                continue;
+            }
             stream.segments.push(StreamSegment {
                 from_client,
-                offset,
-                length,
-                timestamp,
+                offset: emitted.offset,
+                length: emitted.length,
+                timestamp: emitted.timestamp,
+                packet_no: emitted.packet_no,
             });
         }
-        if fin_consumed {
+        if progress.fin_consumed {
             stream.closed = true;
+            if from_client {
+                stream.client_finished = true;
+                stream.client_fin_packet = progress.fin_packet_no;
+            } else {
+                stream.server_finished = true;
+                stream.server_fin_packet = progress.fin_packet_no;
+            }
         }
     }
 

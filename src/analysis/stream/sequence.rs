@@ -8,27 +8,48 @@ pub(super) struct PendingTcpSegment {
     pub(super) payload: Vec<u8>,
     pub(super) fin: bool,
     pub(super) timestamp: f64,
+    pub(super) packet_no: u64,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct AssemblyProgress {
+    pub segments: Vec<EmittedSegment>,
+    pub fin_consumed: bool,
+    pub fin_packet_no: Option<u64>,
+    pub discarded_bytes: usize,
+}
+
+#[derive(Debug)]
+pub(super) struct EmittedSegment {
+    pub offset: usize,
+    pub length: usize,
+    pub timestamp: f64,
+    pub packet_no: u64,
 }
 
 pub(super) fn sequence_delta(sequence: u32, expected: u32) -> i32 {
     sequence.wrapping_sub(expected) as i32
 }
 
-pub(super) fn buffer_pending(pending: &mut Vec<PendingTcpSegment>, segment: PendingTcpSegment) {
+pub(super) fn buffer_pending(
+    pending: &mut Vec<PendingTcpSegment>,
+    segment: PendingTcpSegment,
+) -> bool {
     if pending.iter().any(|existing| {
         existing.sequence == segment.sequence
             && existing.payload == segment.payload
             && existing.fin == segment.fin
     }) {
-        return;
+        return true;
     }
     let pending_bytes: usize = pending.iter().map(|segment| segment.payload.len()).sum();
     if pending.len() >= MAX_PENDING_SEGMENTS
         || pending_bytes.saturating_add(segment.payload.len()) > MAX_PENDING_BYTES
     {
-        return;
+        return false;
     }
     pending.push(segment);
+    true
 }
 
 pub(super) fn consume_contiguous(
@@ -36,11 +57,14 @@ pub(super) fn consume_contiguous(
     next_sequence: &mut Option<u32>,
     pending: &mut Vec<PendingTcpSegment>,
     first: PendingTcpSegment,
-) -> (Vec<(usize, usize, f64)>, bool) {
-    let mut emitted = Vec::new();
-    let mut fin_consumed = consume_one(data, next_sequence, first, &mut emitted);
+) -> AssemblyProgress {
+    let mut progress = AssemblyProgress::default();
+    progress.fin_consumed = consume_one(data, next_sequence, first, &mut progress);
 
     loop {
+        if progress.fin_consumed {
+            break;
+        }
         let expected = match *next_sequence {
             Some(expected) => expected,
             None => break,
@@ -58,16 +82,16 @@ pub(super) fn consume_contiguous(
             break;
         };
         let segment = pending.remove(index);
-        fin_consumed |= consume_one(data, next_sequence, segment, &mut emitted);
+        progress.fin_consumed |= consume_one(data, next_sequence, segment, &mut progress);
     }
-    (emitted, fin_consumed)
+    progress
 }
 
 pub(super) fn consume_one(
     data: &mut Vec<u8>,
     next_sequence: &mut Option<u32>,
     segment: PendingTcpSegment,
-    emitted: &mut Vec<(usize, usize, f64)>,
+    progress: &mut AssemblyProgress,
 ) -> bool {
     let expected = next_sequence.unwrap_or(segment.sequence);
     let behind = sequence_delta(expected, segment.sequence).max(0) as usize;
@@ -79,12 +103,19 @@ pub(super) fn consume_one(
             .min(MAX_STREAM_BYTES.saturating_sub(data.len()));
         data.extend_from_slice(&unseen[..captured]);
         if captured > 0 {
-            emitted.push((offset, captured, segment.timestamp));
+            progress.segments.push(EmittedSegment {
+                offset,
+                length: captured,
+                timestamp: segment.timestamp,
+                packet_no: segment.packet_no,
+            });
         }
+        progress.discarded_bytes += unseen.len() - captured;
         *next_sequence = Some(expected.wrapping_add(unseen.len() as u32));
     }
     let payload_end = segment.sequence.wrapping_add(segment.payload.len() as u32);
     if segment.fin && next_sequence == &Some(payload_end) {
+        progress.fin_packet_no = Some(segment.packet_no);
         *next_sequence = Some(payload_end.wrapping_add(1));
         true
     } else {

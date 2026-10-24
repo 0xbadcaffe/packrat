@@ -141,9 +141,9 @@ impl StreamKey {
 #[derive(Debug, Clone, Default)]
 pub struct ReassembledStream {
     pub key: StreamKey,
-    /// Bytes from the A-side (first endpoint, client).
+    /// Bytes from canonical endpoint A (not necessarily the client).
     pub client_data: Vec<u8>,
-    /// Bytes from the B-side (server).
+    /// Bytes from canonical endpoint B (not necessarily the server).
     pub server_data: Vec<u8>,
     pub client_pkts: u32,
     pub server_pkts: u32,
@@ -152,6 +152,15 @@ pub struct ReassembledStream {
     pub closed: bool,
     /// At least one contributing TCP segment has missing capture bytes.
     pub truncated: bool,
+    pub reset: bool,
+    pub client_finished: bool,
+    pub server_finished: bool,
+    pub client_fin_packet: Option<u64>,
+    pub server_fin_packet: Option<u64>,
+    pub midstream: bool,
+    pub epoch_ambiguous: bool,
+    pub dropped_segments: u64,
+    pub provenance_truncated: bool,
     /// Combined interleaved segment metadata.
     pub segments: Vec<StreamSegment>,
     /// Next expected TCP sequence number for each direction.
@@ -160,9 +169,35 @@ pub struct ReassembledStream {
     server_next_seq: Option<u32>,
     client_pending: Vec<PendingTcpSegment>,
     server_pending: Vec<PendingTcpSegment>,
+    client_initial_syn: Option<u32>,
+    server_initial_syn: Option<u32>,
 }
 
 impl ReassembledStream {
+    pub fn pending_segments(&self) -> usize {
+        self.client_pending.len() + self.server_pending.len()
+    }
+
+    pub fn has_gaps(&self) -> bool {
+        self.truncated
+            || self.dropped_segments > 0
+            || self.pending_segments() > 0
+            || self.epoch_ambiguous
+    }
+
+    pub fn packet_numbers(&self, from_a: bool, start: usize, end: usize) -> Vec<u64> {
+        self.segments
+            .iter()
+            .filter(|segment| {
+                segment.from_client == from_a
+                    && segment.offset < end
+                    && segment.offset.saturating_add(segment.length) > start
+            })
+            .map(|segment| segment.packet_no)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
     fn new(key: StreamKey, ts: f64) -> Self {
         Self {
             key,
@@ -194,6 +229,7 @@ pub struct StreamSegment {
     pub offset: usize,
     pub length: usize,
     pub timestamp: f64,
+    pub packet_no: u64,
 }
 
 impl Default for StreamKey {

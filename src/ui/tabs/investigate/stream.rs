@@ -2,7 +2,9 @@ use super::*;
 
 pub(super) fn draw_flow(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
     let key = FlowKey::from_packet(packet);
-    let rows: Vec<Row> = app.core.flow_tracker
+    let rows: Vec<Row> = app
+        .core
+        .flow_tracker
         .sorted_flows(&app.flows_sort)
         .into_iter()
         .filter(|flow| flow.key == key)
@@ -68,7 +70,7 @@ pub(super) fn draw_stream_context(f: &mut Frame, app: &App, area: Rect) {
     let mut lines = vec![
         Line::from(vec![Span::styled(stream.key.id(), heading())]),
         Line::from(format!(
-            "Client bytes: {}   Server bytes: {}   Segments: {}   Closed: {}   s: follow stream",
+            "A bytes: {}   B bytes: {}   Segments: {}   Closed: {}   s: follow stream",
             stream.client_data.len(),
             stream.server_data.len(),
             stream.segments.len(),
@@ -77,6 +79,14 @@ pub(super) fn draw_stream_context(f: &mut Frame, app: &App, area: Rect) {
         Line::from(format!(
             "First seen: {:.6}s   Last seen: {:.6}s",
             stream.first_seen, stream.last_seen
+        )),
+        Line::from(format!(
+            "Pending: {}  Dropped: {}  Truncated: {}  Reset: {}  Epoch ambiguous: {}",
+            stream.pending_segments(),
+            stream.dropped_segments,
+            stream.truncated,
+            stream.reset,
+            stream.epoch_ambiguous
         )),
         Line::raw(""),
     ];
@@ -115,7 +125,7 @@ pub(super) fn stream_segment_lines(stream: &ReassembledStream) -> Vec<Line<'stat
             } else {
                 String::new()
             };
-            let direction = if segment.from_client { "C->S" } else { "S->C" };
+            let direction = if segment.from_client { "A->B" } else { "B->A" };
             let color = if segment.from_client {
                 C_CYAN()
             } else {
@@ -127,7 +137,10 @@ pub(super) fn stream_segment_lines(stream: &ReassembledStream) -> Vec<Line<'stat
                     Style::default().fg(color).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!("{:.6}s len={}  ", segment.timestamp, segment.length),
+                    format!(
+                        "#{} {:.6}s len={}  ",
+                        segment.packet_no, segment.timestamp, segment.length
+                    ),
                     Style::default().fg(C_FG2()),
                 ),
                 Span::styled(preview, Style::default().fg(color)),
