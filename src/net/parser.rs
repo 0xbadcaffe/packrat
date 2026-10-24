@@ -2,6 +2,23 @@
 #![allow(dead_code)]
 use crate::net::packet::Packet;
 
+pub fn parse_captured(data: &[u8], no: u64, capture: crate::net::packet::CaptureMetadata) -> Result<Packet, String> {
+    if capture.captured_length as usize != data.len() || capture.wire_length < capture.captured_length || data.len() > 1_048_576 {
+        return Err("Invalid captured packet lengths".into());
+    }
+    let timestamp = capture.timestamp.map_or(0.0, |time| time.seconds());
+    let mut packet = if capture.link_type == 1 {
+        parse_ethernet(data, no, timestamp)
+    } else {
+        let mut packet = unknown(data, no, timestamp);
+        packet.info = format!("Undecoded capture link type {}", capture.link_type);
+        packet
+    };
+    packet.length = data.len().min(u16::MAX as usize) as u16;
+    packet.capture = Some(capture);
+    Ok(packet)
+}
+
 // ─── VLAN context ─────────────────────────────────────────────────────────────
 
 /// All VLAN tag metadata extracted from one Ethernet frame.

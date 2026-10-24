@@ -1,5 +1,6 @@
 #[cfg(feature = "real-capture")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut interface = None;
     let mut filter = None;
@@ -17,9 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .promisc(true).snaplen(65_535).timeout(100).open()?;
     if let Some(filter) = filter { capture.filter(&filter, true)?; }
     let mut capture = capture.setnonblock()?;
-    if capture.get_datalink() != pcap::Linktype::ETHERNET {
-        return Err("Only Ethernet capture link types are currently supported".into());
-    }
+    let link_type = u32::try_from(capture.get_datalink().0)?;
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
     loop {
@@ -31,10 +30,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(error) => return Err(error.into()),
         };
-        let seconds = u64::try_from(packet.header.ts.tv_sec)?;
         let fraction = u64::try_from(packet.header.ts.tv_usec)?;
-        let micros = seconds.checked_mul(1_000_000).and_then(|value| value.checked_add(fraction)).ok_or("Capture timestamp overflow")?;
-        packrat_tui::capture::helper::write_frame(&mut output, micros, packet.data)?;
+        if fraction >= 1_000_000 { return Err("Invalid capture timestamp fraction".into()); }
+        let metadata = CaptureMetadata {
+            timestamp: Some(CaptureTimestamp { ticks: fraction, resolution: TimestampResolution::Decimal(6), offset_seconds: packet.header.ts.tv_sec as i64 }),
+            captured_length: packet.header.caplen,
+            wire_length: packet.header.len,
+            link_type,
+            interface_id: 0,
+            section_id: 0,
+            interface_name: None,
+            comments: Vec::new(),
+        };
+        packrat_tui::capture::helper::write_capture_frame(&mut output, &metadata, packet.data)?;
     }
 }
 

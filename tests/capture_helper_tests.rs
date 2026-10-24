@@ -1,5 +1,29 @@
 use packrat_tui::capture::helper::{decode_frame, write_frame, MAX_CAPTURE_FRAME};
 
+#[test]
+fn version_two_preserves_signed_clocks_wire_lengths_and_link_type() {
+    use packrat_tui::capture::helper::{write_capture_frame, decode_capture_frame};
+    use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
+    let metadata = CaptureMetadata {
+        timestamp: Some(CaptureTimestamp { ticks: 1536, resolution: TimestampResolution::Binary(10), offset_seconds: -2 }),
+        captured_length: 3, wire_length: 100, link_type: 101, interface_id: 7, section_id: 0,
+        interface_name: None, comments: Vec::new(),
+    };
+    let mut encoded = Vec::new();
+    write_capture_frame(&mut encoded, &metadata, &[1, 2, 3]).unwrap();
+    let (decoded, bytes) = decode_capture_frame(&encoded).unwrap();
+    assert_eq!(decoded, metadata);
+    assert_eq!(bytes, [1, 2, 3]);
+    let packet = packrat_tui::net::parser::parse_captured(bytes, 1, decoded).unwrap();
+    assert_eq!(packet.protocol, "RAW");
+    assert!(packet.src_port.is_none());
+    for length in 0..encoded.len() {
+        assert!(decode_capture_frame(&encoded[..length]).is_err());
+    }
+    encoded[28..32].copy_from_slice(&1u32.to_be_bytes());
+    assert!(decode_capture_frame(&encoded).is_err());
+}
+
 #[tokio::test]
 async fn helper_startup_failure_is_reported_to_the_caller() {
     use packrat_tui::capture::{CaptureSource, helper::HelperCapture};

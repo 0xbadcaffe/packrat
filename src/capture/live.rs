@@ -6,7 +6,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::capture::{CaptureSource, CaptureTask};
 use crate::net::packet::{Packet, CaptureMetadata, CaptureTimestamp, TimestampResolution};
-use crate::net::parser::parse_ethernet;
+use crate::net::parser::parse_captured;
 
 pub struct LiveCapture {
     pub iface: String,
@@ -20,9 +20,7 @@ impl CaptureSource for LiveCapture {
             #[cfg(feature = "real-capture")]
             {
                 let mut cap = open_capture(&self)?;
-                if cap.get_datalink() != pcap::Linktype::ETHERNET {
-                    return Err(format!("Unsupported capture link type: {:?}", cap.get_datalink()));
-                }
+                let link_type = u32::try_from(cap.get_datalink().0).map_err(|_| "Invalid capture link type")?;
                 let mut counter = 0u64;
 
                 while !stop.load(Ordering::Acquire) && !tx.is_closed() {
@@ -34,12 +32,10 @@ impl CaptureSource for LiveCapture {
                         }
                         Err(error) => return Err(format!("Capture read failed: {error}")),
                     };
-                    let ts = raw.header.ts.tv_sec as f64 + raw.header.ts.tv_usec as f64 / 1_000_000.0;
-                    let mut pkt = parse_ethernet(raw.data, counter + 1, ts);
                     if !(0..1_000_000).contains(&raw.header.ts.tv_usec) || raw.header.len < raw.header.caplen {
                         return Err("Invalid capture timestamp or packet length".into());
                     }
-                    pkt.capture = Some(CaptureMetadata {
+                    let metadata = CaptureMetadata {
                         timestamp: Some(CaptureTimestamp {
                             ticks: raw.header.ts.tv_usec as u64,
                             resolution: TimestampResolution::Decimal(6),
@@ -47,12 +43,13 @@ impl CaptureSource for LiveCapture {
                         }),
                         captured_length: raw.header.caplen,
                         wire_length: raw.header.len,
-                        link_type: 1,
+                        link_type,
                         interface_id: 0,
                         section_id: 0,
                         interface_name: Some(self.iface.clone()),
                         comments: Vec::new(),
-                    });
+                    };
+                    let mut pkt = parse_captured(raw.data, counter + 1, metadata)?;
                     counter += 1;
                     loop {
                         match tx.try_send(pkt) {
