@@ -1,4 +1,5 @@
 use super::super::{HttpHeader, MessageState};
+use std::sync::Arc;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
@@ -36,7 +37,7 @@ pub enum Http3EventKind {
     Data {
         offset: u64,
         wire_length: u64,
-        data: Vec<u8>,
+        data: Arc<[u8]>,
     },
     Extension {
         offset: u64,
@@ -56,7 +57,7 @@ pub enum Http3EventKind {
 pub struct Http3BodyChunk {
     /// Offset of the DATA frame in authenticated QUIC stream plaintext, not the capture.
     pub frame_offset: u64,
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
     pub packet_numbers: Vec<u64>,
 }
 

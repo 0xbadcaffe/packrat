@@ -38,7 +38,7 @@ fn correlates_authenticated_request_response_and_body_with_packet_evidence() {
     );
     let response = exchange.response.as_ref().unwrap();
     assert_eq!(response.state, MessageState::Complete);
-    assert_eq!(response.body[0].data, b"ok");
+    assert_eq!(response.body[0].data.as_ref(), b"ok");
     assert_eq!(response.body[0].frame_offset, 10);
     assert_eq!(response.packet_numbers, [2]);
     assert_eq!(
@@ -179,4 +179,34 @@ fn reset_retains_body_but_never_claims_a_complete_message() {
     assert_eq!(message.state, MessageState::Incomplete);
     assert_eq!(message.body_bytes(), 4);
     assert_eq!(message.reset_code, Some(0x10c));
+}
+
+#[test]
+fn repeated_immutable_reports_share_the_retained_payload_allocation() {
+    let mut tracker = Http3Tracker::default();
+    let event = data_event(Client, 10, b"shared data");
+    let Http3EventKind::Data { data, .. } = &event.event else {
+        panic!();
+    };
+    let allocation = data.clone();
+    tracker
+        .ingest_authenticated(
+            batch(vec![
+                header_event(Client, 0, request()),
+                event,
+                finished(Client, 23),
+            ]),
+            1,
+        )
+        .unwrap();
+    let first = report(&tracker);
+    let second = report(&tracker);
+    let first = &first.transactions[0].request.as_ref().unwrap().body[0].data;
+    let second = &second.transactions[0].request.as_ref().unwrap().body[0].data;
+    assert!(std::sync::Arc::ptr_eq(first, second));
+    assert!(std::sync::Arc::ptr_eq(first, &allocation));
+    assert_eq!(
+        serde_json::to_value(first).unwrap(),
+        serde_json::json!(b"shared data".as_slice())
+    );
 }

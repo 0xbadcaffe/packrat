@@ -36,7 +36,7 @@ pub fn data_event(sender: Http3Sender, offset: u64, bytes: &[u8]) -> Http3Event 
         event: Http3EventKind::Data {
             offset,
             wire_length: bytes.len() as u64 + 2,
-            data: bytes.to_vec(),
+            data: bytes.into(),
         },
     }
 }

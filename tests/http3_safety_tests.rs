@@ -30,7 +30,7 @@ fn bad_batch_identity_stream_types_and_ranges_are_rejected_before_retention() {
             event: Http3EventKind::Data {
                 offset: 0,
                 wire_length: 2,
-                data: vec![1],
+                data: vec![1].into(),
             },
         },
     ];
@@ -170,7 +170,7 @@ fn a_rejected_batch_marks_existing_connection_reports_incomplete() {
         event: Http3EventKind::Data {
             offset: 10,
             wire_length: 1,
-            data: vec![],
+            data: vec![].into(),
         },
     };
     assert!(
