@@ -263,3 +263,23 @@ fn failed_updates_are_reported_without_terminating_the_worker() {
     assert!(worker.monitor().is_running());
     worker.finish(|_| ()).unwrap();
 }
+
+#[test]
+fn cancellation_joins_even_when_the_output_queue_is_full() {
+    let mut worker = AnalysisWorker::spawn(
+        AnalysisCore::default(),
+        WorkerLimits {
+            event_capacity: 1,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for no in 1..=32 {
+        worker
+            .try_packet(packets::tcp(no, 100, 0x18, b"data"), false)
+            .unwrap();
+    }
+    let monitor = worker.monitor();
+    worker.cancel_and_join(Duration::from_secs(2)).unwrap();
+    assert!(!monitor.is_running());
+}

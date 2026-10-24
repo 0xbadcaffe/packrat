@@ -327,6 +327,29 @@ impl AnalysisWorker {
         }
     }
 
+    /// Cancel queued work and join without depending on the output consumer.
+    pub fn cancel_and_join(mut self, timeout: Duration) -> Result<(), String> {
+        self.cancel.store(true, Ordering::Release);
+        self.sender.take();
+        let deadline = std::time::Instant::now() + timeout;
+        while self
+            .thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+        {
+            while self.events.try_recv().is_ok() {}
+            if std::time::Instant::now() >= deadline {
+                return Err("Analysis shutdown timed out; queued work was cancelled".into());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.thread
+            .take()
+            .ok_or("Analysis worker already joined")?
+            .join()
+            .map_err(|_| "Analysis worker join failed".to_string())?
+    }
+
     /// Drain accepted work and deliver every remaining event before joining.
     /// Use only during controlled shutdown, not from an interactive UI tick.
     pub fn finish(self, consume: impl FnMut(WorkerEvent)) -> Result<AnalysisCore, String> {
