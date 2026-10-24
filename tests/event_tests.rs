@@ -1,3 +1,5 @@
+#![cfg(feature = "terminal-ui")]
+
 //! Key-event handler tests.
 //!
 //! Strategy: construct an App with `new_for_test()` (no real capture, no UI),

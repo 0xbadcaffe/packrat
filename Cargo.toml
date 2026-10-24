@@ -33,10 +33,16 @@ path = "src/lib.rs"
 [[bin]]
 name = "packrat"
 path = "src/main.rs"
+required-features = ["terminal-ui"]
+
+[[bin]]
+name = "packrat-profile"
+path = "src/bin/packrat-profile.rs"
+required-features = ["terminal-ui"]
 
 [dependencies]
-ratatui    = "0.29"
-crossterm  = { version = "0.28", features = ["event-stream"] }
+ratatui    = { version = "0.29", optional = true }
+crossterm  = { version = "0.28", features = ["event-stream"], optional = true }
 tokio      = { version = "1", features = ["full"] }
 futures    = "0.3"
 rand       = "0.8"
@@ -54,7 +60,7 @@ pcap-parser = "0.17"
 httparse   = "1.10"
 md5        = "0.7"
 sha2       = "0.10"
-mlua       = { version = "0.10", features = ["lua54", "vendored"] }
+mlua       = { version = "0.10", features = ["lua54", "vendored"], optional = true }
 aya        = { version = "=0.13.1", optional = true }
 libc       = { version = "0.2", optional = true }
 
@@ -62,7 +68,8 @@ libc       = { version = "0.2", optional = true }
 landlock = "0.4.5"
 
 [features]
-default        = []
+default        = ["terminal-ui"]
+terminal-ui    = ["dep:ratatui", "dep:crossterm", "dep:mlua"]
 real-capture   = ["dep:pcap"]
 ebpf-sockets   = ["dep:aya", "dep:libc"]
 

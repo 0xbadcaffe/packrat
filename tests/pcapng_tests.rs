@@ -119,10 +119,13 @@ fn simple_packets_have_no_fabricated_timestamp_or_padding_bytes() {
     assert!(packets[0].capture.as_ref().unwrap().timestamp.is_none());
     assert_eq!(packets[0].capture.as_ref().unwrap().link_type, 101);
     assert_eq!(packets[0].protocol, "RAW");
-    let mut app = packrat_tui::app::App::new_for_test();
-    app.inject_packet(packets[0].clone());
-    assert_eq!(app.packets.len(), 1);
-    assert!(app.core.flow_tracker.flows.is_empty());
+    #[cfg(feature = "terminal-ui")]
+    {
+        let mut app = packrat_tui::app::App::new_for_test();
+        app.inject_packet(packets[0].clone());
+        assert_eq!(app.packets.len(), 1);
+        assert!(app.core.flow_tracker.flows.is_empty());
+    }
     let fields = packrat_tui::analysis::packet_fields::extract_fields(&packets[0]);
     assert_eq!(
         fields

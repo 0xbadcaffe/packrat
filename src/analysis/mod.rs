@@ -1,3 +1,4 @@
+#[cfg(feature = "terminal-ui")]
 pub mod case_export;
 pub mod vlan;
 pub mod display_filter;
@@ -14,6 +15,7 @@ pub mod rules;
 pub mod carving;
 pub mod yara;
 pub mod protocol_workbench;
+#[cfg(feature = "terminal-ui")]
 pub mod profile_workload;
 pub mod diff;
 pub mod jobs;

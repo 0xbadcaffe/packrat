@@ -1,3 +1,5 @@
+#![cfg(feature = "terminal-ui")]
+
 use packrat_tui::app::App;
 use packrat_tui::net::parser::parse_ethernet;
 

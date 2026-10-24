@@ -1,3 +1,5 @@
+#![cfg(feature = "terminal-ui")]
+
 use packrat_tui::{app::App, tabs::Tab, ui};
 use ratatui::{Terminal, backend::TestBackend};
 

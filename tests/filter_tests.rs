@@ -1,6 +1,7 @@
 //! Tests for the display filter parser and evaluator.
 
 use packrat_tui::analysis::display_filter::{self, EvalCtx};
+#[cfg(feature = "terminal-ui")]
 use packrat_tui::app::App;
 use packrat_tui::net::packet::Packet;
 
@@ -37,6 +38,7 @@ fn ctx_marked<'a>(p: &'a Packet) -> EvalCtx<'a> {
 }
 
 #[test]
+#[cfg(feature = "terminal-ui")]
 fn app_ingest_uses_advanced_display_filter_for_new_packets() {
     let mut app = App::new_for_test();
     app.filter.input = "tcp.dstport == 443".into();
@@ -51,6 +53,7 @@ fn app_ingest_uses_advanced_display_filter_for_new_packets() {
 }
 
 #[test]
+#[cfg(feature = "terminal-ui")]
 fn app_rebuild_bare_ip_filter_matches_addresses() {
     let mut app = App::new_for_test();
     app.inject_packet(pkt("TCP", "192.168.1.50", "203.0.113.7", Some(50000), Some(4444), "", 60));

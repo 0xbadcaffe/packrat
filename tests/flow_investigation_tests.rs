@@ -1,3 +1,5 @@
+#![cfg(feature = "terminal-ui")]
+
 #[path = "support/packets.rs"]
 mod packets;
 

@@ -1,6 +1,7 @@
 #[path = "support/packets.rs"]
 mod packets;
 
+#[cfg(feature = "terminal-ui")]
 use packrat_tui::app::App;
 use packrat_tui::engine::{AnalysisCore, PacketDisposition};
 use packrat_tui::net::packet::CaptureMetadata;
@@ -22,6 +23,7 @@ fn core_runs_on_a_worker_without_a_terminal_or_async_runtime() {
 }
 
 #[test]
+#[cfg(feature = "terminal-ui")]
 fn terminal_adapter_and_headless_core_produce_the_same_passive_results() {
     let mut app = App::new_for_test();
     app.core = AnalysisCore::default();

