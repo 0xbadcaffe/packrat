@@ -2,6 +2,13 @@ use super::*;
 use crate::analysis::transactions::{HttpMessage, MessageState, MultiplexedMessage, is_http2};
 
 pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
+    if app
+        .active_investigation_packet()
+        .is_some_and(|packet| packet.protocol.eq_ignore_ascii_case("QUIC"))
+    {
+        super::transactions_http3::draw(f, app, area);
+        return;
+    }
     let snapshot = app.transaction_inspection();
     let stream = if app.background_analysis_enabled() {
         snapshot.map(|snapshot| snapshot.stream.as_ref())
@@ -167,7 +174,7 @@ fn multiplexed_lines(
     for header in &message.headers {
         lines.push(Line::from(format!(
             "    {}: {}",
-            header.name,
+            printable_bytes(header.name.as_bytes(), 128),
             printable_bytes(&header.value, 256)
         )));
     }
@@ -192,7 +199,7 @@ fn multiplexed_lines(
     for header in &message.trailers {
         lines.push(Line::from(format!(
             "    Trailer {}: {}",
-            header.name,
+            printable_bytes(header.name.as_bytes(), 128),
             printable_bytes(&header.value, 256)
         )));
     }
@@ -245,7 +252,7 @@ fn message_lines(
     for header in &message.headers {
         lines.push(Line::from(format!(
             "    {}: {}",
-            header.name,
+            printable_bytes(header.name.as_bytes(), 128),
             printable_bytes(&header.value, 256)
         )));
     }
@@ -262,7 +269,7 @@ fn message_lines(
     for trailer in &message.trailers {
         lines.push(Line::from(format!(
             "    Trailer {}: {}",
-            trailer.name,
+            printable_bytes(trailer.name.as_bytes(), 128),
             printable_bytes(&trailer.value, 256)
         )));
     }

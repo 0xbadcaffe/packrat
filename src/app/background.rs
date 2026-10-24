@@ -210,6 +210,7 @@ impl App {
             }
         }
         self.poll_inspection();
+        self.poll_http3_inspection();
     }
 
     fn handle_worker_event(&mut self, event: WorkerEvent) -> bool {
@@ -263,6 +264,13 @@ impl App {
                 result,
             } => {
                 self.receive_inspection(generation, request_id, result);
+            }
+            WorkerEvent::Http3Inspection {
+                generation,
+                request_id,
+                result,
+            } => {
+                self.receive_http3_inspection(generation, request_id, result);
             }
         }
         true

@@ -283,3 +283,48 @@ fn cancellation_joins_even_when_the_output_queue_is_full() {
     worker.cancel_and_join(Duration::from_secs(2)).unwrap();
     assert!(!monitor.is_running());
 }
+
+#[test]
+fn http3_inspection_is_owned_and_invalidated_by_generation_clear() {
+    use packrat_tui::analysis::transactions::http3::*;
+    let mut core = AnalysisCore::default();
+    core.quic_scope
+        .http3
+        .ingest_authenticated(
+            AuthenticatedHttp3Batch {
+                connection_id: "connection".into(),
+                alpn: "h3".into(),
+                events: vec![Http3Event {
+                    stream_id: 0,
+                    sender: Http3Sender::Client,
+                    event: Http3EventKind::Finished { final_size: 0 },
+                }],
+            },
+            42,
+        )
+        .unwrap();
+    let mut worker = AnalysisWorker::spawn(core, WorkerLimits::default()).unwrap();
+    worker.try_inspect_http3(1, 42).unwrap();
+    let WorkerEvent::Http3Inspection {
+        result: Ok(snapshot),
+        ..
+    } = next(&worker)
+    else {
+        panic!();
+    };
+    assert_eq!(snapshot.packet_no, 42);
+    assert_eq!(snapshot.conversation.connection_id, "connection");
+    assert_eq!(snapshot.generation, 0);
+    worker.try_clear().unwrap();
+    worker.try_inspect_http3(2, 42).unwrap();
+    let WorkerEvent::Http3Inspection {
+        generation: 1,
+        result: Err(_),
+        ..
+    } = next(&worker)
+    else {
+        panic!();
+    };
+    assert_eq!(snapshot.conversation.transactions.len(), 1);
+    worker.finish(|_| ()).unwrap();
+}

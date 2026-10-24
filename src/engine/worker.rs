@@ -1,7 +1,7 @@
 //! Bounded ownership transport for the passive core. No terminal or enforcement.
 use super::shared::ReadCore;
 pub type CoreUpdate = Box<dyn FnOnce(&mut AnalysisCore) -> Result<(), String> + Send>;
-use super::snapshot::{AnalysisSnapshot, InspectionSnapshot};
+use super::snapshot::{AnalysisSnapshot, Http3InspectionSnapshot, InspectionSnapshot};
 use super::{AnalysisCore, PacketAnalysis};
 use crate::net::packet::Packet;
 use std::sync::{
@@ -53,6 +53,11 @@ pub enum WorkerEvent {
         request_id: u64,
         result: Result<InspectionSnapshot, String>,
     },
+    Http3Inspection {
+        generation: u64,
+        request_id: u64,
+        result: Result<Http3InspectionSnapshot, String>,
+    },
     Updated {
         generation: u64,
         request_id: u64,
@@ -71,6 +76,11 @@ enum Command {
         generation: u64,
         request_id: u64,
         stream_id: String,
+    },
+    InspectHttp3 {
+        generation: u64,
+        request_id: u64,
+        packet_no: u64,
     },
     Clear {
         generation: u64,
@@ -303,6 +313,14 @@ impl AnalysisWorker {
         self.try_command(Command::Clear { generation })?;
         self.generation = generation;
         Ok(generation)
+    }
+
+    pub fn try_inspect_http3(&self, request_id: u64, packet_no: u64) -> Result<(), String> {
+        self.try_command(Command::InspectHttp3 {
+            generation: self.generation,
+            request_id,
+            packet_no,
+        })
     }
 
     fn try_command(&self, command: Command) -> Result<(), String> {

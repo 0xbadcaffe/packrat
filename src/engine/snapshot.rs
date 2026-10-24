@@ -39,6 +39,15 @@ pub struct InspectionSnapshot {
     pub http2: Option<Arc<MultiplexedConversation>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Http3InspectionSnapshot {
+    pub generation: u64,
+    pub sequence: u64,
+    pub packet_no: u64,
+    pub revision: u64,
+    pub conversation: Arc<crate::analysis::transactions::http3::Http3Conversation>,
+}
+
 impl AnalysisSnapshot {
     pub(super) fn capture(
         core: &AnalysisCore,

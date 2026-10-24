@@ -92,6 +92,36 @@ pub(super) fn run(
                     result,
                 }
             }
+            Command::InspectHttp3 {
+                generation: submitted,
+                request_id,
+                packet_no,
+            } => {
+                let result = if submitted == generation {
+                    let tracker = &core.quic_scope.http3;
+                    tracker
+                        .connection_for_packet(packet_no)
+                        .and_then(|id| {
+                            Some(Http3InspectionSnapshot {
+                                generation,
+                                sequence,
+                                packet_no,
+                                revision: tracker.connection_revision(id)?,
+                                conversation: Arc::new(tracker.conversation(id)?),
+                            })
+                        })
+                        .ok_or_else(|| {
+                            "No authenticated HTTP/3 evidence is retained for this packet".into()
+                        })
+                } else {
+                    Err("HTTP/3 inspection belongs to an expired generation".into())
+                };
+                WorkerEvent::Http3Inspection {
+                    generation,
+                    request_id,
+                    result,
+                }
+            }
             Command::Clear { generation: next } => {
                 if next != generation + 1 {
                     return Err("Invalid analysis clear generation".into());

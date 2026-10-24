@@ -17,6 +17,7 @@ const MAX_RETAINED_BYTES: usize = 16 * 1024 * 1024;
 #[derive(Default)]
 pub struct Http3Tracker {
     connections: BTreeMap<String, Connection>,
+    packet_connections: BTreeMap<u64, String>,
     retained_bytes: usize,
     retained_events: usize,
     pub rejected_batches: u64,
@@ -30,7 +31,28 @@ impl Http3Tracker {
         packet_no: u64,
     ) -> Result<(), String> {
         let id = batch.connection_id.clone();
-        let result = self.ingest(batch, packet_no);
+        let result = if let Some(prior) = self
+            .packet_connections
+            .get(&packet_no)
+            .filter(|prior| *prior != &id)
+        {
+            if let Some(connection) = self.connections.get_mut(prior) {
+                connection.limited = true;
+                connection.revision += 1;
+            }
+            Err("HTTP/3 packet identity conflicts across authenticated connections".into())
+        } else {
+            self.ingest(batch, packet_no)
+        };
+        if let Some(connection) = self.connections.get_mut(&id) {
+            connection.revision += 1;
+        }
+        if result.is_ok() {
+            self.packet_connections.insert(packet_no, id.clone());
+            while self.packet_connections.len() > 4096 {
+                self.packet_connections.pop_first();
+            }
+        }
         if result.is_err() {
             self.rejected_batches = self.rejected_batches.saturating_add(1);
             if let Some(connection) = self.connections.get_mut(&id) {
@@ -97,15 +119,13 @@ impl Http3Tracker {
     }
 
     pub fn connection_for_packet(&self, packet_no: u64) -> Option<&str> {
+        self.packet_connections.get(&packet_no).map(String::as_str)
+    }
+
+    pub fn connection_revision(&self, id: &str) -> Option<u64> {
         self.connections
-            .iter()
-            .find(|(_, connection)| {
-                connection
-                    .streams
-                    .values()
-                    .any(|halves| halves.values().any(|half| half.contains_packet(packet_no)))
-            })
-            .map(|(id, _)| id.as_str())
+            .get(id)
+            .map(|connection| connection.revision)
     }
 
     pub fn clear(&mut self) {

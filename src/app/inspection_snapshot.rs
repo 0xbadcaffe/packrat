@@ -29,11 +29,12 @@ impl App {
     }
 
     pub(super) fn inspection_pending(&self) -> bool {
-        self.inspection.pending.is_some()
+        self.inspection.pending.is_some() || self.http3_inspection_pending()
     }
 
     pub(super) fn reset_inspection(&mut self) {
         self.inspection = Default::default();
+        self.inspection_http3 = Default::default();
     }
 
     pub(super) fn poll_inspection(&mut self) {

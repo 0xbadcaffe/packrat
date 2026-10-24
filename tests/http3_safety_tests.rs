@@ -267,3 +267,34 @@ fn truncated_json_and_extreme_offsets_never_panic() {
         }
     }
 }
+
+#[test]
+fn packet_lookup_is_bounded_and_conflicting_connection_attribution_is_rejected() {
+    let mut tracker = Http3Tracker::default();
+    for no in 1..=4097 {
+        tracker
+            .ingest_authenticated(batch(vec![finished(Client, 0)]), no)
+            .unwrap();
+    }
+    assert_eq!(tracker.connection_for_packet(1), None);
+    assert_eq!(
+        tracker.connection_for_packet(4097),
+        Some("authenticated-connection")
+    );
+    let before = tracker
+        .connection_revision("authenticated-connection")
+        .unwrap();
+    let mut input = batch(vec![finished(Client, 0)]);
+    input.connection_id = "other".into();
+    assert!(tracker.ingest_authenticated(input, 4097).is_err());
+    assert_eq!(
+        tracker.connection_for_packet(4097),
+        Some("authenticated-connection")
+    );
+    assert!(
+        tracker
+            .connection_revision("authenticated-connection")
+            .unwrap()
+            > before
+    );
+}

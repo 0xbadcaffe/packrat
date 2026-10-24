@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct Connection {
     pub streams: BTreeMap<u64, BTreeMap<Http3Sender, HalfStream>>,
     pub limited: bool,
+    pub revision: u64,
 }
 
 pub(super) struct Frame {
@@ -23,14 +24,6 @@ pub(super) struct HalfStream {
 }
 
 impl HalfStream {
-    pub fn contains_packet(&self, packet_no: u64) -> bool {
-        self.final_packets.contains(&packet_no)
-            || self
-                .frames
-                .values()
-                .any(|frame| frame.packets.contains(&packet_no))
-    }
-
     pub fn ingest(&mut self, event: Http3EventKind, packet_no: u64) -> Result<bool, String> {
         let (offset, length) = match &event {
             Http3EventKind::Headers {
