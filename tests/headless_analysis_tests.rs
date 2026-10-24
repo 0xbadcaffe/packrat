@@ -167,5 +167,5 @@ fn malformed_capture_and_extra_arguments_fail_without_a_success_summary() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("exactly one"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Unknown option: --contain"));
 }

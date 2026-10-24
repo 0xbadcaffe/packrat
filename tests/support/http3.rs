@@ -57,3 +57,36 @@ pub fn batch(events: Vec<Http3Event>) -> AuthenticatedHttp3Batch {
 pub fn report(tracker: &Http3Tracker) -> Http3Conversation {
     tracker.conversation("authenticated-connection").unwrap()
 }
+
+pub fn quic_packet(number: u64) -> packrat_tui::net::packet::Packet {
+    let payload = [0xc0, 0, 0, 0, 1, 4, 1, 2, 3, 4, 4, 5, 6, 7, 8, 0];
+    let mut bytes = vec![0u8; 42];
+    bytes[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+    bytes[14] = 0x45;
+    bytes[16..18].copy_from_slice(&((28 + payload.len()) as u16).to_be_bytes());
+    bytes[22] = 64;
+    bytes[23] = 17;
+    bytes[26..30].copy_from_slice(&[192, 0, 2, 1]);
+    bytes[30..34].copy_from_slice(&[192, 0, 2, 2]);
+    bytes[34..36].copy_from_slice(&40_000u16.to_be_bytes());
+    bytes[36..38].copy_from_slice(&443u16.to_be_bytes());
+    bytes[38..40].copy_from_slice(&((8 + payload.len()) as u16).to_be_bytes());
+    bytes.extend_from_slice(&payload);
+    packrat_tui::net::parser::parse_ethernet(&bytes, number, number as f64)
+}
+
+#[cfg(unix)]
+pub fn helper(directory: &std::path::Path, response: &serde_json::Value) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = directory.join("quic-helper.sh");
+    let response = serde_json::to_string(response)
+        .unwrap()
+        .replace('\'', "'\\''");
+    std::fs::write(
+        &path,
+        format!("#!/bin/sh\nwhile IFS= read -r line; do printf '%s\\n' '{response}'; done\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    path
+}
