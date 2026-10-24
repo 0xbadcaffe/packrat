@@ -11,26 +11,10 @@ use futures::StreamExt;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::time;
 
-mod analysis;
-mod app;
-mod capture;
-mod craft;
-mod dissector;
-mod event;
-mod export;
-mod filter;
-mod model;
-mod net;
-mod pcap_replay;
-mod scan;
-mod sim;
-mod storage;
-mod tabs;
-mod traceroute;
-mod ui;
+use packrat_tui::{analysis, app, event, storage, ui};
 
 use app::{App, CliAction};
-use net::packet::Packet;
+use packrat_tui::net::packet::Packet;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
