@@ -1,5 +1,42 @@
 use packrat_tui::capture::helper::{decode_frame, write_frame, MAX_CAPTURE_FRAME};
 
+#[tokio::test]
+async fn helper_startup_failure_is_reported_to_the_caller() {
+    use packrat_tui::capture::{CaptureSource, helper::HelperCapture};
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    let mut task = HelperCapture {
+        program: std::env::temp_dir().join("packrat-missing-helper-9fa785f2"),
+        iface: "test".into(),
+        filter: None,
+    }.run(tx);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(result) = task.result() { break result; }
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    assert!(result.unwrap_err().contains("Start capture helper"));
+}
+
+#[tokio::test]
+async fn dropping_capture_task_signals_blocking_worker_to_stop() {
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    let exited = Arc::new(AtomicBool::new(false));
+    let worker_exited = exited.clone();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let task = packrat_tui::capture::CaptureTask::blocking(move |stop| {
+        let _ = started_tx.send(());
+        while !stop.load(Ordering::Acquire) { std::thread::yield_now(); }
+        worker_exited.store(true, Ordering::Release);
+        Ok(())
+    });
+    started_rx.await.unwrap();
+    drop(task);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !exited.load(Ordering::Acquire) { tokio::task::yield_now().await; }
+    }).await.unwrap();
+}
+
 #[test]
 fn capture_helper_protocol_round_trips_timestamp_and_frame() {
     let mut encoded = Vec::new();

@@ -1,7 +1,5 @@
 #[cfg(feature = "real-capture")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::Write;
-    use std::time::Instant;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut interface = None;
     let mut filter = None;
@@ -18,15 +16,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut capture = pcap::Capture::from_device(interface.as_str())?
         .promisc(true).snaplen(65_535).timeout(100).open()?;
     if let Some(filter) = filter { capture.filter(&filter, true)?; }
-    let start = Instant::now();
+    let mut capture = capture.setnonblock()?;
+    if capture.get_datalink() != pcap::Linktype::ETHERNET {
+        return Err("Only Ethernet capture link types are currently supported".into());
+    }
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
-    while let Ok(packet) = capture.next_packet() {
-        let micros = start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+    loop {
+        let packet = match capture.next_packet() {
+            Ok(packet) => packet,
+            Err(pcap::Error::TimeoutExpired | pcap::Error::NoMorePackets) => {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let seconds = u64::try_from(packet.header.ts.tv_sec)?;
+        let fraction = u64::try_from(packet.header.ts.tv_usec)?;
+        let micros = seconds.checked_mul(1_000_000).and_then(|value| value.checked_add(fraction)).ok_or("Capture timestamp overflow")?;
         packrat_tui::capture::helper::write_frame(&mut output, micros, packet.data)?;
     }
-    output.flush()?;
-    Ok(())
 }
 
 #[cfg(not(feature = "real-capture"))]

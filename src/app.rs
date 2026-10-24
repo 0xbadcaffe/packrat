@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use tokio::sync::mpsc::Sender;
-use tokio::task::JoinHandle;
 
 use crate::analysis::carving::{Carver, CarvedObject};
 use crate::analysis::yara::YaraEngine;
@@ -415,7 +414,7 @@ pub struct App {
     pub total_bytes: u64,
     pub packet_counter: u64,
     pub capturing: bool,
-    capture_handle: Option<JoinHandle<()>>,
+    capture_handle: Option<crate::capture::CaptureTask>,
     packet_tx: Sender<Packet>,
     pub picking_iface: bool,
     pub iface_list: Vec<String>,
@@ -1929,6 +1928,14 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        if let Some(result) = self.capture_handle.as_mut().and_then(|task| task.result()) {
+            self.capture_handle = None;
+            self.capturing = false;
+            self.set_status(match result {
+                Ok(()) => "Capture stopped".into(),
+                Err(error) => error,
+            });
+        }
         self.rate_tick += 1;
 
         // Flood mode — inject packets from the crafter

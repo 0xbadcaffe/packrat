@@ -4,8 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::Sender;
-use tokio::task::JoinHandle;
-use crate::capture::CaptureSource;
+use crate::capture::{CaptureSource, CaptureTask};
 use crate::net::packet::Packet;
 use crate::net::parser::parse_ethernet;
 
@@ -19,29 +18,30 @@ pub struct HelperCapture {
 }
 
 impl CaptureSource for HelperCapture {
-    fn run(self, tx: Sender<Packet>) -> JoinHandle<()> {
-        tokio::spawn(async move {
+    fn run(self, tx: Sender<Packet>) -> CaptureTask {
+        CaptureTask::spawn(async move {
             let mut command = tokio::process::Command::new(&self.program);
             command.arg("--interface").arg(&self.iface)
                 .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null()).kill_on_drop(true);
             if let Some(filter) = self.filter { command.arg("--filter").arg(filter); }
-            let Ok(mut child) = command.spawn() else { return; };
-            let Some(mut output) = child.stdout.take() else { return; };
+            let mut child = command.spawn().map_err(|error| format!("Start capture helper: {error}"))?;
+            let mut output = child.stdout.take().ok_or("Capture helper stdout unavailable")?;
             let mut packet_no = 0_u64;
             loop {
                 let mut header = [0_u8; HEADER_LENGTH];
-                if output.read_exact(&mut header).await.is_err() { break; }
+                output.read_exact(&mut header).await.map_err(|error| format!("Capture helper header: {error}"))?;
                 let timestamp_micros = u64::from_be_bytes(header[..8].try_into().unwrap());
                 let length = u32::from_be_bytes(header[8..].try_into().unwrap()) as usize;
-                if length == 0 || length > MAX_CAPTURE_FRAME { break; }
+                if length == 0 || length > MAX_CAPTURE_FRAME { return Err("Invalid capture helper frame length".into()); }
                 let mut frame = vec![0_u8; length];
-                if output.read_exact(&mut frame).await.is_err() { break; }
+                output.read_exact(&mut frame).await.map_err(|error| format!("Capture helper payload: {error}"))?;
                 packet_no += 1;
                 let packet = parse_ethernet(&frame, packet_no, timestamp_micros as f64 / 1_000_000.0);
                 if tx.send(packet).await.is_err() { break; }
             }
             let _ = child.kill().await;
+            Ok(())
         })
     }
 }
