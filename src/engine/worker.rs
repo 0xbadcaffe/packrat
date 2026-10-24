@@ -1,4 +1,5 @@
 //! Bounded ownership transport for the passive core. No terminal or enforcement.
+use super::shared::ReadCore;
 use super::snapshot::{AnalysisSnapshot, InspectionSnapshot};
 use super::{AnalysisCore, PacketAnalysis};
 use crate::net::packet::Packet;
@@ -51,6 +52,11 @@ pub enum WorkerEvent {
         request_id: u64,
         result: Result<InspectionSnapshot, String>,
     },
+    Updated {
+        generation: u64,
+        request_id: u64,
+        result: Result<(), String>,
+    },
 }
 
 enum Command {
@@ -67,6 +73,11 @@ enum Command {
     },
     Clear {
         generation: u64,
+    },
+    Update {
+        generation: u64,
+        request_id: u64,
+        apply: Box<dyn FnOnce(&mut AnalysisCore) -> Result<(), String> + Send>,
     },
 }
 
@@ -100,7 +111,8 @@ impl WorkerMonitor {
 pub struct AnalysisWorker {
     sender: Option<SyncSender<Command>>,
     events: Receiver<WorkerEvent>,
-    thread: Option<std::thread::JoinHandle<Result<AnalysisCore, String>>>,
+    thread: Option<std::thread::JoinHandle<Result<(), String>>>,
+    core: ReadCore,
     cancel: Arc<AtomicBool>,
     monitor: WorkerMonitor,
     generation: u64,
@@ -130,12 +142,14 @@ impl AnalysisWorker {
         };
         let worker_monitor = monitor.clone();
         let worker_cancel = Arc::clone(&cancel);
+        let core = ReadCore::new(core);
+        let worker_core = core.clone();
         let thread = std::thread::Builder::new()
             .name("packrat-analysis".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run::run(
-                        core,
+                        worker_core,
                         limits,
                         commands,
                         output,
@@ -160,6 +174,7 @@ impl AnalysisWorker {
             sender: Some(sender),
             events,
             thread: Some(thread),
+            core,
             cancel,
             monitor,
             generation: 0,
@@ -169,6 +184,22 @@ impl AnalysisWorker {
 
     pub fn monitor(&self) -> WorkerMonitor {
         self.monitor.clone()
+    }
+
+    pub fn read_core(&self) -> ReadCore {
+        self.core.clone()
+    }
+
+    pub fn try_update(
+        &self,
+        request_id: u64,
+        apply: impl FnOnce(&mut AnalysisCore) -> Result<(), String> + Send + 'static,
+    ) -> Result<(), String> {
+        self.try_command(Command::Update {
+            generation: self.generation,
+            request_id,
+            apply: Box::new(apply),
+        })
     }
     pub fn generation(&self) -> u64 {
         self.generation
@@ -259,7 +290,14 @@ impl AnalysisWorker {
 
     /// Drain accepted work and deliver every remaining event before joining.
     /// Use only during controlled shutdown, not from an interactive UI tick.
-    pub fn finish(mut self, mut consume: impl FnMut(WorkerEvent)) -> Result<AnalysisCore, String> {
+    pub fn finish(self, consume: impl FnMut(WorkerEvent)) -> Result<AnalysisCore, String> {
+        self.finish_shared(consume)?.into_core()
+    }
+
+    pub fn finish_shared(
+        mut self,
+        mut consume: impl FnMut(WorkerEvent),
+    ) -> Result<ReadCore, String> {
         self.sender.take();
         loop {
             match self.events.recv_timeout(Duration::from_millis(20)) {
@@ -280,7 +318,8 @@ impl AnalysisWorker {
             .take()
             .ok_or("Analysis worker already joined")?
             .join()
-            .map_err(|_| "Analysis worker join failed".to_string())?
+            .map_err(|_| "Analysis worker join failed".to_string())??;
+        Ok(self.core.clone())
     }
 }
 

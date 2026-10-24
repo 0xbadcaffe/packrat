@@ -206,3 +206,60 @@ fn unusable_packets_are_reported_but_never_enter_incident_history() {
             .all(|packet| packet.timestamp.is_finite())
     );
 }
+
+#[test]
+fn a_busy_core_never_blocks_the_terminal_read_path() {
+    let worker = AnalysisWorker::spawn(AnalysisCore::default(), WorkerLimits::default()).unwrap();
+    let read = worker.read_core();
+    let (started, running) = std::sync::mpsc::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    worker
+        .try_update(99, move |core| {
+            started.send(()).unwrap();
+            wait.recv().unwrap();
+            core.hosts.seed_tags("192.0.2.1", ["reviewed".into()]);
+            Ok(())
+        })
+        .unwrap();
+    running.recv_timeout(Duration::from_secs(2)).unwrap();
+    let start = Instant::now();
+    assert!(read.try_read().unwrap().is_none());
+    assert!(start.elapsed() < Duration::from_millis(100));
+    release.send(()).unwrap();
+    let WorkerEvent::Updated {
+        request_id: 99,
+        result: Ok(()),
+        ..
+    } = next(&worker)
+    else {
+        panic!();
+    };
+    let stopped = worker.finish_shared(|_| ()).unwrap();
+    assert!(
+        stopped
+            .read()
+            .unwrap()
+            .hosts
+            .get("192.0.2.1")
+            .unwrap()
+            .tags
+            .contains("reviewed")
+    );
+}
+
+#[test]
+fn failed_updates_are_reported_without_terminating_the_worker() {
+    let worker = AnalysisWorker::spawn(AnalysisCore::default(), WorkerLimits::default()).unwrap();
+    worker
+        .try_update(7, |_| Err("invalid policy".into()))
+        .unwrap();
+    let WorkerEvent::Updated {
+        result: Err(error), ..
+    } = next(&worker)
+    else {
+        panic!();
+    };
+    assert_eq!(error, "invalid policy");
+    assert!(worker.monitor().is_running());
+    worker.finish(|_| ()).unwrap();
+}

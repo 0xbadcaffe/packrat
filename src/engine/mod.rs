@@ -25,6 +25,7 @@ mod artifacts;
 mod graph;
 mod inspect;
 mod maintenance;
+pub mod shared;
 pub mod snapshot;
 mod transactions;
 pub mod worker;

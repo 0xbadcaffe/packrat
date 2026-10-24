@@ -3,13 +3,13 @@ use crate::engine::PacketDisposition;
 use std::collections::VecDeque;
 
 pub(super) fn run(
-    mut core: AnalysisCore,
+    shared: ReadCore,
     limits: WorkerLimits,
     commands: Receiver<Command>,
     output: SyncSender<WorkerEvent>,
     cancel: Arc<AtomicBool>,
     monitor: &WorkerMonitor,
-) -> Result<AnalysisCore, String> {
+) -> Result<(), String> {
     let mut history = VecDeque::<Packet>::new();
     let mut history_bytes = 0usize;
     let mut generation = 0;
@@ -26,6 +26,7 @@ pub(super) fn run(
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if dirty {
+                    let core = shared.0.lock().map_err(|_| "Analysis state poisoned")?;
                     publish(&core, monitor, generation, sequence, analyzed, skipped);
                     dirty = false;
                 }
@@ -33,6 +34,7 @@ pub(super) fn run(
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
+        let mut core = shared.0.lock().map_err(|_| "Analysis state poisoned")?;
         let event = match command {
             Command::Packet {
                 generation: submitted,
@@ -105,17 +107,36 @@ pub(super) fn run(
                 dirty = false;
                 continue;
             }
+            Command::Update {
+                generation: submitted,
+                request_id,
+                apply,
+            } => {
+                let result = if submitted == generation {
+                    apply(&mut core)
+                } else {
+                    Err("Update belongs to an expired generation".into())
+                };
+                dirty = true;
+                WorkerEvent::Updated {
+                    generation,
+                    request_id,
+                    result,
+                }
+            }
         };
         if dirty && sequence % 32 == 0 {
             publish(&core, monitor, generation, sequence, analyzed, skipped);
             dirty = false;
         }
+        drop(core);
         if !send(&output, event, &cancel) {
             break;
         }
     }
+    let core = shared.0.lock().map_err(|_| "Analysis state poisoned")?;
     publish(&core, monitor, generation, sequence, analyzed, skipped);
-    Ok(core)
+    Ok(())
 }
 
 fn publish(
