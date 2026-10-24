@@ -344,11 +344,72 @@ async fn critical_detection_requires_review_and_retains_evidence_after_acknowled
 async fn automatic_latch_requires_policy_gate_for_default_critical_signal() {
     let mut app = App::new_for_test();
     app.traffic_latch.mode = LatchMode::Automatic;
-    app.inject_packet(critical_packet());
+    app.selected_iface = "test-live".into();
+    app.capturing = true;
+    app.ingest_packet(live_critical_packet());
 
     assert_eq!(app.traffic_latch.actions.len(), 1);
     assert_eq!(app.traffic_latch.actions[0].status, LatchStatus::PendingApproval);
     assert!(app.traffic_latch.actions[0].detail.contains("automatic gate not satisfied"));
+}
+
+fn live_critical_packet() -> Packet {
+    use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
+    let mut packet = critical_packet();
+    packet.capture = Some(CaptureMetadata {
+        timestamp: Some(CaptureTimestamp {
+            ticks: 1, resolution: TimestampResolution::Decimal(0), offset_seconds: 0,
+        }),
+        captured_length: packet.bytes.len() as u32,
+        wire_length: packet.bytes.len() as u32,
+        link_type: 1, interface_id: 0, section_id: 0,
+        interface_name: Some("test-live".into()), comments: Vec::new(),
+    });
+    packet
+}
+
+#[test]
+fn injected_and_simulated_packets_cannot_request_or_approve_live_containment() {
+    for simulated_capture in [false, true] {
+        let mut app = App::new_for_test();
+        app.traffic_latch.mode = LatchMode::Automatic;
+        app.latch_helper_path = Some("/must-not-run-a-firewall-helper".into());
+        if simulated_capture {
+            app.capturing = true;
+            app.ingest_packet(critical_packet());
+        } else {
+            app.inject_packet(critical_packet());
+        }
+        assert_eq!(app.traffic_latch.actions[0].status, LatchStatus::Observed);
+        app.approve_active_latch();
+        assert_eq!(app.traffic_latch.actions[0].status, LatchStatus::Observed);
+        assert!(app.status_msg.as_ref().unwrap().contains("Containment disabled"));
+    }
+}
+
+#[test]
+fn offline_detector_state_disables_later_live_enforcement_until_cleared() {
+    let mut app = App::new_for_test();
+    app.traffic_latch.mode = LatchMode::Automatic;
+    app.inject_packet(packet(1));
+    app.capturing = true;
+    app.selected_iface = "test-live".into();
+    app.ingest_packet(live_critical_packet());
+    assert_eq!(app.traffic_latch.actions[0].status, LatchStatus::Observed);
+    app.clear_packets();
+    app.capturing = true;
+    app.ingest_packet(live_critical_packet());
+    assert_eq!(app.traffic_latch.actions[0].status, LatchStatus::PendingApproval);
+}
+
+#[test]
+fn queued_packets_from_another_interface_cannot_trigger_enforcement() {
+    let mut app = App::new_for_test();
+    app.capturing = true;
+    app.selected_iface = "new-interface".into();
+    app.traffic_latch.mode = LatchMode::Automatic;
+    app.ingest_packet(live_critical_packet());
+    assert_eq!(app.traffic_latch.actions[0].status, LatchStatus::Observed);
 }
 
 // ─── Workspace navigation ────────────────────────────────────────────────────

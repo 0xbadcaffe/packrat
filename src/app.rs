@@ -537,6 +537,9 @@ pub struct App {
     pub socket_scope:    SocketScope,
     pub route_ledger:    RouteLedger,
     pub traffic_latch:   TrafficLatch,
+    live_response_eligible: bool,
+    processing_live_packet: bool,
+    live_response_incidents: std::collections::HashSet<u64>,
     pub response_preview: Vec<LatchAction>,
     pub latch_helper_path: Option<std::path::PathBuf>,
     pub wire_pulse:      WirePulse,
@@ -729,6 +732,9 @@ impl App {
             socket_scope:     SocketScope::default(),
             route_ledger:     RouteLedger::default(),
             traffic_latch:    TrafficLatch::default(),
+            live_response_eligible: true,
+            processing_live_packet: false,
+            live_response_incidents: std::collections::HashSet::new(),
             response_preview: Vec::new(),
             latch_helper_path: None,
             wire_pulse:       WirePulse::default(),
@@ -997,6 +1003,7 @@ impl App {
         app.preferred_workspace = Workspace::Traffic;
         app.alert_center.automation_mode = AutomationMode::Off;
         app.persist_preferences = false;
+        app.evidence_vault.enabled = false;
         app
     }
 
@@ -1618,7 +1625,11 @@ impl App {
 
     pub fn ingest_packet(&mut self, pkt: Packet) {
         if !self.capturing { return; }
-        self.ingest_packet_inner(pkt);
+        let live = self.selected_iface != "simulated" && pkt.capture.as_ref().is_some_and(|capture| {
+            capture.timestamp.is_some()
+                && capture.interface_name.as_deref() == Some(self.selected_iface.as_str())
+        });
+        self.analyze_packet(pkt, live);
     }
 
     /// Inject a packet regardless of capturing state (used by packet crafter).
@@ -1627,6 +1638,17 @@ impl App {
     }
 
     fn ingest_packet_inner(&mut self, pkt: Packet) {
+        self.analyze_packet(pkt, false);
+    }
+
+    fn analyze_packet(&mut self, pkt: Packet, live: bool) {
+        if !live {
+            // Offline traffic shares detector state with the live view. Once
+            // mixed, require a clean session before allowing host enforcement.
+            self.live_response_eligible = false;
+            self.live_response_incidents.clear();
+        }
+        self.processing_live_packet = live && self.live_response_eligible;
         if let Some(error) = self.packet_archive.as_ref().and_then(|archive| archive.record(&pkt).err()) {
             self.abort_capture();
             self.capturing = false;
@@ -1906,6 +1928,7 @@ impl App {
             self.packets.iter().cloned(),
         );
         self.freeze_incident_evidence(id);
+        if self.processing_live_packet { self.live_response_incidents.insert(id); }
         self.evaluate_traffic_latch(id, false);
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {signature}"));
@@ -1928,6 +1951,7 @@ impl App {
             self.packets.iter().cloned(),
         );
         self.freeze_incident_evidence(id);
+        if self.processing_live_packet { self.live_response_incidents.insert(id); }
         self.evaluate_traffic_latch(id, auto_contain);
         self.alert_overlay_open = true;
         self.set_status(format!("Critical incident #{id}: {rule_name}"));
@@ -1947,6 +1971,10 @@ impl App {
         let incident = self.incidents.incidents.iter()
             .find(|incident| incident.id == incident_id).cloned();
         if let Some(incident) = incident {
+            if !self.live_response_eligible || !self.live_response_incidents.contains(&incident_id) {
+                self.traffic_latch.observe_offline_incident(&incident);
+                return;
+            }
             let automatic_allowed = auto_contain_rule || self.has_independent_critical_signals(&incident);
             if let Some(path) = self.latch_helper_path.as_ref() {
                 let backend = CommandLatch::new(path);
@@ -1975,6 +2003,10 @@ impl App {
             self.set_status("No active incident has a pending TrafficLatch action");
             return;
         };
+        if !self.live_response_eligible || !self.live_response_incidents.contains(&incident_id) {
+            self.set_status("Containment disabled for offline, synthetic, or mixed evidence; start a clean live session");
+            return;
+        }
         let result = if let Some(path) = self.latch_helper_path.as_ref() {
             let backend = CommandLatch::new(path);
             self.traffic_latch.approve(incident_id, &backend)
@@ -2279,6 +2311,9 @@ impl App {
         self.ioc_engine.clear_hits();
         self.rule_engine.clear_hits();
         self.incidents.clear();
+        self.live_response_eligible = true;
+        self.processing_live_packet = false;
+        self.live_response_incidents.clear();
         self.evidence_vault.clear_session();
         self.socket_scope.traffic.clear();
         self.route_ledger.clear_session();
@@ -3352,5 +3387,18 @@ mod project_tests {
         let tray = restore_investigation_tray(&state).unwrap();
         assert_eq!(tray.retained_packet(1).unwrap().no, 1);
         assert!(tray.retained_packet(2).is_none());
+    }
+
+    #[test]
+    fn explicit_auto_contain_rule_cannot_enforce_an_offline_incident() {
+        let mut app = App::new_for_test();
+        app.traffic_latch.mode = LatchMode::Automatic;
+        app.latch_helper_path = Some("/must-not-execute".into());
+        app.inject_packet(packet(1));
+        app.open_user_rule_incident(&packet(1), "auto-rule", "auto", "test", true);
+        assert_eq!(app.traffic_latch.actions.len(), 1);
+        assert_eq!(app.traffic_latch.actions[0].status, crate::analysis::traffic_latch::LatchStatus::Observed);
+        app.approve_active_latch();
+        assert_eq!(app.traffic_latch.actions[0].status, crate::analysis::traffic_latch::LatchStatus::Observed);
     }
 }

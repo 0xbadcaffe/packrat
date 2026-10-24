@@ -279,6 +279,20 @@ impl Default for TrafficLatch {
 }
 
 impl TrafficLatch {
+    /// Historical and synthetic evidence can be inspected, never enforced.
+    pub fn observe_offline_incident(&mut self, incident: &Incident) {
+        if self.actions.iter().any(|action| action.incident_id == incident.id) { return; }
+        self.actions.push(LatchAction {
+            incident_id: incident.id,
+            address: incident.attacker.parse().ok(),
+            mode: self.mode,
+            status: LatchStatus::Observed,
+            expires_seconds: self.expires_seconds,
+            detail: "Offline, synthetic, or mixed evidence; containment disabled until a clean live session".into(),
+            created_at: now(),
+        });
+    }
+
     pub fn on_incident(&mut self, incident: &Incident, backend: &dyn LatchBackend) -> &LatchAction {
         self.on_incident_with_auto_gate(incident, backend, false)
     }
