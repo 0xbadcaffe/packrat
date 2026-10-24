@@ -146,6 +146,10 @@ fn draw_worklist(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_active_view(f: &mut Frame, app: &App, area: Rect) {
+    if app.investigation_view == InvestigationView::Transactions {
+        transactions::draw(f, app, area);
+        return;
+    }
     let Some(packet) = app.active_investigation_packet() else {
         draw_artifact_context(f, app, area);
         return;
@@ -160,6 +164,7 @@ fn draw_active_view(f: &mut Frame, app: &App, area: Rect) {
         InvestigationView::Encrypted => draw_encrypted(f, app, packet, area),
         InvestigationView::Security => draw_security(f, app, packet, area),
         InvestigationView::Notes => draw_notes(f, app, packet, area),
+        InvestigationView::Transactions => transactions::draw(f, app, area),
     }
 }
 
@@ -353,3 +358,4 @@ mod stream;
 use stream::*;
 mod findings;
 use findings::*;
+mod transactions;

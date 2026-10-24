@@ -188,12 +188,24 @@ impl App {
     }
 
     pub fn active_investigation_stream(&self) -> Option<&ReassembledStream> {
+        if let Some(InvestigationItem::Stream(id)) = self
+            .worklist
+            .active
+            .and_then(|index| self.worklist.items.get(index))
+        {
+            return self.core.streams.get(id);
+        }
         let packet = self.active_investigation_packet()?;
         let key = StreamKey::from_packet(packet)?;
         self.core.streams.get(&key.id())
     }
 
     pub fn open_active_investigation_stream_overlay(&mut self) {
+        if let Some(stream) = self.active_investigation_stream() {
+            let id = stream.key.id();
+            self.open_reassembled_stream(id);
+            return;
+        }
         let Some(packet) = self.active_investigation_packet() else {
             self.set_status("No packet selected for stream follow");
             return;

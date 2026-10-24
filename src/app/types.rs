@@ -64,10 +64,11 @@ pub enum InvestigationView {
     Encrypted,
     Security,
     Notes,
+    Transactions,
 }
 
 impl InvestigationView {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 9;
 
     pub fn label(self) -> &'static str {
         match self {
@@ -79,6 +80,7 @@ impl InvestigationView {
             Self::Encrypted => "Encrypted",
             Self::Security => "Security",
             Self::Notes => "Notes",
+            Self::Transactions => "Transactions",
         }
     }
 
@@ -91,6 +93,7 @@ impl InvestigationView {
             5 => Self::Encrypted,
             6 => Self::Security,
             7 => Self::Notes,
+            8 => Self::Transactions,
             _ => Self::Summary,
         }
     }
@@ -105,6 +108,7 @@ impl InvestigationView {
             Self::Encrypted => 5,
             Self::Security => 6,
             Self::Notes => 7,
+            Self::Transactions => 8,
         }
     }
 }
