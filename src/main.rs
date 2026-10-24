@@ -5,10 +5,10 @@ use std::{io, time::Duration};
 use anyhow::Result;
 use crossterm::{
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::time;
 
 use packrat_tui::{analysis, app, event, storage, ui};
@@ -35,13 +35,15 @@ async fn main() -> Result<()> {
         None => None,
     };
     if options.sandbox {
-        let paths = analysis::runtime_guard::default_write_paths()
-            .map_err(anyhow::Error::msg)?;
+        let paths = analysis::runtime_guard::default_write_paths().map_err(anyhow::Error::msg)?;
         analysis::runtime_guard::apply(&paths).map_err(anyhow::Error::msg)?;
     }
-    let packet_archive = options.archive_path.as_ref()
+    let packet_archive = options
+        .archive_path
+        .as_ref()
         .map(|path| storage::packet_archive::ArchiveWorker::open(path))
-        .transpose().map_err(anyhow::Error::msg)?;
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -87,16 +89,34 @@ async fn main() -> Result<()> {
     let mut tick_interval = time::interval(Duration::from_millis(100));
     let mut event_reader = crossterm::event::EventStream::new();
 
-    let result = run_loop(&mut terminal, &mut app, &mut tick_interval, &mut packet_rx, &mut event_reader).await;
+    let result = match app.start_background_analysis() {
+        Ok(()) => {
+            run_loop(
+                &mut terminal,
+                &mut app,
+                &mut tick_interval,
+                &mut packet_rx,
+                &mut event_reader,
+            )
+            .await
+        }
+        Err(error) => Err(anyhow::Error::msg(error)),
+    };
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+    let shutdown = app.stop_background_analysis();
+    match &shutdown {
+        Ok(0) => (),
+        Ok(cancelled) => eprintln!("Shutdown cancelled {cancelled} pending analysis items."),
+        Err(error) => eprintln!("{error}"),
+    }
     if let Some(archive) = app.packet_archive.as_mut() {
         archive.finish().map_err(anyhow::Error::msg)?;
     }
 
-    result
+    result.and(shutdown.map(|_| ()).map_err(anyhow::Error::msg))
 }
 
 async fn run_loop(
@@ -106,16 +126,21 @@ async fn run_loop(
     packet_rx: &mut tokio::sync::mpsc::Receiver<Packet>,
     event_reader: &mut crossterm::event::EventStream,
 ) -> Result<()> {
-    let dispatch = packrat_tui::capture::dispatch::DispatchBudget::default();
+    let mut pending_packet = None;
+    let mut analysis_interval = time::interval(Duration::from_millis(20));
     loop {
-        dispatch.drain(packet_rx, |packet| app.ingest_packet(packet));
-
-        terminal.draw(|f| ui::draw(f, app))?;
+        app.poll_analysis();
+        app.dispatch_capture(packet_rx, &mut pending_packet)
+            .map_err(anyhow::Error::msg)?;
+        if let Some(view) = app.try_view().map_err(anyhow::Error::msg)? {
+            terminal.draw(|f| ui::draw_view(f, &view))?;
+        }
 
         tokio::select! {
             _ = tick_interval.tick() => {
                 app.tick();
             }
+            _ = analysis_interval.tick() => {}
             Some(Ok(evt)) = event_reader.next() => {
                 if event::handle(app, evt) {
                     break;
@@ -123,8 +148,8 @@ async fn run_loop(
             }
             // Also wake up when the first new packet arrives so the
             // next iteration can drain it without waiting a full tick.
-            pkt = packet_rx.recv() => {
-                if let Some(p) = pkt { app.ingest_packet(p); }
+            pkt = packet_rx.recv(), if pending_packet.is_none() && !app.analysis_backpressured() => {
+                pending_packet = pkt;
             }
         }
     }
