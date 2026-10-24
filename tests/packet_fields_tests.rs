@@ -44,6 +44,18 @@ fn fragments_and_padding_do_not_become_transport_or_tls_fields() {
     assert!(!fields.iter().any(|field| field.path.starts_with("tls.")));
 }
 
+#[test]
+fn arp_tree_uses_captured_sender_and_target_addresses() {
+    let mut bytes = ethernet_header(0x0806);
+    bytes.extend_from_slice(&[0, 1, 8, 0, 6, 4, 0, 2]);
+    bytes.extend_from_slice(&[0, 1, 2, 3, 4, 5, 192, 0, 2, 12]);
+    bytes.extend_from_slice(&[6, 7, 8, 9, 10, 11, 192, 0, 2, 13]);
+    let fields = extract_fields(&packet(bytes, "ARP"));
+    assert_eq!(field(&fields, "arp.opcode"), "2");
+    assert_eq!(field(&fields, "arp.src.proto_ipv4"), "192.0.2.12");
+    assert_eq!(field(&fields, "arp.dst.proto_ipv4"), "192.0.2.13");
+}
+
 fn field<'a>(fields: &'a [packrat_tui::analysis::packet_fields::PacketField], path: &str) -> &'a str {
     fields.iter().find(|field| field.path == path).map(|field| field.value.as_str()).unwrap_or("")
 }

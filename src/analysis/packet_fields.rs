@@ -81,6 +81,7 @@ pub fn extract_fields(packet: &Packet) -> Vec<PacketField> {
         match eth.ether_type {
             0x0800 => add_ipv4_fields(bytes, eth.payload_offset, &mut fields),
             0x86dd => add_ipv6_fields(bytes, eth.payload_offset, &mut fields),
+            0x0806 => add_arp_fields(bytes, eth.payload_offset, &mut fields),
             _ => {}
         }
 
@@ -101,6 +102,23 @@ pub fn extract_fields(packet: &Packet) -> Vec<PacketField> {
     }
 
     fields
+}
+
+fn add_arp_fields(bytes: &[u8], offset: usize, fields: &mut Vec<PacketField>) {
+    let Some(header) = bytes.get(offset..offset + 8) else { return; };
+    fields.push(PacketField::new("ARP", "arp.hw.type", "Hardware Type", read_u16(bytes, offset).unwrap_or(0).to_string(), Some(offset), Some(2)));
+    fields.push(PacketField::new("ARP", "arp.proto.type", "Protocol Type", format!("0x{:04x}", read_u16(bytes, offset + 2).unwrap_or(0)), Some(offset + 2), Some(2)));
+    fields.push(PacketField::new("ARP", "arp.opcode", "Operation", read_u16(bytes, offset + 6).unwrap_or(0).to_string(), Some(offset + 6), Some(2)));
+    if header[4] == 6 && header[5] == 4 && read_u16(bytes, offset + 2) == Some(0x0800) && bytes.len() >= offset + 28 {
+        for (path, label, position, length, value) in [
+            ("arp.src.hw_mac", "Sender MAC", offset + 8, 6, mac(bytes, offset + 8)),
+            ("arp.src.proto_ipv4", "Sender IP", offset + 14, 4, ipv4(bytes, offset + 14)),
+            ("arp.dst.hw_mac", "Target MAC", offset + 18, 6, mac(bytes, offset + 18)),
+            ("arp.dst.proto_ipv4", "Target IP", offset + 24, 4, ipv4(bytes, offset + 24)),
+        ] {
+            fields.push(PacketField::new("ARP", path, label, value, Some(position), Some(length)));
+        }
+    }
 }
 
 pub fn filter_fields(fields: &[PacketField], query: &str) -> Vec<PacketField> {
