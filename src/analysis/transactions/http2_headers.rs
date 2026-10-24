@@ -55,7 +55,7 @@ pub(super) fn validate(
                 .iter()
                 .any(|byte| matches!(byte, 0 | b'\r' | b'\n'))
         {
-            return Err("Invalid HTTP/2 field name or value".into());
+            return Err("Invalid HTTP field name or value".into());
         }
         if header
             .value
@@ -66,7 +66,7 @@ pub(super) fn validate(
                 .last()
                 .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
         {
-            return Err("HTTP/2 field value has leading or trailing whitespace".into());
+            return Err("HTTP field value has leading or trailing whitespace".into());
         }
         if header.name.starts_with(':') {
             if trailers || regular || !pseudo.insert(header.name.as_str()) {
@@ -88,7 +88,7 @@ pub(super) fn validate(
                 .iter()
                 .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(byte))
             {
-                return Err("Invalid HTTP/2 field name token".into());
+                return Err("Invalid HTTP field name token".into());
             }
             regular = true;
         }
@@ -97,7 +97,7 @@ pub(super) fn validate(
             "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade"
         ) || header.name == "te" && !header.value.eq_ignore_ascii_case(b"trailers")
         {
-            return Err("Connection-specific field in HTTP/2 message".into());
+            return Err("Connection-specific field in multiplexed HTTP message".into());
         }
     }
     if trailers {
@@ -127,7 +127,7 @@ pub(super) fn validate(
             || !(b'1'..=b'5').contains(&value[0])
             || value == b"101"
         {
-            return Err("Invalid HTTP/2 :status".into());
+            return Err("Invalid HTTP :status".into());
         }
     }
     Ok(())

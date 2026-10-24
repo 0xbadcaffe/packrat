@@ -5,7 +5,8 @@ pub(super) fn conversation(id: &str, connection: &Connection) -> Http3Conversati
     let mut report = Http3Conversation {
         connection_id: id.into(), transactions: Vec::new(),
         limitations: vec!["QUIC authentication, connection identity, and QPACK state are supplied by the configured helper; ciphertext is not decoded by Packrat.".into(),
-            "Request streams only; server push and control-stream policy are not reconstructed. Offsets refer to authenticated stream plaintext, not capture bytes.".into()],
+            "Request streams only; server push and control-stream policy are not reconstructed. Offsets refer to authenticated stream plaintext, not capture bytes.".into(),
+            "Packet references identify helper frame-completion observations, not every fragment. Packet lookup retains the latest 4096 packet numbers.".into()],
     };
     if connection.limited {
         report
@@ -15,14 +16,17 @@ pub(super) fn conversation(id: &str, connection: &Connection) -> Http3Conversati
     for (stream_id, halves) in &connection.streams {
         let (request, _) = halves
             .get(&Http3Sender::Client)
-            .map(|half| message(half, true, false, connection.limited))
+            .map(|half| message(half, true, false, false, connection.limited))
             .unwrap_or_default();
         let head = request
             .as_ref()
             .is_some_and(|request| request.header(":method") == Some(b"HEAD"));
+        let connect = request
+            .as_ref()
+            .is_some_and(|request| request.header(":method") == Some(b"CONNECT"));
         let (response, interim_responses) = halves
             .get(&Http3Sender::Server)
-            .map(|half| message(half, false, head, connection.limited))
+            .map(|half| message(half, false, head, connect, connection.limited))
             .unwrap_or_default();
         report.transactions.push(Http3Exchange {
             stream_id: *stream_id,
@@ -38,6 +42,7 @@ fn message(
     half: &HalfStream,
     request: bool,
     head: bool,
+    connect: bool,
     connection_limited: bool,
 ) -> (Option<Http3Message>, Vec<Http3Message>) {
     let mut message = Http3Message::default();
@@ -154,7 +159,8 @@ fn message(
             "Retained events or packet provenance are incomplete",
         );
     }
-    let tunnel = message.header(":method") == Some(b"CONNECT");
+    let tunnel = message.header(":method") == Some(b"CONNECT")
+        || connect && status(&message.headers).is_some_and(|code| (200..300).contains(&code));
     let no_body = !request
         && (head || status(&message.headers).is_some_and(|code| matches!(code, 204 | 304)));
     if no_body && message.body_bytes() != 0 {
@@ -203,12 +209,30 @@ fn validate_headers(headers: &[HttpHeader], request: bool, trailers: bool) -> Re
         return Err("Empty HTTP/3 pseudo-header value".into());
     }
     if request {
+        let method = headers
+            .iter()
+            .find(|header| header.name == ":method")
+            .ok_or("Missing :method")?;
+        if !method
+            .value
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(byte))
+        {
+            return Err("Invalid HTTP method token".into());
+        }
         let connect = headers
             .iter()
             .any(|header| header.name == ":method" && header.value == b"CONNECT");
         let extended = headers.iter().any(|header| header.name == ":protocol");
         if extended && !connect {
             return Err(":protocol requires CONNECT".into());
+        }
+        if extended
+            && [":scheme", ":path"]
+                .iter()
+                .any(|required| !headers.iter().any(|header| header.name == *required))
+        {
+            return Err("Extended CONNECT is missing :scheme or :path".into());
         }
         if connect
             && !extended
@@ -218,6 +242,10 @@ fn validate_headers(headers: &[HttpHeader], request: bool, trailers: bool) -> Re
         {
             return Err("Ordinary CONNECT must not contain :scheme or :path".into());
         }
+    } else if status(headers).is_some_and(|code| code < 200 || code == 204)
+        && headers.iter().any(|header| header.name == "content-length")
+    {
+        return Err("Content-Length is forbidden in informational and 204 responses".into());
     }
     Ok(())
 }
