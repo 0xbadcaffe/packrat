@@ -3,3 +3,4 @@ pub mod case_bundle;
 pub mod graph_store;
 pub mod project_store;
 pub mod theme_store;
+pub mod packet_archive;
