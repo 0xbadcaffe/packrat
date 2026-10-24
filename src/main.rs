@@ -50,15 +50,14 @@ async fn main() -> Result<()> {
         Some(address) => Some(analysis::telemetry::bind(address).await?),
         None => None,
     };
-    let packet_archive = options.archive_path.as_ref()
-        .map(|path| storage::packet_archive::ArchiveWorker::open(path))
-        .transpose().map_err(anyhow::Error::msg)?;
-
     if options.sandbox {
         let paths = analysis::runtime_guard::default_write_paths()
             .map_err(anyhow::Error::msg)?;
         analysis::runtime_guard::apply(&paths).map_err(anyhow::Error::msg)?;
     }
+    let packet_archive = options.archive_path.as_ref()
+        .map(|path| storage::packet_archive::ArchiveWorker::open(path))
+        .transpose().map_err(anyhow::Error::msg)?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

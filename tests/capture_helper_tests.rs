@@ -37,6 +37,25 @@ async fn dropping_capture_task_signals_blocking_worker_to_stop() {
     }).await.unwrap();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn archive_is_opened_only_after_filesystem_sandbox_activation() {
+    let root = std::env::temp_dir().join(format!("packrat-sandbox-{}", rand::random::<u64>()));
+    let allowed = root.join("allowed");
+    let denied = root.join("denied");
+    std::fs::create_dir_all(allowed.join("tmp")).unwrap();
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_packrat"))
+        .current_dir(&allowed)
+        .env("TMPDIR", allowed.join("tmp"))
+        .env("XDG_CONFIG_HOME", allowed.join("config"))
+        .env("XDG_DATA_HOME", allowed.join("data"))
+        .args(["--sandbox", "--simulation", "--archive"])
+        .arg(&denied).output().unwrap();
+    assert!(!result.status.success());
+    assert!(!denied.exists(), "Archive directory was created before confinement");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn capture_helper_protocol_round_trips_timestamp_and_frame() {
     let mut encoded = Vec::new();
