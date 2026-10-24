@@ -7,6 +7,7 @@ mod http;
 mod http2;
 mod http2_headers;
 mod http2_wire;
+pub mod http3;
 mod message;
 mod multiplexed;
 
@@ -63,7 +64,7 @@ pub enum MessageState {
     Unsupported,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HttpHeader {
     pub name: String,
     pub value: Vec<u8>,
