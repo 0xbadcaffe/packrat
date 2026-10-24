@@ -19,14 +19,30 @@ impl DispatchBudget {
     /// Consume ready packets within both bounds, without waiting for a sender.
     /// A single callback may exceed the time budget; it is never interrupted.
     pub fn drain<T>(&self, receiver: &mut Receiver<T>, mut consume: impl FnMut(T)) -> usize {
+        self.drain_while(receiver, |packet| {
+            consume(packet);
+            true
+        })
+    }
+
+    /// Stop after the callback retains a pending item under downstream pressure.
+    /// Items not yet handed to the callback remain in the upstream channel.
+    pub fn drain_while<T>(
+        &self,
+        receiver: &mut Receiver<T>,
+        mut consume: impl FnMut(T) -> bool,
+    ) -> usize {
         let started = Instant::now();
         let mut count = 0;
         while count < self.packets.get() && started.elapsed() < self.duration {
             let Ok(packet) = receiver.try_recv() else {
                 break;
             };
-            consume(packet);
+            let ready = consume(packet);
             count += 1;
+            if !ready {
+                break;
+            }
         }
         count
     }

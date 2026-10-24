@@ -61,3 +61,22 @@ fn disconnected_and_empty_queues_return_without_waiting() {
         0
     );
 }
+#[test]
+fn downstream_pressure_leaves_unread_packets_in_the_capture_channel() {
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+    for index in 0..4 {
+        sender.try_send(index).unwrap();
+    }
+    let mut pending = None;
+    let count = packrat_tui::capture::dispatch::DispatchBudget::default().drain_while(
+        &mut receiver,
+        |item| {
+            pending = Some(item);
+            false
+        },
+    );
+    assert_eq!(count, 1);
+    assert_eq!(pending, Some(0));
+    assert_eq!(receiver.len(), 3);
+    assert_eq!(receiver.try_recv().unwrap(), 1);
+}
