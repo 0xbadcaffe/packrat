@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::sim::dynamic::EntryKind;
 use crate::ui::helpers::truncate;
 use crate::ui::theme::*;

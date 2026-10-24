@@ -19,7 +19,7 @@ impl App {
             _ => AutomationMode::Off,
         };
         let mut app = Self {
-            core,
+            core: ReadCore::new(core),
             active_tab: Workspace::from_index(preferences.startup_workspace).home(),
             navigation_history: Vec::new(),
             packets: VecDeque::new(),

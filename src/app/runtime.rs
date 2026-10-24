@@ -60,8 +60,10 @@ impl App {
         if self.rate_tick % 20 == 1 {
             let _ = self.socket_scope.refresh_event_file();
             let _ = self.socket_scope.refresh();
-            if self.core.tls_tracker.key_shelf.path.is_some() {
-                let _ = self.core.tls_tracker.reload_key_log();
+            let core_handle = self.core.clone();
+            let mut core = core_handle.edit();
+            if core.tls_tracker.key_shelf.path.is_some() {
+                let _ = core.tls_tracker.reload_key_log();
             }
         }
 
@@ -95,7 +97,7 @@ impl App {
             }
         }
 
-        self.core.maintenance();
+        self.core.edit().maintenance();
         self.refresh_telemetry();
     }
 
@@ -104,17 +106,18 @@ impl App {
     }
 
     pub(super) fn refresh_telemetry(&self) {
+        let core_handle = self.core.clone();
+        let core = core_handle.edit();
         self.telemetry.publish(TelemetrySnapshot {
             packets_total: self.packet_counter,
             bytes_total: self.total_bytes,
             visible_packets: self.filtered.len(),
-            flows: self.core.flow_tracker.flows.len(),
-            hosts: self.core.hosts.len(),
-            security_findings: self.core.security.alert_count(),
-            rule_hits: self.core.rule_engine.hits.len(),
-            ioc_hits: self.core.ioc_engine.hit_count(),
-            pending_incidents: self
-                .core
+            flows: core.flow_tracker.flows.len(),
+            hosts: core.hosts.len(),
+            security_findings: core.security.alert_count(),
+            rule_hits: core.rule_engine.hits.len(),
+            ioc_hits: core.ioc_engine.hit_count(),
+            pending_incidents: core
                 .incidents
                 .incidents
                 .iter()
@@ -129,5 +132,4 @@ impl App {
             enriched_addresses: self.net_registry.observed.len(),
         });
     }
-
 }

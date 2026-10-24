@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::analysis::packet_fields::PacketField;
 use crate::analysis::stream::ReassembledStream;
-use crate::app::{App, InvestigationItem, InvestigationView};
+use crate::app::{AppView as App, InvestigationItem, InvestigationView};
 use crate::model::evidence::{EvidenceRef, PacketRef};
 use crate::net::flow::FlowKey;
 use crate::net::packet::Packet;

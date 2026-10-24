@@ -14,7 +14,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph},
 };
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::app::GraphUiModeState;
 use crate::ui::theme::*;
 use super::graph_panels;

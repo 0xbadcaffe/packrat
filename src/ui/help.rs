@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App) {

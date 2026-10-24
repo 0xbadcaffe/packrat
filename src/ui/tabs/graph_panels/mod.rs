@@ -1,6 +1,6 @@
 //! Graph panel renderers — node list, neighborhood, adjacency, detail, etc.
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::model::graph_types::GraphNodeKind;
 use crate::ui::theme::*;
 use ratatui::{

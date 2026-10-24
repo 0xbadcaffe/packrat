@@ -114,10 +114,10 @@ fn cases_restore_reviewed_incidents_and_correlated_impact_without_side_effects()
     let mut source = App::new_for_test();
     source.inject_packet(packet(1));
     source.open_user_rule_incident(&packet(1), "rule", "rule", "finding", true);
-    let id = source.core.incidents.active().unwrap().id;
-    source.core.incidents.mark_active_reviewed();
-    source.core.incidents.acknowledge_active().unwrap();
-    source.core.endpoint_evidence.push(EndpointEvidence {
+    let id = source.core.edit().incidents.active().unwrap().id;
+    source.core.edit().incidents.mark_active_reviewed();
+    source.core.edit().incidents.acknowledge_active().unwrap();
+    source.core.edit().endpoint_evidence.push(EndpointEvidence {
         incident_id: id,
         target: "198.51.100.2".into(),
         source: "audit".into(),
@@ -144,17 +144,21 @@ fn cases_restore_reviewed_incidents_and_correlated_impact_without_side_effects()
             .apply_project_state(serde_json::from_slice(&json).unwrap())
             .unwrap();
         assert!(restored.filter.input.is_empty());
-        assert!(restored.core.incidents.active().is_none());
-        assert_eq!(restored.core.incidents.incidents[0].id, id);
-        assert!(restored.core.incidents.incidents[0].reviewed);
+        assert!(restored.core.edit().incidents.active().is_none());
+        assert_eq!(restored.core.edit().incidents.incidents[0].id, id);
+        assert!(restored.core.edit().incidents.incidents[0].reviewed);
         assert_eq!(
-            restored.core.incidents.incidents[0].packet_history[0].bytes,
+            restored.core.edit().incidents.incidents[0].packet_history[0].bytes,
             [1, 2, 3, 4]
         );
-        let report = crate::analysis::impact::correlate(
-            &restored.core.incidents.incidents[0],
-            &restored.core.endpoint_evidence,
-        );
+        let report = restored
+            .query_core(|core| {
+                crate::analysis::impact::correlate(
+                    &core.incidents.incidents[0],
+                    &core.endpoint_evidence,
+                )
+            })
+            .unwrap();
         assert!(!report.compromise_confirmed);
         assert!(
             report
@@ -171,7 +175,7 @@ fn cases_restore_reviewed_incidents_and_correlated_impact_without_side_effects()
             crate::storage::packet_archive::PacketArchive::open_readonly(&directory).unwrap();
         assert_eq!(archive.count().unwrap(), 0);
         drop(archive);
-        let new_id = restored.core.incidents.open_or_update(
+        let new_id = restored.core.edit().incidents.open_or_update(
             IncidentSource::UserRule,
             "new",
             "new",

@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table},
 };
-use crate::app::{App, EncryptedView};
+use crate::app::{AppView as App, EncryptedView};
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {

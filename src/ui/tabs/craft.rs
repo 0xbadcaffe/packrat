@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::craft::{parse_tcp_flags, parse_icmp_type_code};
 use crate::ui::theme::*;
 

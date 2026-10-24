@@ -3,9 +3,11 @@ use super::*;
 impl App {
     /// Reload JSON rules from ~/.config/packrat/rules/ and show status.
     pub fn reload_rules(&mut self) {
-        self.core.rule_engine.rules.clear();
-        let errs = self.core.rule_engine.load_from_dir();
-        let count = self.core.rule_engine.rules.len();
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
+        core.rule_engine.rules.clear();
+        let errs = core.rule_engine.load_from_dir();
+        let count = core.rule_engine.rules.len();
         if errs.is_empty() {
             self.set_status(format!("Rules: {count} rules loaded"));
         } else {
@@ -15,8 +17,10 @@ impl App {
 
     /// Load IOC feeds from ~/.config/packrat/ioc/ and show status.
     pub fn reload_ioc_feeds(&mut self) {
-        let errs = self.core.ioc_engine.load_from_dir();
-        let count = self.core.ioc_engine.ioc_count();
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
+        let errs = core.ioc_engine.load_from_dir();
+        let count = core.ioc_engine.ioc_count();
         if errs.is_empty() {
             self.set_status(format!("IOC: {count} indicators loaded"));
         } else {
@@ -78,14 +82,16 @@ impl App {
 
     /// Apply the current `hosts_tag_input` as a tag to the host at `hosts_scroll`.
     pub fn apply_host_tag(&mut self) {
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
         let tag = self.hosts_tag_input.trim().to_string();
         if tag.is_empty() {
             return;
         }
-        let hosts = self.core.hosts.all();
+        let hosts = core.hosts.all();
         if let Some(h) = hosts.get(self.hosts_scroll) {
             let ip = h.ip.clone();
-            if let Some(host) = self.core.hosts.get_mut(&ip) {
+            if let Some(host) = core.hosts.get_mut(&ip) {
                 host.tags.insert(tag.clone());
             }
             self.set_status(format!("Tagged {ip} as \"{tag}\""));
@@ -94,11 +100,13 @@ impl App {
 
     /// Remove a tag from the host at `hosts_scroll` (removes the first tag, alphabetically).
     pub fn remove_host_tag(&mut self) {
-        let hosts = self.core.hosts.all();
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
+        let hosts = core.hosts.all();
         if let Some(h) = hosts.get(self.hosts_scroll) {
             let ip = h.ip.clone();
             let tag = h.tags.iter().min().cloned();
-            if let (Some(host), Some(t)) = (self.core.hosts.get_mut(&ip), tag) {
+            if let (Some(host), Some(t)) = (core.hosts.get_mut(&ip), tag) {
                 host.tags.remove(&t);
                 self.set_status(format!("Removed tag \"{t}\" from {ip}"));
             }
@@ -122,10 +130,12 @@ impl App {
         for pkt in scenario::build() {
             self.ingest_packet_inner(pkt);
         }
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
 
         // Seed IOC hits for the C2 IP
         for ip in scenario::ioc_ips() {
-            self.core.ioc_engine.load_ioc(crate::analysis::ioc::Ioc {
+            core.ioc_engine.load_ioc(crate::analysis::ioc::Ioc {
                 kind: crate::analysis::ioc::IocKind::Ip,
                 value: ip.into(),
                 description: "Operation Quiet Beacon C2 infrastructure".into(),
@@ -135,7 +145,7 @@ impl App {
         // Re-scan packets against IOCs now that they're loaded
         let pkts: Vec<_> = self.packets.iter().cloned().collect();
         for pkt in &pkts {
-            self.core.ioc_engine.check_packet(pkt);
+            core.ioc_engine.check_packet(pkt);
         }
 
         // Seed notebook notes
@@ -151,48 +161,46 @@ impl App {
         // Seed host tags
         for (ip, tags) in scenario::host_tags() {
             for tag in tags {
-                self.core
-                    .hosts
-                    .seed_tags(ip, std::iter::once(tag.to_string()));
+                core.hosts.seed_tags(ip, std::iter::once(tag.to_string()));
             }
         }
 
         // ── TLS Analysis tab ─────────────────────────────────────────────────
         for session in scenario::tls_sessions() {
-            self.core.tls_tracker.insert(session);
+            core.tls_tracker.insert(session);
         }
 
         // ── Security tab ─────────────────────────────────────────────────────
         let sec = scenario::security_seed();
-        self.core.security.ids_alerts.extend(sec.ids_alerts);
-        self.core.security.arp_anomalies.extend(sec.arp_anomalies);
+        core.security.ids_alerts.extend(sec.ids_alerts);
+        core.security.arp_anomalies.extend(sec.arp_anomalies);
         for g in sec.os_guesses {
-            self.core.security.os_guesses.push(g);
+            core.security.os_guesses.push(g);
         }
-        self.core.security.vuln_hits.extend(sec.vuln_hits);
-        self.core.security.brute_force.extend(sec.brute_force);
-        self.core.security.http_records.extend(sec.http_records);
-        self.core.security.tls_weaknesses.extend(sec.tls_weaknesses);
-        self.core.security.dns_suspects.extend(sec.dns_suspects);
+        core.security.vuln_hits.extend(sec.vuln_hits);
+        core.security.brute_force.extend(sec.brute_force);
+        core.security.http_records.extend(sec.http_records);
+        core.security.tls_weaknesses.extend(sec.tls_weaknesses);
+        core.security.dns_suspects.extend(sec.dns_suspects);
 
         // ── Credentials sub-tab ──────────────────────────────────────────────
-        self.core.credentials.extend(scenario::credentials());
-        self.core.security.cred_hit_count = self.core.credentials.len();
+        core.credentials.extend(scenario::credentials());
+        core.security.cred_hit_count = core.credentials.len();
 
         // ── Objects tab ──────────────────────────────────────────────────────
-        self.core.carved_objects.extend(scenario::carved_objects());
+        core.carved_objects.extend(scenario::carved_objects());
 
         // ── Rules tab ────────────────────────────────────────────────────────
         for (rule, _hits) in scenario::rules() {
-            self.core.rule_engine.add_rule(rule);
+            core.rule_engine.add_rule(rule);
         }
         // Fire rules against the already-ingested packets so hit counts are live
         let pkts2: Vec<_> = self.packets.iter().cloned().collect();
         for pkt in &pkts2 {
-            self.core.rule_engine.evaluate(pkt);
+            core.rule_engine.evaluate(pkt);
         }
 
-        self.core.rebuild_retained_graph(self.packets.iter());
+        core.rebuild_retained_graph(self.packets.iter());
         self.set_status("Scenario loaded: Operation Quiet Beacon — all tabs populated");
     }
 
@@ -207,7 +215,7 @@ impl App {
         app.active_tab = Tab::Packets;
         app.auto_scroll = false;
         app.preferred_workspace = Workspace::Traffic;
-        app.core.alert_center.automation_mode = AutomationMode::Off;
+        app.configure_core(|core| core.alert_center.automation_mode = AutomationMode::Off);
         app.persist_preferences = false;
         app.evidence_vault.enabled = false;
         app

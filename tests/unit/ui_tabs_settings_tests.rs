@@ -1,3 +1,4 @@
+use crate::app::App;
 use super::*;
 use ratatui::{Terminal, backend::TestBackend};
 
@@ -7,7 +8,7 @@ fn preferences_render_at_compact_and_normal_sizes() {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         let app = App::new_for_test();
-        terminal.draw(|frame| draw(frame, &app, frame.area())).unwrap();
+        terminal.draw(|frame| draw(frame, &app.try_view().unwrap().unwrap(), frame.area())).unwrap();
         let output = terminal.backend().buffer().content.iter()
             .map(|cell| cell.symbol())
             .collect::<String>();

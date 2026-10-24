@@ -169,7 +169,7 @@ async fn settings_cycles_alert_automation_without_enabling_containment() {
     }
     event::handle(&mut app, key(KeyCode::Enter));
     assert_eq!(
-        app.core.alert_center.automation_mode,
+        app.core.read().unwrap().alert_center.automation_mode,
         packrat_tui::analysis::alert_center::AutomationMode::Watch,
     );
     assert_eq!(app.traffic_latch.mode, LatchMode::Monitor);
@@ -203,10 +203,13 @@ async fn help_navigation_scrolls_without_closing() {
 #[test]
 fn watch_mode_auto_pins_only_high_priority_alerts() {
     let mut app = App::new_for_test();
-    app.core.alert_center.automation_mode = packrat_tui::analysis::alert_center::AutomationMode::Watch;
-    app.core.alert_center.record(1, "IDS", "LOW", "low", "detail");
-    app.core.alert_center.record(2, "IDS", "HIGH", "high", "detail");
-    for id in app.core.alert_center.drain_pending_pins() {
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    core.alert_center.automation_mode = packrat_tui::analysis::alert_center::AutomationMode::Watch;
+    core.alert_center.record(1, "IDS", "LOW", "low", "detail");
+    core.alert_center.record(2, "IDS", "HIGH", "high", "detail");
+    let pins = core.alert_center.drain_pending_pins();
+    app.replace_core(core);
+    for id in pins {
         app.worklist
             .add(packrat_tui::app::InvestigationItem::Alert(id));
     }
@@ -233,25 +236,30 @@ fn guard_simulation_requires_independent_critical_signals() {
 
     let mut app = App::new_for_test();
     let finding = packet(1);
-    app.core.incidents.open_or_update(
-        IncidentSource::IndustrySignature,
-        "detector-a",
-        "first",
-        Severity::Critical,
-        &finding,
-        std::iter::empty(),
-    );
+    let first = finding.clone();
+    app.configure_core(move |core| {
+        core.incidents.open_or_update(
+            IncidentSource::IndustrySignature,
+            "detector-a",
+            "first",
+            Severity::Critical,
+            &first,
+            std::iter::empty(),
+        );
+    });
     app.simulate_guard_response();
     assert_eq!(app.response_preview[0].status, LatchStatus::PendingApproval);
 
-    app.core.incidents.open_or_update(
-        IncidentSource::IndustrySignature,
-        "detector-b",
-        "second",
-        Severity::Critical,
-        &finding,
-        std::iter::empty(),
-    );
+    app.configure_core(move |core| {
+        core.incidents.open_or_update(
+            IncidentSource::IndustrySignature,
+            "detector-b",
+            "second",
+            Severity::Critical,
+            &finding,
+            std::iter::empty(),
+        );
+    });
     app.simulate_guard_response();
     assert!(
         app.response_preview

@@ -17,7 +17,9 @@ pub(super) fn handle_tls(app: &mut App, key: KeyEvent) {
             app.tls_selected = 0;
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            let max = app.core.tls_tracker.len().saturating_sub(1);
+            let max = app
+                .query_core(|core| core.tls_tracker.len().saturating_sub(1))
+                .unwrap_or(app.tls_selected);
             if app.tls_selected < max {
                 app.tls_selected += 1;
             }
@@ -33,14 +35,17 @@ pub(super) fn handle_tls(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('r') => app.refresh_selected_encrypted_reputation(),
         KeyCode::Char('G') => {
-            app.tls_selected = app.core.tls_tracker.len().saturating_sub(1);
+            app.tls_selected = app
+                .query_core(|core| core.tls_tracker.len().saturating_sub(1))
+                .unwrap_or(app.tls_selected);
             app.tls_scroll = app.tls_selected;
         }
         KeyCode::Char('c') => {
-            match app.encrypted_view {
-                crate::app::EncryptedView::Tls => app.core.tls_tracker.clear(),
-                crate::app::EncryptedView::Quic => app.core.quic_scope.clear(),
-            }
+            let view = app.encrypted_view;
+            app.configure_core(move |core| match view {
+                crate::app::EncryptedView::Tls => core.tls_tracker.clear(),
+                crate::app::EncryptedView::Quic => core.quic_scope.clear(),
+            });
             app.tls_selected = 0;
             app.tls_scroll = 0;
         }
@@ -96,7 +101,9 @@ pub(super) fn handle_rules(app: &mut App, key: KeyEvent) {
         KeyCode::Tab => app.next_tab(),
 
         KeyCode::Down | KeyCode::Char('j') => {
-            let max = app.core.rule_engine.rules.len().saturating_sub(1);
+            let max = app
+                .query_core(|core| core.rule_engine.rules.len().saturating_sub(1))
+                .unwrap_or(app.rules_scroll);
             if app.rules_scroll < max {
                 app.rules_scroll += 1;
             }
@@ -108,14 +115,24 @@ pub(super) fn handle_rules(app: &mut App, key: KeyEvent) {
             app.rules_scroll = 0;
         }
         KeyCode::Char('G') => {
-            app.rules_scroll = app.core.rule_engine.rules.len().saturating_sub(1);
+            app.rules_scroll = app
+                .query_core(|core| core.rule_engine.rules.len().saturating_sub(1))
+                .unwrap_or(app.rules_scroll);
         }
 
         KeyCode::Char('t') => {
             // Toggle the rule at the current scroll position
-            if let Some(rule) = app.core.rule_engine.rules.get(app.rules_scroll) {
-                let id = rule.id.clone();
-                app.core.rule_engine.toggle(&id);
+            let index = app.rules_scroll;
+            if let Some(id) = app
+                .query_core(|core| {
+                    core.rule_engine
+                        .rules
+                        .get(index)
+                        .map(|rule| rule.id.clone())
+                })
+                .flatten()
+            {
+                app.configure_core(move |core| core.rule_engine.toggle(&id));
             }
         }
 
@@ -123,7 +140,7 @@ pub(super) fn handle_rules(app: &mut App, key: KeyEvent) {
             app.reload_rules();
         }
         KeyCode::Char('C') => {
-            app.core.rule_engine.clear_hits();
+            app.configure_core(|core| core.rule_engine.clear_hits());
         }
 
         KeyCode::Char('h') => app.show_help = true,

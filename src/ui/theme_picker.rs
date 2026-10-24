@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::ui::theme::{self, ThemePalette, THEME_NAMES, C_BG2, C_CYAN, C_FG, C_FG3, C_YELLOW};
 
 pub fn draw(f: &mut Frame, app: &App) {

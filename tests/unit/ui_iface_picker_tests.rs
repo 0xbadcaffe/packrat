@@ -1,3 +1,4 @@
+use crate::app::App;
 use super::*;
 use ratatui::{Terminal, backend::TestBackend};
 
@@ -8,7 +9,7 @@ fn render(width: u16, height: u16) -> String {
     app.iface_list = vec!["eth0".into(), "simulated".into()];
     terminal.draw(|frame| {
         let area = frame.area();
-        draw(frame, &app, area);
+        draw(frame, &app.try_view().unwrap().unwrap(), area);
     }).unwrap();
     terminal.backend().buffer().content.iter()
         .map(|cell| cell.symbol())

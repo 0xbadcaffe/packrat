@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::ui::theme::*;
 
 const MIN_LEN: usize = 4;

@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::model::project::{ProjectSaveMode, RecentProject};
 use crate::ui::theme::*;
 

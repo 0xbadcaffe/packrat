@@ -1,3 +1,4 @@
+use crate::app::App;
 use super::*;
 use ratatui::{Terminal, backend::TestBackend};
 
@@ -6,7 +7,7 @@ fn rendered_help(width: u16, height: u16, scroll: u16) -> String {
     let mut terminal = Terminal::new(backend).unwrap();
     let mut app = App::new_for_test();
     app.help_scroll = scroll;
-    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    terminal.draw(|frame| draw(frame, &app.try_view().unwrap().unwrap())).unwrap();
     terminal.backend().buffer().content.iter()
         .map(|cell| cell.symbol())
         .collect::<String>()

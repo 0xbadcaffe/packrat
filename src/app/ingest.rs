@@ -23,6 +23,8 @@ impl App {
     }
 
     pub(super) fn analyze_packet(&mut self, pkt: Packet, live: bool) {
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
         if !live {
             // Offline traffic shares detector state with the live view. Once
             // mixed, require a clean session before allowing host enforcement.
@@ -56,9 +58,8 @@ impl App {
         self.wire_pulse.observe(&pkt);
         self.net_registry.observe(&pkt.src);
         self.net_registry.observe(&pkt.dst);
-        let analysis = self
-            .core
-            .analyze_with_history(&pkt, self.packets.iter().cloned());
+        let analysis = core.analyze_with_history(&pkt, self.packets.iter().cloned());
+        drop(core);
         for notice in analysis.incidents {
             if !self.restoring_project {
                 self.freeze_incident_evidence(notice.id);

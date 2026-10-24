@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::ui::theme::*;
 use crate::ui::helpers::fmt_bytes;
 

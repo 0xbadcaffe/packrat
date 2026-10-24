@@ -17,6 +17,8 @@ impl App {
     /// Execute search across all data sources and populate `search_results`.
     /// Called on every keystroke while the palette is open.
     pub fn run_search(&mut self) {
+        let core_handle = self.core.clone();
+        let core = core_handle.edit();
         let q = self.search_query.to_lowercase();
         let mut results: Vec<SearchResult> = Vec::new();
         for index in 0..Tab::COUNT {
@@ -72,7 +74,7 @@ impl App {
         }
 
         // ── Hosts ─────────────────────────────────────────────────────────────
-        let host_list: Vec<_> = self.core.hosts.all().into_iter().enumerate().collect();
+        let host_list: Vec<_> = core.hosts.all().into_iter().enumerate().collect();
         for (idx, host) in host_list {
             let label = host.ip.clone();
             let detail = format!(
@@ -97,7 +99,7 @@ impl App {
         }
 
         // ── IOC hits ──────────────────────────────────────────────────────────
-        for (idx, hit) in self.core.ioc_engine.hits.iter().enumerate() {
+        for (idx, hit) in core.ioc_engine.hits.iter().enumerate() {
             let label = format!("{} {}", hit.ioc.kind, hit.ioc.value);
             let detail = hit.context.clone();
             let haystack = format!("{} {}", label, detail).to_lowercase();
@@ -117,7 +119,7 @@ impl App {
         }
 
         // ── Rule hits ─────────────────────────────────────────────────────────
-        for (idx, hit) in self.core.rule_engine.hits.iter().enumerate() {
+        for (idx, hit) in core.rule_engine.hits.iter().enumerate() {
             let label = hit.rule_name.clone();
             let detail = hit.message.clone();
             let haystack = format!("{} {}", label, detail).to_lowercase();
@@ -137,7 +139,7 @@ impl App {
         }
 
         // ── YARA matches ──────────────────────────────────────────────────────
-        for (idx, result) in self.core.yara_engine.results.iter().enumerate() {
+        for (idx, result) in core.yara_engine.results.iter().enumerate() {
             let label = result.target_label.clone();
             let detail = result.rule_names().join(", ");
             let haystack = format!("{} {}", label, detail).to_lowercase();
@@ -157,7 +159,7 @@ impl App {
         }
 
         // ── Carved objects ────────────────────────────────────────────────────
-        for (idx, obj) in self.core.carved_objects.iter().enumerate() {
+        for (idx, obj) in core.carved_objects.iter().enumerate() {
             let label = format!("#{} {}", obj.id, obj.kind);
             let detail = obj.source.clone();
             let haystack = format!("{} {} {}", label, detail, obj.sha256).to_lowercase();

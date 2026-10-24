@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::traceroute::HopResult;
 use crate::ui::theme::*;
 

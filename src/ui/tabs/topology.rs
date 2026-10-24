@@ -8,7 +8,7 @@ use ratatui::{
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::topology::NodeInfo;
 use crate::ui::helpers::fmt_bytes;
 use crate::ui::theme::*;

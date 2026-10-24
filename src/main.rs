@@ -60,12 +60,14 @@ async fn main() -> Result<()> {
     app.capture_helper_path = options.capture_helper_path;
     if let Some(path) = options.endpoint_evidence_path {
         match analysis::impact::read_endpoint_evidence(&path) {
-            Ok(events) => app.core.endpoint_evidence = events,
+            Ok(events) => app.configure_core(move |core| core.endpoint_evidence = events),
             Err(error) => app.set_status(format!("Endpoint evidence import failed: {error}")),
         }
     }
-    app.core.tls_tracker.decrypt_helper_path = options.tls_decrypt_helper_path;
-    app.core.quic_scope.decode_helper_path = options.quic_decode_helper_path;
+    app.configure_core(move |core| {
+        core.tls_tracker.decrypt_helper_path = options.tls_decrypt_helper_path;
+        core.quic_scope.decode_helper_path = options.quic_decode_helper_path;
+    });
     if let Some(path) = options
         .key_log_path
         .or_else(|| std::env::var_os("SSLKEYLOGFILE").map(Into::into))

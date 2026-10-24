@@ -211,9 +211,12 @@ struct TopNode {
 
 /// Write a full case bundle JSON to `path`. Returns the path on success.
 pub fn export(app: &App, path: &Path) -> Result<String, String> {
-    let bundle = build(app);
+    let view = app.try_view()?.ok_or("Analysis is busy; retry the export")?;
+    let bundle = build(&view);
     let json = serde_json::to_string_pretty(&bundle)
         .map_err(|e| format!("serialize: {e}"))?;
+    drop(bundle);
+    drop(view);
     std::fs::write(path, &json)
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path.display().to_string())
@@ -238,7 +241,7 @@ pub fn export_auto(app: &App) -> Result<String, String> {
     Err("could not write case bundle to any location".into())
 }
 
-fn build(app: &App) -> CaseBundle<'_> {
+fn build<'a>(app: &'a crate::app::AppView<'_>) -> CaseBundle<'a> {
     // Capture metadata
     let duration = app.packets.back().map(|p| p.timestamp).unwrap_or(0.0);
     let meta = CaptureMeta {

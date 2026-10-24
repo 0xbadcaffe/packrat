@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::ui::theme::*;
 
 const MATRIX_HEAD: Color = Color::Rgb(190, 255, 210);

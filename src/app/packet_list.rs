@@ -6,6 +6,8 @@ impl App {
     }
 
     pub fn clear_packets(&mut self) {
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
         self.capturing = false;
         self.packets.clear();
         self.packet_index_base = 0;
@@ -16,7 +18,7 @@ impl App {
         self.reset_header_focus();
         self.total_bytes = 0;
         self.packet_counter = 0;
-        self.core.clear();
+        core.clear();
         self.flows_selected = None;
         self.stream_overlay = None;
         self.packet_comparison = None;

@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs, Wrap},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::tabs::{Tab, Workspace};
 use crate::ui::theme::*;
 
@@ -25,7 +25,11 @@ mod view_menu;
 
 pub use helpers::fmt_bytes;
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &crate::app::App) {
+    if let Ok(Some(view)) = app.try_view() { draw_view(f, &view); }
+}
+
+pub fn draw_view(f: &mut Frame, app: &App) {
     // Apply the active theme before rendering any widget.
     theme::set_theme(theme::palette_by_name(&app.selected_theme_name));
 

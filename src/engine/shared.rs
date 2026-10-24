@@ -17,6 +17,9 @@ impl Deref for CoreReadGuard<'_> {
 }
 
 impl ReadCore {
+    pub(crate) fn edit(&self) -> MutexGuard<'_, AnalysisCore> {
+        self.0.lock().unwrap_or_else(|error| error.into_inner())
+    }
     pub fn new(core: AnalysisCore) -> Self {
         Self(Arc::new(Mutex::new(core)))
     }

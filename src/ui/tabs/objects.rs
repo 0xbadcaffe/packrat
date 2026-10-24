@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
-use crate::app::{App, ObjectsSubTab};
+use crate::app::{AppView as App, ObjectsSubTab};
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {

@@ -26,7 +26,7 @@ fn core_runs_on_a_worker_without_a_terminal_or_async_runtime() {
 #[cfg(feature = "terminal-ui")]
 fn terminal_adapter_and_headless_core_produce_the_same_passive_results() {
     let mut app = App::new_for_test();
-    app.core = AnalysisCore::default();
+    app.replace_core(AnalysisCore::default());
     let mut core = AnalysisCore::default();
     let mut history = Vec::new();
     for packet in [
@@ -38,18 +38,18 @@ fn terminal_adapter_and_headless_core_produce_the_same_passive_results() {
         history.push(packet.clone());
         app.inject_packet(packet);
     }
-    assert_eq!(core.streams.len(), app.core.streams.len());
+    assert_eq!(core.streams.len(), app.core.read().unwrap().streams.len());
     assert_eq!(
         core.flow_tracker.flows.len(),
-        app.core.flow_tracker.flows.len()
+        app.core.read().unwrap().flow_tracker.flows.len()
     );
     assert_eq!(
         serde_json::to_value(core.incidents.snapshot()).unwrap(),
-        serde_json::to_value(app.core.incidents.snapshot()).unwrap()
+        serde_json::to_value(app.core.read().unwrap().incidents.snapshot()).unwrap()
     );
     assert_eq!(
         core.alert_center.items.len(),
-        app.core.alert_center.items.len()
+        app.core.read().unwrap().alert_center.items.len()
     );
 }
 

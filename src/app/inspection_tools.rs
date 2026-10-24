@@ -3,6 +3,8 @@ use super::*;
 impl App {
     /// Open the Protocol Autopsy overlay for the currently selected packet.
     pub fn open_autopsy(&mut self) {
+        let core_handle = self.core.clone();
+        let core = core_handle.edit();
         let pkt = match self.selected_packet() {
             Some(p) => p.clone(),
             None => return,
@@ -13,7 +15,7 @@ impl App {
         // Build stream preview from reassembled data for this flow
         let stream_key = crate::analysis::stream::StreamKey::from_packet(&pkt);
         let stream_preview = if let Some(key) = stream_key {
-            match self.core.streams.get(&key.id()) {
+            match core.streams.get(&key.id()) {
                 Some(stream) => {
                     let mut lines: Vec<(bool, String)> = Vec::new();
                     // Client data
@@ -42,20 +44,28 @@ impl App {
 
     /// Reload user-configured rules through the terminal adapter.
     pub fn reload_yara_rules(&mut self) {
-        self.core.yara_engine.reload();
-        self.core.reset_object_scan();
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
+        core.yara_engine.reload();
+        core.reset_object_scan();
     }
 
     pub fn yara_force_rescan(&mut self) {
-        self.core.reset_object_scan();
-        self.core.scan_new_objects();
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
+        core.reset_object_scan();
+        core.scan_new_objects();
     }
 
     pub fn yara_scan_new_objects(&mut self) {
-        self.core.scan_new_objects();
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
+        core.scan_new_objects();
     }
 
     pub fn carve_from_streams(&mut self) {
-        self.core.carve_from_streams();
+        let core_handle = self.core.clone();
+        let mut core = core_handle.edit();
+        core.carve_from_streams();
     }
 }

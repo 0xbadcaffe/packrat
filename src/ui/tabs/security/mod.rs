@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
-use crate::app::{App, SecuritySubTab};
+use crate::app::{AppView as App, SecuritySubTab};
 use crate::net::security::Severity;
 use crate::ui::theme::*;
 

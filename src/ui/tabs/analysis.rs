@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap},
 };
 
-use crate::app::App;
+use crate::app::AppView as App;
 use crate::ui::helpers::{fmt_bytes, truncate};
 use crate::ui::theme::*;
 
