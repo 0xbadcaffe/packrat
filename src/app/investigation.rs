@@ -199,7 +199,11 @@ impl App {
             self.set_status("Active packet is not TCP-backed");
             return;
         };
-        let Some(stream) = self.streams.get(&key.id()) else {
+        self.open_reassembled_stream(key.id());
+    }
+
+    pub(super) fn open_reassembled_stream(&mut self, id: String) {
+        let Some(stream) = self.streams.get(&id) else {
             self.set_status("No reassembled stream is available for this packet yet");
             return;
         };
@@ -223,7 +227,7 @@ impl App {
             self.set_status("Reassembled stream has no payload bytes yet");
             return;
         }
-        self.stream_overlay = Some(StreamOverlayState::new(key.id(), segments));
+        self.stream_overlay = Some(StreamOverlayState::new(id, segments));
     }
 
     pub fn export_stream_overlay(&mut self) {

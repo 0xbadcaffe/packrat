@@ -9,6 +9,10 @@ pub struct FlowKey {
     pub proto:   String,
     /// VLAN scope: flows on different VLANs are distinct even if IP+port match.
     pub vlan_id: Option<u16>,
+    pub outer_vlan_id: Option<u16>,
+    pub interface: Option<String>,
+    pub interface_id: u32,
+    pub section_id: u32,
 }
 
 impl FlowKey {
@@ -16,7 +20,13 @@ impl FlowKey {
         let a = (pkt.src.clone(), pkt.src_port.unwrap_or(0));
         let b = (pkt.dst.clone(), pkt.dst_port.unwrap_or(0));
         let (ep1, ep2) = if a <= b { (a, b) } else { (b, a) };
-        Self { ep1, ep2, proto: pkt.protocol.clone(), vlan_id: pkt.vlan_id }
+        Self {
+            ep1, ep2, proto: pkt.protocol.clone(), vlan_id: pkt.vlan_id,
+            outer_vlan_id: pkt.outer_vlan_id,
+            interface: pkt.capture.as_ref().and_then(|capture| capture.interface_name.clone()),
+            interface_id: pkt.capture.as_ref().map_or(0, |capture| capture.interface_id),
+            section_id: pkt.capture.as_ref().map_or(0, |capture| capture.section_id),
+        }
     }
 }
 

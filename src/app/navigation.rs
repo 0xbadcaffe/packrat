@@ -88,33 +88,21 @@ impl App {
 
     pub fn flows_open_stream(&mut self) {
         let sorted = self.flow_tracker.sorted_flows(&self.flows_sort);
-        if let Some(sel) = self.flows_selected {
-            if let Some(flow) = sorted.get(sel) {
-                let key = flow.key.clone();
-                let initiator = flow.initiator.clone();
-                let mut segments: Vec<(bool, Vec<u8>)> = Vec::new();
-                for pkt in &self.packets {
-                    let pkt_key = FlowKey::from_packet(pkt);
-                    if pkt_key == key {
-                        let is_init = pkt.src == initiator;
-                        let offset = crate::analysis::stream::tcp_payload_offset(pkt);
-                        let payload = if pkt.bytes.len() > offset {
-                            pkt.bytes[offset..].to_vec()
-                        } else {
-                            Vec::new()
-                        };
-                        if !payload.is_empty() {
-                            segments.push((is_init, payload));
-                        }
-                    }
-                }
-                let title = format!(
-                    "{}:{} <-> {}:{} ({})",
-                    key.ep1.0, key.ep1.1, key.ep2.0, key.ep2.1, key.proto
-                );
-                self.stream_overlay = Some(StreamOverlayState::new(title, segments));
-            }
-        }
+        let stream_id = self
+            .flows_selected
+            .and_then(|index| sorted.get(index))
+            .and_then(|flow| {
+                self.packets
+                    .iter()
+                    .find(|packet| FlowKey::from_packet(packet) == flow.key)
+                    .and_then(StreamKey::from_packet)
+                    .map(|key| key.id())
+            });
+        let Some(stream_id) = stream_id else {
+            self.set_status("Selected flow has no retained TCP packet context");
+            return;
+        };
+        self.open_reassembled_stream(stream_id);
     }
 
     pub fn flows_jump_to_packets(&mut self) {
