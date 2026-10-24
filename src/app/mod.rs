@@ -8,7 +8,9 @@ use crate::analysis::alert_center::AutomationMode;
 use crate::analysis::diff::DiffEngine;
 use crate::analysis::display_filter::DisplayFilter;
 use crate::analysis::evidence_vault::EvidenceVault;
-use crate::analysis::incident::{IncidentSource, IncidentStore};
+#[cfg(test)]
+use crate::analysis::incident::IncidentSource;
+use crate::analysis::incident::IncidentStore;
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::net_registry::NetRegistry;
 use crate::analysis::notebook::Notebook;
@@ -62,6 +64,7 @@ mod incidents;
 mod ingest;
 mod inspection_tools;
 mod investigation;
+mod live_dispatch;
 mod view;
 pub use view::AppView;
 mod navigation;
@@ -86,6 +89,7 @@ pub struct App {
     pending_analysis_bytes: usize,
     pending_analysis_events: VecDeque<WorkerEvent>,
     packet_effects: std::collections::HashMap<u64, bool>,
+    preferences_dirty: std::cell::Cell<bool>,
     pub active_tab: Tab,
     /// Recently visited screens, newest last. Modal overlays are not included.
     pub navigation_history: Vec<Tab>,

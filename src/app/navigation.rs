@@ -6,8 +6,6 @@ impl App {
     }
 
     pub fn move_down(&mut self) {
-        let core_handle = self.core.clone();
-        let core = core_handle.edit();
         match self.active_tab {
             Tab::Packets => {
                 if let Some(sel) = self.selected {
@@ -29,7 +27,9 @@ impl App {
                 self.dyn_scroll = self.dyn_scroll.saturating_sub(1);
             }
             Tab::Flows => {
-                let len = core.flow_tracker.flows.len();
+                let Some(len) = self.query_core(|core| core.flow_tracker.flows.len()) else {
+                    return;
+                };
                 if let Some(sel) = self.flows_selected {
                     if sel + 1 < len {
                         self.flows_selected = Some(sel + 1);
@@ -90,7 +90,10 @@ impl App {
 
     pub fn flows_open_stream(&mut self) {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            self.set_status("Analysis busy; retry opening the flow");
+            return;
+        };
         let sorted = core.flow_tracker.sorted_flows(&self.flows_sort);
         let stream_id = self
             .flows_selected
@@ -112,7 +115,9 @@ impl App {
 
     pub fn flows_jump_to_packets(&mut self) {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            return;
+        };
         let sorted = core.flow_tracker.sorted_flows(&self.flows_sort);
         if let Some(sel) = self.flows_selected {
             if let Some(flow) = sorted.get(sel) {
@@ -317,12 +322,13 @@ impl App {
     }
 
     pub fn load_key_log(&mut self, path: impl AsRef<std::path::Path>) {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
-        match core.tls_tracker.load_key_log(path.as_ref()) {
-            Ok(count) => self.set_status(format!("Loaded {count} TLS/QUIC key-log secrets")),
-            Err(error) => self.set_status(format!("Key-log error: {error}")),
-        }
+        let path = path.as_ref().to_path_buf();
+        self.update_core("TLS/QUIC key log loaded", move |core| {
+            core.tls_tracker
+                .load_key_log(&path)
+                .map(|_| ())
+                .map_err(|error| format!("Key-log error: {error}"))
+        });
     }
 
     pub fn refresh_selected_whois(&mut self) {
@@ -363,7 +369,9 @@ impl App {
 
     pub fn refresh_selected_encrypted_reputation(&mut self) {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            return;
+        };
         let Some(path) = self.reputation_helper_path.clone() else {
             self.set_status("Configure --reputation-helper to refresh JA4 or RatQ reputation");
             return;
@@ -384,6 +392,7 @@ impl App {
             self.set_status("No selected encrypted fingerprint to refresh");
             return;
         };
+        drop(core);
         match self
             .net_registry
             .refresh_fingerprint_reputation_with_helper(&fingerprint, path)

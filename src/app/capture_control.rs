@@ -25,7 +25,11 @@ impl App {
 
         // Clear all analysis state so simulated data cannot bleed into real captures
         // and vice-versa. clear_packets() sets capturing=false; we restore it below.
-        self.clear_packets();
+        if let Err(error) = self.try_clear_packets() {
+            self.picking_iface = true;
+            self.set_status(format!("Interface switch postponed: {error}"));
+            return;
+        }
 
         if self.selected_iface == "simulated" {
             self.seed_scenario();

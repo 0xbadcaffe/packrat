@@ -4,7 +4,10 @@ impl App {
     /// Open the Protocol Autopsy overlay for the currently selected packet.
     pub fn open_autopsy(&mut self) {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            self.set_status("Analysis busy; retry packet inspection");
+            return;
+        };
         let pkt = match self.selected_packet() {
             Some(p) => p.clone(),
             None => return,
@@ -44,28 +47,26 @@ impl App {
 
     /// Reload user-configured rules through the terminal adapter.
     pub fn reload_yara_rules(&mut self) {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
-        core.yara_engine.reload();
-        core.reset_object_scan();
+        self.configure_core(|core| {
+            core.yara_engine.reload();
+            core.reset_object_scan();
+        });
     }
 
     pub fn yara_force_rescan(&mut self) {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
-        core.reset_object_scan();
-        core.scan_new_objects();
+        self.configure_core(|core| {
+            core.reset_object_scan();
+            core.scan_new_objects();
+        });
     }
 
     pub fn yara_scan_new_objects(&mut self) {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
-        core.scan_new_objects();
+        self.configure_core(|core| {
+            core.scan_new_objects();
+        });
     }
 
     pub fn carve_from_streams(&mut self) {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
-        core.carve_from_streams();
+        self.configure_core(|core| core.carve_from_streams());
     }
 }

@@ -21,6 +21,7 @@ impl App {
         let mut app = Self {
             core: ReadCore::new(core),
             analysis_worker: None,
+            preferences_dirty: std::cell::Cell::new(false),
             analysis_updates: Default::default(),
             analysis_update_id: 0,
             pending_analysis: VecDeque::new(),

@@ -18,7 +18,10 @@ impl App {
     /// Called on every keystroke while the palette is open.
     pub fn run_search(&mut self) {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            self.set_status("Analysis busy; search will refresh when ready");
+            return;
+        };
         let q = self.search_query.to_lowercase();
         let mut results: Vec<SearchResult> = Vec::new();
         for index in 0..Tab::COUNT {

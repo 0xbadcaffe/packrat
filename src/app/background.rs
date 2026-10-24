@@ -31,6 +31,21 @@ impl App {
     pub fn background_analysis_enabled(&self) -> bool {
         self.analysis_worker.is_some()
     }
+
+    pub fn stop_background_analysis(&mut self) -> Result<usize, String> {
+        self.abort_capture();
+        self.capturing = false;
+        let cancelled = self.pending_analysis.len() + self.packet_effects.len();
+        self.pending_analysis.clear();
+        self.pending_analysis_bytes = 0;
+        self.pending_analysis_events.clear();
+        self.analysis_updates.clear();
+        self.packet_effects.clear();
+        if let Some(worker) = self.analysis_worker.take() {
+            worker.cancel_and_join(std::time::Duration::from_secs(3))?;
+        }
+        Ok(cancelled)
+    }
     pub fn analysis_backpressured(&self) -> bool {
         !self.pending_analysis.is_empty()
     }

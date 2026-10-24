@@ -1,6 +1,7 @@
 use super::*;
 
 impl App {
+    #[cfg(test)]
     pub(super) fn open_industry_incident(
         &mut self,
         packet: &Packet,
@@ -29,6 +30,7 @@ impl App {
         self.set_status(format!("Critical incident #{id}: {signature}"));
     }
 
+    #[cfg(test)]
     pub(super) fn open_user_rule_incident(
         &mut self,
         packet: &Packet,
@@ -59,6 +61,7 @@ impl App {
         self.set_status(format!("Critical incident #{id}: {rule_name}"));
     }
 
+    #[cfg(test)]
     pub(super) fn freeze_incident_evidence(&mut self, incident_id: u64) {
         let core_handle = self.core.clone();
         let core = core_handle.edit();
@@ -81,6 +84,7 @@ impl App {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn evaluate_traffic_latch(&mut self, incident_id: u64, auto_contain_rule: bool) {
         let core_handle = self.core.clone();
         let core = core_handle.edit();
@@ -120,27 +124,32 @@ impl App {
         &self,
         incident: &crate::analysis::incident::Incident,
     ) -> bool {
-        let core_handle = self.core.clone();
-        let core = core_handle.edit();
-        let mut detectors = std::collections::BTreeSet::new();
-        for candidate in core.incidents.incidents.iter().filter(|candidate| {
-            candidate.attacker == incident.attacker
-                && candidate.target == incident.target
-                && candidate.severity == EvidenceSeverity::Critical
-                && candidate.status == crate::analysis::incident::IncidentStatus::PendingReview
-        }) {
-            detectors.insert((candidate.source, candidate.detector.clone()));
-        }
-        detectors.len() >= 2
+        self.query_core(|core| {
+            let mut detectors = std::collections::BTreeSet::new();
+            for candidate in core.incidents.incidents.iter().filter(|candidate| {
+                candidate.attacker == incident.attacker
+                    && candidate.target == incident.target
+                    && candidate.severity == EvidenceSeverity::Critical
+                    && candidate.status == crate::analysis::incident::IncidentStatus::PendingReview
+            }) {
+                detectors.insert((candidate.source, candidate.detector.clone()));
+            }
+            detectors.len() >= 2
+        })
+        .unwrap_or(false)
     }
 
     pub fn approve_active_latch(&mut self) {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            self.set_status("Analysis busy; retry containment review");
+            return;
+        };
         let Some(incident_id) = core.incidents.active().map(|incident| incident.id) else {
             self.set_status("No active incident has a pending TrafficLatch action");
             return;
         };
+        drop(core);
         if !self.live_response_eligible || !self.live_response_incidents.contains(&incident_id) {
             self.set_status("Containment disabled for offline, synthetic, or mixed evidence; start a clean live session");
             return;
@@ -162,7 +171,9 @@ impl App {
 
     pub fn simulate_guard_response(&mut self) {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            return;
+        };
         let incidents = core.incidents.incidents.clone();
         drop(core);
         self.response_preview = incidents
@@ -207,11 +218,14 @@ impl App {
 
     /// Open the retained incident packet history and record that it was reviewed.
     pub fn open_active_incident_analysis(&mut self) -> bool {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
-        if !core.incidents.mark_active_reviewed() {
+        let Some(Some(id)) = self.query_core(|core| core.incidents.active().map(|i| i.id)) else {
             return false;
-        }
+        };
+        self.configure_core(move |core| {
+            if let Some(incident) = core.incidents.incidents.iter_mut().find(|i| i.id == id) {
+                incident.reviewed = true;
+            }
+        });
         self.active_tab = Tab::Analysis;
         self.analysis_section = INCIDENT_ANALYSIS_SECTION;
         self.alert_overlay_open = false;
@@ -221,10 +235,34 @@ impl App {
 
     /// Acknowledgement hides the active alert but preserves its history.
     pub fn acknowledge_active_incident(&mut self) -> Result<(), &'static str> {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
-        core.incidents.acknowledge_active()?;
-        self.alert_overlay_open = core.incidents.active().is_some();
+        let Some(Some((id, reviewed, other_pending))) = self.query_core(|core| {
+            core.incidents.active().map(|i| {
+                (
+                    i.id,
+                    i.reviewed,
+                    core.incidents.incidents.iter().any(|other| {
+                        other.id != i.id
+                            && other.status
+                                == crate::analysis::incident::IncidentStatus::PendingReview
+                    }),
+                )
+            })
+        }) else {
+            return Err("no active incident or analysis busy");
+        };
+        if !reviewed {
+            return Err("review the incident analysis before acknowledging it");
+        }
+        self.update_core(
+            "Incident acknowledged; retained packet history remains available.",
+            move |core| {
+                if core.incidents.active().is_none_or(|i| i.id != id) {
+                    return Err("Incident changed; review the current alert".into());
+                }
+                core.incidents.acknowledge_active().map_err(str::to_string)
+            },
+        );
+        self.alert_overlay_open = other_pending;
         self.set_status("Incident acknowledged; retained packet history remains available.");
         Ok(())
     }

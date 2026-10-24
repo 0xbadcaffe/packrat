@@ -65,6 +65,9 @@ impl App {
         live: bool,
         restoring: bool,
     ) {
+        if restoring {
+            return;
+        }
         self.processing_live_packet = live && self.live_response_eligible;
         for notice in analysis.incidents {
             if !restoring {

@@ -15,9 +15,14 @@ impl App {
         &self,
         name: &str,
         mode: ProjectSaveMode,
-    ) -> crate::model::project::ProjectState {
+    ) -> Result<crate::model::project::ProjectState, String> {
+        if !self.analysis_idle() {
+            return Err("Analysis is still pending; pause capture and retry saving".into());
+        }
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let core = core_handle
+            .try_read()?
+            .ok_or("Analysis busy; retry saving")?;
         use crate::model::project::ProjectState;
         use crate::storage::case_bundle::ObjectEntry;
         let portable = mode == ProjectSaveMode::Portable;
@@ -61,12 +66,18 @@ impl App {
         if portable {
             state.embedded_packets = self.packets.iter().cloned().collect();
         }
-        state
+        Ok(state)
     }
 
     /// Save the current project to `path`.  Marks the workspace clean.
     pub fn save_project(&mut self, path: &str, name: &str, mode: ProjectSaveMode) {
-        let state = self.snapshot_project(name, mode.clone());
+        let state = match self.snapshot_project(name, mode.clone()) {
+            Ok(state) => state,
+            Err(error) => {
+                self.set_status(error);
+                return;
+            }
+        };
         let p = std::path::Path::new(path);
         match project_store::save(&state, p) {
             Ok(()) => {
@@ -136,36 +147,52 @@ impl App {
         {
             return Err("Saved endpoint evidence exceeds limits".into());
         }
-        self.clear_packets();
-        self.restoring_project = true;
-        for packet in state.embedded_packets {
-            self.inject_packet(packet);
+        let bytes = state
+            .embedded_packets
+            .iter()
+            .try_fold(0usize, |total, packet| {
+                total.checked_add(packet.bytes.len().saturating_add(512))
+            })
+            .ok_or("Saved packet budget overflow")?;
+        if state.embedded_packets.len() > 100_000 || bytes > 256 * 1024 * 1024 {
+            return Err("Saved packet history exceeds analysis budget".into());
         }
-        self.restoring_project = false;
+        self.try_clear_packets()?;
+        if self.background_analysis_enabled() {
+            self.enqueue_offline_packets(state.embedded_packets, true)?;
+        } else {
+            self.restoring_project = true;
+            for packet in state.embedded_packets {
+                self.inject_packet(packet);
+            }
+            self.restoring_project = false;
+        }
         // Saved evidence is historical even when the project contains no frames.
         self.live_response_eligible = false;
         self.live_response_incidents.clear();
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
-        if let Some(incidents) = incidents {
-            core.incidents = incidents;
-        }
-        core.endpoint_evidence = state.endpoint_evidence;
+        self.alert_overlay_open = incidents
+            .as_ref()
+            .is_some_and(|store| store.active().is_some());
+        self.configure_core(move |core| {
+            if let Some(incidents) = incidents {
+                core.incidents = incidents;
+            }
+            core.endpoint_evidence = state.endpoint_evidence;
+            for (ip, tags) in state.host_tags {
+                core.hosts.seed_tags(&ip, tags);
+            }
+            core.alert_center
+                .restore(state.alert_items, state.alert_automation);
+        });
         self.notebook = state.notebook;
         self.tag_store = state.tag_store;
         self.filter.input = state.active_filter;
         self.rebuild_filtered();
-        for (ip, tags) in state.host_tags {
-            core.hosts.seed_tags(&ip, tags);
-        }
-        core.alert_center
-            .restore(state.alert_items, state.alert_automation);
         self.worklist = tray;
         self.response_preview = state.guard_simulation;
         if state.active_tab < Tab::COUNT {
             self.active_tab = Tab::from_index(state.active_tab);
         }
-        self.alert_overlay_open = core.incidents.active().is_some();
         Ok(())
     }
 

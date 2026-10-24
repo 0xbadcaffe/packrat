@@ -54,7 +54,10 @@ impl App {
 
     pub(super) fn open_reassembled_stream(&mut self, id: String) {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            self.set_status("Analysis busy; retry stream inspection");
+            return;
+        };
         let Some(stream) = core.streams.get(&id) else {
             self.set_status("No reassembled stream is available for this packet yet");
             return;
@@ -167,7 +170,9 @@ impl App {
 
     pub fn pin_selected_alert(&mut self) -> bool {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            return false;
+        };
         let Some(id) = core.alert_center.selected_item().map(|item| item.id) else {
             self.set_status("No alert selected to pin");
             return false;
@@ -177,7 +182,9 @@ impl App {
 
     pub fn pin_current_context(&mut self) -> bool {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            return false;
+        };
         let item = match self.active_tab {
             Tab::Packets => self
                 .selected_packet()

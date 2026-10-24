@@ -20,6 +20,7 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        self.poll_analysis();
         if let Some(error) = self
             .packet_archive
             .as_mut()
@@ -40,7 +41,10 @@ impl App {
         self.rate_tick += 1;
 
         // Flood mode — inject packets from the crafter
-        let flood_n = self.craft.flood_tick();
+        let source_ready = !self.analysis_backpressured();
+        let flood_n = self
+            .craft
+            .flood_tick_budget(if source_ready { 256 } else { 0 });
         for i in 0..flood_n {
             let next_no = self.packet_counter + 1 + i as u64;
             if let Ok(pkt) = self.craft.build_packet(next_no) {
@@ -60,15 +64,19 @@ impl App {
         if self.rate_tick % 20 == 1 {
             let _ = self.socket_scope.refresh_event_file();
             let _ = self.socket_scope.refresh();
-            let core_handle = self.core.clone();
-            let mut core = core_handle.edit();
-            if core.tls_tracker.key_shelf.path.is_some() {
-                let _ = core.tls_tracker.reload_key_log();
-            }
+            self.configure_core(|core| {
+                if core.tls_tracker.key_shelf.path.is_some() {
+                    let _ = core.tls_tracker.reload_key_log();
+                }
+            });
         }
 
         // Advance PCAP replay — inject replayed packets
-        let replayed = self.replay.tick();
+        let replayed = if source_ready {
+            self.replay.tick()
+        } else {
+            Vec::new()
+        };
         for pkt in replayed {
             self.ingest_packet_inner(pkt);
         }
@@ -97,8 +105,13 @@ impl App {
             }
         }
 
-        self.core.edit().maintenance();
+        if self.rate_tick % 10 == 0 && self.pending_analysis.len() < 8 {
+            self.configure_core(|core| core.maintenance());
+        }
         self.refresh_telemetry();
+        if self.preferences_dirty.get() {
+            self.save_preferences();
+        }
     }
 
     pub(crate) fn animation_tick(&self) -> u32 {
@@ -107,7 +120,9 @@ impl App {
 
     pub(super) fn refresh_telemetry(&self) {
         let core_handle = self.core.clone();
-        let core = core_handle.edit();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            return;
+        };
         self.telemetry.publish(TelemetrySnapshot {
             packets_total: self.packet_counter,
             bytes_total: self.total_bytes,

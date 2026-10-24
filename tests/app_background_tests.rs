@@ -82,3 +82,87 @@ fn clear_discards_old_generation_outcomes_without_reopening_an_alert() {
         Some(0)
     );
 }
+
+#[test]
+fn busy_worker_does_not_block_settings_navigation_or_queued_controls() {
+    let mut app = App::new_for_test();
+    app.start_background_analysis().unwrap();
+    let (started, start) = std::sync::mpsc::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    app.configure_core(move |_| {
+        started.send(()).unwrap();
+        wait.recv_timeout(Duration::from_secs(3)).unwrap();
+    });
+    app.poll_analysis();
+    start.recv_timeout(Duration::from_secs(3)).unwrap();
+    let began = Instant::now();
+    app.open_settings();
+    app.settings_cursor = 3;
+    app.activate_settings_selection();
+    app.move_down();
+    app.run_search();
+    app.yara_force_rescan();
+    app.open_autopsy();
+    assert!(app.try_view().unwrap().is_none());
+    assert!(began.elapsed() < Duration::from_millis(100));
+    release.send(()).unwrap();
+    drain(&mut app);
+    assert_eq!(
+        app.query_core(|core| core.alert_center.automation_mode),
+        Some(AutomationMode::Watch)
+    );
+}
+
+#[test]
+fn synthetic_flood_retains_rate_debt_while_respecting_each_tick_budget() {
+    let mut app = App::new_for_test();
+    app.craft.flooding = true;
+    app.craft.flood_rate = 1000;
+    assert_eq!(app.craft.flood_tick_budget(0), 0);
+    assert_eq!(app.craft.flood_tick_budget(10), 10);
+    app.craft.flood_rate = 0;
+    assert_eq!(app.craft.flood_tick_budget(1000), 190);
+    assert_eq!(app.craft.flood_tick_budget(1000), 0);
+}
+
+#[test]
+fn live_dispatch_keeps_the_rejected_packet_and_unread_capture_tail() {
+    let mut app = App::new_for_test();
+    app.capturing = true;
+    app.start_background_analysis().unwrap();
+    let (started, start) = std::sync::mpsc::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    app.configure_core(move |_| {
+        started.send(()).unwrap();
+        wait.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    app.poll_analysis();
+    start.recv_timeout(Duration::from_secs(3)).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    for no in 1..=600 {
+        tx.try_send(packets::tcp(no, 100, 0x18, b"data")).unwrap();
+    }
+    let mut pending = None;
+    for _ in 0..4 {
+        app.dispatch_capture(&mut rx, &mut pending).unwrap();
+    }
+    assert!(pending.is_some());
+    assert!(!rx.is_empty());
+    let retained = pending.as_ref().unwrap().no;
+    app.dispatch_capture(&mut rx, &mut pending).unwrap();
+    assert_eq!(pending.as_ref().unwrap().no, retained);
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !rx.is_empty() || pending.is_some() || !app.analysis_idle() {
+        app.poll_analysis();
+        app.dispatch_capture(&mut rx, &mut pending).unwrap();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(app.packets.len(), 600);
+    assert_eq!(
+        app.packets.iter().map(|p| p.no).collect::<Vec<_>>(),
+        (1..=600).collect::<Vec<_>>()
+    );
+    app.stop_background_analysis().unwrap();
+}

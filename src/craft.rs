@@ -114,11 +114,15 @@ impl CraftState {
 
     /// Called each app tick (100 ms). Returns how many packets to inject this tick.
     pub fn flood_tick(&mut self) -> u32 {
+        self.flood_tick_budget(u32::MAX)
+    }
+
+    pub fn flood_tick_budget(&mut self, budget: u32) -> u32 {
         if !self.flooding { return 0; }
         // flood_rate pps, tick = 100 ms → expected packets per tick = flood_rate / 10
         let per_tick = self.flood_rate as f64 / 10.0;
         self.flood_accum += per_tick;
-        let n = self.flood_accum.floor() as u32;
+        let n = (self.flood_accum.floor() as u32).min(budget);
         self.flood_accum -= n as f64;
         n
     }

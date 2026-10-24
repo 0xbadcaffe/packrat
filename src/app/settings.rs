@@ -11,8 +11,6 @@ impl App {
     }
 
     pub fn activate_settings_selection(&mut self) {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
         match self.settings_cursor {
             1 => self.auto_scroll = !self.auto_scroll,
             2 => {
@@ -21,7 +19,7 @@ impl App {
                 );
             }
             3 => {
-                core.alert_center.cycle_automation_mode();
+                self.configure_core(|core| core.alert_center.cycle_automation_mode());
             }
             4 => {
                 self.traffic_latch.mode = match self.traffic_latch.mode {
@@ -42,7 +40,6 @@ impl App {
             7 => self.clear_guard_kill_switch(),
             _ => {}
         }
-        drop(core);
         self.save_preferences();
         self.set_status("Preferences updated");
     }
@@ -76,22 +73,30 @@ impl App {
     }
 
     pub(super) fn save_preferences(&self) {
-        let core_handle = self.core.clone();
-        let core = core_handle.edit();
         if !self.persist_preferences {
             return;
         }
-        let automation = match core.alert_center.automation_mode {
+        self.preferences_dirty.set(true);
+        if !self.analysis_idle() {
+            return;
+        }
+        let Some(mode) = self.query_core(|core| core.alert_center.automation_mode) else {
+            return;
+        };
+        let automation = match mode {
             AutomationMode::Off => 0,
             AutomationMode::Watch => 1,
             AutomationMode::Triage => 2,
         };
-        let _ = theme_store::save(&theme_store::Preferences {
+        let saved = theme_store::save(&theme_store::Preferences {
             theme: self.selected_theme_name.clone(),
             auto_scroll: self.auto_scroll,
             alert_automation: automation,
             startup_workspace: self.preferred_workspace.index(),
             navigation_version: 1,
         });
+        if saved.is_ok() {
+            self.preferences_dirty.set(false);
+        }
     }
 }

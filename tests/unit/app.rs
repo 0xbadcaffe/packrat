@@ -1,5 +1,43 @@
 use super::*;
 
+#[test]
+fn background_restore_preserves_acknowledgements_without_reopening_alerts() {
+    let mut source = App::new_for_test();
+    source.inject_packet(packet(1));
+    source.open_user_rule_incident(&packet(1), "rule", "rule", "finding", false);
+    source.open_active_incident_analysis();
+    source.acknowledge_active_incident().unwrap();
+    let state = source
+        .snapshot_project("case", ProjectSaveMode::Portable)
+        .unwrap();
+    let mut restored = App::new_for_test();
+    restored.start_background_analysis().unwrap();
+    restored.apply_project_state(state).unwrap();
+    assert!(
+        restored
+            .snapshot_project("pending", ProjectSaveMode::Portable)
+            .is_err()
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !restored.analysis_idle() {
+        restored.poll_analysis();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(!restored.alert_overlay_open);
+    assert_eq!(restored.packets.len(), 1);
+    assert_eq!(
+        restored.query_core(|core| core.incidents.active().is_none()),
+        Some(true)
+    );
+    assert_eq!(
+        restored.query_core(|core| core.incidents.incidents[0].reviewed),
+        Some(true)
+    );
+    assert!(restored.evidence_vault.exports.is_empty());
+    assert!(restored.traffic_latch.actions.is_empty());
+}
+
 fn packet(no: u64) -> Packet {
     Packet {
         capture: None,
@@ -25,10 +63,14 @@ fn portable_snapshot_embeds_packets_but_lightweight_does_not() {
     let mut app = App::new_for_test();
     app.inject_packet(packet(1));
 
-    let portable = app.snapshot_project("portable", ProjectSaveMode::Portable);
+    let portable = app
+        .snapshot_project("portable", ProjectSaveMode::Portable)
+        .unwrap();
     assert_eq!(portable.embedded_packets.len(), 1);
     assert_eq!(portable.embedded_packets[0].bytes, vec![1, 2, 3, 4]);
-    let lightweight = app.snapshot_project("light", ProjectSaveMode::Lightweight);
+    let lightweight = app
+        .snapshot_project("light", ProjectSaveMode::Lightweight)
+        .unwrap();
     assert!(lightweight.embedded_packets.is_empty());
 }
 
@@ -46,7 +88,7 @@ fn pinned_packet_survives_live_eviction_and_both_project_modes() {
         [1, 2, 3, 4]
     );
     for mode in [ProjectSaveMode::Lightweight, ProjectSaveMode::Portable] {
-        let state = app.snapshot_project("retained", mode);
+        let state = app.snapshot_project("retained", mode).unwrap();
         let serialized = serde_json::to_vec(&state).unwrap();
         let restored = serde_json::from_slice(&serialized).unwrap();
         let tray = restore_investigation_tray(&restored).unwrap();
@@ -129,7 +171,7 @@ fn cases_restore_reviewed_incidents_and_correlated_impact_without_side_effects()
     });
 
     for mode in [ProjectSaveMode::Lightweight, ProjectSaveMode::Portable] {
-        let state = source.snapshot_project("case", mode);
+        let state = source.snapshot_project("case", mode).unwrap();
         let json = serde_json::to_vec(&state).unwrap();
         let directory =
             std::env::temp_dir().join(format!("packrat-restore-{}", rand::random::<u64>()));
@@ -194,7 +236,9 @@ fn cases_restore_reviewed_incidents_and_correlated_impact_without_side_effects()
 fn invalid_saved_incidents_do_not_replace_the_open_investigation() {
     let mut app = App::new_for_test();
     app.inject_packet(packet(99));
-    let mut state = app.snapshot_project("bad", ProjectSaveMode::Portable);
+    let mut state = app
+        .snapshot_project("bad", ProjectSaveMode::Portable)
+        .unwrap();
     state.incident_state.as_mut().unwrap().last_id = u64::MAX;
     assert!(app.apply_project_state(state).is_err());
     assert_eq!(app.packets[0].no, 99);
