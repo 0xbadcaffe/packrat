@@ -22,6 +22,7 @@ pub mod path_reconstruction;
 pub mod graph_scoring;
 pub mod graph_cluster;
 pub mod incident;
+pub mod impact;
 pub mod industrial_policy;
 pub mod dns_transactions;
 pub mod ipv6_fragments;
