@@ -2,6 +2,12 @@
 
 use crate::net::packet::Packet;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldProvenance {
+    Captured,
+    Metadata,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PacketField {
     pub layer: String,
@@ -13,6 +19,14 @@ pub struct PacketField {
 }
 
 impl PacketField {
+    pub fn provenance(&self) -> FieldProvenance {
+        if self.offset.is_some() && self.length.is_some() { FieldProvenance::Captured } else { FieldProvenance::Metadata }
+    }
+
+    pub fn raw_bytes<'a>(&self, packet: &'a Packet) -> Option<&'a [u8]> {
+        let offset = self.offset?;
+        packet.bytes.get(offset..offset.checked_add(self.length?)?)
+    }
     fn new(
         layer: &str,
         path: &str,
@@ -45,6 +59,7 @@ struct TransportLayout {
     protocol: u8,
     offset: usize,
     payload_offset: usize,
+    end: usize,
 }
 
 pub fn extract_fields(packet: &Packet) -> Vec<PacketField> {
@@ -75,8 +90,11 @@ pub fn extract_fields(packet: &Packet) -> Vec<PacketField> {
                 17 => add_udp_fields(bytes, transport.offset, &mut fields),
                 _ => {}
             }
-            add_tls_fields(bytes, transport.payload_offset, &mut fields);
-            add_dtls_fields(bytes, transport.payload_offset, &mut fields);
+            if transport.protocol == 6 {
+                add_tls_fields(&bytes[..transport.end], transport.payload_offset, &mut fields);
+            } else if transport.protocol == 17 {
+                add_dtls_fields(&bytes[..transport.end], transport.payload_offset, &mut fields);
+            }
         }
     } else {
         fields.push(PacketField::new("Bytes", "payload.len", "Captured Bytes", bytes.len().to_string(), None, None));
@@ -192,38 +210,58 @@ fn add_ipv6_fields(bytes: &[u8], ip: usize, fields: &mut Vec<PacketField>) {
 }
 
 fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
-    match eth.ether_type {
+    let ip = eth.payload_offset;
+    let (protocol, offset, end) = match eth.ether_type {
         0x0800 => {
-            let ip = eth.payload_offset;
-            if bytes.len() < ip + 20 {
+            if bytes.len() < ip + 20 || bytes[ip] >> 4 != 4 {
                 return None;
             }
             let ihl = ((bytes[ip] & 0x0f) as usize) * 4;
             let offset = ip + ihl;
-            let protocol = bytes[ip + 9];
-            let payload_offset = match protocol {
-                6 if bytes.len() >= offset + 20 => offset + (((bytes[offset + 12] >> 4) as usize) * 4),
-                17 if bytes.len() >= offset + 8 => offset + 8,
-                _ => offset,
-            };
-            Some(TransportLayout { protocol, offset, payload_offset })
+            let end = ip.checked_add(read_u16(bytes, ip + 2)? as usize)?;
+            if ihl < 20 || end < offset || end > bytes.len() || read_u16(bytes, ip + 6)? & 0x1fff != 0 { return None; }
+            (bytes[ip + 9], offset, end)
         }
         0x86dd => {
-            let ip = eth.payload_offset;
-            if bytes.len() < ip + 40 {
+            if bytes.len() < ip + 40 || bytes[ip] >> 4 != 6 {
                 return None;
             }
-            let offset = ip + 40;
-            let protocol = bytes[ip + 6];
-            let payload_offset = match protocol {
-                6 if bytes.len() >= offset + 20 => offset + (((bytes[offset + 12] >> 4) as usize) * 4),
-                17 if bytes.len() >= offset + 8 => offset + 8,
-                _ => offset,
-            };
-            Some(TransportLayout { protocol, offset, payload_offset })
+            let end = ip.checked_add(40 + read_u16(bytes, ip + 4)? as usize)?;
+            if end > bytes.len() { return None; }
+            let mut offset = ip + 40;
+            let mut protocol = bytes[ip + 6];
+            for _ in 0..16 {
+                let header = bytes.get(offset..end)?;
+                let length = match protocol {
+                    0 | 43 | 60 if header.len() >= 2 => (usize::from(header[1]) + 1) * 8,
+                    44 if header.len() >= 8 => {
+                        if u16::from_be_bytes([header[2], header[3]]) & 0xfff8 != 0 { return None; }
+                        8
+                    }
+                    _ => break,
+                };
+                protocol = header[0];
+                offset = offset.checked_add(length)?;
+                if offset > end { return None; }
+            }
+            (protocol, offset, end)
         }
-        _ => None,
-    }
+        _ => return None,
+    };
+    let payload_offset = match protocol {
+        6 if offset + 20 <= end => {
+            let length = usize::from(bytes[offset + 12] >> 4) * 4;
+            if length < 20 || offset + length > end { return None; }
+            offset + length
+        }
+        17 if offset + 8 <= end => {
+            let length = read_u16(bytes, offset + 4)? as usize;
+            if length < 8 || offset + length > end { return None; }
+            return Some(TransportLayout { protocol, offset, payload_offset: offset + 8, end: offset + length });
+        }
+        _ => return None,
+    };
+    Some(TransportLayout { protocol, offset, payload_offset, end })
 }
 
 fn add_tcp_fields(bytes: &[u8], tcp: usize, fields: &mut Vec<PacketField>) {

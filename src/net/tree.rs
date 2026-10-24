@@ -75,6 +75,22 @@ fn app_payload_stub() -> TreeSection {
 }
 
 pub fn build_tree(pkt: &Packet, is_simulated: bool) -> Vec<TreeSection> {
+    if !is_simulated {
+        let mut sections: Vec<TreeSection> = Vec::new();
+        for field in crate::analysis::packet_fields::extract_fields(pkt) {
+            if sections.last().is_none_or(|section| section.title != field.layer) {
+                sections.push(TreeSection {
+                    title: field.layer.clone(),
+                    fields: Vec::new(),
+                    expanded: true,
+                });
+            }
+            if let Some(section) = sections.last_mut() {
+                section.fields.push(make_field(&field.label, &field.value, FieldColor::Default));
+            }
+        }
+        return sections;
+    }
     let raw = &pkt.bytes;
     let eth_extra = match (pkt.outer_vlan_id.is_some(), pkt.vlan_id.is_some()) {
         (true, _)      => 8usize, // QinQ: two 4-byte tags

@@ -1,6 +1,49 @@
 use packrat_tui::analysis::packet_fields::{extract_fields, filter_fields};
 use packrat_tui::net::packet::Packet;
 
+#[test]
+fn production_tree_never_invents_ntp_fields_from_packet_number() {
+    let mut pkt = packet(ethernet_ipv4_tcp(123456, 789), "NTP");
+    let first = packrat_tui::net::tree::build_tree(&pkt, false);
+    assert!(first.iter().any(|section| section.fields.iter().any(|field| field.val == "123456")));
+    assert!(!first.iter().any(|section| section.title.contains("Network Time")));
+    pkt.no = 987654;
+    let second = packrat_tui::net::tree::build_tree(&pkt, false);
+    for (left, right) in first.iter().zip(&second).skip(1) {
+        assert_eq!(format!("{:?}", left), format!("{:?}", right));
+    }
+}
+
+#[test]
+fn truncated_frames_have_no_fabricated_transport_fields() {
+    for len in 0..54 {
+        let bytes = ethernet_ipv4_tcp(123, 456)[..len].to_vec();
+        let tree = packrat_tui::net::tree::build_tree(&packet(bytes, "HTTPS"), false);
+        assert!(!tree.iter().any(|section| section.title == "TCP"));
+    }
+}
+
+#[test]
+fn field_provenance_references_exact_captured_sequence_bytes() {
+    let pkt = packet(ethernet_ipv4_tcp(0x12345678, 456), "TCP");
+    let fields = extract_fields(&pkt);
+    let seq = fields.iter().find(|field| field.path == "tcp.seq").unwrap();
+    assert_eq!(seq.raw_bytes(&pkt), Some(&[0x12, 0x34, 0x56, 0x78][..]));
+    assert_eq!(seq.provenance(), packrat_tui::analysis::packet_fields::FieldProvenance::Captured);
+}
+
+#[test]
+fn fragments_and_padding_do_not_become_transport_or_tls_fields() {
+    let mut bytes = ethernet_ipv4_tcp(123, 456);
+    bytes[20..22].copy_from_slice(&1u16.to_be_bytes());
+    let fields = extract_fields(&packet(bytes, "TCP"));
+    assert!(!fields.iter().any(|field| field.path.starts_with("tcp.")));
+    let mut bytes = ethernet_ipv4_tcp(123, 456);
+    bytes.extend_from_slice(&[22, 3, 3, 0, 0]);
+    let fields = extract_fields(&packet(bytes, "TLS"));
+    assert!(!fields.iter().any(|field| field.path.starts_with("tls.")));
+}
+
 fn field<'a>(fields: &'a [packrat_tui::analysis::packet_fields::PacketField], path: &str) -> &'a str {
     fields.iter().find(|field| field.path == path).map(|field| field.value.as_str()).unwrap_or("")
 }
