@@ -1,12 +1,12 @@
 //! Automatic evidence preservation for critical incidents.
 
 use std::collections::HashSet;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::analysis::incident::Incident;
-use crate::export::PcapWriter;
+use crate::export::pcapng::PcapNgWriter;
 
 #[derive(Debug, Clone)]
 pub struct EvidenceExport {
@@ -55,15 +55,21 @@ impl EvidenceVault {
         if !self.enabled || self.frozen_incidents.contains(&incident.id) {
             return Ok(None);
         }
-        std::fs::create_dir_all(&self.directory)
+        let mut directory = std::fs::DirBuilder::new();
+        directory.recursive(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::DirBuilderExt;
+            directory.mode(0o700);
+        }
+        directory.create(&self.directory)
             .map_err(|error| format!("create evidence directory: {error}"))?;
 
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs();
-        let base = format!("incident-{}-{stamp}", incident.id);
-        let pcap_path = self.directory.join(format!("{base}.pcap"));
+            .as_nanos();
+        let base = format!("incident-{}-{stamp}-{:016x}", incident.id, rand::random::<u64>());
+        let pcap_path = self.directory.join(format!("{base}.pcapng"));
         let metadata_path = self.directory.join(format!("{base}.json"));
         let ndjson_path = self.directory.join(format!("{base}.ndjson"));
 
@@ -89,11 +95,21 @@ impl EvidenceVault {
 }
 
 fn write_pcap(path: &Path, incident: &Incident) -> Result<(), String> {
-    let mut writer = PcapWriter::new(path).map_err(|error| format!("create PCAP: {error}"))?;
+    let mut writer = PcapNgWriter::create(path).map_err(|error| format!("create PCAPNG: {error}"))?;
     for packet in &incident.packet_history {
-        writer.write_packet(packet).map_err(|error| format!("write PCAP: {error}"))?;
+        writer.write_packet(packet).map_err(|error| format!("write PCAPNG: {error}"))?;
     }
-    writer.flush().map_err(|error| format!("flush PCAP: {error}"))
+    writer.flush().map_err(|error| format!("flush PCAPNG: {error}"))
+}
+
+fn private_output(path: &Path) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)] {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
 }
 
 #[derive(serde::Serialize)]
@@ -136,7 +152,7 @@ fn metadata(incident: &Incident) -> IncidentMetadata<'_> {
 fn write_metadata_with_events(path: &Path, incident: &Incident, events: &[crate::analysis::impact::EndpointEvidence]) -> Result<(), String> {
     let mut record = metadata(incident);
     record.impact = crate::analysis::impact::correlate(incident, events);
-    let file = File::create(path).map_err(|error| format!("create evidence metadata: {error}"))?;
+    let file = private_output(path).map_err(|error| format!("create evidence metadata: {error}"))?;
     let mut writer = BufWriter::new(file);
     serde_json::to_writer_pretty(&mut writer, &record).map_err(|error| format!("write evidence metadata: {error}"))?;
     writer.flush().map_err(|error| format!("flush evidence metadata: {error}"))
@@ -162,7 +178,7 @@ struct PacketRecord<'a> {
 }
 
 fn write_ndjson(path: &Path, incident: &Incident, events: &[crate::analysis::impact::EndpointEvidence]) -> Result<(), String> {
-    let file = File::create(path).map_err(|error| format!("create NDJSON: {error}"))?;
+    let file = private_output(path).map_err(|error| format!("create NDJSON: {error}"))?;
     let mut writer = BufWriter::new(file);
     let mut header = metadata(incident);
     header.impact = crate::analysis::impact::correlate(incident, events);
@@ -244,6 +260,15 @@ mod tests {
         assert!(first.pcap_path.exists());
         assert!(first.metadata_path.exists());
         assert!(first.ndjson_path.exists());
+        assert_eq!(first.pcap_path.extension().unwrap(), "pcapng");
+        let packets = crate::pcap_replay::read_pcap(&first.pcap_path).unwrap();
+        assert_eq!(packets[0].bytes, incident.packet_history[0].bytes);
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [&first.pcap_path, &first.metadata_path, &first.ndjson_path] {
+                assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600);
+            }
+        }
         assert!(vault.freeze(&incident).unwrap().is_none());
         let ndjson = std::fs::read_to_string(first.ndjson_path).unwrap();
         assert_eq!(ndjson.lines().count(), 2);

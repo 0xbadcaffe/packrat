@@ -5,6 +5,8 @@ use std::path::Path;
 use anyhow::Result;
 use crate::net::packet::Packet;
 
+pub mod pcapng;
+
 /// Writes captured packets to a libpcap-format `.pcap` file.
 pub struct PcapWriter {
     writer: BufWriter<File>,

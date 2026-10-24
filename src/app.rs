@@ -43,7 +43,7 @@ use crate::pcap_replay::ReplayState;
 use crate::scan::ScanState;
 use crate::sim::capture::SimulatedCapture;
 use crate::sim::dynamic::DynEntry;
-use crate::export::PcapWriter;
+use crate::export::pcapng::PcapNgWriter;
 use crate::filter::PacketFilter;
 use crate::net::flow::{FlowTracker, FlowSort, FlowKey};
 use crate::net::lua_plugin::PluginManager;
@@ -489,7 +489,7 @@ pub struct App {
     pub _hex_scroll: u16,
     pub recording: bool,
     pub pcap_path: String,
-    pcap_writer: Option<PcapWriter>,
+    pcap_writer: Option<PcapNgWriter<std::io::BufWriter<std::fs::File>>>,
     pub show_help: bool,
     pub help_scroll: u16,
     pub dissectors: Vec<DissectorDef>,
@@ -2297,14 +2297,16 @@ impl App {
 
     pub fn toggle_recording(&mut self) {
         if self.recording {
-            if let Some(ref mut w) = self.pcap_writer { let _ = w.flush(); }
+            if let Some(error) = self.pcap_writer.as_mut().and_then(|writer| writer.flush().err()) {
+                self.set_status(format!("Recording flush failed: {error}"));
+            }
             self.pcap_writer = None;
             self.recording = false;
         } else {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default().as_secs();
-            let filename = format!("packrat_{}.pcap", ts);
+                .unwrap_or_default().as_nanos();
+            let filename = format!("packrat_{}.pcapng", ts);
             // Try CWD first, then home directory as fallback.
             let candidates = [
                 filename.clone(),
@@ -2313,12 +2315,15 @@ impl App {
                     .unwrap_or_else(|| format!("/tmp/{}", filename)),
             ];
             for path in &candidates {
-                if let Ok(writer) = PcapWriter::new(std::path::Path::new(path)) {
+                if let Ok(writer) = PcapNgWriter::create(std::path::Path::new(path)) {
                     self.pcap_path = path.clone();
                     self.pcap_writer = Some(writer);
                     self.recording = true;
                     break;
                 }
+            }
+            if !self.recording {
+                self.set_status("Cannot create recording: no writable output path");
             }
         }
     }

@@ -124,6 +124,14 @@ impl PacketArchive {
         rows.collect::<rusqlite::Result<Vec<i64>>>().map_err(|error| error.to_string())
     }
 
+    pub fn packet_ids(&self, after_id: i64, limit: usize) -> Result<Vec<i64>, String> {
+        let mut statement = self.db.prepare("SELECT id FROM packets WHERE id>?1 ORDER BY id LIMIT ?2")
+            .map_err(|error| error.to_string())?;
+        let rows = statement.query_map(params![after_id, limit.clamp(1, 1000) as i64], |row| row.get(0))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<i64>>>().map_err(|error| error.to_string())
+    }
+
     pub fn packet(&mut self, id: i64) -> Result<Packet, String> {
         let (offset, length, digest, metadata): (i64, i64, String, String) = self
             .db

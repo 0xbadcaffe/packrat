@@ -158,3 +158,112 @@ fn every_truncated_prefix_is_handled_without_panicking() {
         assert!(read(&bytes[..length]).is_err(), "prefix {length}");
     }
 }
+
+#[test]
+fn export_round_trip_preserves_raw_bytes_clocks_names_comments_and_wire_lengths() {
+    let mut bytes = section(false, 0x80 | 10, -3, 1);
+    bytes.extend(enhanced(false, 0, 1536, &[1; 17], 100));
+    bytes.extend(section(true, 9, 0, 101));
+    bytes.extend(enhanced(true, 0, 123456789, &[0x45; 23], 25));
+    let original = read(&bytes).unwrap();
+    let mut output = Vec::new();
+    {
+        let mut writer = packrat_tui::export::pcapng::PcapNgWriter::new(&mut output);
+        for packet in &original { writer.write_packet(packet).unwrap(); }
+        writer.flush().unwrap();
+    }
+    let restored = read(&output).unwrap();
+    for (left, right) in original.iter().zip(restored.iter()) {
+        assert_eq!(left.bytes, right.bytes);
+        assert_eq!(left.capture, right.capture);
+    }
+}
+
+#[test]
+fn export_untimed_packets_do_not_fabricate_times_or_include_padding() {
+    let mut bytes = section(false, 6, 0, 101);
+    let mut simple = number(8, false).to_vec();
+    simple.extend([0x45; 8]);
+    bytes.extend(block(3, simple, false));
+    let mut original = read(&bytes).unwrap().remove(0);
+    original.bytes.truncate(3);
+    original.capture.as_mut().unwrap().captured_length = 3;
+    let mut output = Vec::new();
+    {
+        let mut writer = packrat_tui::export::pcapng::PcapNgWriter::new(&mut output);
+        writer.write_packet(&original).unwrap();
+        writer.write_packet(&original).unwrap();
+        writer.flush().unwrap();
+    }
+    for restored in read(&output).unwrap() {
+        let capture = restored.capture.unwrap();
+        assert!(capture.timestamp.is_none());
+        assert_eq!(capture.wire_length, 8);
+        assert_eq!(capture.link_type, 101);
+        assert_eq!(restored.bytes, [0x45; 3]);
+    }
+}
+
+#[test]
+fn export_validation_fails_before_writing_invalid_packets() {
+    use packrat_tui::net::packet::TimestampResolution;
+    let mut bytes = section(false, 9, 0, 1);
+    bytes.extend(enhanced(false, 0, 10, &[1; 14], 14));
+    let original = read(&bytes).unwrap().remove(0);
+    for variant in 0..6 {
+        let mut packet = original.clone();
+        let metadata = packet.capture.as_mut().unwrap();
+        match variant {
+            0 => metadata.captured_length += 1,
+            1 => metadata.wire_length = 0,
+            2 => metadata.timestamp.as_mut().unwrap().resolution = TimestampResolution::Decimal(128),
+            3 => metadata.link_type = 65536,
+            4 => metadata.comments.push("x".repeat(4097)),
+            _ => metadata.timestamp = None,
+        }
+        let mut output = Vec::new();
+        let mut writer = packrat_tui::export::pcapng::PcapNgWriter::new(&mut output);
+        assert!(writer.write_packet(&packet).is_err(), "variant {variant}");
+        assert!(output.is_empty());
+    }
+}
+
+#[test]
+fn export_io_errors_are_returned_and_existing_files_never_overwritten() {
+    struct Fail;
+    impl std::io::Write for Fail {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("disk full"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let packet = packrat_tui::net::parser::parse_ethernet(&[0; 14], 1, 1.0);
+    let mut writer = packrat_tui::export::pcapng::PcapNgWriter::new(Fail);
+    assert!(writer.write_packet(&packet).unwrap_err().to_string().contains("disk full"));
+    let path = std::env::temp_dir().join(format!("packrat-export-{}.pcapng", rand::random::<u64>()));
+    std::fs::write(&path, "original").unwrap();
+    assert!(packrat_tui::export::pcapng::PcapNgWriter::create(&path).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), b"original");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn archive_cli_streams_export_and_reimport_with_metadata() {
+    let directory = std::env::temp_dir().join(format!("packrat-export-{}", rand::random::<u64>()));
+    let output = directory.join("evidence.pcapng");
+    let mut bytes = section(false, 9, -1, 101);
+    bytes.extend(enhanced(false, 0, 2_123_456_789, &[0x45; 14], 100));
+    let packets = read(&bytes).unwrap();
+    {
+        let mut archive = packrat_tui::storage::packet_archive::PacketArchive::open(&directory).unwrap();
+        archive.append(&packets).unwrap();
+    }
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&directory).arg("--export").arg(&output).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(String::from_utf8_lossy(&result.stdout).trim(), "Exported 1 packets");
+    let restored = read_pcap(&output).unwrap();
+    assert_eq!(restored[0].bytes, packets[0].bytes);
+    assert_eq!(restored[0].capture, packets[0].capture);
+    std::fs::remove_dir_all(directory).unwrap();
+}
