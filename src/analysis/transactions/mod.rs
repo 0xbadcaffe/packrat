@@ -4,9 +4,18 @@ use crate::analysis::stream::ReassembledStream;
 
 mod framing;
 mod http;
+mod http2;
+mod http2_headers;
+mod http2_wire;
 mod message;
+mod multiplexed;
+
+pub use multiplexed::{
+    MultiplexedConversation, MultiplexedMessage, MultiplexedProtocol, MultiplexedTransaction,
+};
 
 pub use http::reconstruct_http;
+pub use http2::reconstruct_http2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum Direction {

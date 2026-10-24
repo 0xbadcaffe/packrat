@@ -58,6 +58,7 @@ toml       = "0.8"
 pcap       = { version = "2.0", optional = true }
 pcap-parser = "0.17"
 httparse   = "1.10"
+loona-hpack = "0.4.3"
 md5        = "0.7"
 sha2       = "0.10"
 mlua       = { version = "0.10", features = ["lua54", "vendored"], optional = true }
