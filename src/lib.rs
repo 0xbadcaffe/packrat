@@ -6,6 +6,7 @@ pub mod app;
 pub mod capture;
 pub mod craft;
 pub mod dissector;
+pub mod engine;
 pub mod event;
 pub mod export;
 pub mod filter;

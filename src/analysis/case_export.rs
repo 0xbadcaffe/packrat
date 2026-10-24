@@ -246,12 +246,12 @@ fn build(app: &App) -> CaseBundle<'_> {
         packets_total: app.packet_counter,
         bytes_total:   app.total_bytes,
         duration_sec:  duration,
-        flows:         app.flow_tracker.flows.len(),
-        streams:       app.streams.len(),
+        flows:         app.core.flow_tracker.flows.len(),
+        streams:       app.core.streams.len(),
     };
 
     // Hosts
-    let hosts: Vec<HostRecord<'_>> = app.hosts.all().iter().map(|h| {
+    let hosts: Vec<HostRecord<'_>> = app.core.hosts.all().iter().map(|h| {
         let mut ports: Vec<u16> = h.open_ports.iter().copied().collect();
         ports.sort();
         let mut protos: Vec<&str> = h.protocols.iter().map(|s| s.as_str()).collect();
@@ -275,7 +275,7 @@ fn build(app: &App) -> CaseBundle<'_> {
     }).collect();
 
     // IOC hits
-    let ioc_hits: Vec<IocHitRecord<'_>> = app.ioc_engine.hits.iter().map(|h| IocHitRecord {
+    let ioc_hits: Vec<IocHitRecord<'_>> = app.core.ioc_engine.hits.iter().map(|h| IocHitRecord {
         kind:    h.ioc.kind.to_string(),
         value:   &h.ioc.value,
         context: &h.context,
@@ -283,7 +283,7 @@ fn build(app: &App) -> CaseBundle<'_> {
     }).collect();
 
     // Rule hits
-    let rule_hits: Vec<RuleHitRecord<'_>> = app.rule_engine.hits.iter().map(|h| RuleHitRecord {
+    let rule_hits: Vec<RuleHitRecord<'_>> = app.core.rule_engine.hits.iter().map(|h| RuleHitRecord {
         rule_id:   &h.rule_id,
         rule_name: &h.rule_name,
         message:   &h.message,
@@ -298,13 +298,13 @@ fn build(app: &App) -> CaseBundle<'_> {
     }).collect();
 
     // Security alerts
-    let alerts: Vec<AlertRecord> = app.security.ids_alerts.iter().map(|a| AlertRecord {
+    let alerts: Vec<AlertRecord> = app.core.security.ids_alerts.iter().map(|a| AlertRecord {
         signature: a.signature.to_string(),
         severity:  a.severity.to_string(),
         pkt_no:    a.pkt_no,
     }).collect();
 
-    let findings = app.alert_center.items.iter().map(|item| FindingRecord {
+    let findings = app.core.alert_center.items.iter().map(|item| FindingRecord {
         id: item.id,
         source: &item.source,
         title: &item.title,
@@ -321,7 +321,7 @@ fn build(app: &App) -> CaseBundle<'_> {
     }).collect();
 
     // Credentials (redacted — only protocol and kind, no values)
-    let creds: Vec<CredRecord<'_>> = app.credentials.iter().map(|c| CredRecord {
+    let creds: Vec<CredRecord<'_>> = app.core.credentials.iter().map(|c| CredRecord {
         proto: &c.proto,
         kind:  c.kind,
     }).collect();
@@ -333,8 +333,8 @@ fn build(app: &App) -> CaseBundle<'_> {
         timestamp: n.timestamp,
     }).collect();
 
-    let incidents = app.incidents.incidents.iter().map(|incident| IncidentRecord {
-        impact: crate::analysis::impact::correlate(incident, &app.endpoint_evidence),
+    let incidents = app.core.incidents.incidents.iter().map(|incident| IncidentRecord {
+        impact: crate::analysis::impact::correlate(incident, &app.core.endpoint_evidence),
         id: incident.id,
         source: incident.source.to_string(),
         detector: &incident.detector,
@@ -398,7 +398,7 @@ fn build(app: &App) -> CaseBundle<'_> {
     }).collect();
 
     // Operator graph summary
-    let graph = &app.operator_graph;
+    let graph = &app.core.operator_graph;
     let mut top: Vec<TopNode> = graph.all_nodes_sorted()
         .into_iter()
         .map(|n| TopNode {

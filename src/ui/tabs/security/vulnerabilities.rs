@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn draw_vuln(f: &mut Frame, app: &App, area: Rect) {
-    let hits = &app.security.vuln_hits;
+    let hits = &app.core.security.vuln_hits;
     let scroll = app.security_scroll;
     let visible = area.height.saturating_sub(3) as usize;
 

@@ -169,7 +169,7 @@ async fn settings_cycles_alert_automation_without_enabling_containment() {
     }
     event::handle(&mut app, key(KeyCode::Enter));
     assert_eq!(
-        app.alert_center.automation_mode,
+        app.core.alert_center.automation_mode,
         packrat_tui::analysis::alert_center::AutomationMode::Watch,
     );
     assert_eq!(app.traffic_latch.mode, LatchMode::Monitor);
@@ -203,10 +203,10 @@ async fn help_navigation_scrolls_without_closing() {
 #[test]
 fn watch_mode_auto_pins_only_high_priority_alerts() {
     let mut app = App::new_for_test();
-    app.alert_center.automation_mode = packrat_tui::analysis::alert_center::AutomationMode::Watch;
-    app.alert_center.record(1, "IDS", "LOW", "low", "detail");
-    app.alert_center.record(2, "IDS", "HIGH", "high", "detail");
-    for id in app.alert_center.drain_pending_pins() {
+    app.core.alert_center.automation_mode = packrat_tui::analysis::alert_center::AutomationMode::Watch;
+    app.core.alert_center.record(1, "IDS", "LOW", "low", "detail");
+    app.core.alert_center.record(2, "IDS", "HIGH", "high", "detail");
+    for id in app.core.alert_center.drain_pending_pins() {
         app.worklist
             .add(packrat_tui::app::InvestigationItem::Alert(id));
     }
@@ -233,7 +233,7 @@ fn guard_simulation_requires_independent_critical_signals() {
 
     let mut app = App::new_for_test();
     let finding = packet(1);
-    app.incidents.open_or_update(
+    app.core.incidents.open_or_update(
         IncidentSource::IndustrySignature,
         "detector-a",
         "first",
@@ -244,7 +244,7 @@ fn guard_simulation_requires_independent_critical_signals() {
     app.simulate_guard_response();
     assert_eq!(app.response_preview[0].status, LatchStatus::PendingApproval);
 
-    app.incidents.open_or_update(
+    app.core.incidents.open_or_update(
         IncidentSource::IndustrySignature,
         "detector-b",
         "second",

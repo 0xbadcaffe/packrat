@@ -7,7 +7,7 @@ impl App {
         signature: &str,
         detail: &str,
     ) {
-        let id = self.incidents.open_or_update(
+        let id = self.core.incidents.open_or_update(
             IncidentSource::IndustrySignature,
             signature,
             detail,
@@ -34,7 +34,7 @@ impl App {
         message: &str,
         auto_contain: bool,
     ) {
-        let id = self.incidents.open_or_update(
+        let id = self.core.incidents.open_or_update(
             IncidentSource::UserRule,
             rule_id,
             format!("{rule_name}: {message}"),
@@ -55,6 +55,7 @@ impl App {
 
     pub(super) fn freeze_incident_evidence(&mut self, incident_id: u64) {
         let incident = self
+            .core
             .incidents
             .incidents
             .iter()
@@ -65,7 +66,7 @@ impl App {
         };
         if let Err(error) = self
             .evidence_vault
-            .freeze_with_endpoint_evidence(&incident, &self.endpoint_evidence)
+            .freeze_with_endpoint_evidence(&incident, &self.core.endpoint_evidence)
         {
             self.set_status(format!(
                 "Incident #{incident_id} retained in memory; evidence export failed: {error}"
@@ -75,6 +76,7 @@ impl App {
 
     pub(super) fn evaluate_traffic_latch(&mut self, incident_id: u64, auto_contain_rule: bool) {
         let incident = self
+            .core
             .incidents
             .incidents
             .iter()
@@ -110,7 +112,7 @@ impl App {
         incident: &crate::analysis::incident::Incident,
     ) -> bool {
         let mut detectors = std::collections::BTreeSet::new();
-        for candidate in self.incidents.incidents.iter().filter(|candidate| {
+        for candidate in self.core.incidents.incidents.iter().filter(|candidate| {
             candidate.attacker == incident.attacker
                 && candidate.target == incident.target
                 && candidate.severity == EvidenceSeverity::Critical
@@ -122,7 +124,7 @@ impl App {
     }
 
     pub fn approve_active_latch(&mut self) {
-        let Some(incident_id) = self.incidents.active().map(|incident| incident.id) else {
+        let Some(incident_id) = self.core.incidents.active().map(|incident| incident.id) else {
             self.set_status("No active incident has a pending TrafficLatch action");
             return;
         };
@@ -146,7 +148,7 @@ impl App {
     }
 
     pub fn simulate_guard_response(&mut self) {
-        let incidents = self.incidents.incidents.clone();
+        let incidents = self.core.incidents.incidents.clone();
         self.response_preview = incidents
             .iter()
             .filter(|incident| {
@@ -189,7 +191,7 @@ impl App {
 
     /// Open the retained incident packet history and record that it was reviewed.
     pub fn open_active_incident_analysis(&mut self) -> bool {
-        if !self.incidents.mark_active_reviewed() {
+        if !self.core.incidents.mark_active_reviewed() {
             return false;
         }
         self.active_tab = Tab::Analysis;
@@ -201,8 +203,8 @@ impl App {
 
     /// Acknowledgement hides the active alert but preserves its history.
     pub fn acknowledge_active_incident(&mut self) -> Result<(), &'static str> {
-        self.incidents.acknowledge_active()?;
-        self.alert_overlay_open = self.incidents.active().is_some();
+        self.core.incidents.acknowledge_active()?;
+        self.alert_overlay_open = self.core.incidents.active().is_some();
         self.set_status("Incident acknowledged; retained packet history remains available.");
         Ok(())
     }

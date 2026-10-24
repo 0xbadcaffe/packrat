@@ -62,6 +62,7 @@ impl App {
                 available: true,
             },
             InvestigationItem::Host(address) => self
+                .core
                 .hosts
                 .get(address)
                 .map(|host| InvestigationContext {
@@ -86,6 +87,7 @@ impl App {
                 })
                 .unwrap_or_else(|| missing("Host", address.clone())),
             InvestigationItem::Alert(id) => self
+                .core
                 .alert_center
                 .items
                 .iter()
@@ -136,6 +138,7 @@ impl App {
                 })
                 .unwrap_or_else(|| missing("Object", format!("Object #{id}"))),
             InvestigationItem::GraphNode(key) => self
+                .core
                 .operator_graph
                 .all_nodes()
                 .find(|node| node.key == *key)
@@ -187,7 +190,7 @@ impl App {
     pub fn active_investigation_stream(&self) -> Option<&ReassembledStream> {
         let packet = self.active_investigation_packet()?;
         let key = StreamKey::from_packet(packet)?;
-        self.streams.get(&key.id())
+        self.core.streams.get(&key.id())
     }
 
     pub fn open_active_investigation_stream_overlay(&mut self) {
@@ -203,7 +206,7 @@ impl App {
     }
 
     pub(super) fn open_reassembled_stream(&mut self, id: String) {
-        let Some(stream) = self.streams.get(&id) else {
+        let Some(stream) = self.core.streams.get(&id) else {
             self.set_status("No reassembled stream is available for this packet yet");
             return;
         };
@@ -314,7 +317,7 @@ impl App {
     }
 
     pub fn pin_selected_alert(&mut self) -> bool {
-        let Some(id) = self.alert_center.selected_item().map(|item| item.id) else {
+        let Some(id) = self.core.alert_center.selected_item().map(|item| item.id) else {
             self.set_status("No alert selected to pin");
             return false;
         };
@@ -330,7 +333,7 @@ impl App {
                 .active_investigation_packet()
                 .map(|packet| InvestigationItem::Packet(packet.no)),
             Tab::Flows => {
-                let sorted = self.flow_tracker.sorted_flows(&self.flows_sort);
+                let sorted = self.core.flow_tracker.sorted_flows(&self.flows_sort);
                 self.flows_selected
                     .and_then(|index| sorted.get(index))
                     .map(|flow| {
@@ -346,15 +349,16 @@ impl App {
             }
             Tab::Hosts => {
                 let hosts = if self.hosts_search.is_empty() {
-                    self.hosts.all()
+                    self.core.hosts.all()
                 } else {
-                    self.hosts.search(&self.hosts_search)
+                    self.core.hosts.search(&self.hosts_search)
                 };
                 hosts
                     .get(self.hosts_scroll)
                     .map(|host| InvestigationItem::Host(host.ip.clone()))
             }
             Tab::Security => self
+                .core
                 .alert_center
                 .selected_item()
                 .map(|alert| InvestigationItem::Alert(alert.id)),
@@ -365,7 +369,7 @@ impl App {
             Tab::OperatorGraph => self
                 .graph_ui
                 .selected_node
-                .and_then(|id| self.operator_graph.get_node(id))
+                .and_then(|id| self.core.operator_graph.get_node(id))
                 .map(|node| InvestigationItem::GraphNode(node.key.clone())),
             Tab::Notebook => {
                 let notes = if self.notebook_search.is_empty() {

@@ -19,7 +19,7 @@ impl App {
                 );
             }
             3 => {
-                self.alert_center.cycle_automation_mode();
+                self.core.alert_center.cycle_automation_mode();
             }
             4 => {
                 self.traffic_latch.mode = match self.traffic_latch.mode {
@@ -76,7 +76,7 @@ impl App {
         if !self.persist_preferences {
             return;
         }
-        let automation = match self.alert_center.automation_mode {
+        let automation = match self.core.alert_center.automation_mode {
             AutomationMode::Off => 0,
             AutomationMode::Watch => 1,
             AutomationMode::Triage => 2,

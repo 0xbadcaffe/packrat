@@ -31,15 +31,15 @@ pub(super) fn handle_security(app: &mut App, key: KeyEvent) {
     if matches!(app.security_tab, SecuritySubTab::Alerts) {
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
-                app.alert_center.next();
+                app.core.alert_center.next();
                 return;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                app.alert_center.previous();
+                app.core.alert_center.previous();
                 return;
             }
             KeyCode::Char('f') => {
-                app.alert_center.cycle_severity_filter();
+                app.core.alert_center.cycle_severity_filter();
                 return;
             }
             KeyCode::Char('m') => {
@@ -51,31 +51,31 @@ pub(super) fn handle_security(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Enter => {
-                app.alert_center.set_selected_disposition(
+                app.core.alert_center.set_selected_disposition(
                     crate::analysis::alert_center::AlertDisposition::Reviewing,
                 );
                 return;
             }
             KeyCode::Char('C') => {
-                app.alert_center.set_selected_disposition(
+                app.core.alert_center.set_selected_disposition(
                     crate::analysis::alert_center::AlertDisposition::Confirmed,
                 );
                 return;
             }
             KeyCode::Char('z') => {
-                app.alert_center.set_selected_disposition(
+                app.core.alert_center.set_selected_disposition(
                     crate::analysis::alert_center::AlertDisposition::Benign,
                 );
                 return;
             }
             KeyCode::Char('K') => {
-                app.alert_center.set_selected_disposition(
+                app.core.alert_center.set_selected_disposition(
                     crate::analysis::alert_center::AlertDisposition::Contained,
                 );
                 return;
             }
             KeyCode::Char('x') => {
-                app.alert_center.set_selected_disposition(
+                app.core.alert_center.set_selected_disposition(
                     crate::analysis::alert_center::AlertDisposition::Closed,
                 );
                 return;
@@ -116,9 +116,9 @@ pub(super) fn handle_security(app: &mut App, key: KeyEvent) {
         KeyCode::Char('g') => app.security_scroll = 0,
         KeyCode::Char('G') => app.security_scroll = 9999,
         KeyCode::Char('C') => {
-            app.security.clear();
-            app.credentials.clear();
-            app.alert_center.clear();
+            app.core.security.clear();
+            app.core.credentials.clear();
+            app.core.alert_center.clear();
             app.security_scroll = 0;
         }
         KeyCode::Char('l') if matches!(app.security_tab, SecuritySubTab::RoutePolicy) => {

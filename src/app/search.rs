@@ -72,7 +72,7 @@ impl App {
         }
 
         // ── Hosts ─────────────────────────────────────────────────────────────
-        let host_list: Vec<_> = self.hosts.all().into_iter().enumerate().collect();
+        let host_list: Vec<_> = self.core.hosts.all().into_iter().enumerate().collect();
         for (idx, host) in host_list {
             let label = host.ip.clone();
             let detail = format!(
@@ -97,7 +97,7 @@ impl App {
         }
 
         // ── IOC hits ──────────────────────────────────────────────────────────
-        for (idx, hit) in self.ioc_engine.hits.iter().enumerate() {
+        for (idx, hit) in self.core.ioc_engine.hits.iter().enumerate() {
             let label = format!("{} {}", hit.ioc.kind, hit.ioc.value);
             let detail = hit.context.clone();
             let haystack = format!("{} {}", label, detail).to_lowercase();
@@ -117,7 +117,7 @@ impl App {
         }
 
         // ── Rule hits ─────────────────────────────────────────────────────────
-        for (idx, hit) in self.rule_engine.hits.iter().enumerate() {
+        for (idx, hit) in self.core.rule_engine.hits.iter().enumerate() {
             let label = hit.rule_name.clone();
             let detail = hit.message.clone();
             let haystack = format!("{} {}", label, detail).to_lowercase();

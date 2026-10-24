@@ -1,7 +1,7 @@
 use super::*;
 
 pub fn draw_neighborhood(f: &mut Frame, app: &App, area: Rect) {
-    let engine = &app.operator_graph;
+    let engine = &app.core.operator_graph;
     let selected = app.graph_ui.selected_node;
 
     let mut lines: Vec<Line> = Vec::new();
@@ -108,7 +108,7 @@ pub fn draw_neighborhood(f: &mut Frame, app: &App, area: Rect) {
             "  Select a node from the list to explore relationships.",
             Style::default().fg(C_FG3()),
         )));
-        if app.operator_graph.node_count() == 0 {
+        if app.core.operator_graph.node_count() == 0 {
             lines.push(Line::raw(""));
             lines.push(Line::from(Span::styled(
                 "  Start capture or load a PCAP — the graph builds automatically.",

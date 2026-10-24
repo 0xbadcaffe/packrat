@@ -5,7 +5,7 @@ use super::*;
 pub(super) fn draw_vlan_intel(f: &mut Frame, app: &App, area: Rect) {
     use crate::analysis::vlan::AlertSeverity;
 
-    let intel = &app.vlan_intel;
+    let intel = &app.core.vlan_intel;
     let scroll = app.security_scroll;
 
     // Split area: top half stats table, bottom half alert table

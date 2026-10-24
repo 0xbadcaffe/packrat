@@ -70,10 +70,10 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
         0 => {
             let dur = app.packets.back().map(|p| p.timestamp).unwrap_or(0.0);
             let avg = if app.packets.is_empty() { 0 } else { app.total_bytes as usize / app.packets.len() };
-            let ioc_hits = app.ioc_engine.hit_count();
-            let ioc_loaded = app.ioc_engine.ioc_count();
-            let rule_hits = app.rule_engine.hits.len();
-            let rule_loaded = app.rule_engine.rules.len();
+            let ioc_hits = app.core.ioc_engine.hit_count();
+            let ioc_loaded = app.core.ioc_engine.ioc_count();
+            let rule_hits = app.core.rule_engine.hits.len();
+            let rule_loaded = app.core.rule_engine.rules.len();
             let yara_hits = app.yara_engine.total_matches();
             let rows: Vec<(&str, String)> = vec![
                 ("Total Packets",    app.packets.len().to_string()),
@@ -82,9 +82,9 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 ("Avg Packet Size",  format!("{} bytes", avg)),
                 ("Packets/sec",      app.current_rate().to_string()),
                 ("Interface",        app.selected_iface.clone()),
-                ("Hosts Seen",       app.hosts.len().to_string()),
-                ("TLS Sessions",     app.tls_tracker.len().to_string()),
-                ("Flows",            app.flow_tracker.flows.len().to_string()),
+                ("Hosts Seen",       app.core.hosts.len().to_string()),
+                ("TLS Sessions",     app.core.tls_tracker.len().to_string()),
+                ("Flows",            app.core.flow_tracker.flows.len().to_string()),
                 ("Recording",        if app.recording { format!("yes → {}", app.pcap_path) } else { "no".into() }),
                 ("IOC Indicators",   format!("{} loaded, {} hits", ioc_loaded, ioc_hits)),
                 ("Rules",            format!("{} loaded, {} hits", rule_loaded, rule_hits)),
@@ -314,7 +314,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 }
             }
             // Flow-level anomalies (beacon / scan)
-            for flow in app.flow_tracker.sorted_flows(&app.flows_sort) {
+            for flow in app.core.flow_tracker.sorted_flows(&app.flows_sort) {
                 if flow.flags.beacon {
                     found = true;
                     let n = flow.intervals.len() as f64;
@@ -392,7 +392,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 Style::default().fg(C_FG2()),
             )]));
             lines.push(Line::raw("  ".to_string() + &"─".repeat(80)));
-            let sorted = app.flow_tracker.sorted_flows(&app.flows_sort);
+            let sorted = app.core.flow_tracker.sorted_flows(&app.flows_sort);
             for flow in sorted.iter().take(20) {
                 let dur = flow.last_seen - flow.first_seen;
                 let dur_str = if dur < 1.0 { format!("{:.0}ms", dur * 1000.0) }
@@ -419,7 +419,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
         }
         11 => {
             lines.push(Line::raw(""));
-            let incident = app.incidents.active().or_else(|| app.incidents.incidents.last());
+            let incident = app.core.incidents.active().or_else(|| app.core.incidents.incidents.last());
             let Some(incident) = incident else {
                 lines.push(Line::from(Span::styled(
                     "  No critical incidents have been retained in this capture session.",
@@ -438,7 +438,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 ("Packet window", format!("#{} - #{}", incident.first_packet, incident.last_packet)),
                 ("Retained packets", incident.packet_history.len().to_string()),
             ];
-            let impact = crate::analysis::impact::correlate(incident, &app.endpoint_evidence);
+            let impact = crate::analysis::impact::correlate(incident, &app.core.endpoint_evidence);
             for entry in impact.evidence.iter().filter(|entry| entry.category != "network_activity") {
                 rows.push(("Impact", format!("{}: {:?} - {}", entry.category, entry.confidence, entry.explanation)));
             }

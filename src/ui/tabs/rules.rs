@@ -24,7 +24,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_rules_table(f: &mut Frame, app: &App, area: Rect) {
-    let rules = &app.rule_engine.rules;
+    let rules = &app.core.rule_engine.rules;
 
     let header = Row::new(vec![
         Cell::from("ID").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
@@ -75,7 +75,7 @@ fn draw_rules_table(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_hits_table(f: &mut Frame, app: &App, area: Rect) {
-    let hits = &app.rule_engine.hits;
+    let hits = &app.core.rule_engine.hits;
 
     let header = Row::new(vec![
         Cell::from("Rule").style(Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
@@ -136,8 +136,8 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("[C]", Style::default().fg(C_YELLOW())),
         Span::styled(" clear hits", Style::default().fg(C_FG3())),
         Span::styled(
-            format!("  {} rule(s) loaded", app.rule_engine.rules.len()),
-            Style::default().fg(if app.rule_engine.rules.is_empty() { C_FG3() } else { C_GREEN() }),
+            format!("  {} rule(s) loaded", app.core.rule_engine.rules.len()),
+            Style::default().fg(if app.core.rule_engine.rules.is_empty() { C_FG3() } else { C_GREEN() }),
         ),
     ]);
 

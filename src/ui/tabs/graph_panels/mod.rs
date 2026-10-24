@@ -14,7 +14,7 @@ use ratatui::{
 // ─── Node list (left panel) ───────────────────────────────────────────────────
 
 pub fn draw_node_list(f: &mut Frame, app: &App, area: Rect) {
-    let engine = &app.operator_graph;
+    let engine = &app.core.operator_graph;
     let filter = &app.graph_ui.filter;
     let snap = engine.filtered_snapshot(filter);
 
@@ -75,7 +75,7 @@ pub fn draw_node_list(f: &mut Frame, app: &App, area: Rect) {
 // ─── Adjacency view (tabular neighbors) ──────────────────────────────────────
 
 pub fn draw_adjacency(f: &mut Frame, app: &App, area: Rect) {
-    let engine = &app.operator_graph;
+    let engine = &app.core.operator_graph;
     let selected = app.graph_ui.selected_node;
 
     let header = Row::new(vec![
@@ -166,7 +166,7 @@ pub fn draw_adjacency(f: &mut Frame, app: &App, area: Rect) {
 // ─── Paths view ───────────────────────────────────────────────────────────────
 
 pub fn draw_paths(f: &mut Frame, app: &App, area: Rect) {
-    let paths = &app.operator_graph.paths;
+    let paths = &app.core.operator_graph.paths;
     let scroll = app.graph_ui.list_scroll;
 
     let items: Vec<ListItem> = paths
@@ -233,7 +233,7 @@ pub fn draw_paths(f: &mut Frame, app: &App, area: Rect) {
 // ─── Clusters view ────────────────────────────────────────────────────────────
 
 pub fn draw_clusters(f: &mut Frame, app: &App, area: Rect) {
-    let clusters = &app.operator_graph.clusters;
+    let clusters = &app.core.operator_graph.clusters;
     let scroll = app.graph_ui.list_scroll;
 
     let items: Vec<ListItem> = clusters
@@ -293,7 +293,7 @@ pub fn draw_clusters(f: &mut Frame, app: &App, area: Rect) {
 // ─── Evidence view ────────────────────────────────────────────────────────────
 
 pub fn draw_evidence(f: &mut Frame, app: &App, area: Rect) {
-    let engine = &app.operator_graph;
+    let engine = &app.core.operator_graph;
     let mut lines: Vec<Line> = Vec::new();
 
     if let Some(node_id) = app.graph_ui.selected_node {

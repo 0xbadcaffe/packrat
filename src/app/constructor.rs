@@ -9,13 +9,16 @@ impl App {
         let preferences = theme_store::load();
         let iface_list = list_interfaces(startup_mode == StartupMode::Simulation);
         let selected_iface = iface_list.first().cloned().unwrap_or_default();
-        let mut alert_center = AlertCenter::default();
-        alert_center.automation_mode = match preferences.alert_automation {
+        let mut core = AnalysisCore::default();
+        core.ioc_engine.load_from_dir();
+        core.rule_engine.load_from_dir();
+        core.alert_center.automation_mode = match preferences.alert_automation {
             1 => AutomationMode::Watch,
             2 => AutomationMode::Triage,
             _ => AutomationMode::Off,
         };
         let mut app = Self {
+            core,
             active_tab: Workspace::from_index(preferences.startup_workspace).home(),
             navigation_history: Vec::new(),
             packets: VecDeque::new(),
@@ -50,7 +53,6 @@ impl App {
             strings_search_active: false,
             strings_selected: None,
             strings_scroll: 0,
-            flow_tracker: FlowTracker::new(),
             flows_selected: None,
             flows_sort: FlowSort::Bytes,
             stream_overlay: None,
@@ -63,38 +65,17 @@ impl App {
             lua_reload_msg: None,
             craft: CraftState::default(),
             traceroute: TracerouteState::default(),
-            security: SecurityEngine::default(),
-            credentials: Vec::new(),
             scan: ScanState::new(),
             replay: ReplayState::default(),
             security_tab: SecuritySubTab::Alerts,
-            alert_center,
             security_scroll: 0,
             scanner_scroll: 0,
             replay_editing: false,
             pcap_import_editing: false,
             pcap_import_path: String::new(),
             scan_editing: false,
-            hosts: HostInventory::default(),
             tag_store: TagStore::default(),
             notebook: Notebook::default(),
-            streams: StreamAssembler::default(),
-            timeline: ProtocolTimelines::default(),
-            tls_tracker: TlsTracker::default(),
-            quic_scope: QuicScope::default(),
-            vlan_intel: VlanIntel::default(),
-            ioc_engine: {
-                let mut e = IocEngine::default();
-                e.load_from_dir();
-                e
-            },
-            rule_engine: {
-                let mut e = RuleEngine::default();
-                e.load_from_dir();
-                e
-            },
-            incidents: IncidentStore::default(),
-            endpoint_evidence: Vec::new(),
             packet_archive: None,
             evidence_vault: EvidenceVault::default(),
             telemetry: TelemetryHub::default(),
@@ -139,7 +120,6 @@ impl App {
             yara_engine: YaraEngine::new(),
             yara_scan_cursor: 0,
             rules_scroll: 0,
-            operator_graph: OperatorGraphEngine::default(),
             graph_ui: GraphUiState::default(),
             graph_tick_counter: 0,
             search_open: false,

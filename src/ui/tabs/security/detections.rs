@@ -3,7 +3,7 @@ use super::*;
 // ─── IDS Alerts ──────────────────────────────────────────────────────────────
 
 pub(super) fn draw_ids(f: &mut Frame, app: &App, area: Rect) {
-    let alerts = &app.security.ids_alerts;
+    let alerts = &app.core.security.ids_alerts;
     let scroll = app.security_scroll;
     let visible = area.height.saturating_sub(3) as usize;
 
@@ -65,7 +65,7 @@ pub(super) fn draw_ids(f: &mut Frame, app: &App, area: Rect) {
 // ─── Credentials ─────────────────────────────────────────────────────────────
 
 pub(super) fn draw_creds(f: &mut Frame, app: &App, area: Rect) {
-    let creds = &app.credentials;
+    let creds = &app.core.credentials;
     let scroll = app.security_scroll;
     let visible = area.height.saturating_sub(3) as usize;
 
@@ -110,7 +110,7 @@ pub(super) fn draw_creds(f: &mut Frame, app: &App, area: Rect) {
 // ─── OS Fingerprint ──────────────────────────────────────────────────────────
 
 pub(super) fn draw_os(f: &mut Frame, app: &App, area: Rect) {
-    let guesses = &app.security.os_guesses;
+    let guesses = &app.core.security.os_guesses;
     let scroll = app.security_scroll;
     let visible = area.height.saturating_sub(3) as usize;
 
@@ -162,7 +162,7 @@ pub(super) fn draw_os(f: &mut Frame, app: &App, area: Rect) {
 // ─── ARP Watch ───────────────────────────────────────────────────────────────
 
 pub(super) fn draw_arp(f: &mut Frame, app: &App, area: Rect) {
-    let anomalies = &app.security.arp_anomalies;
+    let anomalies = &app.core.security.arp_anomalies;
     let scroll = app.security_scroll;
     let visible = area.height.saturating_sub(3) as usize;
 
@@ -215,7 +215,7 @@ pub(super) fn draw_arp(f: &mut Frame, app: &App, area: Rect) {
 // ─── DNS Tunneling ────────────────────────────────────────────────────────────
 
 pub(super) fn draw_dns_tunnel(f: &mut Frame, app: &App, area: Rect) {
-    let suspects = &app.security.dns_suspects;
+    let suspects = &app.core.security.dns_suspects;
     let scroll = app.security_scroll;
     let visible = area.height.saturating_sub(3) as usize;
 
@@ -293,7 +293,7 @@ pub(super) fn draw_dns_tunnel(f: &mut Frame, app: &App, area: Rect) {
 // ─── HTTP Analytics ──────────────────────────────────────────────────────────
 
 pub(super) fn draw_http(f: &mut Frame, app: &App, area: Rect) {
-    let records = &app.security.http_records;
+    let records = &app.core.security.http_records;
     let scroll = app.security_scroll;
     let visible = area.height.saturating_sub(3) as usize;
 
@@ -361,7 +361,7 @@ pub(super) fn draw_http(f: &mut Frame, app: &App, area: Rect) {
 // ─── TLS Weakness ────────────────────────────────────────────────────────────
 
 pub(super) fn draw_tls(f: &mut Frame, app: &App, area: Rect) {
-    let weaknesses = &app.security.tls_weaknesses;
+    let weaknesses = &app.core.security.tls_weaknesses;
     let scroll = app.security_scroll;
     let visible = area.height.saturating_sub(3) as usize;
 
@@ -417,7 +417,7 @@ pub(super) fn draw_tls(f: &mut Frame, app: &App, area: Rect) {
 // ─── Brute Force ─────────────────────────────────────────────────────────────
 
 pub(super) fn draw_brute(f: &mut Frame, app: &App, area: Rect) {
-    let alerts = &app.security.brute_force;
+    let alerts = &app.core.security.brute_force;
     let scroll = app.security_scroll;
     let visible = area.height.saturating_sub(3) as usize;
 

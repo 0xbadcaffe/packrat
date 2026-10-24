@@ -3,7 +3,7 @@ use super::*;
 // ─── Detail panel (right) ─────────────────────────────────────────────────────
 
 pub fn draw_detail_panel(f: &mut Frame, app: &App, area: Rect) {
-    let engine = &app.operator_graph;
+    let engine = &app.core.operator_graph;
     let mut lines: Vec<Line> = Vec::new();
 
     if let Some(node_id) = app.graph_ui.selected_node {

@@ -19,9 +19,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
     // Host table
     let hosts: Vec<_> = if app.hosts_search.is_empty() {
-        app.hosts.all()
+        app.core.hosts.all()
     } else {
-        app.hosts.search(&app.hosts_search)
+        app.core.hosts.search(&app.hosts_search)
     };
 
     draw_host_table(f, app, &hosts, chunks[1]);
@@ -172,7 +172,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let status = Paragraph::new(Line::from(vec![
         Span::styled(
             format!(" {} hosts  [s] search  [j/k] scroll  [t] tag  [T] untag  [c] clear host",
-                app.hosts.len()),
+                app.core.hosts.len()),
             Style::default().fg(C_FG3()),
         ),
     ])).style(Style::default().bg(C_BG2()));

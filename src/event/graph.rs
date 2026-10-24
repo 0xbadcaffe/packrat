@@ -48,13 +48,13 @@ pub(super) fn handle_graph(app: &mut App, key: KeyEvent) {
                 app.graph_ui.list_scroll = app.graph_ui.list_scroll.saturating_add(1);
             }
             GraphUiModeState::Paths => {
-                let max = app.operator_graph.paths.len().saturating_sub(1);
+                let max = app.core.operator_graph.paths.len().saturating_sub(1);
                 if app.graph_ui.path_selected < max {
                     app.graph_ui.path_selected += 1;
                 }
             }
             GraphUiModeState::Clusters => {
-                let max = app.operator_graph.clusters.len().saturating_sub(1);
+                let max = app.core.operator_graph.clusters.len().saturating_sub(1);
                 if app.graph_ui.cluster_selected < max {
                     app.graph_ui.cluster_selected += 1;
                 }
@@ -85,13 +85,13 @@ pub(super) fn handle_graph(app: &mut App, key: KeyEvent) {
                     // Select the highlighted node in the list
                     let filter = app.graph_ui.filter.clone();
                     let search = app.graph_ui.search.clone();
-                    let snapshot = app.operator_graph.filtered_snapshot(&filter);
+                    let snapshot = app.core.operator_graph.filtered_snapshot(&filter);
                     let visible: Vec<_> = {
                         let q = search.to_lowercase();
                         snapshot
                             .node_ids
                             .iter()
-                            .filter_map(|&id| app.operator_graph.get_node(id))
+                            .filter_map(|&id| app.core.operator_graph.get_node(id))
                             .filter(|n| q.is_empty() || n.label.to_lowercase().contains(&q))
                             .collect()
                     };
@@ -108,7 +108,7 @@ pub(super) fn handle_graph(app: &mut App, key: KeyEvent) {
                 }
                 GraphUiModeState::Paths => {
                     // Jump to first node of selected path
-                    if let Some(path) = app.operator_graph.paths.get(app.graph_ui.path_selected) {
+                    if let Some(path) = app.core.operator_graph.paths.get(app.graph_ui.path_selected) {
                         if let Some(&node_id) = path.nodes.first() {
                             app.graph_ui.selected_node = Some(node_id);
                             app.graph_ui.mode = GraphUiModeState::Neighborhood;
@@ -117,8 +117,7 @@ pub(super) fn handle_graph(app: &mut App, key: KeyEvent) {
                 }
                 GraphUiModeState::Clusters => {
                     // Jump to first member of selected cluster
-                    if let Some(cluster) = app
-                        .operator_graph
+                    if let Some(cluster) = app.core.operator_graph
                         .clusters
                         .get(app.graph_ui.cluster_selected)
                     {
@@ -156,7 +155,7 @@ pub(super) fn handle_graph(app: &mut App, key: KeyEvent) {
         // Compute pivots for selected node
         KeyCode::Char('p') => {
             if let Some(node_id) = app.graph_ui.selected_node {
-                app.operator_graph.recompute_pivots(node_id);
+                app.core.operator_graph.recompute_pivots(node_id);
             }
         }
 
@@ -172,7 +171,7 @@ pub(super) fn handle_graph(app: &mut App, key: KeyEvent) {
                 .unwrap_or_default()
                 .as_secs();
             let path = format!("packrat_graph_{}.json", ts);
-            let _ = crate::storage::graph_store::export_json(&app.operator_graph, &path);
+            let _ = crate::storage::graph_store::export_json(&app.core.operator_graph, &path);
         }
 
         KeyCode::Char('h') => {

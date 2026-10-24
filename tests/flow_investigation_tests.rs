@@ -38,9 +38,9 @@ fn qinq_flow_counters_do_not_combine_tenants_with_identical_endpoints() {
     assert_ne!(FlowKey::from_packet(&first), FlowKey::from_packet(&second));
     app.inject_packet(first);
     app.inject_packet(second);
-    assert_eq!(app.flow_tracker.flows.len(), 2);
+    assert_eq!(app.core.flow_tracker.flows.len(), 2);
     assert!(
-        app.flow_tracker
+        app.core.flow_tracker
             .flows
             .values()
             .all(|flow| flow.packets == 1)

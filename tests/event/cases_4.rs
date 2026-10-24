@@ -168,18 +168,18 @@ async fn security_g_jumps_to_top() {
 async fn alert_center_collects_findings_and_tracks_review_state() {
     let mut app = sec_app();
     app.inject_packet(critical_packet());
-    assert!(!app.alert_center.items.is_empty());
-    assert_eq!(app.alert_center.items[0].source, "IDS");
+    assert!(!app.core.alert_center.items.is_empty());
+    assert_eq!(app.core.alert_center.items[0].source, "IDS");
 
     app.alert_overlay_open = false;
     event::handle(&mut app, key(KeyCode::Enter));
     assert_eq!(
-        app.alert_center.selected_item().unwrap().disposition,
+        app.core.alert_center.selected_item().unwrap().disposition,
         packrat_tui::analysis::alert_center::AlertDisposition::Reviewing,
     );
     event::handle(&mut app, key(KeyCode::Char('C')));
     assert_eq!(
-        app.alert_center.selected_item().unwrap().disposition,
+        app.core.alert_center.selected_item().unwrap().disposition,
         packrat_tui::analysis::alert_center::AlertDisposition::Confirmed,
     );
 }
@@ -187,13 +187,13 @@ async fn alert_center_collects_findings_and_tracks_review_state() {
 #[tokio::test]
 async fn alert_center_filter_and_navigation_are_bounded() {
     let mut app = sec_app();
-    app.alert_center.record(1, "IDS", "LOW", "low", "detail");
-    app.alert_center
+    app.core.alert_center.record(1, "IDS", "LOW", "low", "detail");
+    app.core.alert_center
         .record(2, "RULE", "CRITICAL", "critical", "detail");
     event::handle(&mut app, key(KeyCode::Char('f')));
-    assert_eq!(app.alert_center.selected_item().unwrap().packet_no, 2);
+    assert_eq!(app.core.alert_center.selected_item().unwrap().packet_no, 2);
     event::handle(&mut app, key(KeyCode::Char('j')));
-    assert_eq!(app.alert_center.selected, 0);
+    assert_eq!(app.core.alert_center.selected, 0);
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn investigation_tray_accepts_typed_context_without_duplicate_items() {
 #[tokio::test]
 async fn alert_center_m_pins_selected_alert_to_investigation_tray() {
     let mut app = sec_app();
-    app.alert_center.record(9, "IDS", "HIGH", "Probe", "detail");
+    app.core.alert_center.record(9, "IDS", "HIGH", "Probe", "detail");
     event::handle(&mut app, key(KeyCode::Char('m')));
     assert_eq!(
         app.worklist.items,
@@ -248,7 +248,7 @@ fn investigation_context_resolves_alert_and_handles_expired_source() {
     use packrat_tui::app::InvestigationItem;
 
     let mut app = App::new_for_test();
-    app.alert_center
+    app.core.alert_center
         .record(9, "IDS", "HIGH", "Probe", "detector reason");
     app.worklist.add(InvestigationItem::Alert(1));
     let context = app.active_investigation_context().unwrap();
@@ -261,7 +261,7 @@ fn investigation_context_resolves_alert_and_handles_expired_source() {
             .any(|(label, value)| label == "Reason" && value == "detector reason")
     );
 
-    app.alert_center.clear();
+    app.core.alert_center.clear();
     let expired = app.active_investigation_context().unwrap();
     assert!(!expired.available);
     assert!(expired.details[0].1.contains("no longer retained"));

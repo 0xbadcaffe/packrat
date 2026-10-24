@@ -27,7 +27,7 @@ impl App {
         // Active filter text
         state.active_filter = self.filter.input.clone();
         // Host tags: ip → sorted vec
-        for host in self.hosts.all() {
+        for host in self.core.hosts.all() {
             if !host.tags.is_empty() {
                 let mut tags: Vec<String> = host.tags.iter().cloned().collect();
                 tags.sort();
@@ -36,8 +36,8 @@ impl App {
         }
         // Carved object metadata
         state.carved_objects = self.carved_objects.iter().map(ObjectEntry::from).collect();
-        state.alert_items = self.alert_center.items.clone();
-        state.alert_automation = self.alert_center.automation_mode;
+        state.alert_items = self.core.alert_center.items.clone();
+        state.alert_automation = self.core.alert_center.automation_mode;
         state.investigation_items = self
             .worklist
             .items
@@ -52,8 +52,8 @@ impl App {
             .into_iter()
             .filter_map(|no| self.packet_by_no(no).cloned())
             .collect();
-        state.incident_state = Some(self.incidents.snapshot());
-        state.endpoint_evidence = self.endpoint_evidence.clone();
+        state.incident_state = Some(self.core.incidents.snapshot());
+        state.endpoint_evidence = self.core.endpoint_evidence.clone();
         state.guard_simulation = self.response_preview.clone();
         state.active_tab = self.active_tab.index();
         if portable {
@@ -144,24 +144,25 @@ impl App {
         self.live_response_eligible = false;
         self.live_response_incidents.clear();
         if let Some(incidents) = incidents {
-            self.incidents = incidents;
+            self.core.incidents = incidents;
         }
-        self.endpoint_evidence = state.endpoint_evidence;
+        self.core.endpoint_evidence = state.endpoint_evidence;
         self.notebook = state.notebook;
         self.tag_store = state.tag_store;
         self.filter.input = state.active_filter;
         self.rebuild_filtered();
         for (ip, tags) in state.host_tags {
-            self.hosts.seed_tags(&ip, tags);
+            self.core.hosts.seed_tags(&ip, tags);
         }
-        self.alert_center
+        self.core
+            .alert_center
             .restore(state.alert_items, state.alert_automation);
         self.worklist = tray;
         self.response_preview = state.guard_simulation;
         if state.active_tab < Tab::COUNT {
             self.active_tab = Tab::from_index(state.active_tab);
         }
-        self.alert_overlay_open = self.incidents.active().is_some();
+        self.alert_overlay_open = self.core.incidents.active().is_some();
         Ok(())
     }
 

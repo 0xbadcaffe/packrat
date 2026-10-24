@@ -19,7 +19,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         ("Theme", app.selected_theme_name.clone()),
         ("Follow new packets", on_off(app.auto_scroll)),
         ("Startup workspace", app.preferred_workspace.label().into()),
-        ("Alert assistance", app.alert_center.automation_mode.to_string()),
+        ("Alert assistance", app.core.alert_center.automation_mode.to_string()),
         ("Guard mode", app.traffic_latch.mode.to_string()),
         ("Guard block timeout", format!("{} seconds", app.traffic_latch.expires_seconds)),
         ("Guard active limit", app.traffic_latch.max_active_blocks.to_string()),

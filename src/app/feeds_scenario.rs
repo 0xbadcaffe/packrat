@@ -3,9 +3,9 @@ use super::*;
 impl App {
     /// Reload JSON rules from ~/.config/packrat/rules/ and show status.
     pub fn reload_rules(&mut self) {
-        self.rule_engine.rules.clear();
-        let errs = self.rule_engine.load_from_dir();
-        let count = self.rule_engine.rules.len();
+        self.core.rule_engine.rules.clear();
+        let errs = self.core.rule_engine.load_from_dir();
+        let count = self.core.rule_engine.rules.len();
         if errs.is_empty() {
             self.set_status(format!("Rules: {count} rules loaded"));
         } else {
@@ -15,8 +15,8 @@ impl App {
 
     /// Load IOC feeds from ~/.config/packrat/ioc/ and show status.
     pub fn reload_ioc_feeds(&mut self) {
-        let errs = self.ioc_engine.load_from_dir();
-        let count = self.ioc_engine.ioc_count();
+        let errs = self.core.ioc_engine.load_from_dir();
+        let count = self.core.ioc_engine.ioc_count();
         if errs.is_empty() {
             self.set_status(format!("IOC: {count} indicators loaded"));
         } else {
@@ -82,10 +82,10 @@ impl App {
         if tag.is_empty() {
             return;
         }
-        let hosts = self.hosts.all();
+        let hosts = self.core.hosts.all();
         if let Some(h) = hosts.get(self.hosts_scroll) {
             let ip = h.ip.clone();
-            if let Some(host) = self.hosts.get_mut(&ip) {
+            if let Some(host) = self.core.hosts.get_mut(&ip) {
                 host.tags.insert(tag.clone());
             }
             self.set_status(format!("Tagged {ip} as \"{tag}\""));
@@ -94,11 +94,11 @@ impl App {
 
     /// Remove a tag from the host at `hosts_scroll` (removes the first tag, alphabetically).
     pub fn remove_host_tag(&mut self) {
-        let hosts = self.hosts.all();
+        let hosts = self.core.hosts.all();
         if let Some(h) = hosts.get(self.hosts_scroll) {
             let ip = h.ip.clone();
             let tag = h.tags.iter().min().cloned();
-            if let (Some(host), Some(t)) = (self.hosts.get_mut(&ip), tag) {
+            if let (Some(host), Some(t)) = (self.core.hosts.get_mut(&ip), tag) {
                 host.tags.remove(&t);
                 self.set_status(format!("Removed tag \"{t}\" from {ip}"));
             }
@@ -125,7 +125,7 @@ impl App {
 
         // Seed IOC hits for the C2 IP
         for ip in scenario::ioc_ips() {
-            self.ioc_engine.load_ioc(crate::analysis::ioc::Ioc {
+            self.core.ioc_engine.load_ioc(crate::analysis::ioc::Ioc {
                 kind: crate::analysis::ioc::IocKind::Ip,
                 value: ip.into(),
                 description: "Operation Quiet Beacon C2 infrastructure".into(),
@@ -135,7 +135,7 @@ impl App {
         // Re-scan packets against IOCs now that they're loaded
         let pkts: Vec<_> = self.packets.iter().cloned().collect();
         for pkt in &pkts {
-            self.ioc_engine.check_packet(pkt);
+            self.core.ioc_engine.check_packet(pkt);
         }
 
         // Seed notebook notes
@@ -151,43 +151,45 @@ impl App {
         // Seed host tags
         for (ip, tags) in scenario::host_tags() {
             for tag in tags {
-                self.hosts.seed_tags(ip, std::iter::once(tag.to_string()));
+                self.core
+                    .hosts
+                    .seed_tags(ip, std::iter::once(tag.to_string()));
             }
         }
 
         // ── TLS Analysis tab ─────────────────────────────────────────────────
         for session in scenario::tls_sessions() {
-            self.tls_tracker.insert(session);
+            self.core.tls_tracker.insert(session);
         }
 
         // ── Security tab ─────────────────────────────────────────────────────
         let sec = scenario::security_seed();
-        self.security.ids_alerts.extend(sec.ids_alerts);
-        self.security.arp_anomalies.extend(sec.arp_anomalies);
+        self.core.security.ids_alerts.extend(sec.ids_alerts);
+        self.core.security.arp_anomalies.extend(sec.arp_anomalies);
         for g in sec.os_guesses {
-            self.security.os_guesses.push(g);
+            self.core.security.os_guesses.push(g);
         }
-        self.security.vuln_hits.extend(sec.vuln_hits);
-        self.security.brute_force.extend(sec.brute_force);
-        self.security.http_records.extend(sec.http_records);
-        self.security.tls_weaknesses.extend(sec.tls_weaknesses);
-        self.security.dns_suspects.extend(sec.dns_suspects);
+        self.core.security.vuln_hits.extend(sec.vuln_hits);
+        self.core.security.brute_force.extend(sec.brute_force);
+        self.core.security.http_records.extend(sec.http_records);
+        self.core.security.tls_weaknesses.extend(sec.tls_weaknesses);
+        self.core.security.dns_suspects.extend(sec.dns_suspects);
 
         // ── Credentials sub-tab ──────────────────────────────────────────────
-        self.credentials.extend(scenario::credentials());
-        self.security.cred_hit_count = self.credentials.len();
+        self.core.credentials.extend(scenario::credentials());
+        self.core.security.cred_hit_count = self.core.credentials.len();
 
         // ── Objects tab ──────────────────────────────────────────────────────
         self.carved_objects.extend(scenario::carved_objects());
 
         // ── Rules tab ────────────────────────────────────────────────────────
         for (rule, _hits) in scenario::rules() {
-            self.rule_engine.add_rule(rule);
+            self.core.rule_engine.add_rule(rule);
         }
         // Fire rules against the already-ingested packets so hit counts are live
         let pkts2: Vec<_> = self.packets.iter().cloned().collect();
         for pkt in &pkts2 {
-            self.rule_engine.evaluate(pkt);
+            self.core.rule_engine.evaluate(pkt);
         }
 
         self.set_status("Scenario loaded: Operation Quiet Beacon — all tabs populated");
@@ -204,7 +206,7 @@ impl App {
         app.active_tab = Tab::Packets;
         app.auto_scroll = false;
         app.preferred_workspace = Workspace::Traffic;
-        app.alert_center.automation_mode = AutomationMode::Off;
+        app.core.alert_center.automation_mode = AutomationMode::Off;
         app.persist_preferences = false;
         app.evidence_vault.enabled = false;
         app

@@ -34,7 +34,7 @@ pub fn run(packet_count: usize) -> ProfileSummary {
         retained_packets: app.packets.len(),
         first_retained_packet: app.packets.front().map(|packet| packet.no),
         selected_packet: app.selected_packet().map(|packet| packet.no),
-        alerts: app.alert_center.items.len(),
+        alerts: app.core.alert_center.items.len(),
         elapsed: started.elapsed(),
     }
 }

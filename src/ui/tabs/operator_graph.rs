@@ -77,7 +77,7 @@ fn draw_mode_bar(f: &mut Frame, app: &App, area: Rect) {
     } else if !app.graph_ui.search.is_empty() {
         format!(" /{}", app.graph_ui.search)
     } else {
-        format!("  {} nodes  {} edges", app.operator_graph.node_count(), app.operator_graph.edge_count())
+        format!("  {} nodes  {} edges", app.core.operator_graph.node_count(), app.core.operator_graph.edge_count())
     };
     spans.push(Span::styled(search, Style::default().fg(C_YELLOW())));
 
@@ -95,10 +95,10 @@ fn draw_pivot_bar(f: &mut Frame, app: &App, area: Rect) {
 
     // Top: pivot suggestions for selected node
     let pivot_line = if let Some(node_id) = app.graph_ui.selected_node {
-        if !app.operator_graph.pivots.is_empty()
-            && app.operator_graph.pivots_for == Some(node_id)
+        if !app.core.operator_graph.pivots.is_empty()
+            && app.core.operator_graph.pivots_for == Some(node_id)
         {
-            let pivots: Vec<String> = app.operator_graph.pivots.iter().take(4)
+            let pivots: Vec<String> = app.core.operator_graph.pivots.iter().take(4)
                 .map(|p| format!("[{:.2}] {}", p.score, p.label))
                 .collect();
             format!(" Pivots: {}", pivots.join("  │  "))

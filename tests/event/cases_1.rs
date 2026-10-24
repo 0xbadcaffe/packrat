@@ -306,7 +306,7 @@ async fn critical_detection_requires_review_and_retains_evidence_after_acknowled
     let mut app = App::new_for_test();
     app.inject_packet(critical_packet());
     assert!(app.alert_overlay_open);
-    assert_eq!(app.incidents.incidents.len(), 1);
+    assert_eq!(app.core.incidents.incidents.len(), 1);
 
     event::handle(&mut app, key(KeyCode::Enter));
     assert_eq!(app.active_tab, Tab::Analysis);
@@ -314,8 +314,8 @@ async fn critical_detection_requires_review_and_retains_evidence_after_acknowled
     assert!(!app.alert_overlay_open);
 
     event::handle(&mut app, key(KeyCode::Char('C')));
-    assert!(app.incidents.active().is_none());
-    assert_eq!(app.incidents.incidents[0].packet_history.len(), 1);
+    assert!(app.core.incidents.active().is_none());
+    assert_eq!(app.core.incidents.incidents[0].packet_history.len(), 1);
 }
 
 #[tokio::test]

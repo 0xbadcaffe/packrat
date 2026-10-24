@@ -12,7 +12,7 @@ use crate::app::App;
 use crate::ui::theme::*;
 
 pub fn draw(f: &mut Frame, app: &App) {
-    let Some(incident) = app.incidents.active() else { return; };
+    let Some(incident) = app.core.incidents.active() else { return; };
     let area = f.area();
     let popup = Rect::new(
         area.x.saturating_add(2),

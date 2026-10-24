@@ -59,7 +59,7 @@ pub(super) fn handle_hosts(app: &mut App, key: KeyEvent) {
             app.hosts_searching = true;
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            let max = app.hosts.len().saturating_sub(1);
+            let max = app.core.hosts.len().saturating_sub(1);
             if app.hosts_scroll < max {
                 app.hosts_scroll += 1;
             }
@@ -71,14 +71,14 @@ pub(super) fn handle_hosts(app: &mut App, key: KeyEvent) {
             app.hosts_scroll = 0;
         }
         KeyCode::Char('G') => {
-            app.hosts_scroll = app.hosts.len().saturating_sub(1);
+            app.hosts_scroll = app.core.hosts.len().saturating_sub(1);
         }
         KeyCode::Char('C') => {
             app.hosts_search.clear();
             app.hosts_scroll = 0;
         }
         KeyCode::Char('c') => {
-            app.hosts.clear();
+            app.core.hosts.clear();
         }
         KeyCode::Char('t') => {
             app.hosts_tagging = true;

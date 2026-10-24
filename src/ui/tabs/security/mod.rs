@@ -78,10 +78,9 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(6), Constraint::Length(7)])
         .split(area);
-    let visible_indices = app.alert_center.visible_indices();
+    let visible_indices = app.core.alert_center.visible_indices();
     let visible_rows = chunks[0].height.saturating_sub(3) as usize;
-    let start = app
-        .alert_center
+    let start = app.core.alert_center
         .selected
         .saturating_sub(visible_rows.saturating_sub(1));
     let header = Row::new(vec![
@@ -101,8 +100,8 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
         .take(visible_rows)
         .enumerate()
         .map(|(offset, index)| {
-            let item = &app.alert_center.items[*index];
-            let selected = start + offset == app.alert_center.selected;
+            let item = &app.core.alert_center.items[*index];
+            let selected = start + offset == app.core.alert_center.selected;
             let severity_color = match item.severity.as_str() {
                 "CRITICAL" | "CRIT" => C_RED(),
                 "HIGH" => C_ORANGE(),
@@ -132,8 +131,8 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
     let title = format!(
         " Alert Center - {} findings - severity: {} - automation: {} ",
         visible_indices.len(),
-        app.alert_center.severity_filter,
-        app.alert_center.automation_mode,
+        app.core.alert_center.severity_filter,
+        app.core.alert_center.automation_mode,
     );
     let table = Table::new(
         std::iter::once(header).chain(rows).collect::<Vec<_>>(),
@@ -152,7 +151,7 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
     .style(Style::default().bg(C_BG()));
     f.render_widget(table, chunks[0]);
 
-    let detail = if let Some(item) = app.alert_center.selected_item() {
+    let detail = if let Some(item) = app.core.alert_center.selected_item() {
         vec![
             Line::from(vec![
                 Span::styled(
@@ -251,7 +250,7 @@ fn render_hint(f: &mut Frame, area: Rect, hint: &str) {
 // ─── IOC Hits ─────────────────────────────────────────────────────────────────
 
 fn draw_ioc_hits(f: &mut Frame, app: &App, area: Rect) {
-    let hits = &app.ioc_engine.hits;
+    let hits = &app.core.ioc_engine.hits;
     let scroll = app.security_scroll;
 
     let header = Row::new(vec![
@@ -290,7 +289,7 @@ fn draw_ioc_hits(f: &mut Frame, app: &App, area: Rect) {
     let title = format!(
         " IOC Hits — {} hits  {} indicators loaded ",
         hits.len(),
-        app.ioc_engine.ioc_count()
+        app.core.ioc_engine.ioc_count()
     );
     let table = Table::new(
         rows,

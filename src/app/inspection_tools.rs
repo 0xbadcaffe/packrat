@@ -13,7 +13,7 @@ impl App {
         // Build stream preview from reassembled data for this flow
         let stream_key = crate::analysis::stream::StreamKey::from_packet(&pkt);
         let stream_preview = if let Some(key) = stream_key {
-            match self.streams.get(&key.id()) {
+            match self.core.streams.get(&key.id()) {
                 Some(stream) => {
                     let mut lines: Vec<(bool, String)> = Vec::new();
                     // Client data
@@ -93,6 +93,7 @@ impl App {
     /// Carve embedded files from all reassembled TCP streams.
     pub fn carve_from_streams(&mut self) {
         let streams: Vec<(String, Vec<u8>, Vec<u8>)> = self
+            .core
             .streams
             .all()
             .iter()

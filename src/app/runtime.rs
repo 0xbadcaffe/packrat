@@ -60,8 +60,8 @@ impl App {
         if self.rate_tick % 20 == 1 {
             let _ = self.socket_scope.refresh_event_file();
             let _ = self.socket_scope.refresh();
-            if self.tls_tracker.key_shelf.path.is_some() {
-                let _ = self.tls_tracker.reload_key_log();
+            if self.core.tls_tracker.key_shelf.path.is_some() {
+                let _ = self.core.tls_tracker.reload_key_log();
             }
         }
 
@@ -109,12 +109,13 @@ impl App {
             packets_total: self.packet_counter,
             bytes_total: self.total_bytes,
             visible_packets: self.filtered.len(),
-            flows: self.flow_tracker.flows.len(),
-            hosts: self.hosts.len(),
-            security_findings: self.security.alert_count(),
-            rule_hits: self.rule_engine.hits.len(),
-            ioc_hits: self.ioc_engine.hit_count(),
+            flows: self.core.flow_tracker.flows.len(),
+            hosts: self.core.hosts.len(),
+            security_findings: self.core.security.alert_count(),
+            rule_hits: self.core.rule_engine.hits.len(),
+            ioc_hits: self.core.ioc_engine.hit_count(),
             pending_incidents: self
+                .core
                 .incidents
                 .incidents
                 .iter()
@@ -136,10 +137,10 @@ impl App {
         self.graph_tick_counter = self.graph_tick_counter.wrapping_add(1);
 
         // ── Sync IDS alerts ──────────────────────────────────────────────────
-        let new_alerts = self.security.ids_alerts.len();
+        let new_alerts = self.core.security.ids_alerts.len();
         if new_alerts > self.graph_ui.synced_alerts {
-            for alert in &self.security.ids_alerts[self.graph_ui.synced_alerts..new_alerts] {
-                self.operator_graph.on_ids_alert(
+            for alert in &self.core.security.ids_alerts[self.graph_ui.synced_alerts..new_alerts] {
+                self.core.operator_graph.on_ids_alert(
                     alert.signature,
                     &alert.severity.to_string(),
                     "", // IdsAlert doesn't carry src/dst IP here — use empty
@@ -152,10 +153,10 @@ impl App {
         }
 
         // ── Sync IOC hits ────────────────────────────────────────────────────
-        let new_ioc = self.ioc_engine.hits.len();
+        let new_ioc = self.core.ioc_engine.hits.len();
         if new_ioc > self.graph_ui.synced_ioc_hits {
-            for hit in &self.ioc_engine.hits[self.graph_ui.synced_ioc_hits..new_ioc] {
-                self.operator_graph.on_ioc_hit(
+            for hit in &self.core.ioc_engine.hits[self.graph_ui.synced_ioc_hits..new_ioc] {
+                self.core.operator_graph.on_ioc_hit(
                     &hit.ioc.value,
                     &hit.ioc.kind.to_string(),
                     &hit.context,
@@ -168,11 +169,11 @@ impl App {
         }
 
         // ── Sync credentials ─────────────────────────────────────────────────
-        let new_creds = self.credentials.len();
+        let new_creds = self.core.credentials.len();
         if new_creds > self.graph_ui.synced_creds {
-            for cred in &self.credentials[self.graph_ui.synced_creds..new_creds] {
+            for cred in &self.core.credentials[self.graph_ui.synced_creds..new_creds] {
                 // CredentialHit: proto, kind, value, pkt_no — no IP fields
-                self.operator_graph.on_credential(
+                self.core.operator_graph.on_credential(
                     Some(cred.kind),
                     &cred.proto,
                     true,
@@ -186,10 +187,10 @@ impl App {
         }
 
         // ── Sync rule hits ───────────────────────────────────────────────────
-        let new_rules = self.rule_engine.hits.len();
+        let new_rules = self.core.rule_engine.hits.len();
         if new_rules > self.graph_ui.synced_rule_hits {
-            for hit in &self.rule_engine.hits[self.graph_ui.synced_rule_hits..new_rules] {
-                self.operator_graph.on_rule_hit(
+            for hit in &self.core.rule_engine.hits[self.graph_ui.synced_rule_hits..new_rules] {
+                self.core.operator_graph.on_rule_hit(
                     &hit.rule_id,
                     &hit.rule_name,
                     &hit.message,
@@ -204,7 +205,7 @@ impl App {
         let new_objects = self.carved_objects.len();
         if new_objects > self.graph_ui.synced_objects {
             for obj in &self.carved_objects[self.graph_ui.synced_objects..new_objects] {
-                self.operator_graph.on_carved_object(
+                self.core.operator_graph.on_carved_object(
                     obj.id,
                     &obj.kind,
                     &obj.sha256,
@@ -218,11 +219,11 @@ impl App {
 
         // ── Periodic recomputation (every 30 ticks ≈ 3s at 10Hz) ─────────────
         if self.graph_tick_counter % 30 == 0 {
-            self.operator_graph.recompute_scores();
+            self.core.operator_graph.recompute_scores();
         }
         if self.graph_tick_counter % 60 == 0 {
-            self.operator_graph.recompute_paths();
-            self.operator_graph.recompute_clusters();
+            self.core.operator_graph.recompute_paths();
+            self.core.operator_graph.recompute_clusters();
         }
     }
 }

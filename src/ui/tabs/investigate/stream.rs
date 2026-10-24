@@ -2,8 +2,7 @@ use super::*;
 
 pub(super) fn draw_flow(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
     let key = FlowKey::from_packet(packet);
-    let rows: Vec<Row> = app
-        .flow_tracker
+    let rows: Vec<Row> = app.core.flow_tracker
         .sorted_flows(&app.flows_sort)
         .into_iter()
         .filter(|flow| flow.key == key)

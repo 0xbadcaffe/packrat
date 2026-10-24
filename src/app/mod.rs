@@ -1,33 +1,27 @@
+use crate::engine::AnalysisCore;
 use std::collections::VecDeque;
 use tokio::sync::mpsc::Sender;
 
-use crate::analysis::alert_center::{AlertCenter, AutomationMode};
+use crate::analysis::alert_center::AutomationMode;
 use crate::analysis::carving::{CarvedObject, Carver};
 use crate::analysis::diff::DiffEngine;
 use crate::analysis::display_filter::DisplayFilter;
 use crate::analysis::evidence_vault::EvidenceVault;
 use crate::analysis::incident::{IncidentSource, IncidentStore};
-use crate::analysis::ioc::IocEngine;
 use crate::analysis::jobs::JobQueue;
 use crate::analysis::net_registry::NetRegistry;
 use crate::analysis::notebook::Notebook;
-use crate::analysis::operator_graph::{GraphUiState, OperatorGraphEngine};
+use crate::analysis::operator_graph::GraphUiState;
 use crate::analysis::packet_compare::{self, PacketComparison};
 use crate::analysis::packet_fields::{self, PacketField};
 use crate::analysis::protocol_workbench::ProtocolWorkbench;
-use crate::analysis::quic_scope::QuicScope;
 use crate::analysis::route_ledger::RouteLedger;
-use crate::analysis::rules::Action as RuleAction;
-use crate::analysis::rules::RuleEngine;
 use crate::analysis::socket_scope::SocketScope;
-use crate::analysis::stream::{ReassembledStream, StreamAssembler, StreamKey, StreamOverlayState};
+use crate::analysis::stream::{ReassembledStream, StreamKey, StreamOverlayState};
 use crate::analysis::telemetry::{TelemetryHub, TelemetrySnapshot};
-use crate::analysis::timeline::ProtocolTimelines;
-use crate::analysis::tls::TlsTracker;
 use crate::analysis::traffic_latch::{
     CommandLatch, LatchAction, LatchMode, NftablesLatch, TrafficLatch,
 };
-use crate::analysis::vlan::VlanIntel;
 use crate::analysis::wire_pulse::WirePulse;
 use crate::analysis::yara::YaraEngine;
 use crate::capture::CaptureSource;
@@ -36,15 +30,12 @@ use crate::dissector::DissectorDef;
 use crate::export::pcapng::PcapNgWriter;
 use crate::filter::PacketFilter;
 use crate::model::evidence::Severity as EvidenceSeverity;
-use crate::model::hosts::HostInventory;
 use crate::model::project::{ProjectSaveMode, SavedInvestigationItem};
 use crate::model::tags::TagStore;
-use crate::net::flow::{FlowKey, FlowSort, FlowTracker};
-use crate::net::inspector::CredentialHit;
+use crate::net::flow::{FlowKey, FlowSort};
 use crate::net::lua_plugin::PluginManager;
 use crate::net::packet::Packet;
 use crate::net::packet::TreeSection;
-use crate::net::security::SecurityEngine;
 use crate::pcap_replay::ReplayState;
 use crate::scan::ScanState;
 use crate::sim::capture::SimulatedCapture;
@@ -82,6 +73,7 @@ pub use startup::{CliAction, StartupMode, StartupOptions, parse_startup_args, us
 pub use types::*;
 
 pub struct App {
+    pub core: AnalysisCore,
     pub active_tab: Tab,
     /// Recently visited screens, newest last. Modal overlays are not included.
     pub navigation_history: Vec<Tab>,
@@ -117,7 +109,6 @@ pub struct App {
     pub strings_search_active: bool,
     pub strings_selected: Option<usize>,
     pub strings_scroll: usize,
-    pub flow_tracker: FlowTracker,
     pub flows_selected: Option<usize>,
     pub flows_sort: FlowSort,
     pub stream_overlay: Option<StreamOverlayState>,
@@ -126,9 +117,6 @@ pub struct App {
     pub lua_reload_msg: Option<String>,
     pub craft: CraftState,
     pub traceroute: TracerouteState,
-    pub security: SecurityEngine,
-    pub alert_center: AlertCenter,
-    pub credentials: Vec<CredentialHit>,
     pub scan: ScanState,
     pub replay: ReplayState,
     pub security_tab: SecuritySubTab,
@@ -140,18 +128,8 @@ pub struct App {
     pub pcap_import_path: String,
     pub scan_editing: bool,
     // ─── Phase 1–4 analysis state ──────────────────────────────────────────────
-    pub hosts: HostInventory,
     pub tag_store: TagStore,
     pub notebook: Notebook,
-    pub streams: StreamAssembler,
-    pub timeline: ProtocolTimelines,
-    pub tls_tracker: TlsTracker,
-    pub quic_scope: QuicScope,
-    pub vlan_intel: VlanIntel,
-    pub ioc_engine: IocEngine,
-    pub rule_engine: RuleEngine,
-    pub incidents: IncidentStore,
-    pub endpoint_evidence: Vec<crate::analysis::impact::EndpointEvidence>,
     pub packet_archive: Option<crate::storage::packet_archive::ArchiveWorker>,
     pub evidence_vault: EvidenceVault,
     pub telemetry: TelemetryHub,
@@ -206,7 +184,6 @@ pub struct App {
     // Rules UI state
     pub rules_scroll: usize,
     // ─── Operator graph ────────────────────────────────────────────────────────
-    pub operator_graph: OperatorGraphEngine,
     pub graph_ui: GraphUiState,
     /// Tick counter used to throttle graph recomputation.
     graph_tick_counter: u32,

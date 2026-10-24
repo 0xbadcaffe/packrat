@@ -18,7 +18,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Min(0), Constraint::Length(10), Constraint::Length(1)])
         .split(area);
 
-    let sessions = app.tls_tracker.all();
+    let sessions = app.core.tls_tracker.all();
     draw_session_table(f, app, &sessions, chunks[0]);
     draw_detail_panel(f, app, &sessions, chunks[1]);
     draw_status_bar(f, app, &sessions, chunks[2]);
@@ -254,7 +254,7 @@ fn draw_status_bar(
     let bar = Paragraph::new(Line::from(vec![
         Span::styled(
             format!(" TLS view  {} sessions  {} SNI  {} weak  {} keys  {} decrypted  [[/]] TLS/QUIC  [j/k] scroll  [r] reputation",
-                sessions.len(), with_sni, weak, _app.tls_tracker.key_shelf.secret_count(),
+                sessions.len(), with_sni, weak, _app.core.tls_tracker.key_shelf.secret_count(),
                 sessions.iter().map(|session| session.decrypted_records.len()).sum::<usize>()),
             Style::default().fg(C_FG3()),
         ),
@@ -263,7 +263,7 @@ fn draw_status_bar(
 }
 
 fn draw_quic(f: &mut Frame, app: &App, area: Rect) {
-    let connections = app.quic_scope.all();
+    let connections = app.core.quic_scope.all();
     let header = Row::new(vec![
         Cell::from("Connection ID"), Cell::from("Version"), Cell::from("Types"),
         Cell::from("RatQ"), Cell::from("Decoded"), Cell::from("Packets"), Cell::from("Bytes"), Cell::from("Addresses"), Cell::from("Flags"),

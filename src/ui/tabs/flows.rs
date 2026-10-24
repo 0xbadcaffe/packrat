@@ -20,7 +20,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_flow_table(f: &mut Frame, app: &App, area: Rect) {
-    let sorted = app.flow_tracker.sorted_flows(&app.flows_sort);
+    let sorted = app.core.flow_tracker.sorted_flows(&app.flows_sort);
 
     let header = Row::new(vec![
         Cell::from("Proto").style(Style::default().fg(C_FG2())),

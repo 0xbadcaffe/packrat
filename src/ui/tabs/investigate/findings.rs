@@ -30,13 +30,13 @@ pub(super) fn draw_strings(f: &mut Frame, app: &App, packet: &Packet, area: Rect
 pub(super) fn draw_encrypted(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
     let mut lines = vec![
         Line::from(format!("Protocol: {}", packet.protocol)),
-        Line::from(format!("Known TLS sessions: {}", app.tls_tracker.len())),
+        Line::from(format!("Known TLS sessions: {}", app.core.tls_tracker.len())),
         Line::from(format!(
             "Known QUIC connections: {}",
-            app.quic_scope.connections.len()
+            app.core.quic_scope.connections.len()
         )),
     ];
-    if let Some(session) = app.tls_tracker.get(&packet_flow_id(packet)) {
+    if let Some(session) = app.core.tls_tracker.get(&packet_flow_id(packet)) {
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![Span::styled("TLS session", heading())]));
         lines.push(Line::from(format!("Flow: {}", session.flow_id)));
@@ -77,7 +77,7 @@ pub(super) fn draw_encrypted(f: &mut Frame, app: &App, packet: &Packet, area: Re
             )));
         }
     }
-    for connection in app.quic_scope.connections.values() {
+    for connection in app.core.quic_scope.connections.values() {
         let frames: Vec<_> = connection
             .decoded_frames
             .iter()
@@ -131,8 +131,7 @@ pub(super) fn draw_security(f: &mut Frame, app: &App, packet: &Packet, area: Rec
     ];
 
     let mut count = 0usize;
-    for alert in app
-        .security
+    for alert in app.core.security
         .ids_alerts
         .iter()
         .filter(|alert| alert.pkt_no == packet.no)
@@ -143,8 +142,7 @@ pub(super) fn draw_security(f: &mut Frame, app: &App, packet: &Packet, area: Rec
             alert.severity, alert.signature, alert.detail
         )));
     }
-    for hit in app
-        .security
+    for hit in app.core.security
         .vuln_hits
         .iter()
         .filter(|hit| hit.pkt_no == packet.no)
@@ -152,8 +150,7 @@ pub(super) fn draw_security(f: &mut Frame, app: &App, packet: &Packet, area: Rec
         count += 1;
         lines.push(Line::from(format!("VULN {} - {}", hit.kind, hit.detail)));
     }
-    for hit in app
-        .security
+    for hit in app.core.security
         .tls_weaknesses
         .iter()
         .filter(|hit| hit.pkt_no == packet.no)
@@ -161,8 +158,7 @@ pub(super) fn draw_security(f: &mut Frame, app: &App, packet: &Packet, area: Rec
         count += 1;
         lines.push(Line::from(format!("TLS {} - {}", hit.kind, hit.detail)));
     }
-    for hit in app
-        .ioc_engine
+    for hit in app.core.ioc_engine
         .hits
         .iter()
         .filter(|hit| hit.pkt_no == packet.no)
@@ -173,8 +169,7 @@ pub(super) fn draw_security(f: &mut Frame, app: &App, packet: &Packet, area: Rec
             hit.ioc.kind, hit.ioc.value, hit.context
         )));
     }
-    for hit in app
-        .rule_engine
+    for hit in app.core.rule_engine
         .hits
         .iter()
         .filter(|hit| hit.pkt_no == packet.no)
@@ -185,8 +180,7 @@ pub(super) fn draw_security(f: &mut Frame, app: &App, packet: &Packet, area: Rec
             hit.rule_name, hit.message
         )));
     }
-    for cred in app
-        .credentials
+    for cred in app.core.credentials
         .iter()
         .filter(|cred| cred.pkt_no == packet.no)
     {

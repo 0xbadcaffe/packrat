@@ -122,7 +122,7 @@ fn simple_packets_have_no_fabricated_timestamp_or_padding_bytes() {
     let mut app = packrat_tui::app::App::new_for_test();
     app.inject_packet(packets[0].clone());
     assert_eq!(app.packets.len(), 1);
-    assert!(app.flow_tracker.flows.is_empty());
+    assert!(app.core.flow_tracker.flows.is_empty());
     let fields = packrat_tui::analysis::packet_fields::extract_fields(&packets[0]);
     assert_eq!(
         fields

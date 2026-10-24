@@ -27,7 +27,7 @@ impl App {
                 self.dyn_scroll = self.dyn_scroll.saturating_sub(1);
             }
             Tab::Flows => {
-                let len = self.flow_tracker.flows.len();
+                let len = self.core.flow_tracker.flows.len();
                 if let Some(sel) = self.flows_selected {
                     if sel + 1 < len {
                         self.flows_selected = Some(sel + 1);
@@ -87,7 +87,7 @@ impl App {
     }
 
     pub fn flows_open_stream(&mut self) {
-        let sorted = self.flow_tracker.sorted_flows(&self.flows_sort);
+        let sorted = self.core.flow_tracker.sorted_flows(&self.flows_sort);
         let stream_id = self
             .flows_selected
             .and_then(|index| sorted.get(index))
@@ -106,7 +106,7 @@ impl App {
     }
 
     pub fn flows_jump_to_packets(&mut self) {
-        let sorted = self.flow_tracker.sorted_flows(&self.flows_sort);
+        let sorted = self.core.flow_tracker.sorted_flows(&self.flows_sort);
         if let Some(sel) = self.flows_selected {
             if let Some(flow) = sorted.get(sel) {
                 let ip = flow.key.ep1.0.clone();
@@ -310,7 +310,7 @@ impl App {
     }
 
     pub fn load_key_log(&mut self, path: impl AsRef<std::path::Path>) {
-        match self.tls_tracker.load_key_log(path.as_ref()) {
+        match self.core.tls_tracker.load_key_log(path.as_ref()) {
             Ok(count) => self.set_status(format!("Loaded {count} TLS/QUIC key-log secrets")),
             Err(error) => self.set_status(format!("Key-log error: {error}")),
         }
@@ -359,11 +359,13 @@ impl App {
         };
         let fingerprint = match self.encrypted_view {
             EncryptedView::Tls => self
+                .core
                 .tls_tracker
                 .all()
                 .get(self.tls_selected)
                 .and_then(|session| session.ja4.clone()),
             EncryptedView::Quic => self
+                .core
                 .quic_scope
                 .all()
                 .get(self.tls_selected)

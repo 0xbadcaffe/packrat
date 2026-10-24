@@ -106,7 +106,7 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
     };
 
     // Security alert badge
-    let sec_count = app.security.alert_count() + app.credentials.len();
+    let sec_count = app.core.security.alert_count() + app.core.credentials.len();
     let sec_span = if sec_count > 0 {
         Span::styled(
             format!("  ⚠ {} alerts", sec_count),
@@ -117,7 +117,7 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
     };
 
     // IOC hit badge
-    let ioc_hits = app.ioc_engine.hit_count();
+    let ioc_hits = app.core.ioc_engine.hit_count();
     let ioc_span = if ioc_hits > 0 {
         Span::styled(
             format!("  ☢ {} IOC", ioc_hits),
@@ -128,7 +128,7 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
     };
 
     // Rule hit badge
-    let rule_hits = app.rule_engine.hits.len();
+    let rule_hits = app.core.rule_engine.hits.len();
     let rule_span = if rule_hits > 0 {
         Span::styled(
             format!("  ⚡ {} rules", rule_hits),
@@ -385,7 +385,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         Span::raw("")
     };
 
-    let sec_count = app.security.alert_count() + app.credentials.len();
+    let sec_count = app.core.security.alert_count() + app.core.credentials.len();
     let sec_span = if sec_count > 0 {
         Span::styled(format!("│ ⚠ {} ", sec_count), Style::default().fg(C_RED()).add_modifier(Modifier::BOLD))
     } else {

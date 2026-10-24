@@ -16,22 +16,10 @@ impl App {
         self.reset_header_focus();
         self.total_bytes = 0;
         self.packet_counter = 0;
-        self.flow_tracker.clear();
+        self.core.clear();
         self.flows_selected = None;
         self.stream_overlay = None;
         self.packet_comparison = None;
-        self.security.clear();
-        self.alert_center.clear();
-        self.credentials.clear();
-        self.hosts.clear();
-        self.streams.clear();
-        self.timeline.clear();
-        self.tls_tracker.clear();
-        self.quic_scope.clear();
-        self.vlan_intel.clear();
-        self.ioc_engine.clear_hits();
-        self.rule_engine.clear_hits();
-        self.incidents.clear();
         self.live_response_eligible = true;
         self.processing_live_packet = false;
         self.live_response_incidents.clear();
@@ -46,7 +34,6 @@ impl App {
         self.carved_objects.clear();
         self.yara_engine.clear_results();
         self.yara_scan_cursor = 0;
-        self.operator_graph.clear();
         self.graph_ui = GraphUiState::default();
         self.graph_tick_counter = 0;
     }
