@@ -157,6 +157,8 @@ const COVERAGE: &[CoverageGroup] = &[
 
 const TEST_SOURCES: &str = concat!(
     include_str!("security_policy_tests.rs"),
+    include_str!("security_policy/cases_1.rs"),
+    include_str!("security_policy/cases_2.rs"),
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("dns_transaction_tests.rs"),
     include_str!("industrial_policy_tests.rs"),
