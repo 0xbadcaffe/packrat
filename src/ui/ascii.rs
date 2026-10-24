@@ -23,30 +23,5 @@ pub const EMPTY_CAPTURE: &[&str] = &[
 pub const INCIDENT_MARK: &str = "!!  INTRUSION SIGNAL  !!";
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn presentation_art_is_terminal_safe_and_compact() {
-        for line in STARTUP_MARK.iter().chain(EMPTY_CAPTURE) {
-            assert!(line.is_ascii());
-            assert!(line.len() <= 72);
-            assert!(!line.chars().any(char::is_control));
-        }
-        assert_eq!(PACKRAT_EMOJI, "🐀");
-        assert!(COMPACT_STARTUP_MARK.is_ascii());
-        assert!(NARROW_STARTUP_MARK.is_ascii());
-        assert!(INCIDENT_MARK.is_ascii());
-    }
-
-    #[test]
-    fn startup_logo_spells_packrat_on_a_fixed_terminal_grid() {
-        assert_eq!(STARTUP_MARK.len(), 6);
-        assert!(STARTUP_MARK[..5].iter().all(|line| line.len() <= 52));
-        assert!(STARTUP_MARK[0].starts_with(" ____"));
-        assert!(STARTUP_MARK[1..5].iter().all(|line| line.starts_with('|')));
-        assert!(STARTUP_MARK[4].starts_with("|_|"));
-        assert!(STARTUP_MARK[5].contains("CAPTURE"));
-        assert!(STARTUP_MARK[5].contains("DETECT"));
-    }
-}
+#[path = "../../tests/unit/ui_ascii_tests.rs"]
+mod tests;

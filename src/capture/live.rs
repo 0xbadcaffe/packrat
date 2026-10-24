@@ -92,15 +92,5 @@ fn open_capture(source: &LiveCapture) -> Result<Capture<Active>, String> {
 }
 
 #[cfg(all(test, feature = "real-capture"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_capture_device_returns_an_error_without_panicking() {
-        let source = LiveCapture {
-            iface: "packrat-device-that-does-not-exist".into(),
-            filter: None,
-        };
-        assert!(open_capture(&source).is_err());
-    }
-}
+#[path = "../../tests/unit/capture_live_tests.rs"]
+mod tests;

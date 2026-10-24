@@ -46,13 +46,5 @@ fn packet_count(mut args: impl Iterator<Item = String>) -> Result<usize, String>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn packet_count_is_validated() {
-        assert_eq!(packet_count(["--packets", "42"].map(str::to_string).into_iter()), Ok(42));
-        assert!(packet_count(["--packets", "0"].map(str::to_string).into_iter()).is_err());
-        assert!(packet_count(["--unknown"].map(str::to_string).into_iter()).is_err());
-    }
-}
+#[path = "../../tests/unit/bin_packrat_profile_tests.rs"]
+mod tests;
