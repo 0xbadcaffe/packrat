@@ -80,7 +80,7 @@ fn message_lines(lines: &mut Vec<Line<'static>>, role: &str, message: &Http3Mess
         Style::default().fg(color),
     ));
     lines.push(Line::from(format!(
-        "  Packets {:?}",
+        "  Completion packets {:?}",
         message.packet_numbers
     )));
     for header in &message.headers {

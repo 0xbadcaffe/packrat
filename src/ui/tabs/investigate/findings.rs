@@ -101,7 +101,8 @@ pub(super) fn draw_encrypted(f: &mut Frame, app: &App, packet: &Packet, area: Re
             for frame in frames {
                 lines.push(Line::from(format!(
                     "Decoded frame: {} - {}",
-                    frame.frame_type, frame.detail
+                    printable_bytes(frame.frame_type.as_bytes(), 64),
+                    printable_bytes(frame.detail.as_bytes(), 512)
                 )));
             }
         }

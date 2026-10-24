@@ -123,3 +123,28 @@ fn malformed_helper_header_names_cannot_emit_terminal_control_bytes() {
     assert!(text.contains("Ambiguous"));
     assert!(text.contains("bad.[2J"));
 }
+
+#[test]
+fn decoded_quic_frame_details_cannot_emit_terminal_controls() {
+    let directory = tempfile::tempdir().unwrap();
+    let program = helper(
+        directory.path(),
+        &serde_json::json!({"ok":true, "frames":[{"frame_type":"data\u{1b}", "detail":"peer\u{1b}[2J"}]}),
+    );
+    let mut app = App::new_for_test();
+    app.configure_core(move |core| core.quic_scope.decode_helper_path = Some(program));
+    app.inject_packet(quic_packet(1));
+    app.open_selected_packet_investigation();
+    app.investigation_view = InvestigationView::Encrypted;
+    let mut terminal = Terminal::new(TestBackend::new(180, 60)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(!text.contains('\u{1b}'));
+    assert!(text.contains("peer.[2J"));
+}
