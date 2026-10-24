@@ -104,11 +104,18 @@ jobs:
       - name: Install memory and CPU instrumentation
         run: |
           sudo apt-get update
-          sudo apt-get install -y valgrind "linux-tools-$(uname -r)"
+          if apt-cache show linux-perf >/dev/null 2>&1; then
+            sudo apt-get install -y valgrind linux-perf
+          else
+            sudo apt-get install -y valgrind "linux-tools-$(uname -r)"
+          fi
           perf_path=$(bash scripts/select-perf.sh "$(uname -r)")
-          sudo ln -sf "$perf_path" /usr/local/bin/perf
+          profiler_bin="$RUNNER_TEMP/packrat-profiler-bin"
+          mkdir -p "$profiler_bin"
+          ln -sf "$perf_path" "$profiler_bin/perf"
+          echo "$profiler_bin" >> "$GITHUB_PATH"
           valgrind --version
-          perf --version
+          "$perf_path" --version
 
       - name: Build symbolized profiling workload
         run: cargo build --locked --profile profiling --bin packrat-profile

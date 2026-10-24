@@ -29,6 +29,7 @@ fn install(root: &Path, relative: &str, success: bool) {
 fn supported_kernel_tool_package_layouts_are_selected_and_verified() {
     for layout in [
         "linux-tools/7.0.0-1017-azure/perf",
+        "linux-tools/7.0.0-1017/perf",
         "linux-tools-7.0.0-1017-azure/perf",
         "linux-tools-7.0.0-1017/perf",
     ] {
@@ -68,4 +69,30 @@ fn missing_profiler_is_an_explicit_failure_not_a_silently_skipped_check() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("No executable perf"));
+}
+
+#[test]
+fn standalone_linux_perf_package_is_preferred_without_a_symlink_rewrite() {
+    let directory = tempfile::tempdir().unwrap();
+    install(directory.path(), "bin/perf", true);
+    install(directory.path(), "linux-tools-7.0.0-1017/perf", true);
+    let binary = directory.path().join("bin/perf");
+    let output = Command::new("bash")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/select-perf.sh"))
+        .arg("7.0.0-1017-azure")
+        .arg(directory.path())
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        binary.to_str().unwrap()
+    );
+    assert!(
+        !std::fs::symlink_metadata(binary)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
 }
