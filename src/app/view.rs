@@ -14,15 +14,23 @@ impl std::ops::Deref for AppView<'_> {
 
 impl App {
     pub fn configure_core(&mut self, apply: impl FnOnce(&mut AnalysisCore) + Send + 'static) {
-        let handle = self.core.clone();
-        apply(&mut handle.edit());
+        self.update_core("", move |core| {
+            apply(core);
+            Ok(())
+        });
     }
 
     pub fn query_core<T>(&self, query: impl FnOnce(&AnalysisCore) -> T) -> Option<T> {
+        if !self.analysis_generation_ready() {
+            return None;
+        }
         self.core.try_read().ok().flatten().map(|core| query(&core))
     }
 
     pub fn try_view(&self) -> Result<Option<AppView<'_>>, String> {
+        if !self.analysis_generation_ready() {
+            return Ok(None);
+        }
         Ok(self
             .core
             .try_read()?
@@ -30,6 +38,11 @@ impl App {
     }
 
     pub fn replace_core(&mut self, core: AnalysisCore) {
+        self.analysis_worker.take();
+        self.pending_analysis.clear();
+        self.pending_analysis_bytes = 0;
+        self.pending_analysis_events.clear();
+        self.packet_effects.clear();
         self.core = ReadCore::new(core);
     }
 }

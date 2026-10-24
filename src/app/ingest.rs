@@ -2,15 +2,24 @@ use super::*;
 
 impl App {
     pub fn ingest_packet(&mut self, pkt: Packet) {
+        if let Err(error) = self.try_ingest_packet(pkt) {
+            self.reject_analysis_packet(error);
+        }
+    }
+
+    pub fn try_ingest_packet(&mut self, pkt: Packet) -> Result<(), SubmitError<Packet>> {
         if !self.capturing {
-            return;
+            return Ok(());
+        }
+        if self.analysis_backpressured() {
+            return Err(SubmitError::Full(pkt));
         }
         let live = self.selected_iface != "simulated"
             && pkt.capture.as_ref().is_some_and(|capture| {
                 capture.timestamp.is_some()
                     && capture.interface_name.as_deref() == Some(self.selected_iface.as_str())
             });
-        self.analyze_packet(pkt, live);
+        self.try_analyze_packet(pkt, live, self.restoring_project)
     }
 
     /// Inject a packet regardless of capturing state (used by packet crafter).
@@ -19,12 +28,37 @@ impl App {
     }
 
     pub(super) fn ingest_packet_inner(&mut self, pkt: Packet) {
+        if self.analysis_worker.is_some() {
+            if let Err(error) = self.enqueue_offline_packets(vec![pkt], self.restoring_project) {
+                self.set_status(error);
+            }
+            return;
+        }
         self.analyze_packet(pkt, false);
     }
 
     pub(super) fn analyze_packet(&mut self, pkt: Packet, live: bool) {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
+        if let Err(error) = self.try_analyze_packet(pkt, live, self.restoring_project) {
+            self.reject_analysis_packet(error);
+        }
+    }
+
+    pub(super) fn try_analyze_packet(
+        &mut self,
+        pkt: Packet,
+        live: bool,
+        restoring: bool,
+    ) -> Result<(), SubmitError<Packet>> {
+        if let Some(worker) = &mut self.analysis_worker {
+            match worker.try_packet(pkt.clone(), live) {
+                Ok(sequence) => {
+                    self.packet_effects.insert(sequence, restoring);
+                }
+                Err(SubmitError::Full(_)) => return Err(SubmitError::Full(pkt)),
+                Err(SubmitError::Disconnected(_)) => return Err(SubmitError::Disconnected(pkt)),
+                Err(SubmitError::Oversized(_)) => return Err(SubmitError::Oversized(pkt)),
+            }
+        }
         if !live {
             // Offline traffic shares detector state with the live view. Once
             // mixed, require a clean session before allowing host enforcement.
@@ -35,7 +69,7 @@ impl App {
         if let Some(error) = self
             .packet_archive
             .as_ref()
-            .filter(|_| !self.restoring_project)
+            .filter(|_| !restoring)
             .and_then(|archive| archive.record(&pkt).err())
         {
             self.abort_capture();
@@ -50,34 +84,32 @@ impl App {
             .as_ref()
             .is_some_and(|capture| capture.link_type != 1 || capture.timestamp.is_none())
         {
-            self.retain_packet_display(pkt);
-            return;
+            self.retain_analyzed_display(pkt, restoring);
+            return Ok(());
         }
         let process = self.socket_scope.observe(&pkt);
         self.route_ledger.observe(&pkt, process.as_deref());
         self.wire_pulse.observe(&pkt);
         self.net_registry.observe(&pkt.src);
         self.net_registry.observe(&pkt.dst);
-        let analysis = core.analyze_with_history(&pkt, self.packets.iter().cloned());
-        drop(core);
-        for notice in analysis.incidents {
-            if !self.restoring_project {
-                self.freeze_incident_evidence(notice.id);
-                if self.processing_live_packet {
-                    self.live_response_incidents.insert(notice.id);
-                }
-                self.evaluate_traffic_latch(notice.id, notice.auto_contain_rule);
+        if self.analysis_worker.is_none() {
+            let analysis = self
+                .core
+                .edit()
+                .analyze_with_history(&pkt, self.packets.iter().cloned());
+            if let Some(context) = self.analysis_context(&analysis) {
+                self.handle_packet_analysis(analysis, context, live, restoring);
             }
-            self.alert_overlay_open = true;
-            self.set_status(format!(
-                "Critical incident #{}: {}",
-                notice.id, notice.label
-            ));
         }
-        for alert_id in analysis.alert_pins {
-            self.worklist.add(InvestigationItem::Alert(alert_id));
-        }
+        self.retain_analyzed_display(pkt, restoring);
+        Ok(())
+    }
+
+    fn retain_analyzed_display(&mut self, pkt: Packet, restoring: bool) {
+        let previous = self.restoring_project;
+        self.restoring_project = restoring;
         self.retain_packet_display(pkt);
+        self.restoring_project = previous;
     }
 
     pub(super) fn retain_packet_display(&mut self, pkt: Packet) {

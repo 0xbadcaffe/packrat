@@ -1,5 +1,6 @@
 use crate::engine::AnalysisCore;
 use crate::engine::shared::{CoreReadGuard, ReadCore};
+use crate::engine::worker::{AnalysisWorker, SubmitError, WorkerEvent, WorkerLimits};
 use std::collections::VecDeque;
 use tokio::sync::mpsc::Sender;
 
@@ -49,6 +50,8 @@ const MAX_PACKETS: usize = 10_000;
 pub const INCIDENT_ANALYSIS_SECTION: usize = 11;
 pub const SETTINGS_COUNT: usize = 8;
 
+mod analysis_results;
+mod background;
 mod capture_control;
 mod constructor;
 mod feeds_scenario;
@@ -76,6 +79,13 @@ pub use types::*;
 
 pub struct App {
     pub core: ReadCore,
+    analysis_worker: Option<AnalysisWorker>,
+    analysis_updates: std::collections::HashMap<u64, String>,
+    analysis_update_id: u64,
+    pending_analysis: VecDeque<background::QueuedWork>,
+    pending_analysis_bytes: usize,
+    pending_analysis_events: VecDeque<WorkerEvent>,
+    packet_effects: std::collections::HashMap<u64, bool>,
     pub active_tab: Tab,
     /// Recently visited screens, newest last. Modal overlays are not included.
     pub navigation_history: Vec<Tab>,

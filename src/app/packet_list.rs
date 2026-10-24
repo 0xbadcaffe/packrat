@@ -6,8 +6,22 @@ impl App {
     }
 
     pub fn clear_packets(&mut self) {
-        let core_handle = self.core.clone();
-        let mut core = core_handle.edit();
+        if let Err(error) = self.try_clear_packets() {
+            self.set_status(format!("Clear not accepted: {error}"));
+        }
+    }
+
+    pub fn try_clear_packets(&mut self) -> Result<(), String> {
+        if let Some(worker) = &mut self.analysis_worker {
+            worker.try_clear()?;
+        } else {
+            self.core.edit().clear();
+        }
+        self.pending_analysis.clear();
+        self.pending_analysis_bytes = 0;
+        self.pending_analysis_events.clear();
+        self.packet_effects.clear();
+        self.analysis_updates.clear();
         self.capturing = false;
         self.packets.clear();
         self.packet_index_base = 0;
@@ -18,7 +32,6 @@ impl App {
         self.reset_header_focus();
         self.total_bytes = 0;
         self.packet_counter = 0;
-        core.clear();
         self.flows_selected = None;
         self.stream_overlay = None;
         self.packet_comparison = None;
@@ -34,6 +47,7 @@ impl App {
         self.net_registry.clear_session();
         self.alert_overlay_open = false;
         self.graph_ui = GraphUiState::default();
+        Ok(())
     }
 
     pub fn toggle_recording(&mut self) {

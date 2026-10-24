@@ -20,6 +20,13 @@ impl App {
         };
         let mut app = Self {
             core: ReadCore::new(core),
+            analysis_worker: None,
+            analysis_updates: Default::default(),
+            analysis_update_id: 0,
+            pending_analysis: VecDeque::new(),
+            pending_analysis_bytes: 0,
+            pending_analysis_events: VecDeque::new(),
+            packet_effects: Default::default(),
             active_tab: Workspace::from_index(preferences.startup_workspace).home(),
             navigation_history: Vec::new(),
             packets: VecDeque::new(),

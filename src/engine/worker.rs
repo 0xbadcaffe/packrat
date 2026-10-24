@@ -1,5 +1,6 @@
 //! Bounded ownership transport for the passive core. No terminal or enforcement.
 use super::shared::ReadCore;
+pub type CoreUpdate = Box<dyn FnOnce(&mut AnalysisCore) -> Result<(), String> + Send>;
 use super::snapshot::{AnalysisSnapshot, InspectionSnapshot};
 use super::{AnalysisCore, PacketAnalysis};
 use crate::net::packet::Packet;
@@ -77,7 +78,7 @@ enum Command {
     Update {
         generation: u64,
         request_id: u64,
-        apply: Box<dyn FnOnce(&mut AnalysisCore) -> Result<(), String> + Send>,
+        apply: CoreUpdate,
     },
 }
 
@@ -121,6 +122,10 @@ pub struct AnalysisWorker {
 
 impl AnalysisWorker {
     pub fn spawn(core: AnalysisCore, limits: WorkerLimits) -> Result<Self, String> {
+        Self::spawn_shared(ReadCore::new(core), limits)
+    }
+
+    pub fn spawn_shared(core: ReadCore, limits: WorkerLimits) -> Result<Self, String> {
         if limits.input_capacity == 0
             || limits.input_capacity > 4096
             || limits.event_capacity == 0
@@ -136,13 +141,16 @@ impl AnalysisWorker {
         let monitor = WorkerMonitor {
             running: Arc::new(AtomicBool::new(true)),
             latest: Arc::new(Mutex::new(Arc::new(AnalysisSnapshot::capture(
-                &core, 0, 0, 0, 0,
+                &*core.read()?,
+                0,
+                0,
+                0,
+                0,
             )))),
             failure: Arc::new(Mutex::new(None)),
         };
         let worker_monitor = monitor.clone();
         let worker_cancel = Arc::clone(&cancel);
-        let core = ReadCore::new(core);
         let worker_core = core.clone();
         let thread = std::thread::Builder::new()
             .name("packrat-analysis".into())
@@ -195,11 +203,42 @@ impl AnalysisWorker {
         request_id: u64,
         apply: impl FnOnce(&mut AnalysisCore) -> Result<(), String> + Send + 'static,
     ) -> Result<(), String> {
-        self.try_command(Command::Update {
+        self.try_update_boxed(request_id, Box::new(apply))
+            .map_err(|error| match error {
+                SubmitError::Full(_) => "Analysis worker queue is full".into(),
+                _ => "Analysis worker disconnected".into(),
+            })
+    }
+
+    pub fn try_update_boxed(
+        &self,
+        request_id: u64,
+        apply: CoreUpdate,
+    ) -> Result<(), SubmitError<CoreUpdate>> {
+        let Some(sender) = &self.sender else {
+            return Err(SubmitError::Disconnected(apply));
+        };
+        match sender.try_send(Command::Update {
             generation: self.generation,
             request_id,
-            apply: Box::new(apply),
-        })
+            apply,
+        }) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let (full, command) = match error {
+                    TrySendError::Full(command) => (true, command),
+                    TrySendError::Disconnected(command) => (false, command),
+                };
+                let Command::Update { apply, .. } = command else {
+                    unreachable!()
+                };
+                Err(if full {
+                    SubmitError::Full(apply)
+                } else {
+                    SubmitError::Disconnected(apply)
+                })
+            }
+        }
     }
     pub fn generation(&self) -> u64 {
         self.generation
