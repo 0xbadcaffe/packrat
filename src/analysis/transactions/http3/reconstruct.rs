@@ -30,6 +30,7 @@ pub(super) fn conversation(id: &str, connection: &Connection) -> Http3Conversati
             .unwrap_or_default();
         let method = request
             .as_ref()
+            .filter(|request| request.state != MessageState::Ambiguous)
             .and_then(|request| request.header(":method"));
         let (response, interim_responses) = halves
             .get(&Http3Sender::Server)
@@ -68,6 +69,22 @@ pub(super) fn message(
         }
         expected += frame.length;
         retain_packets(&mut message, &frame.packets, &mut limited);
+        if !request
+            && request_method == Some(b"CONNECT")
+            && status(&message.headers).is_some_and(|code| (200..300).contains(&code))
+            && matches!(
+                frame.event,
+                Http3EventKind::Headers { .. }
+                    | Http3EventKind::PushPromise { .. }
+                    | Http3EventKind::Extension { frame_type: 5, .. }
+            )
+        {
+            ambiguous = true;
+            diagnostic(
+                &mut message,
+                "Known HTTP frame is forbidden inside an established CONNECT tunnel",
+            );
+        }
         match &frame.event {
             Http3EventKind::PushStart { .. } if !request && *offset == 0 => (),
             Http3EventKind::PushPromise { .. } if !request => (),
@@ -287,7 +304,7 @@ pub(super) fn validate_headers(
     Ok(())
 }
 
-fn status(headers: &[HttpHeader]) -> Option<u16> {
+pub(super) fn status(headers: &[HttpHeader]) -> Option<u16> {
     let bytes = &headers
         .iter()
         .find(|header| header.name == ":status")?

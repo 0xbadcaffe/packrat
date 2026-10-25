@@ -160,3 +160,36 @@ fn promise_and_cancellation_identifiers_share_a_bounded_connection_budget() {
             .any(|text| text.contains("incomplete"))
     );
 }
+
+#[test]
+fn a_promise_after_a_successful_connect_is_not_a_valid_push() {
+    let mut events = push_fixture::credit(0);
+    events.push(header_event(
+        Client,
+        0,
+        support::headers(&[(":method", "CONNECT"), (":authority", "proxy.test:443")]),
+    ));
+    events.push(header_event(
+        Server,
+        0,
+        support::headers(&[(":status", "200")]),
+    ));
+    events.push(push_fixture::promise(0, 10, 0));
+    events.extend(push_fixture::response(7, 0, b"ok"));
+    let mut tracker = Http3Tracker::default();
+    tracker.ingest_authenticated(batch(events), 1).unwrap();
+    let report = report(&tracker);
+    assert_eq!(report.pushes[0].state, MessageState::Ambiguous);
+    assert_eq!(
+        report.transactions[0].response.as_ref().unwrap().state,
+        MessageState::Ambiguous
+    );
+    assert_eq!(
+        report.pushes[0].streams[0]
+            .response
+            .as_ref()
+            .unwrap()
+            .body_bytes(),
+        2
+    );
+}

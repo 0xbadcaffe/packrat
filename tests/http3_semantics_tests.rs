@@ -89,3 +89,28 @@ fn malformed_extended_connect_and_non_token_methods_are_ambiguous() {
         );
     }
 }
+
+#[test]
+fn trailers_are_not_permitted_inside_a_successful_connect_tunnel() {
+    let mut tracker = Http3Tracker::default();
+    tracker
+        .ingest_authenticated(
+            batch(vec![
+                header_event(
+                    Client,
+                    0,
+                    headers(&[(":method", "CONNECT"), (":authority", "example.test:443")]),
+                ),
+                header_event(Server, 0, headers(&[(":status", "200")])),
+                header_event(Server, 10, headers(&[("checksum", "not-a-trailer")])),
+                finished(Server, 20),
+            ]),
+            1,
+        )
+        .unwrap();
+    let report = report(&tracker);
+    assert_eq!(
+        report.transactions[0].response.as_ref().unwrap().state,
+        MessageState::Ambiguous
+    );
+}

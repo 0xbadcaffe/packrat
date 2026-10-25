@@ -124,9 +124,31 @@ fn promises(connection: &Connection, pushes: &mut BTreeMap<u64, Http3Push>) {
         };
         let mut expected = 0;
         let mut contiguous = true;
+        let connect = halves
+            .get(&Http3Sender::Client)
+            .filter(|half| !half.ambiguous)
+            .and_then(|half| half.frames.get(&0))
+            .is_some_and(|frame| {
+                if let Http3EventKind::Headers { headers, .. } = &frame.event {
+                    reconstruct::validate_headers(headers, true, false).is_ok()
+                        && headers
+                            .iter()
+                            .any(|header| header.name == ":method" && header.value == b"CONNECT")
+                } else {
+                    false
+                }
+            });
+        let mut tunnel = false;
         for (offset, frame) in &half.frames {
             contiguous &= *offset == expected;
             expected = *offset + frame.length;
+            if connect && contiguous {
+                if let Http3EventKind::Headers { headers, .. } = &frame.event {
+                    tunnel |= reconstruct::validate_headers(headers, false, false).is_ok()
+                        && reconstruct::status(headers)
+                            .is_some_and(|code| (200..300).contains(&code));
+                }
+            }
             let Http3EventKind::PushPromise {
                 push_id, headers, ..
             } = &frame.event
@@ -134,6 +156,12 @@ fn promises(connection: &Connection, pushes: &mut BTreeMap<u64, Http3Push>) {
                 continue;
             };
             let push = pushes.entry(*push_id).or_insert_with(|| new_push(*push_id));
+            if tunnel {
+                issue(
+                    push,
+                    "PUSH_PROMISE is forbidden inside an established CONNECT tunnel",
+                );
+            }
             if push.promised_on.is_empty() {
                 push.request_headers = headers.clone();
             } else if push.request_headers != *headers {
