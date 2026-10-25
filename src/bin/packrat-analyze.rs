@@ -82,6 +82,9 @@ fn analyze(
         )?;
     }
     let mut http3_exchanges = 0;
+    let mut http3_pushes = 0;
+    let mut http3_control_streams = 0;
+    let mut http3_unclassified_streams = 0;
     for id in core.quic_scope.http3.connection_ids() {
         let report = core
             .quic_scope
@@ -89,6 +92,9 @@ fn analyze(
             .conversation(id)
             .ok_or("Retained QUIC connection disappeared")?;
         http3_exchanges += report.transactions.len();
+        http3_pushes += report.pushes.len();
+        http3_control_streams += report.control_streams.len();
+        http3_unclassified_streams += report.unclassified_streams.len();
         event(
             output,
             &json!({"type": "http3_conversation", "connection_id": id, "conversation": report}),
@@ -100,6 +106,8 @@ fn analyze(
         "analyzed": analyzed, "skipped": skipped, "http_exchanges": exchanges + http2_exchanges + http3_exchanges,
         "http1_exchanges": exchanges, "http2_exchanges": http2_exchanges,
         "http3_exchanges": http3_exchanges, "quic_decode_errors": core.quic_scope.decode_errors,
+        "http3_pushes": http3_pushes, "http3_control_streams": http3_control_streams,
+        "http3_unclassified_streams": http3_unclassified_streams,
         "quic_last_decode_error": core.quic_scope.last_decode_error,
         "evicted_quic_connections": core.quic_scope.evicted_connections,
         "retained_streams": core.streams.len(), "evicted_streams": core.streams.evicted_streams(),

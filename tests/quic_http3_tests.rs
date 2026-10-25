@@ -1,4 +1,8 @@
 #![cfg(unix)]
+#[path = "support/http3_control.rs"]
+mod control;
+#[path = "support/http3_push.rs"]
+mod push_fixture;
 #[path = "support/http3.rs"]
 mod support;
 use packrat_tui::analysis::transactions::http3::Http3Sender::Client;
@@ -117,5 +121,65 @@ fn headless_helper_options_reject_missing_duplicate_and_unknown_options() {
             .unwrap();
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn headless_reports_authenticated_control_and_pushes_without_enabling_containment() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("push.pcapng");
+    let mut writer = PcapNgWriter::create(&path).unwrap();
+    writer.write_packet(&quic_packet(1)).unwrap();
+    writer.flush().unwrap();
+    for ok in [false, true] {
+        let program = helper(
+            directory.path(),
+            &serde_json::json!({"ok":ok, "http3":batch(push_fixture::exchange())}),
+        );
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+            .arg("--quic-decode-helper")
+            .arg(program)
+            .arg(&path)
+            .env("HOME", "/nonexistent")
+            .env_remove("TERM")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let events: Vec<serde_json::Value> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let summary = events
+            .iter()
+            .find(|event| event["type"] == "summary")
+            .unwrap();
+        assert_eq!(summary["http3_pushes"], usize::from(ok));
+        assert_eq!(summary["http3_control_streams"], usize::from(ok));
+        assert_eq!(summary["quic_decode_errors"], usize::from(!ok));
+        assert_eq!(summary["containment"], "disabled");
+        if ok {
+            let report = &events
+                .iter()
+                .find(|event| event["type"] == "http3_conversation")
+                .unwrap()["conversation"];
+            assert_eq!(report["control_streams"][0]["max_push_id"], 0);
+            assert_eq!(report["pushes"][0]["state"], "Complete");
+            assert_eq!(report["pushes"][0]["streams"][0]["stream_id"], 7);
+            assert_eq!(
+                report["pushes"][0]["streams"][0]["response"]["body"][0]["data"],
+                serde_json::json!(b"ok".as_slice())
+            );
+        } else {
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| event["type"] == "http3_conversation")
+            );
+        }
     }
 }

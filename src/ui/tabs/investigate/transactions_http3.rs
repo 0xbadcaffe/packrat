@@ -1,5 +1,8 @@
 use super::*;
-use crate::analysis::transactions::{MessageState, http3::Http3Message};
+use crate::analysis::transactions::{
+    MessageState,
+    http3::{Http3ControlStream, Http3Message, Http3Push},
+};
 
 pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
     let report = if app.background_analysis_enabled() {
@@ -29,7 +32,13 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
         return;
     };
     let mut lines = vec![Line::styled(
-        format!("HTTP/3 connection {}", report.connection_id),
+        format!(
+            "HTTP/3 connection {}  Requests: {}  Pushes: {}  Control streams: {}",
+            report.connection_id,
+            report.transactions.len(),
+            report.pushes.len(),
+            report.control_streams.len()
+        ),
         heading(),
     )];
     for limitation in &report.limitations {
@@ -38,10 +47,30 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(C_YELLOW()),
         ));
     }
+    if !report.unclassified_streams.is_empty() {
+        lines.push(Line::styled(
+            format!(
+                "Unclassified unidirectional streams: {:?}",
+                report.unclassified_streams
+            ),
+            Style::default().fg(C_YELLOW()),
+        ));
+    }
+    for stream in &report.control_streams {
+        control_lines(&mut lines, stream);
+    }
     for exchange in &report.transactions {
         lines.push(Line::raw(""));
         lines.push(Line::styled(
-            format!("Request stream #{}", exchange.stream_id),
+            format!(
+                "Request stream #{}{}",
+                exchange.stream_id,
+                if exchange.goaway_excluded {
+                    "  GOAWAY excludes this request"
+                } else {
+                    ""
+                }
+            ),
             heading(),
         ));
         if let Some(request) = &exchange.request {
@@ -54,6 +83,9 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
             message_lines(&mut lines, "Response", response);
         }
     }
+    for push in &report.pushes {
+        push_lines(&mut lines, push);
+    }
     f.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -61,6 +93,85 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
             .block(panel("HTTP/3 Transactions")),
         area,
     );
+}
+
+fn control_lines(lines: &mut Vec<Line<'static>>, stream: &Http3ControlStream) {
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        format!(
+            "Control stream #{} {:?} [{:?}]",
+            stream.stream_id, stream.sender, stream.state
+        ),
+        heading(),
+    ));
+    for setting in &stream.settings {
+        let name = match setting.identifier {
+            1 => "QPACK table capacity",
+            6 => "Maximum field section",
+            7 => "QPACK blocked streams",
+            8 => "Extended CONNECT",
+            0x33 => "HTTP datagrams",
+            _ => "Extension setting",
+        };
+        lines.push(Line::from(format!(
+            "  {name} (0x{:x}): {}",
+            setting.identifier, setting.value
+        )));
+    }
+    lines.push(Line::from(format!(
+        "  GOAWAY: {:?}  MAX_PUSH_ID: {:?}  CANCEL_PUSH: {:?}",
+        stream.goaway, stream.max_push_id, stream.cancelled_pushes
+    )));
+    lines.push(Line::from(format!(
+        "  Completion packets {:?}",
+        stream.packet_numbers
+    )));
+    for detail in &stream.diagnostics {
+        lines.push(Line::styled(
+            detail.clone(),
+            Style::default().fg(C_YELLOW()),
+        ));
+    }
+}
+
+fn push_lines(lines: &mut Vec<Line<'static>>, push: &Http3Push) {
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        format!(
+            "Push #{} [{:?}]  Promised on {:?}",
+            push.push_id, push.state, push.promised_on
+        ),
+        heading(),
+    ));
+    lines.push(Line::from(format!(
+        "  Cancelled by: {:?}  GOAWAY excluded: {}  Promise packets {:?}",
+        push.cancelled_by, push.goaway_excluded, push.promise_packets
+    )));
+    for header in &push.request_headers {
+        lines.push(Line::from(format!(
+            "    Promise {}: {}",
+            printable_bytes(header.name.as_bytes(), 128),
+            printable_bytes(&header.value, 256)
+        )));
+    }
+    for detail in &push.diagnostics {
+        lines.push(Line::styled(
+            detail.clone(),
+            Style::default().fg(C_YELLOW()),
+        ));
+    }
+    for stream in &push.streams {
+        lines.push(Line::styled(
+            format!("  Push response stream #{}", stream.stream_id),
+            heading(),
+        ));
+        for interim in &stream.interim_responses {
+            message_lines(lines, "Push interim", interim);
+        }
+        if let Some(response) = &stream.response {
+            message_lines(lines, "Push response", response);
+        }
+    }
 }
 
 fn message_lines(lines: &mut Vec<Line<'static>>, role: &str, message: &Http3Message) {
