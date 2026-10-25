@@ -228,7 +228,7 @@ fn connections_headers_and_payload_retention_are_bounded_and_disclosed() {
             rejected = true;
             break;
         }
-        offset += payload.len() as u64 + 2;
+        offset += payload.len() as u64 + 1 + integer_width(payload.len() as u64);
     }
     assert!(rejected);
     assert!(

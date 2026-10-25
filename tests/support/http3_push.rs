@@ -27,7 +27,7 @@ pub fn start(stream_id: u64, push_id: u64) -> Http3Event {
         stream_id,
         sender: Server,
         event: Http3EventKind::PushStart {
-            wire_length: 2,
+            wire_length: 1 + support::integer_width(push_id),
             push_id,
         },
     }

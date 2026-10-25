@@ -35,7 +35,7 @@ pub fn data_event(sender: Http3Sender, offset: u64, bytes: &[u8]) -> Http3Event 
         sender,
         event: Http3EventKind::Data {
             offset,
-            wire_length: bytes.len() as u64 + 2,
+            wire_length: bytes.len() as u64 + 1 + integer_width(bytes.len() as u64),
             data: bytes.into(),
         },
     }
@@ -45,6 +45,15 @@ pub fn finished(sender: Http3Sender, size: u64) -> Http3Event {
         stream_id: 0,
         sender,
         event: Http3EventKind::Finished { final_size: size },
+    }
+}
+
+pub fn integer_width(value: u64) -> u64 {
+    match value {
+        0..=63 => 1,
+        64..=16383 => 2,
+        16384..=1_073_741_823 => 4,
+        _ => 8,
     }
 }
 pub fn batch(events: Vec<Http3Event>) -> AuthenticatedHttp3Batch {

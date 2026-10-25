@@ -16,7 +16,15 @@ pub fn settings(sender: Http3Sender, offset: u64, entries: &[(u64, u64)]) -> Htt
         sender,
         Http3EventKind::Settings {
             offset,
-            wire_length: 2 + entries.len() as u64 * 2,
+            wire_length: {
+                let payload: u64 = entries
+                    .iter()
+                    .map(|(id, value)| {
+                        super::support::integer_width(*id) + super::support::integer_width(*value)
+                    })
+                    .sum();
+                1 + super::support::integer_width(payload) + payload
+            },
             entries: entries
                 .iter()
                 .map(|(identifier, value)| Http3Setting {
@@ -32,7 +40,7 @@ pub fn credit(offset: u64, push_id: u64) -> Http3Event {
         Http3Sender::Client,
         Http3EventKind::MaxPushId {
             offset,
-            wire_length: 3,
+            wire_length: 2 + super::support::integer_width(push_id),
             push_id,
         },
     )
@@ -42,7 +50,7 @@ pub fn goaway(sender: Http3Sender, offset: u64, identifier: u64) -> Http3Event {
         sender,
         Http3EventKind::Goaway {
             offset,
-            wire_length: 3,
+            wire_length: 2 + super::support::integer_width(identifier),
             identifier,
         },
     )
