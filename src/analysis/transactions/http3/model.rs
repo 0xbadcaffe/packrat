@@ -29,6 +29,16 @@ pub struct Http3Event {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Http3EventKind {
+    PushStart {
+        wire_length: u64,
+        push_id: u64,
+    },
+    PushPromise {
+        offset: u64,
+        wire_length: u64,
+        push_id: u64,
+        headers: Vec<HttpHeader>,
+    },
     ControlStart {
         wire_length: u64,
     },
@@ -79,7 +89,9 @@ pub enum Http3EventKind {
 impl Http3EventKind {
     pub(super) fn range(&self) -> Option<(u64, u64)> {
         match self {
-            Self::ControlStart { wire_length } => Some((0, *wire_length)),
+            Self::ControlStart { wire_length } | Self::PushStart { wire_length, .. } => {
+                Some((0, *wire_length))
+            }
             Self::Settings {
                 offset,
                 wire_length,
@@ -100,6 +112,11 @@ impl Http3EventKind {
                 wire_length,
                 ..
             }
+            | Self::PushPromise {
+                offset,
+                wire_length,
+                ..
+            }
             | Self::Headers {
                 offset,
                 wire_length,
@@ -116,6 +133,15 @@ impl Http3EventKind {
                 ..
             } => Some((*offset, *wire_length)),
             Self::Finished { .. } | Self::Reset { .. } => None,
+        }
+    }
+
+    pub(super) fn push_id(&self) -> Option<u64> {
+        match self {
+            Self::PushStart { push_id, .. }
+            | Self::PushPromise { push_id, .. }
+            | Self::CancelPush { push_id, .. } => Some(*push_id),
+            _ => None,
         }
     }
 }
@@ -192,6 +218,27 @@ pub struct Http3Exchange {
     pub request: Option<Http3Message>,
     pub response: Option<Http3Message>,
     pub interim_responses: Vec<Http3Message>,
+    pub goaway_excluded: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Http3PushStream {
+    pub stream_id: u64,
+    pub response: Option<Http3Message>,
+    pub interim_responses: Vec<Http3Message>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Http3Push {
+    pub push_id: u64,
+    pub promised_on: Vec<u64>,
+    pub request_headers: Vec<HttpHeader>,
+    pub promise_packets: Vec<u64>,
+    pub streams: Vec<Http3PushStream>,
+    pub cancelled_by: Vec<Http3Sender>,
+    pub goaway_excluded: bool,
+    pub state: MessageState,
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -199,5 +246,7 @@ pub struct Http3Conversation {
     pub connection_id: String,
     pub transactions: Vec<Http3Exchange>,
     pub control_streams: Vec<Http3ControlStream>,
+    pub pushes: Vec<Http3Push>,
+    pub unclassified_streams: Vec<u64>,
     pub limitations: Vec<String>,
 }

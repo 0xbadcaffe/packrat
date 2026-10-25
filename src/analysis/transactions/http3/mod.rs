@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 mod control;
 mod model;
+mod push;
 mod reconstruct;
 mod state;
 mod validation;
@@ -100,6 +101,12 @@ impl Http3Tracker {
                 connection.limited = true;
                 return Err("HTTP/3 event or byte retention limit reached".into());
             }
+            if let Some(id) = event.event.push_id() {
+                if connection.push_ids.len() >= 128 && !connection.push_ids.contains(&id) {
+                    return Err("HTTP/3 retained push identifier limit reached".into());
+                }
+                connection.push_ids.insert(id);
+            }
             let halves = connection.streams.entry(event.stream_id).or_default();
             let half = halves.entry(event.sender).or_default();
             if half.ingest(event.event, packet_no)? {
@@ -137,10 +144,12 @@ impl Http3Tracker {
 
 fn event_cost(event: &Http3Event) -> usize {
     512 + match &event.event {
-        Http3EventKind::Headers { headers, .. } => headers
-            .iter()
-            .map(|header| header.name.len() + header.value.len() + 32)
-            .sum(),
+        Http3EventKind::Headers { headers, .. } | Http3EventKind::PushPromise { headers, .. } => {
+            headers
+                .iter()
+                .map(|header| header.name.len() + header.value.len() + 32)
+                .sum()
+        }
         Http3EventKind::Data { data, .. } => data.len(),
         Http3EventKind::Settings { entries, .. } => entries.len() * 16,
         _ => 0,

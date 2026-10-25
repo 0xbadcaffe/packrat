@@ -5,6 +5,7 @@ pub(super) struct Connection {
     pub streams: BTreeMap<u64, BTreeMap<Http3Sender, HalfStream>>,
     pub limited: bool,
     pub revision: u64,
+    pub push_ids: std::collections::BTreeSet<u64>,
 }
 
 pub(super) struct Frame {

@@ -2,10 +2,20 @@ use super::super::{HttpHeader, MessageState};
 use super::*;
 
 pub(super) fn conversation(id: &str, connection: &Connection) -> Http3Conversation {
+    let mut control_streams = control::inspect(connection);
+    let pushes = push::inspect(connection, &mut control_streams);
+    let goaway = control_streams
+        .iter()
+        .filter(|stream| {
+            stream.sender == Http3Sender::Server && stream.state != MessageState::Ambiguous
+        })
+        .filter_map(|stream| stream.goaway)
+        .min();
     let mut report = Http3Conversation {
-        connection_id: id.into(), transactions: Vec::new(), control_streams: control::inspect(connection),
+        connection_id: id.into(), transactions: Vec::new(), control_streams, pushes,
+        unclassified_streams: connection.streams.iter().filter(|(id, halves)| **id % 4 >= 2 && !halves.values().any(|half| half.frames.get(&0).is_some_and(|frame| matches!(frame.event, Http3EventKind::ControlStart { .. } | Http3EventKind::PushStart { .. })))).map(|(id, _)| *id).collect(),
         limitations: vec!["QUIC authentication, connection identity, and QPACK state are supplied by the configured helper; ciphertext is not decoded by Packrat.".into(),
-            "Server push is not reconstructed. Offsets refer to authenticated stream plaintext, not capture bytes; control status describes the retained prefix, not a completed connection.".into(),
+            "Offsets refer to authenticated stream plaintext, not capture bytes. Control status describes the retained prefix, not a completed connection; origin authority and cache policy are not independently verified.".into(),
             "Packet references identify helper frame-completion observations, not every fragment. Packet lookup retains the latest 4096 packet numbers.".into()],
     };
     if connection.limited {
@@ -16,33 +26,30 @@ pub(super) fn conversation(id: &str, connection: &Connection) -> Http3Conversati
     for (stream_id, halves) in connection.streams.iter().filter(|(id, _)| **id % 4 == 0) {
         let (request, _) = halves
             .get(&Http3Sender::Client)
-            .map(|half| message(half, true, false, false, connection.limited))
+            .map(|half| message(half, true, None, connection.limited))
             .unwrap_or_default();
-        let head = request
+        let method = request
             .as_ref()
-            .is_some_and(|request| request.header(":method") == Some(b"HEAD"));
-        let connect = request
-            .as_ref()
-            .is_some_and(|request| request.header(":method") == Some(b"CONNECT"));
+            .and_then(|request| request.header(":method"));
         let (response, interim_responses) = halves
             .get(&Http3Sender::Server)
-            .map(|half| message(half, false, head, connect, connection.limited))
+            .map(|half| message(half, false, method, connection.limited))
             .unwrap_or_default();
         report.transactions.push(Http3Exchange {
             stream_id: *stream_id,
             request,
             response,
             interim_responses,
+            goaway_excluded: goaway.is_some_and(|limit| *stream_id >= limit),
         });
     }
     report
 }
 
-fn message(
+pub(super) fn message(
     half: &HalfStream,
     request: bool,
-    head: bool,
-    connect: bool,
+    request_method: Option<&[u8]>,
     connection_limited: bool,
 ) -> (Option<Http3Message>, Vec<Http3Message>) {
     let mut message = Http3Message::default();
@@ -62,6 +69,8 @@ fn message(
         expected += frame.length;
         retain_packets(&mut message, &frame.packets, &mut limited);
         match &frame.event {
+            Http3EventKind::PushStart { .. } if !request && *offset == 0 => (),
+            Http3EventKind::PushPromise { .. } if !request => (),
             Http3EventKind::Headers { headers, .. } => {
                 if message.headers.is_empty() {
                     if let Err(error) = validate_headers(headers, request, false) {
@@ -163,16 +172,37 @@ fn message(
         );
     }
     let tunnel = message.header(":method") == Some(b"CONNECT")
-        || connect && status(&message.headers).is_some_and(|code| (200..300).contains(&code));
+        || request_method == Some(b"CONNECT")
+            && status(&message.headers).is_some_and(|code| (200..300).contains(&code));
     let no_body = !request
-        && (head || status(&message.headers).is_some_and(|code| matches!(code, 204 | 304)));
+        && (request_method == Some(b"HEAD")
+            || status(&message.headers).is_some_and(|code| matches!(code, 204 | 304)));
     if no_body && message.body_bytes() != 0 {
         ambiguous = true;
         diagnostic(&mut message, "Response semantics forbid a message body");
     }
-    if let Err(error) = validate_content_length(&message, no_body) {
-        ambiguous = true;
-        diagnostic(&mut message, error);
+    match content_length(&message.headers) {
+        Ok(Some(length))
+            if !no_body && message.end_stream && length != message.body_bytes() as u64 =>
+        {
+            if !request && request_method.is_none() {
+                diagnostic(
+                    &mut message,
+                    "Request method is missing; response Content-Length semantics remain unresolved",
+                );
+            } else {
+                ambiguous = true;
+                diagnostic(
+                    &mut message,
+                    "HTTP/3 Content-Length disagrees with captured body",
+                );
+            }
+        }
+        Err(error) => {
+            ambiguous = true;
+            diagnostic(&mut message, error);
+        }
+        _ => (),
     }
     message.state = if ambiguous {
         MessageState::Ambiguous
@@ -194,7 +224,11 @@ fn message(
     (Some(message), interim)
 }
 
-fn validate_headers(headers: &[HttpHeader], request: bool, trailers: bool) -> Result<(), String> {
+pub(super) fn validate_headers(
+    headers: &[HttpHeader],
+    request: bool,
+    trailers: bool,
+) -> Result<(), String> {
     super::super::http2_headers::validate(headers, request, trailers)?;
     if trailers {
         if headers
@@ -261,10 +295,9 @@ fn status(headers: &[HttpHeader]) -> Option<u16> {
     std::str::from_utf8(bytes).ok()?.parse().ok()
 }
 
-fn validate_content_length(message: &Http3Message, no_body: bool) -> Result<(), &'static str> {
+pub(super) fn content_length(headers: &[HttpHeader]) -> Result<Option<u64>, &'static str> {
     let mut value = None;
-    for header in message
-        .headers
+    for header in headers
         .iter()
         .filter(|header| header.name == "content-length")
     {
@@ -280,13 +313,7 @@ fn validate_content_length(message: &Http3Message, no_body: bool) -> Result<(), 
         }
         value = Some(length);
     }
-    if !no_body
-        && message.end_stream
-        && value.is_some_and(|length| length != message.body_bytes() as u64)
-    {
-        return Err("HTTP/3 Content-Length disagrees with captured body");
-    }
-    Ok(())
+    Ok(value)
 }
 
 fn diagnostic(message: &mut Http3Message, detail: &str) {

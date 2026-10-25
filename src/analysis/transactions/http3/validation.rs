@@ -10,6 +10,25 @@ pub(super) fn validate_event(event: &Http3Event) -> Result<(), String> {
         return Err("Invalid HTTP/3 stream type or unidirectional sender".into());
     }
     match &event.event {
+        Http3EventKind::PushStart {
+            wire_length,
+            push_id,
+        } => {
+            if kind != 3
+                || !matches!(wire_length, 2..=6 | 8..=10 | 12 | 16)
+                || *push_id > MAX_OFFSET
+            {
+                return Err("Invalid HTTP/3 push stream prefix or sender".into());
+            }
+        }
+        Http3EventKind::PushPromise {
+            push_id, headers, ..
+        } => {
+            if kind != 0 || event.sender != Http3Sender::Server || *push_id > MAX_OFFSET {
+                return Err("PUSH_PROMISE must originate on a server request direction".into());
+            }
+            validate_headers(headers)?;
+        }
         Http3EventKind::ControlStart { wire_length } => {
             if kind < 2 || !matches!(wire_length, 1 | 2 | 4 | 8) {
                 return Err("Invalid HTTP/3 control stream prefix".into());
