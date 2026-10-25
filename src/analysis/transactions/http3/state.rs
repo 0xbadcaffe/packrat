@@ -25,36 +25,27 @@ pub(super) struct HalfStream {
 
 impl HalfStream {
     pub fn ingest(&mut self, event: Http3EventKind, packet_no: u64) -> Result<bool, String> {
-        let (offset, length) = match &event {
-            Http3EventKind::Headers {
-                offset,
-                wire_length,
-                ..
-            }
-            | Http3EventKind::Data {
-                offset,
-                wire_length,
-                ..
-            }
-            | Http3EventKind::Extension {
-                offset,
-                wire_length,
-                ..
-            } => (*offset, *wire_length),
-            Http3EventKind::Finished { final_size } | Http3EventKind::Reset { final_size, .. } => {
-                self.ambiguous |= self.final_size.is_some_and(|prior| prior != *final_size)
-                    || self
-                        .frames
-                        .iter()
-                        .any(|(offset, frame)| offset + frame.length > *final_size);
-                let new = self.final_size.is_none();
-                self.final_size.get_or_insert(*final_size);
-                if let Http3EventKind::Reset { error_code, .. } = &event {
-                    self.ambiguous |= self.reset_code.is_some_and(|prior| prior != *error_code);
-                    self.reset_code = Some(*error_code);
+        let (offset, length) = if let Some(range) = event.range() {
+            range
+        } else {
+            match &event {
+                Http3EventKind::Finished { final_size }
+                | Http3EventKind::Reset { final_size, .. } => {
+                    self.ambiguous |= self.final_size.is_some_and(|prior| prior != *final_size)
+                        || self
+                            .frames
+                            .iter()
+                            .any(|(offset, frame)| offset + frame.length > *final_size);
+                    let new = self.final_size.is_none();
+                    self.final_size.get_or_insert(*final_size);
+                    if let Http3EventKind::Reset { error_code, .. } = &event {
+                        self.ambiguous |= self.reset_code.is_some_and(|prior| prior != *error_code);
+                        self.reset_code = Some(*error_code);
+                    }
+                    retain_packet(&mut self.final_packets, packet_no, &mut self.limited);
+                    return Ok(new);
                 }
-                retain_packet(&mut self.final_packets, packet_no, &mut self.limited);
-                return Ok(new);
+                _ => return Err("HTTP/3 event has no retained range".into()),
             }
         };
         if self.final_size.is_some_and(|size| offset + length > size) {

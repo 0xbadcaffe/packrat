@@ -3,9 +3,9 @@ use super::*;
 
 pub(super) fn conversation(id: &str, connection: &Connection) -> Http3Conversation {
     let mut report = Http3Conversation {
-        connection_id: id.into(), transactions: Vec::new(),
+        connection_id: id.into(), transactions: Vec::new(), control_streams: control::inspect(connection),
         limitations: vec!["QUIC authentication, connection identity, and QPACK state are supplied by the configured helper; ciphertext is not decoded by Packrat.".into(),
-            "Request streams only; server push and control-stream policy are not reconstructed. Offsets refer to authenticated stream plaintext, not capture bytes.".into(),
+            "Server push is not reconstructed. Offsets refer to authenticated stream plaintext, not capture bytes; control status describes the retained prefix, not a completed connection.".into(),
             "Packet references identify helper frame-completion observations, not every fragment. Packet lookup retains the latest 4096 packet numbers.".into()],
     };
     if connection.limited {
@@ -13,7 +13,7 @@ pub(super) fn conversation(id: &str, connection: &Connection) -> Http3Conversati
             .limitations
             .push("Retention or rejected input limits make this connection incomplete.".into());
     }
-    for (stream_id, halves) in &connection.streams {
+    for (stream_id, halves) in connection.streams.iter().filter(|(id, _)| **id % 4 == 0) {
         let (request, _) = halves
             .get(&Http3Sender::Client)
             .map(|half| message(half, true, false, false, connection.limited))
@@ -123,7 +123,10 @@ fn message(
                     diagnostic(&mut message, "PUSH_PROMISE metadata was not reconstructed");
                 }
             }
-            _ => unreachable!("Closure events are not stored as frames"),
+            _ => {
+                ambiguous = true;
+                diagnostic(&mut message, "Unexpected HTTP/3 frame in a message");
+            }
         }
     }
     retain_packets(&mut message, &half.final_packets, &mut limited);

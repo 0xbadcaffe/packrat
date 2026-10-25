@@ -29,6 +29,29 @@ pub struct Http3Event {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Http3EventKind {
+    ControlStart {
+        wire_length: u64,
+    },
+    Settings {
+        offset: u64,
+        wire_length: u64,
+        entries: Vec<Http3Setting>,
+    },
+    Goaway {
+        offset: u64,
+        wire_length: u64,
+        identifier: u64,
+    },
+    MaxPushId {
+        offset: u64,
+        wire_length: u64,
+        push_id: u64,
+    },
+    CancelPush {
+        offset: u64,
+        wire_length: u64,
+        push_id: u64,
+    },
     Headers {
         offset: u64,
         wire_length: u64,
@@ -51,6 +74,69 @@ pub enum Http3EventKind {
         final_size: u64,
         error_code: u64,
     },
+}
+
+impl Http3EventKind {
+    pub(super) fn range(&self) -> Option<(u64, u64)> {
+        match self {
+            Self::ControlStart { wire_length } => Some((0, *wire_length)),
+            Self::Settings {
+                offset,
+                wire_length,
+                ..
+            }
+            | Self::Goaway {
+                offset,
+                wire_length,
+                ..
+            }
+            | Self::MaxPushId {
+                offset,
+                wire_length,
+                ..
+            }
+            | Self::CancelPush {
+                offset,
+                wire_length,
+                ..
+            }
+            | Self::Headers {
+                offset,
+                wire_length,
+                ..
+            }
+            | Self::Data {
+                offset,
+                wire_length,
+                ..
+            }
+            | Self::Extension {
+                offset,
+                wire_length,
+                ..
+            } => Some((*offset, *wire_length)),
+            Self::Finished { .. } | Self::Reset { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Http3Setting {
+    pub identifier: u64,
+    pub value: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Http3ControlStream {
+    pub stream_id: u64,
+    pub sender: Http3Sender,
+    pub settings: Vec<Http3Setting>,
+    pub goaway: Option<u64>,
+    pub max_push_id: Option<u64>,
+    pub cancelled_pushes: Vec<u64>,
+    pub state: MessageState,
+    pub packet_numbers: Vec<u64>,
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -112,5 +198,6 @@ pub struct Http3Exchange {
 pub struct Http3Conversation {
     pub connection_id: String,
     pub transactions: Vec<Http3Exchange>,
+    pub control_streams: Vec<Http3ControlStream>,
     pub limitations: Vec<String>,
 }
