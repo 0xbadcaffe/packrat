@@ -127,24 +127,38 @@ async fn run_loop(
     event_reader: &mut crossterm::event::EventStream,
 ) -> Result<()> {
     let mut pending_packet = None;
-    let mut analysis_interval = time::interval(Duration::from_millis(20));
+    let mut redraw_period = Duration::from_millis(app.ui_refresh_ms);
+    let mut redraw_interval = time::interval(redraw_period);
+    let mut redraw_pending = true;
     loop {
+        let configured_period = Duration::from_millis(app.ui_refresh_ms);
+        if configured_period != redraw_period {
+            redraw_period = configured_period;
+            redraw_interval = time::interval(redraw_period);
+        }
         app.poll_analysis();
         app.dispatch_capture(packet_rx, &mut pending_packet)
             .map_err(anyhow::Error::msg)?;
-        if let Some(view) = app.try_view().map_err(anyhow::Error::msg)? {
-            terminal.draw(|f| ui::draw_view(f, &view))?;
+        if redraw_pending {
+            if let Some(view) = app.try_view().map_err(anyhow::Error::msg)? {
+                terminal.draw(|f| ui::draw_view(f, &view))?;
+            }
+            redraw_pending = false;
         }
 
         tokio::select! {
             _ = tick_interval.tick() => {
                 app.tick();
+                redraw_pending = true;
             }
-            _ = analysis_interval.tick() => {}
+            _ = redraw_interval.tick() => {
+                redraw_pending = true;
+            }
             Some(Ok(evt)) = event_reader.next() => {
                 if event::handle(app, evt) {
                     break;
                 }
+                redraw_pending = true;
             }
             // Also wake up when the first new packet arrives so the
             // next iteration can drain it without waiting a full tick.

@@ -32,6 +32,7 @@ async fn helper_startup_failure_is_reported_to_the_caller() {
         program: std::env::temp_dir().join("packrat-missing-helper-9fa785f2"),
         iface: "test".into(),
         filter: None,
+        timeout_ms: packrat_tui::storage::theme_store::DEFAULT_CAPTURE_TIMEOUT_MS,
     }.run(tx);
     let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {

@@ -5,6 +5,13 @@
 use std::path::PathBuf;
 use anyhow::Result;
 
+pub const DEFAULT_UI_REFRESH_MS: u64 = 50;
+pub const MIN_UI_REFRESH_MS: u64 = 20;
+pub const MAX_UI_REFRESH_MS: u64 = 250;
+pub const DEFAULT_CAPTURE_TIMEOUT_MS: u64 = 100;
+pub const MIN_CAPTURE_TIMEOUT_MS: u64 = 25;
+pub const MAX_CAPTURE_TIMEOUT_MS: u64 = 1_000;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct Preferences {
     #[serde(default = "default_theme")]
@@ -17,6 +24,10 @@ pub struct Preferences {
     pub startup_workspace: usize,
     #[serde(default)]
     pub navigation_version: u8,
+    #[serde(default = "default_ui_refresh_ms")]
+    pub ui_refresh_ms: u64,
+    #[serde(default = "default_capture_timeout_ms")]
+    pub capture_timeout_ms: u64,
 }
 
 impl Default for Preferences {
@@ -27,6 +38,8 @@ impl Default for Preferences {
             alert_automation: 0,
             startup_workspace: 0,
             navigation_version: 1,
+            ui_refresh_ms: DEFAULT_UI_REFRESH_MS,
+            capture_timeout_ms: DEFAULT_CAPTURE_TIMEOUT_MS,
         }
     }
 }
@@ -41,10 +54,16 @@ impl Preferences {
             };
             self.navigation_version = 1;
         }
+        self.ui_refresh_ms = self.ui_refresh_ms.clamp(MIN_UI_REFRESH_MS, MAX_UI_REFRESH_MS);
+        self.capture_timeout_ms = self
+            .capture_timeout_ms
+            .clamp(MIN_CAPTURE_TIMEOUT_MS, MAX_CAPTURE_TIMEOUT_MS);
     }
 }
 
 fn default_theme() -> String { "Dark Pro".into() }
+fn default_ui_refresh_ms() -> u64 { DEFAULT_UI_REFRESH_MS }
+fn default_capture_timeout_ms() -> u64 { DEFAULT_CAPTURE_TIMEOUT_MS }
 
 fn prefs_path() -> Option<PathBuf> {
     dirs_next::config_dir().map(|d| d.join("packrat").join("prefs.json"))

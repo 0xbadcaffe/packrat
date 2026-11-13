@@ -4,20 +4,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut interface = None;
     let mut filter = None;
+    let mut timeout_ms = packrat_tui::storage::theme_store::DEFAULT_CAPTURE_TIMEOUT_MS;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--interface" => { index += 1; interface = args.get(index).cloned(); }
             "--filter" => { index += 1; filter = args.get(index).cloned(); }
+            "--timeout-ms" => {
+                index += 1;
+                timeout_ms = args.get(index).ok_or("--timeout-ms requires a value")?.parse()?;
+            }
             unknown => return Err(format!("unknown argument: {unknown}").into()),
         }
         index += 1;
     }
     let interface = interface.ok_or("--interface is required")?;
     let mut capture = pcap::Capture::from_device(interface.as_str())?
-        .promisc(true).snaplen(65_535).timeout(100).open()?;
+        .promisc(true).snaplen(65_535)
+        .timeout(timeout_ms.clamp(
+            packrat_tui::storage::theme_store::MIN_CAPTURE_TIMEOUT_MS,
+            packrat_tui::storage::theme_store::MAX_CAPTURE_TIMEOUT_MS,
+        ) as i32)
+        .open()?;
     if let Some(filter) = filter { capture.filter(&filter, true)?; }
-    let mut capture = capture.setnonblock()?;
     let link_type = u32::try_from(capture.get_datalink().0)?;
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
@@ -25,7 +34,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let packet = match capture.next_packet() {
             Ok(packet) => packet,
             Err(pcap::Error::TimeoutExpired | pcap::Error::NoMorePackets) => {
-                std::thread::sleep(std::time::Duration::from_millis(2));
                 continue;
             }
             Err(error) => return Err(error.into()),

@@ -17,6 +17,7 @@ pub struct HelperCapture {
     pub program: PathBuf,
     pub iface: String,
     pub filter: Option<String>,
+    pub timeout_ms: u64,
 }
 
 impl CaptureSource for HelperCapture {
@@ -24,6 +25,7 @@ impl CaptureSource for HelperCapture {
         CaptureTask::spawn(async move {
             let mut command = tokio::process::Command::new(&self.program);
             command.arg("--interface").arg(&self.iface)
+                .arg("--timeout-ms").arg(self.timeout_ms.to_string())
                 .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null()).kill_on_drop(true);
             if let Some(filter) = self.filter { command.arg("--filter").arg(filter); }

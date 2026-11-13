@@ -38,6 +38,7 @@ impl App {
                     (self.traffic_latch.max_active_blocks + 1).min(1_024)
             }
             7 => self.clear_guard_kill_switch(),
+            8 | 9 => self.adjust_settings_selection(true),
             _ => {}
         }
         self.save_preferences();
@@ -67,6 +68,24 @@ impl App {
                         .max(1)
                 };
             }
+            8 => {
+                self.ui_refresh_ms = if increase {
+                    (self.ui_refresh_ms + 10).min(theme_store::MAX_UI_REFRESH_MS)
+                } else {
+                    self.ui_refresh_ms
+                        .saturating_sub(10)
+                        .max(theme_store::MIN_UI_REFRESH_MS)
+                };
+            }
+            9 => {
+                self.capture_timeout_ms = if increase {
+                    (self.capture_timeout_ms + 25).min(theme_store::MAX_CAPTURE_TIMEOUT_MS)
+                } else {
+                    self.capture_timeout_ms
+                        .saturating_sub(25)
+                        .max(theme_store::MIN_CAPTURE_TIMEOUT_MS)
+                };
+            }
             _ => {}
         }
         self.save_preferences();
@@ -94,6 +113,8 @@ impl App {
             alert_automation: automation,
             startup_workspace: self.preferred_workspace.index(),
             navigation_version: 1,
+            ui_refresh_ms: self.ui_refresh_ms,
+            capture_timeout_ms: self.capture_timeout_ms,
         });
         if saved.is_ok() {
             self.preferences_dirty.set(false);

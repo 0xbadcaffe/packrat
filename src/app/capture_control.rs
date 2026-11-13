@@ -42,6 +42,7 @@ impl App {
                     program,
                     iface: self.selected_iface.clone(),
                     filter: None,
+                    timeout_ms: self.capture_timeout_ms,
                 };
                 self.capture_handle = Some(source.run(self.packet_tx.clone()));
                 self.capturing = true;
@@ -53,6 +54,7 @@ impl App {
                 let source = LiveCapture {
                     iface: self.selected_iface.clone(),
                     filter: None,
+                    timeout_ms: self.capture_timeout_ms,
                 };
                 self.capture_handle = Some(source.run(self.packet_tx.clone()));
                 self.capturing = true;

@@ -149,6 +149,8 @@ impl App {
             settings_cursor: 0,
             auto_scroll: preferences.auto_scroll,
             preferred_workspace: Workspace::from_index(preferences.startup_workspace),
+            ui_refresh_ms: preferences.ui_refresh_ms,
+            capture_timeout_ms: preferences.capture_timeout_ms,
             persist_preferences: true,
             current_project_name: None,
             current_project_path: None,

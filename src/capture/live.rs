@@ -11,6 +11,7 @@ use crate::net::parser::parse_captured;
 pub struct LiveCapture {
     pub iface: String,
     pub filter: Option<String>,
+    pub timeout_ms: u64,
 }
 
 impl CaptureSource for LiveCapture {
@@ -27,7 +28,6 @@ impl CaptureSource for LiveCapture {
                     let raw = match cap.next_packet() {
                         Ok(raw) => raw,
                         Err(pcap::Error::TimeoutExpired | pcap::Error::NoMorePackets) => {
-                            std::thread::sleep(std::time::Duration::from_millis(2));
                             continue;
                         }
                         Err(error) => return Err(format!("Capture read failed: {error}")),
@@ -80,7 +80,7 @@ fn open_capture(source: &LiveCapture) -> Result<Capture<Active>, String> {
         .map_err(|error| format!("capture device '{}': {error}", source.iface))?
         .promisc(true)
         .snaplen(65535)
-        .timeout(100)
+        .timeout(source.timeout_ms as i32)
         .open()
         .map_err(|error| format!("open capture device '{}': {error}", source.iface))?;
     if let Some(filter) = source.filter.as_deref() {
@@ -88,7 +88,7 @@ fn open_capture(source: &LiveCapture) -> Result<Capture<Active>, String> {
             .filter(filter, true)
             .map_err(|error| format!("invalid BPF filter '{filter}': {error}"))?;
     }
-    capture.setnonblock().map_err(|error| format!("Set capture nonblocking: {error}"))
+    Ok(capture)
 }
 
 #[cfg(all(test, feature = "real-capture"))]
