@@ -18,6 +18,25 @@ impl App {
             2 => AutomationMode::Triage,
             _ => AutomationMode::Off,
         };
+        let (save_alerts, alert_save_error) = if preferences.save_alerts {
+            match crate::storage::alert_jsonl::AlertJsonlWriter::open_default() {
+                Ok(writer) => {
+                    core.alert_jsonl_writer = Some(writer);
+                    (true, None)
+                }
+                Err(error) => {
+                    core.alert_save_error = Some(error.clone());
+                    (false, Some(error))
+                }
+            }
+        } else {
+            (false, None)
+        };
+        let alert_save_error_reported = alert_save_error.clone();
+        let status_msg = alert_save_error
+            .as_ref()
+            .map(|error| format!("Alert saving disabled: {error}"));
+        let status_msg_ticks = if status_msg.is_some() { 100 } else { 0 };
         let mut app = Self {
             core: ReadCore::new(core),
             analysis_worker: None,
@@ -151,14 +170,16 @@ impl App {
             preferred_workspace: Workspace::from_index(preferences.startup_workspace),
             ui_refresh_ms: preferences.ui_refresh_ms,
             capture_timeout_ms: preferences.capture_timeout_ms,
+            save_alerts,
+            alert_save_error_reported,
             persist_preferences: true,
             current_project_name: None,
             current_project_path: None,
             project_dirty: false,
             project_manager_open: false,
             project_manager: ProjectManagerState::default(),
-            status_msg: None,
-            status_msg_ticks: 0,
+            status_msg,
+            status_msg_ticks,
         };
 
         if startup_mode == StartupMode::Simulation {

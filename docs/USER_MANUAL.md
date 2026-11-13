@@ -91,9 +91,17 @@ Press `,` from any workspace. Use `j`/`k` to select a preference,
 `Left`/`Right` to change it, and `Enter` to toggle or edit it. Preferences
 include the theme, whether the packet cursor follows new traffic, startup
 workspace, deterministic alert assistance, Guard mode, block timeout, active
-block limit, and kill-switch reset.
+block limit, kill-switch reset, and alert JSONL saving.
 
-Theme, packet following, startup workspace, and alert assistance are saved in
+Enable **Save alerts as JSONL** in Preferences to append versioned Alert Center
+records as newline-delimited JSON at `$XDG_DATA_HOME/packrat/alerts.jsonl`
+(usually `~/.local/share/packrat/alerts.jsonl`). Each line has
+`schema_version`, `record_type`, a per-run `session_id`, and an `alert` object.
+New alerts, correlated updates, and analyst disposition changes are appended;
+existing findings are not backfilled. The setting is off by default.
+
+Theme, packet following, startup workspace, alert assistance, and the JSONL
+export toggle are saved in
 the platform configuration directory's `packrat/prefs.json`. Guard starts from
 the command-line policy on each launch; changing Guard controls in Preferences
 affects the current process only.

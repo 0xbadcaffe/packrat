@@ -115,6 +115,7 @@ pub struct AlertCenter {
     next_id: u64,
     fingerprints: HashSet<String>,
     pending_pins: Vec<u64>,
+    pending_exports: Vec<AlertItem>,
 }
 
 impl Default for AlertCenter {
@@ -127,6 +128,7 @@ impl Default for AlertCenter {
             next_id: 0,
             fingerprints: HashSet::new(),
             pending_pins: Vec::new(),
+            pending_exports: Vec::new(),
         }
     }
 }
@@ -146,6 +148,7 @@ impl AlertCenter {
         self.selected = 0;
         self.automation_mode = automation_mode;
         self.pending_pins.clear();
+        self.pending_exports.clear();
     }
 
     pub fn record(
@@ -198,6 +201,7 @@ impl AlertCenter {
                     item.priority = priority;
                     item.severity = severity;
                 }
+                self.pending_exports.push(item.clone());
             }
             return false;
         }
@@ -222,6 +226,7 @@ impl AlertCenter {
             first_seen: timestamp,
             last_seen: timestamp,
         });
+        self.pending_exports.push(self.items.last().expect("just inserted alert").clone());
         if self.automation_mode != AutomationMode::Off && priority >= 80 {
             self.pending_pins.push(self.next_id);
         }
@@ -272,11 +277,16 @@ impl AlertCenter {
         std::mem::take(&mut self.pending_pins)
     }
 
+    pub fn drain_pending_exports(&mut self) -> Vec<AlertItem> {
+        std::mem::take(&mut self.pending_exports)
+    }
+
     pub fn set_selected_disposition(&mut self, disposition: AlertDisposition) -> bool {
         let Some(index) = self.visible_indices().get(self.selected).copied() else {
             return false;
         };
         self.items[index].disposition = disposition;
+        self.pending_exports.push(self.items[index].clone());
         true
     }
 
@@ -285,6 +295,7 @@ impl AlertCenter {
         self.fingerprints.clear();
         self.selected = 0;
         self.pending_pins.clear();
+        self.pending_exports.clear();
     }
 }
 

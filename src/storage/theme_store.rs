@@ -28,6 +28,8 @@ pub struct Preferences {
     pub ui_refresh_ms: u64,
     #[serde(default = "default_capture_timeout_ms")]
     pub capture_timeout_ms: u64,
+    #[serde(default)]
+    pub save_alerts: bool,
 }
 
 impl Default for Preferences {
@@ -40,6 +42,7 @@ impl Default for Preferences {
             navigation_version: 1,
             ui_refresh_ms: DEFAULT_UI_REFRESH_MS,
             capture_timeout_ms: DEFAULT_CAPTURE_TIMEOUT_MS,
+            save_alerts: false,
         }
     }
 }

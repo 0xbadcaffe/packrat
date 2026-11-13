@@ -21,6 +21,14 @@ impl App {
 
     pub fn tick(&mut self) {
         self.poll_analysis();
+        if let Some(error) = self.query_core(|core| core.alert_save_error.clone()).flatten() {
+            if self.alert_save_error_reported.as_ref() != Some(&error) {
+                self.alert_save_error_reported = Some(error.clone());
+                self.save_alerts = false;
+                self.set_status(format!("Alert saving stopped: {error}"));
+                self.save_preferences();
+            }
+        }
         if let Some(error) = self
             .packet_archive
             .as_mut()

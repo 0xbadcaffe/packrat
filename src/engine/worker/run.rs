@@ -155,6 +155,15 @@ pub(super) fn run(
                 }
             }
         };
+        let pending_alerts = core.alert_center.drain_pending_exports();
+        let write_result = core
+            .alert_jsonl_writer
+            .as_mut()
+            .map(|writer| writer.append_alerts(&pending_alerts));
+        if let Some(Err(error)) = write_result {
+            core.alert_save_error = Some(error);
+            core.alert_jsonl_writer = None;
+        }
         if dirty && sequence % 32 == 0 {
             publish(&core, monitor, generation, sequence, analyzed, skipped);
             dirty = false;

@@ -26,6 +26,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         ("Guard kill switch", if app.traffic_latch.emergency_stop { "ENGAGED".into() } else { "Ready".into() }),
         ("UI refresh interval", format!("{} ms ({} FPS)", app.ui_refresh_ms, 1_000 / app.ui_refresh_ms)),
         ("Capture read timeout", format!("{} ms", app.capture_timeout_ms)),
+        ("Save alerts as JSONL", on_off(app.save_alerts)),
     ];
     let visible_rows = chunks[0].height.saturating_sub(3).max(1) as usize;
     let first_row = app.settings_cursor.saturating_add(1).saturating_sub(visible_rows);
@@ -74,6 +75,7 @@ fn setting_detail(app: &App) -> String {
         6 => format!("Limit concurrent, unexpired blocks. Currently active: {}.", app.traffic_latch.active_count()),
         8 => "Set the redraw interval. Lower values make the interface smoother and use more CPU. Range: 20–250 ms.".into(),
         9 => "Set the blocking capture read timeout. It also bounds how long capture may take to notice a stop request. Range: 25–1000 ms; applies to the next capture start.".into(),
+        10 => "Append versioned Alert Center records to the JSONL file in Packrat's data directory. Existing alerts are not backfilled.".into(),
         _ if app.traffic_latch.emergency_stop => "Reset the emergency stop. Guard remains in monitor mode after reset.".into(),
         _ => "The emergency stop is ready. Press ! globally to revoke active blocks and force monitor mode.".into(),
     }

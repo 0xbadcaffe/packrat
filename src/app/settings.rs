@@ -39,6 +39,7 @@ impl App {
             }
             7 => self.clear_guard_kill_switch(),
             8 | 9 => self.adjust_settings_selection(true),
+            10 => self.toggle_alert_saving(),
             _ => {}
         }
         self.save_preferences();
@@ -47,7 +48,7 @@ impl App {
 
     pub fn adjust_settings_selection(&mut self, increase: bool) {
         match self.settings_cursor {
-            1 | 2 | 3 | 4 | 7 => self.activate_settings_selection(),
+            1 | 2 | 3 | 4 | 7 | 10 => self.activate_settings_selection(),
             5 => {
                 self.traffic_latch.expires_seconds = if increase {
                     (self.traffic_latch.expires_seconds + 60).min(86_400)
@@ -115,9 +116,38 @@ impl App {
             navigation_version: 1,
             ui_refresh_ms: self.ui_refresh_ms,
             capture_timeout_ms: self.capture_timeout_ms,
+            save_alerts: self.save_alerts,
         });
         if saved.is_ok() {
             self.preferences_dirty.set(false);
+        }
+    }
+
+    fn toggle_alert_saving(&mut self) {
+        if self.save_alerts {
+            self.save_alerts = false;
+            self.configure_core(|core| {
+                core.alert_jsonl_writer = None;
+                core.alert_save_error = None;
+                core.alert_center.drain_pending_exports();
+            });
+            self.alert_save_error_reported = None;
+            return;
+        }
+
+        match crate::storage::alert_jsonl::AlertJsonlWriter::open_default() {
+            Ok(writer) => {
+                let path = writer.path().display().to_string();
+                self.configure_core(move |core| {
+                    core.alert_jsonl_writer = Some(writer);
+                    core.alert_save_error = None;
+                    core.alert_center.drain_pending_exports();
+                });
+                self.save_alerts = true;
+                self.alert_save_error_reported = None;
+                self.set_status(format!("Saving new alerts to {path}"));
+            }
+            Err(error) => self.set_status(format!("Could not enable alert saving: {error}")),
         }
     }
 }

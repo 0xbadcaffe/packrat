@@ -50,7 +50,7 @@ use crate::ui::project_manager::ProjectManagerState;
 
 const MAX_PACKETS: usize = 10_000;
 pub const INCIDENT_ANALYSIS_SECTION: usize = 11;
-pub const SETTINGS_COUNT: usize = 10;
+pub const SETTINGS_COUNT: usize = 11;
 
 mod analysis_results;
 mod background;
@@ -228,6 +228,8 @@ pub struct App {
     pub preferred_workspace: Workspace,
     pub ui_refresh_ms: u64,
     pub capture_timeout_ms: u64,
+    pub save_alerts: bool,
+    alert_save_error_reported: Option<String>,
     persist_preferences: bool,
     // ─── Project management ────────────────────────────────────────────────────
     /// Name of the currently open project (None = ad-hoc workspace).
