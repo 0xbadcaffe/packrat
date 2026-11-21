@@ -85,8 +85,8 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check the configured resolver and whether a forwarding or failover path was expected.",
         ),
         (
-            "IDS", "Unsolicited DNS response", "dns.unmatched_response", 2, Heuristic,
-            "Check capture start, packet drops, and visibility of the query direction.",
+            "IDS", "DNS reply without observed query", "dns.unmatched_response", 3, Heuristic,
+            "Check capture start, packet drops, query-direction visibility, and the DNS correlation window.",
         ),
         (
             "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 1, DirectObservation,

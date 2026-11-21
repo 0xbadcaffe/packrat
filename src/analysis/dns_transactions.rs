@@ -20,7 +20,7 @@ pub struct DnsFinding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DnsFindingKind {
-    UnsolicitedResponse,
+    ReplyWithoutObservedQuery,
     QuestionMismatch,
     UnexpectedResponder,
     ConflictingResponse,
@@ -185,10 +185,10 @@ impl DnsTransactionTracker {
 
         let Some(query) = self.pending.remove(&key) else {
             return vec![DnsFinding {
-                kind: DnsFindingKind::UnsolicitedResponse,
+                kind: DnsFindingKind::ReplyWithoutObservedQuery,
                 related_packets: Vec::new(),
                 detail: format!(
-                    "unsolicited transaction 0x{:04x} from {} to {}:{}",
+                    "no matching query retained for transaction 0x{:04x} from {} to {}:{}",
                     message.id, packet.src, packet.dst, destination_port
                 ),
             }];

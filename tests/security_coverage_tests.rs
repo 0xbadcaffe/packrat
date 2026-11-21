@@ -136,12 +136,15 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "correlates_matching_transactions_and_rejects_question_substitution",
     },
     CoverageGroup {
+        signatures: &["DNS reply without observed query"],
+        positive_test: "reply_without_observed_query_is_a_visibility_alert_not_an_incident",
+    },
+    CoverageGroup {
         signatures: &[
-            "Unsolicited DNS response",
             "Unexpected DNS responder",
             "Conflicting DNS responses",
         ],
-        positive_test: "detects_unsolicited_unexpected_and_competing_responses",
+        positive_test: "detects_unexpected_and_competing_responses",
     },
     CoverageGroup {
         signatures: &[

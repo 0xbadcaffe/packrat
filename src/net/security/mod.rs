@@ -86,7 +86,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "HTTP request smuggling ambiguity",
     "Critical industrial control command",
     "Industrial state-changing command",
-    "Unsolicited DNS response",
+    "DNS reply without observed query",
     "DNS transaction question mismatch",
     "Unexpected DNS responder",
     "Conflicting DNS responses",

@@ -228,7 +228,9 @@ impl SecurityEngine {
     pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet) {
         for finding in self.dns_transactions.observe(pkt) {
             let (signature, severity) = match finding.kind {
-                DnsFindingKind::UnsolicitedResponse => ("Unsolicited DNS response", Severity::High),
+                DnsFindingKind::ReplyWithoutObservedQuery => {
+                    ("DNS reply without observed query", Severity::Low)
+                }
                 DnsFindingKind::QuestionMismatch => {
                     ("DNS transaction question mismatch", Severity::Critical)
                 }

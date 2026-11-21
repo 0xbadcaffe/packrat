@@ -119,13 +119,35 @@ fn correlates_matching_transactions_and_rejects_question_substitution() {
 }
 
 #[test]
-fn detects_unsolicited_unexpected_and_competing_responses() {
+fn reply_without_observed_query_is_a_visibility_alert_not_an_incident() {
+    let mut core = AnalysisCore::default();
+    let reply = dns_packet(1, true, "10.0.0.53", "10.0.0.5", 7, "safe.example");
+    core.analyze(&reply);
+    let alert = core.alert_center.items.iter().find(|a| {
+        a.title == "DNS reply without observed query"
+    }).expect("missing query visibility alert");
+    assert_eq!(alert.severity, "LOW");
+    assert_eq!(alert.packet_refs, [1]);
+    assert!(alert.detail.contains("no matching query retained"));
+    let rule = alert.provenance.as_ref().unwrap();
+    assert_eq!(rule.rule_id, "dns.unmatched_response");
+    assert_eq!(rule.revision, 3);
+    assert_eq!(rule.confidence.to_string(), "Heuristic");
+    assert!(core.incidents.incidents.is_empty());
+
+    // The same tuple is ordinary traffic when the query is visible.
+    let query = dns_packet(2, false, "10.0.0.5", "10.0.0.53", 7, "safe.example");
+    let reply = dns_packet(3, true, "10.0.0.53", "10.0.0.5", 7, "safe.example");
+    core.analyze(&query);
+    core.analyze(&reply);
+    assert_eq!(core.alert_center.items.len(), 1);
+    assert_eq!(core.alert_center.items[0].hit_count, 1);
+    assert_eq!(core.alert_center.items[0].packet_refs, [1]);
+}
+
+#[test]
+fn detects_unexpected_and_competing_responses() {
     let mut tracker = DnsTransactionTracker::default();
-    let unsolicited = dns_packet(1, true, "10.0.0.99", "10.0.0.5", 7, "safe.example");
-    assert_eq!(
-        tracker.observe(&unsolicited)[0].kind,
-        DnsFindingKind::UnsolicitedResponse
-    );
 
     let query = dns_packet(2, false, "10.0.0.5", "10.0.0.53", 8, "safe.example");
     tracker.observe(&query);
