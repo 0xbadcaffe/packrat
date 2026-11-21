@@ -229,6 +229,7 @@ pub fn security_seed() -> ScenarioSecurityData {
                 port: 88,
                 attempts: 5,
                 service: "Kerberos",
+                packet_refs: Vec::new(),
             },
             BruteForceAlert {
                 src_ip: VICTIM.into(),
@@ -236,6 +237,7 @@ pub fn security_seed() -> ScenarioSecurityData {
                 port: 80,
                 attempts: 12,
                 service: "HTTP",
+                packet_refs: Vec::new(),
             },
             BruteForceAlert {
                 src_ip: "10.10.1.99".into(),
@@ -243,6 +245,7 @@ pub fn security_seed() -> ScenarioSecurityData {
                 port: 22,
                 attempts: 47,
                 service: "SSH",
+                packet_refs: Vec::new(),
             },
             BruteForceAlert {
                 src_ip: "10.10.1.99".into(),
@@ -250,6 +253,7 @@ pub fn security_seed() -> ScenarioSecurityData {
                 port: 3389,
                 attempts: 23,
                 service: "RDP",
+                packet_refs: Vec::new(),
             },
         ],
         http_records: vec![

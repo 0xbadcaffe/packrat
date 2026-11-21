@@ -187,11 +187,28 @@ fn http_authentication_burst_requires_distinct_wire_401_responses() {
     let alert = &security.brute_force[0];
     assert_eq!((alert.src_ip.as_str(), alert.dst_ip.as_str(), alert.port), ("10.0.0.5", "203.0.113.9", 80));
     assert_eq!(alert.attempts, 5);
+    assert_eq!(alert.packet_refs, [6, 11, 12, 13, 14]);
 
     for i in 50..=54 {
         security.update(&response(i, i as u32 * 1000));
     }
     assert_eq!(security.brute_force.len(), 2);
+    assert_eq!(security.brute_force[1].packet_refs, [50, 51, 52, 53, 54]);
+
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    for i in 6..=14 {
+        let sequence = if i <= 10 { 10_000 } else { i as u32 * 1000 };
+        core.analyze(&response(i, sequence));
+    }
+    let exports = core.alert_center.drain_pending_exports();
+    let alert = exports
+        .iter()
+        .find(|alert| alert.title == "HTTP authentication burst")
+        .expect("HTTP burst exported");
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.hit_count, 1);
+    assert_eq!(alert.packet_no, 14);
+    assert_eq!(alert.packet_refs, [6, 11, 12, 13, 14]);
 }
 
 #[test]

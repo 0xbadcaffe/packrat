@@ -242,6 +242,7 @@ pub struct BruteForceAlert {
     pub port: u16,
     pub attempts: usize,
     pub service: &'static str,
+    pub packet_refs: Vec<u64>,
 }
 
 /// Internal tracking key for brute force attempts
@@ -253,9 +254,15 @@ pub(super) struct BfKey {
 }
 
 pub(super) struct BfWindow {
-    pub(super) observations: Vec<(f64, Option<(u16, u32)>)>,
+    pub(super) observations: Vec<AuthObservation>,
     pub(super) service: &'static str,
     pub(super) alerted: bool,
+}
+
+pub(super) struct AuthObservation {
+    pub(super) timestamp: f64,
+    pub(super) packet_no: u64,
+    pub(super) http_token: Option<(u16, u32)>,
 }
 
 // ─── HTTP Record ──────────────────────────────────────────────────────────────

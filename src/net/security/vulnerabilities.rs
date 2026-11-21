@@ -167,7 +167,7 @@ impl SecurityEngine {
                             window
                                 .observations
                                 .last()
-                                .map_or(f64::NEG_INFINITY, |entry| entry.0)
+                                .map_or(f64::NEG_INFINITY, |entry| entry.timestamp)
                         };
                         last(a).total_cmp(&last(b))
                     })
@@ -185,19 +185,26 @@ impl SecurityEngine {
             // Prune events older than 30 seconds
             window
                 .observations
-                .retain(|&(t, _)| (0.0..=30.0).contains(&(now - t)));
+                .retain(|entry| (0.0..=30.0).contains(&(now - entry.timestamp)));
             if window.observations.is_empty() {
                 window.alerted = false;
             }
             if http_failure.is_some()
-                && window.observations.iter().any(|&(_, token)| token == http_failure)
+                && window
+                    .observations
+                    .iter()
+                    .any(|entry| entry.http_token == http_failure)
             {
                 return;
             }
             if window.observations.len() == 5 {
                 window.observations.remove(0);
             }
-            window.observations.push((now, http_failure));
+            window.observations.push(AuthObservation {
+                timestamp: now,
+                packet_no: pkt.no,
+                http_token: http_failure,
+            });
 
             if !window.alerted && window.observations.len() >= 5 {
                 window.alerted = true;
@@ -212,6 +219,7 @@ impl SecurityEngine {
                     port: key.port,
                     attempts,
                     service: svc_static,
+                    packet_refs: window.observations.iter().map(|entry| entry.packet_no).collect(),
                 };
                 self.findings.authentication.push(alert.clone());
                 self.brute_force.push(alert);
