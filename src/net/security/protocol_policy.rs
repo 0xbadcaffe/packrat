@@ -234,6 +234,7 @@ impl SecurityEngine {
                 DnsFindingKind::AmbiguousReply => ("DNS reply correlation ambiguous", Severity::Low),
                 DnsFindingKind::NxDomainBurst => ("DNS NXDOMAIN burst", Severity::Medium),
                 DnsFindingKind::LargeTxtResponse => ("Oversized DNS TXT traffic", Severity::Low),
+                DnsFindingKind::ExternalResolver => ("Direct external DNS resolver use", Severity::Low),
                 DnsFindingKind::QuestionMismatch => {
                     ("DNS transaction question mismatch", Severity::Critical)
                 }

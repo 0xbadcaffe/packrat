@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 
 mod answers;
 mod correlation;
+mod external_resolver;
 mod negative_answers;
 mod record_wire;
 
@@ -29,6 +30,7 @@ pub enum DnsFindingKind {
     AmbiguousReply,
     NxDomainBurst,
     LargeTxtResponse,
+    ExternalResolver,
     QuestionMismatch,
     UnexpectedResponder,
     ConflictingResponse,
@@ -104,6 +106,7 @@ struct DnsMessage<'a> {
 pub struct DnsTransactionTracker {
     exchanges: HashMap<TransactionKey, ExchangeBucket>,
     negative_answers: negative_answers::NegativeAnswers,
+    external_resolvers: external_resolver::ExternalResolvers,
 }
 
 impl DnsTransactionTracker {
@@ -237,6 +240,7 @@ impl DnsTransactionTracker {
             });
         }
         findings.extend(self.negative_answers.observe(scope, packet, query, &message));
+        findings.extend(self.external_resolvers.observe(scope, packet, query, &message));
         if query.server == packet.src && query.question == message.question
             && message.question.qtype == 16 && message.question.qclass == 1
             && let Some(summary) = record_wire::summarize_response(&message, true)
@@ -265,6 +269,7 @@ impl DnsTransactionTracker {
     pub fn clear(&mut self) {
         self.exchanges.clear();
         self.negative_answers.clear();
+        self.external_resolvers.clear();
     }
 
     fn insert_query(&mut self, key: TransactionKey, query: PendingQuery) {

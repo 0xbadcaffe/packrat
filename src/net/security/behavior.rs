@@ -160,52 +160,7 @@ impl SecurityEngine {
         });
     }
 
-    // ─── DNS Abuse and Lateral Movement ─────────────────────────────────────
-
-    pub(super) fn check_dns_abuse_and_lateral_movement(&mut self, pkt: &Packet) {
-        let mut alerts = Vec::new();
-        self.external_dns_pairs.retain(|_, last_seen| {
-            pkt.timestamp < *last_seen || pkt.timestamp - *last_seen <= 3600.0
-        });
-        self.ntlm_fanout.retain(|_, state| {
-            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 300.0
-        });
-
-        if pkt.dst_port == Some(53)
-            && is_internal_address(&pkt.src)
-            && !is_internal_address(&pkt.dst)
-        {
-            let key = (pkt.src.clone(), pkt.dst.clone());
-            if !self.external_dns_pairs.contains_key(&key) {
-                alerts.push((
-                    "Direct external DNS resolver use",
-                    Severity::Low,
-                    format!(
-                        "{} sent DNS directly to public resolver {}",
-                        pkt.src, pkt.dst
-                    ),
-                ));
-            }
-            if self.external_dns_pairs.len() < MAX_SCAN_STATES
-                || self.external_dns_pairs.contains_key(&key)
-            {
-                self.external_dns_pairs.insert(key, pkt.timestamp);
-            }
-        }
-
-        self.record_ntlm_fanout(pkt);
-
-        for (signature, severity, detail) in alerts {
-            self.push_ids(IdsAlert {
-                pkt_no: pkt.no,
-                signature,
-                severity,
-                detail,
-            });
-        }
-    }
-
-    fn record_ntlm_fanout(&mut self, pkt: &Packet) {
+    pub(super) fn check_ntlm_fanout(&mut self, pkt: &Packet) {
         if pkt.dst_port != Some(445)
             || !is_internal_address(&pkt.src)
             || !is_internal_address(&pkt.dst)
@@ -214,6 +169,7 @@ impl SecurityEngine {
         {
             return;
         }
+        self.ntlm_fanout.retain(|_, state| pkt.timestamp - state.last_seen <= 300.0);
         let key = (pkt.src.clone(), service_scope(pkt));
         if self.ntlm_fanout.len() >= MAX_SCAN_STATES && !self.ntlm_fanout.contains_key(&key) {
             return;

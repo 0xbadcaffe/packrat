@@ -25,7 +25,6 @@ impl SecurityEngine {
             lldp_chassis: HashMap::new(),
             beacon_flows: HashMap::new(),
             exfil_flows: HashMap::new(),
-            external_dns_pairs: HashMap::new(),
             admin_fanout: Default::default(),
             ntlm_fanout: HashMap::new(),
             dhcp_vlans: HashMap::new(),
@@ -60,7 +59,6 @@ impl SecurityEngine {
         self.lldp_chassis.clear();
         self.beacon_flows.clear();
         self.exfil_flows.clear();
-        self.external_dns_pairs.clear();
         self.admin_fanout.clear();
         self.ntlm_fanout.clear();
         self.dhcp_vlans.clear();
@@ -110,7 +108,7 @@ impl SecurityEngine {
         self.check_ipv6_control_plane(pkt);
         self.check_layer2_control_plane(pkt);
         self.check_beacon_and_exfiltration(pkt);
-        self.check_dns_abuse_and_lateral_movement(pkt);
+        self.check_ntlm_fanout(pkt);
         self.check_dhcp_integrity(pkt);
         self.check_ipv6_fragment_reassembly(pkt);
         self.check_http_request_smuggling(pkt);

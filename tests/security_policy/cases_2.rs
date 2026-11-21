@@ -212,22 +212,6 @@ fn http_authentication_burst_requires_distinct_wire_401_responses() {
 }
 
 #[test]
-fn detects_external_resolver_use() {
-    let mut security = SecurityEngine::default();
-
-    let mut txt = packet("DNS", 53, "Query TXT encoded.example", vec![0; 600]);
-    txt.src = "10.0.0.5".into();
-    txt.dst = "8.8.8.8".into();
-    txt.length = 600;
-    security.update(&txt);
-
-    assert!(security.ids_alerts.iter().any(|alert| {
-        alert.signature == "Direct external DNS resolver use"
-            && alert.severity == packrat_tui::net::security::Severity::Low
-    }));
-}
-
-#[test]
 fn detects_new_dhcp_server_authority_per_vlan() {
     let mut security = SecurityEngine::default();
     security.update(&dhcp_packet(

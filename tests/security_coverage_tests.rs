@@ -182,6 +182,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("dns_transaction_tests.rs"),
     include_str!("dns_transaction/txt_reply_tests.rs"),
+    include_str!("dns_transaction/external_resolver_tests.rs"),
     include_str!("industrial_policy_tests.rs"),
 );
 

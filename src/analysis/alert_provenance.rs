@@ -113,6 +113,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check the queried name and record contents; verification records and mail policy can produce large TXT replies.",
         ),
         (
+            "IDS", "Direct external DNS resolver use", "dns.external_resolver_exchange", 1, Correlated,
+            "Check the configured resolver policy, including approved public resolvers, VPNs and lab address ranges.",
+        ),
+        (
             "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 2, DirectObservation,
             "Compare the distinct 401 responses with application logs; check expected challenges.",
         ),

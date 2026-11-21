@@ -159,7 +159,6 @@ pub struct SecurityEngine {
     lldp_chassis: HashMap<[u8; 6], Vec<u8>>,
     beacon_flows: HashMap<BehaviorFlowKey, BeaconState>,
     exfil_flows: HashMap<ExfilKey, ExfilState>,
-    external_dns_pairs: HashMap<(String, String), f64>,
     admin_fanout: admin_fanout::AdminFanout,
     ntlm_fanout: HashMap<(String, ServiceScope), NtlmFanoutState>,
     dhcp_vlans: HashMap<Option<u16>, DhcpVlanState>,
