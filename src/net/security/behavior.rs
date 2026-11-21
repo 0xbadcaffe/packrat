@@ -164,27 +164,12 @@ impl SecurityEngine {
 
     pub(super) fn check_dns_abuse_and_lateral_movement(&mut self, pkt: &Packet) {
         let mut alerts = Vec::new();
-        let is_dns = pkt.protocol.eq_ignore_ascii_case("DNS")
-            || pkt.src_port == Some(53)
-            || pkt.dst_port == Some(53);
-
         self.external_dns_pairs.retain(|_, last_seen| {
             pkt.timestamp < *last_seen || pkt.timestamp - *last_seen <= 3600.0
         });
         self.ntlm_fanout.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 300.0
         });
-
-        if is_dns && Self::contains_str_ci(pkt.info.as_bytes(), b"txt") && pkt.length > 512 {
-            alerts.push((
-                "Oversized DNS TXT traffic",
-                Severity::Medium,
-                format!(
-                    "{}-byte DNS TXT traffic between {} and {}",
-                    pkt.length, pkt.src, pkt.dst
-                ),
-            ));
-        }
 
         if pkt.dst_port == Some(53)
             && is_internal_address(&pkt.src)

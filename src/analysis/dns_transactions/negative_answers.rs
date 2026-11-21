@@ -2,13 +2,12 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::net::packet::Packet;
 
-use super::{DnsFinding, DnsFindingKind, DnsMessage, DnsScope, PendingQuery, parse_name};
+use super::{DnsFinding, DnsFindingKind, DnsMessage, DnsScope, PendingQuery, record_wire};
 
 const WINDOW_SECS: f64 = 30.0;
 const THRESHOLD: usize = 20;
 const MAX_NAMES: usize = 64;
 const MAX_CLIENTS: usize = 512;
-const MAX_RECORDS: usize = 128;
 
 #[derive(Debug, Default)]
 pub(super) struct NegativeAnswers {
@@ -90,34 +89,6 @@ impl NegativeAnswers {
 }
 
 fn is_nxdomain(message: &DnsMessage<'_>) -> bool {
-    let bytes = message.bytes;
-    message.response && bytes[2] & 0x7a == 0 && bytes[3] & 0x0f == 3
-        && bytes[4..6] == [0, 1]
-        && extended_rcode(bytes, message.answer_offset) == Some(0)
-}
-
-fn extended_rcode(bytes: &[u8], mut offset: usize) -> Option<u8> {
-    let word = |at: usize| u16::from_be_bytes([bytes[at], bytes[at + 1]]) as usize;
-    let additional_start = word(6) + word(8);
-    let count = additional_start + word(10);
-    if count > MAX_RECORDS || bytes.len() > 4096 {
-        return None;
-    }
-    let mut extension = None;
-    for record in 0..count {
-        let (owner, fields) = parse_name(bytes, offset)?;
-        let header = bytes.get(fields..fields + 10)?;
-        let data_size = u16::from_be_bytes([header[8], header[9]]) as usize;
-        offset = fields + 10 + data_size;
-        if offset > bytes.len() {
-            return None;
-        }
-        if header[..2] == [0, 41] {
-            if record < additional_start || !owner.is_empty() || extension.is_some() {
-                return None;
-            }
-            extension = Some(header[4]);
-        }
-    }
-    (offset == bytes.len()).then_some(extension.unwrap_or(0))
+    message.bytes[3] & 0x0f == 3
+        && record_wire::summarize_response(message, false).is_some_and(|summary| summary.rcode == 3)
 }

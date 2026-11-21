@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 
-use super::parse_name;
+use super::{parse_name, record_wire::txt_character_bytes};
 
 const MAX_ANSWERS: usize = 64;
 const MAX_MESSAGE_BYTES: usize = 4096;
@@ -30,7 +30,7 @@ pub(super) fn answer_fingerprint(bytes: &[u8], mut offset: usize) -> Option<[u8;
             2 | 5 | 12 | 39 => name_rdata(bytes, start, end, 0)?,
             15 => name_rdata(bytes, start, end, 2)?, // MX
             33 => name_rdata(bytes, start, end, 6)?, // SRV
-            16 if valid_txt(data) => data.to_vec(),
+            16 if txt_character_bytes(data).is_some() => data.to_vec(),
             _ => return None,
         };
         answers.push((owner, rr_type, class, canonical));
@@ -64,19 +64,6 @@ fn name_rdata(bytes: &[u8], start: usize, end: usize, prefix_len: usize) -> Opti
     let mut result = bytes.get(start..name_start)?.to_vec();
     result.extend(name.as_bytes());
     Some(result)
-}
-
-fn valid_txt(mut data: &[u8]) -> bool {
-    if data.is_empty() {
-        return false;
-    }
-    while let Some(&size) = data.first() {
-        let Some(rest) = data.get(1 + usize::from(size)..) else {
-            return false;
-        };
-        data = rest;
-    }
-    true
 }
 
 fn word(bytes: &[u8], offset: usize) -> Option<u16> {

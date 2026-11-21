@@ -4,6 +4,9 @@ use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, Packet, Timest
 use packrat_tui::net::security::SecurityEngine;
 use packrat_tui::net::security::Severity;
 
+#[path = "dns_transaction/txt_reply_tests.rs"]
+mod txt_reply_tests;
+
 fn dns_packet(
     no: u64,
     response: bool,

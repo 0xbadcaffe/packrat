@@ -212,7 +212,7 @@ fn http_authentication_burst_requires_distinct_wire_401_responses() {
 }
 
 #[test]
-fn detects_dns_txt_abuse_and_external_resolver_use() {
+fn detects_external_resolver_use() {
     let mut security = SecurityEngine::default();
 
     let mut txt = packet("DNS", 53, "Query TXT encoded.example", vec![0; 600]);
@@ -221,12 +221,6 @@ fn detects_dns_txt_abuse_and_external_resolver_use() {
     txt.length = 600;
     security.update(&txt);
 
-    assert!(
-        security
-            .ids_alerts
-            .iter()
-            .any(|alert| alert.signature == "Oversized DNS TXT traffic")
-    );
     assert!(security.ids_alerts.iter().any(|alert| {
         alert.signature == "Direct external DNS resolver use"
             && alert.severity == packrat_tui::net::security::Severity::Low

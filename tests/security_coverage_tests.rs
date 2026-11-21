@@ -90,11 +90,12 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "detects_large_high_entropy_outbound_transfer",
     },
     CoverageGroup {
-        signatures: &[
-            "Oversized DNS TXT traffic",
-            "Direct external DNS resolver use",
-        ],
-        positive_test: "detects_dns_txt_abuse_and_external_resolver_use",
+        signatures: &["Direct external DNS resolver use"],
+        positive_test: "detects_external_resolver_use",
+    },
+    CoverageGroup {
+        signatures: &["Oversized DNS TXT traffic"],
+        positive_test: "large_txt_counts_only_complete_answer_character_strings",
     },
     CoverageGroup {
         signatures: &["DNS NXDOMAIN burst"],
@@ -180,6 +181,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy/cases_3.rs"),
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("dns_transaction_tests.rs"),
+    include_str!("dns_transaction/txt_reply_tests.rs"),
     include_str!("industrial_policy_tests.rs"),
 );
 

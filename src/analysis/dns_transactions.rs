@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 mod answers;
 mod correlation;
 mod negative_answers;
+mod record_wire;
 
 use correlation::{ExchangeBucket, ReplyMatch};
 
@@ -27,6 +28,7 @@ pub enum DnsFindingKind {
     ReplyWithoutObservedQuery,
     AmbiguousReply,
     NxDomainBurst,
+    LargeTxtResponse,
     QuestionMismatch,
     UnexpectedResponder,
     ConflictingResponse,
@@ -235,6 +237,20 @@ impl DnsTransactionTracker {
             });
         }
         findings.extend(self.negative_answers.observe(scope, packet, query, &message));
+        if query.server == packet.src && query.question == message.question
+            && message.question.qtype == 16 && message.question.qclass == 1
+            && let Some(summary) = record_wire::summarize_response(&message, true)
+            && summary.rcode == 0 && summary.answer_txt_bytes > 512
+        {
+            findings.push(DnsFinding {
+                kind: DnsFindingKind::LargeTxtResponse,
+                detail: format!(
+                    "{} returned {} bytes of TXT answer data for {}",
+                    packet.src, summary.answer_txt_bytes, message.question.name,
+                ),
+                related_packets: vec![query.packet_no],
+            });
+        }
         exchange.reply = Some(RecentResponse {
             reply_packet: packet.no,
             server: packet.src.clone(),

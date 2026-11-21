@@ -109,6 +109,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Review the queried names and client process; search suffixes and misconfiguration can also cause bursts.",
         ),
         (
+            "IDS", "Oversized DNS TXT traffic", "dns.large_txt_answer", 1, Correlated,
+            "Check the queried name and record contents; verification records and mail policy can produce large TXT replies.",
+        ),
+        (
             "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 2, DirectObservation,
             "Compare the distinct 401 responses with application logs; check expected challenges.",
         ),
