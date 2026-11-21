@@ -239,7 +239,10 @@ impl SecurityEngine {
                     ("Conflicting DNS responses", Severity::Critical)
                 }
                 DnsFindingKind::ChangedReply => {
-                    ("DNS reply changed at the same resolver", Severity::Medium)
+                    ("DNS reply changed at the same resolver", Severity::Low)
+                }
+                DnsFindingKind::ChangedAnswerSet => {
+                    ("DNS answer set changed at the same resolver", Severity::Medium)
                 }
             };
             self.push_ids_with_evidence(

@@ -3,6 +3,9 @@
 use std::collections::HashMap;
 
 use crate::net::packet::Packet;
+use sha2::{Digest, Sha256};
+
+mod answers;
 
 const TRANSACTION_TTL_SECS: f64 = 30.0;
 const RESPONSE_TTL_SECS: f64 = 5.0;
@@ -22,6 +25,7 @@ pub enum DnsFindingKind {
     UnexpectedResponder,
     ConflictingResponse,
     ChangedReply,
+    ChangedAnswerSet,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -45,7 +49,8 @@ struct RecentResponse {
     reply_packet: u64,
     server: String,
     question: Question,
-    fingerprint: u64,
+    fingerprint: [u8; 32],
+    answer_fingerprint: Option<[u8; 32]>,
     timestamp: f64,
 }
 
@@ -60,6 +65,7 @@ struct DnsMessage<'a> {
     id: u16,
     response: bool,
     question: Question,
+    answer_offset: usize,
     bytes: &'a [u8],
 }
 
@@ -107,7 +113,7 @@ impl DnsTransactionTracker {
             client_port: destination_port,
             id: message.id,
         };
-        let fingerprint = stable_hash(message.bytes);
+        let fingerprint = Sha256::digest(message.bytes).into();
         if let Some(previous) = self.recent.get(&key) {
             if previous.server != packet.src {
                 return vec![DnsFinding {
@@ -120,12 +126,30 @@ impl DnsTransactionTracker {
                 }];
             }
             if previous.fingerprint != fingerprint {
+                let (kind, difference) = if previous.question != message.question {
+                    (DnsFindingKind::QuestionMismatch, "a different question in the reply")
+                } else {
+                    match (
+                        previous.answer_fingerprint,
+                        answers::answer_fingerprint(message.bytes, message.answer_offset),
+                    ) {
+                        (Some(before), Some(after)) if before == after => return Vec::new(),
+                        (Some(_), Some(_)) => (
+                            DnsFindingKind::ChangedAnswerSet,
+                            "a different answer set or base response code",
+                        ),
+                        _ => (
+                            DnsFindingKind::ChangedReply,
+                            "different reply bytes; answer comparison unavailable",
+                        ),
+                    }
+                };
                 return vec![DnsFinding {
-                    kind: DnsFindingKind::ChangedReply,
+                    kind,
                     related_packets: vec![previous.query_packet, previous.reply_packet],
                     detail: format!(
-                        "transaction 0x{:04x} for {} received different reply bytes from resolver {}",
-                        message.id, previous.question.name, previous.server
+                        "transaction 0x{:04x} for {} received {difference} from resolver {}",
+                        message.id, previous.question.name, previous.server,
                     ),
                 }];
             }
@@ -172,6 +196,7 @@ impl DnsTransactionTracker {
                 server: packet.src.clone(),
                 question: message.question,
                 fingerprint,
+                answer_fingerprint: answers::answer_fingerprint(message.bytes, message.answer_offset),
                 timestamp: packet.timestamp,
             },
         );
@@ -237,6 +262,7 @@ fn parse_message(bytes: &[u8]) -> Option<DnsMessage<'_>> {
             qtype,
             qclass,
         },
+        answer_offset: end + 4,
         bytes,
     })
 }
@@ -245,6 +271,7 @@ fn parse_name(bytes: &[u8], start: usize) -> Option<(String, usize)> {
     let mut labels = Vec::new();
     let mut cursor = start;
     let mut end = None;
+    let mut wire_name_length = 1;
     for _ in 0..128 {
         let length = *bytes.get(cursor)?;
         if length == 0 {
@@ -256,7 +283,7 @@ fn parse_name(bytes: &[u8], start: usize) -> Option<(String, usize)> {
         if length & 0xc0 == 0xc0 {
             let second = *bytes.get(cursor + 1)?;
             let pointer = (((length & 0x3f) as usize) << 8) | second as usize;
-            if pointer >= bytes.len() {
+            if pointer >= cursor {
                 return None;
             }
             end.get_or_insert(cursor + 2);
@@ -269,11 +296,23 @@ fn parse_name(bytes: &[u8], start: usize) -> Option<(String, usize)> {
         let label_start = cursor + 1;
         let label_end = label_start.checked_add(length as usize)?;
         let label = std::str::from_utf8(bytes.get(label_start..label_end)?).ok()?;
-        labels.push(label.to_string());
-        cursor = label_end;
-        if labels.iter().map(String::len).sum::<usize>() + labels.len().saturating_sub(1) > 253 {
+        wire_name_length += usize::from(length) + 1;
+        if wire_name_length > 255 {
             return None;
         }
+        let mut escaped = String::with_capacity(label.len());
+        for char in label.chars() {
+            match char {
+                '.' | '\\' => {
+                    escaped.push('\\');
+                    escaped.push(char);
+                }
+                char if char.is_control() => escaped.extend(char.escape_default()),
+                char => escaped.push(char),
+            }
+        }
+        labels.push(escaped);
+        cursor = label_end;
     }
     None
 }
@@ -286,11 +325,20 @@ fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
         ether_type = u16::from_be_bytes([*raw.get(network + 2)?, *raw.get(network + 3)?]);
         network += 4;
     }
-    let transport = match ether_type {
+    let (transport, network_end) = match ether_type {
         0x0800 if raw.get(network + 9) == Some(&17) => {
-            network + ((raw.get(network)? & 0x0f) as usize) * 4
+            let ihl = usize::from(raw.get(network)? & 0x0f) * 4;
+            let fragment = u16::from_be_bytes(raw.get(network + 6..network + 8)?.try_into().ok()?);
+            if ihl < 20 || fragment & 0x3fff != 0 {
+                return None;
+            }
+            let length = u16::from_be_bytes(raw.get(network + 2..network + 4)?.try_into().ok()?);
+            (network + ihl, network + usize::from(length))
         }
-        0x86dd => ipv6_udp_offset(raw, network)?,
+        0x86dd => {
+            let length = u16::from_be_bytes(raw.get(network + 4..network + 6)?.try_into().ok()?);
+            (ipv6_udp_offset(raw, network)?, network + 40 + usize::from(length))
+        }
         _ => return None,
     };
     let source_port = u16::from_be_bytes([*raw.get(transport)?, *raw.get(transport + 1)?]);
@@ -301,7 +349,10 @@ fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
         return None;
     }
     let payload_start = transport.checked_add(8)?;
-    let payload_end = transport.checked_add(udp_length)?.min(raw.len());
+    let payload_end = transport.checked_add(udp_length)?;
+    if payload_end > network_end {
+        return None;
+    }
     Some((
         source_port,
         destination_port,
@@ -329,10 +380,4 @@ fn ipv6_udp_offset(raw: &[u8], network: usize) -> Option<usize> {
         }
     }
     None
-}
-
-fn stable_hash(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-    })
 }

@@ -86,6 +86,21 @@ fn dns_ipv6_packet(
     }
 }
 
+fn append_answer(packet: &mut Packet, owner: &[u8], rr_type: u16, ttl: u32, data: &[u8]) {
+    let header = 42;
+    let count = u16::from_be_bytes(packet.bytes[header + 6..header + 8].try_into().unwrap());
+    packet.bytes[header + 6..header + 8].copy_from_slice(&(count + 1).to_be_bytes());
+    packet.bytes.extend_from_slice(owner);
+    packet.bytes.extend_from_slice(&rr_type.to_be_bytes());
+    packet.bytes.extend_from_slice(&1_u16.to_be_bytes());
+    packet.bytes.extend_from_slice(&ttl.to_be_bytes());
+    packet.bytes.extend_from_slice(&(data.len() as u16).to_be_bytes());
+    packet.bytes.extend_from_slice(data);
+    packet.length = packet.bytes.len() as u16;
+    packet.bytes[16..18].copy_from_slice(&(packet.length - 14).to_be_bytes());
+    packet.bytes[38..40].copy_from_slice(&(packet.length - 34).to_be_bytes());
+}
+
 #[test]
 fn correlates_matching_transactions_and_rejects_question_substitution() {
     let mut tracker = DnsTransactionTracker::default();
@@ -152,21 +167,77 @@ fn security_engine_emits_dns_integrity_alert() {
 }
 
 #[test]
-fn distinguishes_same_resolver_changes_from_competing_responders() {
+fn reports_only_semantic_changes_for_supported_dns_answers() {
     let mut engine = SecurityEngine::default();
     let query = dns_packet(1, false, "10.0.0.5", "10.0.0.53", 49, "safe.example");
-    let reply = dns_packet(2, true, "10.0.0.53", "10.0.0.5", 49, "safe.example");
-    let mut changed = reply.clone();
-    changed.bytes[45] ^= 0x80;
+    let mut reply = dns_packet(2, true, "10.0.0.53", "10.0.0.5", 49, "safe.example");
+    append_answer(&mut reply, &[0xc0, 0x0c], 1, 300, &[192, 0, 2, 1]);
+    append_answer(&mut reply, &[0xc0, 0x0c], 5, 300, &[0xc0, 0x11]);
+    let mut reordered = dns_packet(3, true, "10.0.0.53", "10.0.0.5", 49, "safe.example");
+    let owner = b"\x04SAFE\x07EXAMPLE\0";
+    append_answer(&mut reordered, owner, 5, 299, b"\x07EXAMPLE\0");
+    append_answer(&mut reordered, owner, 1, 299, &[192, 0, 2, 1]);
+
+    engine.update(&query);
+    engine.update(&reply);
+    engine.update(&reply);
+    engine.update(&reordered);
+    assert!(engine.ids_alerts.is_empty());
+
+    reordered.no = 4;
+    reordered.timestamp = 4.0;
+    *reordered.bytes.last_mut().unwrap() = 2;
+    let batch = engine.inspect(&reordered);
+    assert_eq!(engine.ids_alerts.len(), 1);
+    assert_eq!(engine.ids_alerts[0].signature, "DNS answer set changed at the same resolver");
+    assert_eq!(engine.ids_alerts[0].severity, Severity::Medium);
+    assert_eq!(batch.ids[0].related_packets, [1, 2]);
+}
+
+#[test]
+fn unsupported_dns_answer_changes_remain_low_confidence_wire_findings() {
+    let mut engine = SecurityEngine::default();
+    let query = dns_packet(1, false, "10.0.0.5", "10.0.0.53", 49, "safe.example");
+    let mut reply = dns_packet(2, true, "10.0.0.53", "10.0.0.5", 49, "safe.example");
+    append_answer(&mut reply, &[0xc0, 0x0c], 65_280, 300, &[1]);
     engine.update(&query);
     engine.update(&reply);
     engine.update(&reply);
     assert!(engine.ids_alerts.is_empty());
 
-    engine.update(&changed);
+    *reply.bytes.last_mut().unwrap() = 2;
+    engine.update(&reply);
     assert_eq!(engine.ids_alerts.len(), 1);
     assert_eq!(engine.ids_alerts[0].signature, "DNS reply changed at the same resolver");
-    assert_eq!(engine.ids_alerts[0].severity, Severity::Medium);
+    assert_eq!(engine.ids_alerts[0].severity, Severity::Low);
+}
+
+#[test]
+fn standard_dns_response_code_changes_are_semantic() {
+    let mut tracker = DnsTransactionTracker::default();
+    let query = dns_packet(1, false, "10.0.0.5", "10.0.0.53", 49, "safe.example");
+    let mut reply = dns_packet(2, true, "10.0.0.53", "10.0.0.5", 49, "safe.example");
+    assert!(tracker.observe(&query).is_empty());
+    assert!(tracker.observe(&reply).is_empty());
+    reply.bytes[45] = 0x83;
+    assert_eq!(tracker.observe(&reply)[0].kind, DnsFindingKind::ChangedAnswerSet);
+}
+
+#[test]
+fn incomplete_udp_datagrams_do_not_enter_dns_correlation() {
+    let mut tracker = DnsTransactionTracker::default();
+    let query = dns_packet(1, false, "10.0.0.5", "10.0.0.53", 49, "safe.example");
+    let mut reply = dns_packet(2, true, "10.0.0.53", "10.0.0.5", 49, "safe.example");
+    let valid = reply.clone();
+    assert!(tracker.observe(&query).is_empty());
+    reply.bytes[20] = 0x20; // More fragments.
+    reply.bytes[45] = 0x83;
+    assert!(tracker.observe(&reply).is_empty());
+    reply.bytes[20] = 0;
+    let udp_length = u16::from_be_bytes(reply.bytes[38..40].try_into().unwrap()) + 4;
+    reply.bytes[38..40].copy_from_slice(&udp_length.to_be_bytes());
+    assert!(tracker.observe(&reply).is_empty());
+    assert!(tracker.observe(&valid).is_empty());
 }
 
 #[test]

@@ -90,6 +90,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "Unexpected DNS responder",
     "Conflicting DNS responses",
     "DNS reply changed at the same resolver",
+    "DNS answer set changed at the same resolver",
     "EternalBlue",
     "BlueKeep (CVE-2019-0708)",
     "Log4Shell (CVE-2021-44228)",

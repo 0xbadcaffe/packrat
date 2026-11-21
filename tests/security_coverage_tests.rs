@@ -10,7 +10,11 @@ struct CoverageGroup {
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
         signatures: &["DNS reply changed at the same resolver"],
-        positive_test: "distinguishes_same_resolver_changes_from_competing_responders",
+        positive_test: "unsupported_dns_answer_changes_remain_low_confidence_wire_findings",
+    },
+    CoverageGroup {
+        signatures: &["DNS answer set changed at the same resolver"],
+        positive_test: "reports_only_semantic_changes_for_supported_dns_answers",
     },
     CoverageGroup {
         signatures: &["Malformed IPv4 fragment"],
