@@ -98,3 +98,7 @@ pub(super) fn lookup(source: &str, title: &str) -> Option<AlertProvenance> {
             verification_hint: hint.into(),
         })
 }
+
+pub fn is_registered_rule_id(id: &str) -> bool {
+    RULES.iter().any(|&(_, _, rule_id, ..)| rule_id == id)
+}

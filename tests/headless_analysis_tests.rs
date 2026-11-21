@@ -11,12 +11,25 @@ use std::{
 };
 
 fn run(path: &Path) -> Output {
+    run_with(path, &[])
+}
+
+fn run_with(path: &Path, options: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+        .args(options)
         .arg(path)
         .env_remove("TERM")
         .env("HOME", "/nonexistent")
         .output()
         .unwrap()
+}
+
+fn read_events(output: &Output) -> Vec<Value> {
+    String::from_utf8(output.stdout.clone())
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
 }
 
 fn events(output: &Output) -> Vec<Value> {
@@ -25,11 +38,7 @@ fn events(output: &Output) -> Vec<Value> {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8(output.stdout.clone())
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect()
+    read_events(output)
 }
 
 #[test]
@@ -153,6 +162,9 @@ fn unsupported_link_types_are_reported_not_silently_analyzed() {
     assert_eq!(events[0]["reason"]["UnsupportedLinkType"], 101);
     assert_eq!(events.last().unwrap()["skipped"], 1);
     assert_eq!(events.last().unwrap()["incidents"], 0);
+    let replay = run_with(&path, &["--expect-alert", "scan.horizontal=0"]);
+    assert!(!replay.status.success());
+    assert_eq!(read_events(&replay).last().unwrap()["alert_expectations"]["verdict"], "inconclusive");
 }
 
 #[test]
@@ -168,4 +180,65 @@ fn malformed_capture_and_extra_arguments_fail_without_a_success_summary() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("Unknown option: --contain"));
+}
+
+#[test]
+fn labeled_http_replay_distinguishes_retransmissions_from_distinct_responses() {
+    let directory = tempfile::tempdir().unwrap();
+    let benign = directory.path().join("benign.pcapng");
+    let suspicious = directory.path().join("auth-bursts.pcapng");
+    let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    let mut writer = PcapNgWriter::create(&benign).unwrap();
+    for no in 1..=5 {
+        writer.write_packet(&support::tcp(no, 100, 0x18, response, true)).unwrap();
+    }
+    writer.flush().unwrap();
+    let benign_run = run_with(&benign, &["--expect-alert", "http.unauthorized_burst=0"]);
+    assert_eq!(events(&benign_run).last().unwrap()["alert_expectations"]["verdict"], "passed");
+
+    let mut writer = PcapNgWriter::create(&suspicious).unwrap();
+    for no in (1..=5).chain(40..=44) {
+        writer.write_packet(&support::tcp(no, no as u32 * 100, 0x18, response, true)).unwrap();
+    }
+    writer.flush().unwrap();
+    let options = ["--expect-alert", "http.unauthorized_burst=1", "--expect-alert", "scan.horizontal=0"];
+    let first = run_with(&suspicious, &options);
+    let second = run_with(&suspicious, &options);
+    assert_eq!(first.stdout, second.stdout);
+    let events = events(&first);
+    let auth: Vec<_> = events.iter()
+        .filter(|e| e["alert"]["provenance"]["rule_id"] == "http.unauthorized_burst")
+        .collect();
+    assert_eq!(auth.len(), 2);
+    assert_eq!(auth[0]["alert"]["packet_refs"], serde_json::json!([1, 2, 3, 4, 5]));
+    assert_eq!(auth[1]["alert"]["id"], auth[0]["alert"]["id"]);
+    assert_eq!(auth[1]["alert"]["hit_count"], 2);
+    let summary = events.last().unwrap();
+    assert_eq!(summary["rule_counts"]["http.unauthorized_burst"], 1);
+    assert_eq!(summary["alert_expectations"]["verdict"], "passed");
+
+    let mismatch = run_with(&suspicious, &["--expect-alert", "http.unauthorized_burst=0"]);
+    assert!(!mismatch.status.success());
+    assert_eq!(read_events(&mismatch).last().unwrap()["alert_expectations"]["verdict"], "failed");
+    let typo = run_with(&suspicious, &["--expect-alert", "http.unregistered=0"]);
+    assert!(!typo.status.success());
+    assert!(String::from_utf8_lossy(&typo.stderr).contains("Unknown alert rule ID"));
+}
+
+#[test]
+fn labeled_scan_replay_differentiates_unique_targets_from_repeat_traffic() {
+    let directory = tempfile::tempdir().unwrap();
+    for (label, diverse) in [("repeated", false), ("fanout", true)] {
+        let path = directory.path().join(format!("{label}.pcapng"));
+        let mut writer = PcapNgWriter::create(&path).unwrap();
+        for no in 1..=12 {
+            let mut packet = support::tcp(no, no as u32 * 100, 0x02, &[], false);
+            packet.bytes[33] = if diverse { no as u8 + 10 } else { 2 };
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+        let expected = if diverse { "scan.horizontal=1" } else { "scan.horizontal=0" };
+        let replay = run_with(&path, &["--expect-alert", expected]);
+        assert_eq!(events(&replay).last().unwrap()["alert_expectations"]["verdict"], "passed");
+    }
 }

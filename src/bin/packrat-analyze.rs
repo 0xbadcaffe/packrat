@@ -9,6 +9,10 @@ use packrat_tui::pcap_replay::stream_pcap;
 use serde::Serialize;
 use serde_json::json;
 
+#[path = "packrat-analyze/alerts.rs"]
+mod alerts;
+use alerts::ReplayAlerts;
+
 fn event(output: &mut impl Write, value: &impl Serialize) -> Result<(), String> {
     serde_json::to_writer(&mut *output, value).map_err(|error| error.to_string())?;
     output.write_all(b"\n").map_err(|error| error.to_string())
@@ -17,6 +21,8 @@ fn event(output: &mut impl Write, value: &impl Serialize) -> Result<(), String> 
 fn analyze(
     path: &Path,
     helper: Option<std::path::PathBuf>,
+    alerts_only: bool,
+    mut replay: ReplayAlerts,
     output: &mut impl Write,
 ) -> Result<(), String> {
     let mut core = AnalysisCore::default();
@@ -38,11 +44,19 @@ fn analyze(
             return Ok(());
         }
         analyzed += 1;
-        for notice in outcome.incidents {
-            event(
-                output,
-                &json!({"type": "incident", "packet": packet.no, "notice": notice}),
-            )?;
+        for alert in core.alert_center.drain_pending_exports() {
+            replay.observe(&alert);
+            if alerts_only {
+                event(output, &json!({"type": "alert", "schema_version": 1, "alert": alert}))?;
+            }
+        }
+        if !alerts_only {
+            for notice in outcome.incidents {
+                event(
+                    output,
+                    &json!({"type": "incident", "packet": packet.no, "notice": notice}),
+                )?;
+            }
         }
         if history.len() == 256 {
             history.pop_front();
@@ -50,6 +64,23 @@ fn analyze(
         history.push_back(packet);
         Ok(())
     })?;
+    let evaluation = replay.evaluate(analyzed > 0 && skipped == 0);
+    if alerts_only {
+        event(
+            output,
+            &json!({
+                "type": "summary", "packets": packets, "analyzed": analyzed, "skipped": skipped,
+                "alert_scope": "grouped_alerts", "alerts_opened": replay.opened,
+                "alert_snapshots": replay.snapshots, "rule_counts": replay.rule_counts,
+                "alert_expectations": evaluation, "containment": "disabled"
+            }),
+        )?;
+        output.flush().map_err(|error| error.to_string())?;
+        if evaluation.as_ref().is_some_and(|evaluation| evaluation.verdict != "passed") {
+            return Err("Alert expectations did not pass; see the replay summary".into());
+        }
+        return Ok(());
+    }
     let mut exchanges = 0usize;
     let mut http2_exchanges = 0usize;
     core.refresh_graph();
@@ -113,7 +144,8 @@ fn analyze(
         "retained_streams": core.streams.len(), "evicted_streams": core.streams.evicted_streams(),
         "incidents": core.incidents.incidents.len(), "containment": "disabled",
         "graph_nodes": core.operator_graph.node_count(), "graph_edges": core.operator_graph.edge_count(),
-        "transaction_scope": "retained_streams_only", "incident_history_limit": 256}),
+        "transaction_scope": "retained_streams_only", "incident_history_limit": 256,
+        "alerts_opened": replay.opened, "alert_snapshots": replay.snapshots}),
     )?;
     output.flush().map_err(|error| error.to_string())
 }
@@ -122,11 +154,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let mut input = None;
     let mut helper = None;
+    let mut alerts_only = false;
+    let mut replay = ReplayAlerts::default();
     let mut positional = false;
     while let Some(arg) = args.next() {
         if !positional && (arg == "--help" || arg == "-h") {
             println!(
-                "Usage: packrat-analyze [--quic-decode-helper PROGRAM] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
+                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--quic-decode-helper PROGRAM] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\n--expect-alert implies --alerts-only, counts newly grouped alerts, and exits nonzero on mismatches or skipped input. Repeat it for multiple rules.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
             );
             return Ok(());
         }
@@ -134,7 +168,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             positional = true;
             continue;
         }
-        if !positional && arg == "--quic-decode-helper" {
+        if !positional && arg == "--alerts-only" {
+            alerts_only = true;
+        } else if !positional && arg == "--expect-alert" {
+            let expectation = args.next().ok_or("Missing RULE_ID=COUNT after --expect-alert")?;
+            replay.expect(expectation.to_str().ok_or("Alert expectations must be UTF-8")?)?;
+            alerts_only = true;
+        } else if !positional && arg == "--quic-decode-helper" {
             if helper.is_some() {
                 return Err("QUIC helper was specified twice".into());
             }
@@ -153,6 +193,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     analyze(
         Path::new(&input),
         helper,
+        alerts_only,
+        replay,
         &mut BufWriter::new(stdout.lock()),
     )?;
     Ok(())
