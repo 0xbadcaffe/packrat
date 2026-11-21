@@ -11,7 +11,6 @@ use super::*;
 #[case("XSS Probe")]
 #[case("Heartbleed (CVE-2014-0160)")]
 #[case("PrintNightmare (CVE-2021-1675)")]
-#[case("Pass-the-Hash (suspected)")]
 #[case("Log4Shell via DNS (CVE-2021-44228)")]
 fn shipped_signature_replays(#[case] signature: &str) {
     let mut security = SecurityEngine::default();

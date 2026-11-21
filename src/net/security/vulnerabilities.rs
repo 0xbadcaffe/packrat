@@ -111,7 +111,7 @@ impl SecurityEngine {
         };
         let service = match server_port {
             21 if is_ftp_not_logged_in(payload) => "FTP",
-            445 if is_smb2_logon_failure(payload) => "SMB",
+            445 if smb_wire::is_smb2_logon_failure(payload) => "SMB",
             80 | 443 | 8080 if is_http_unauthorized(payload) => "HTTP",
             _ => return,
         };
@@ -132,11 +132,7 @@ impl SecurityEngine {
             dst: server.clone(),
             port,
             service,
-            scope: (
-                pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
-                pkt.outer_vlan_id,
-                pkt.vlan_id,
-            ),
+            scope: service_scope(pkt),
         };
         let now = pkt.timestamp;
         if self.bf_windows.len() >= MAX_ENTRIES && !self.bf_windows.contains_key(&key) {
@@ -207,24 +203,6 @@ fn is_ftp_not_logged_in(payload: &[u8]) -> bool {
         line.get(end..end + 2) == Some(b"\r\n")
             && line[..end].iter().all(|&byte| byte.is_ascii_graphic() || byte == b' ')
     })
-}
-
-fn is_smb2_logon_failure(payload: &[u8]) -> bool {
-    // Direct-hosted SMB: one complete, non-compound SMB2 error response.
-    let Some(prefix) = payload.first_chunk::<4>() else { return false };
-    let length = u32::from_be_bytes(*prefix) as usize;
-    if prefix[0] != 0 || length < 72 {
-        return false;
-    }
-    let Some(message) = payload.get(4..4 + length) else { return false };
-    let error_data_bytes = u32::from_le_bytes(message[68..72].try_into().unwrap()) as usize;
-    message[..6] == *b"\xfeSMB\x40\x00"
-        && message[8..12] == 0xc000_006d_u32.to_le_bytes()
-        && message[12..14] == 1_u16.to_le_bytes()
-        && message[16] & 1 != 0
-        && message[20..24] == [0; 4]
-        && message[64..66] == 9_u16.to_le_bytes()
-        && error_data_bytes <= message.len() - 72
 }
 
 fn is_http_unauthorized(payload: &[u8]) -> bool {

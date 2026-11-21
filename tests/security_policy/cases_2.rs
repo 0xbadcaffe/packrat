@@ -255,7 +255,7 @@ fn detects_dns_nxdomain_burst_txt_abuse_and_external_resolver_use() {
 }
 
 #[test]
-fn detects_administrative_and_ntlm_lateral_fanout() {
+fn detects_administrative_service_fanout() {
     let mut security = SecurityEngine::default();
     for index in 1..=8_u8 {
         let mut smb = packet("SMB", 445, "", vec![0; 64]);
@@ -265,26 +265,11 @@ fn detects_administrative_and_ntlm_lateral_fanout() {
         smb.dst = format!("10.0.1.{index}");
         security.update(&smb);
     }
-    for index in 1..=3_u8 {
-        let mut ntlm = packet("SMB", 445, "", b"NTLMSSP authentication".to_vec());
-        ntlm.no = 20 + index as u64;
-        ntlm.timestamp = 20.0 + index as f64;
-        ntlm.src = "10.0.0.9".into();
-        ntlm.dst = format!("10.0.2.{index}");
-        security.update(&ntlm);
-    }
-
     assert!(
         security
             .ids_alerts
             .iter()
             .any(|alert| alert.signature == "Administrative service fan-out")
-    );
-    assert!(
-        security
-            .ids_alerts
-            .iter()
-            .any(|alert| alert.signature == "NTLM authentication fan-out")
     );
 }
 

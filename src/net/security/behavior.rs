@@ -268,23 +268,7 @@ impl SecurityEngine {
             }
         }
 
-        if Self::contains_str_ci(&pkt.bytes, b"NTLMSSP") && is_internal_address(&pkt.src) {
-            let source = pkt.src.clone();
-            if self.ntlm_fanout.len() < MAX_SCAN_STATES || self.ntlm_fanout.contains_key(&source) {
-                let state = self.ntlm_fanout.entry(source.clone()).or_default();
-                state.last_seen = pkt.timestamp;
-                record_timed_target(state, pkt.timestamp, &pkt.dst, 300.0);
-                let unique_targets = unique_timed_targets(state);
-                if unique_targets >= NTLM_TARGET_THRESHOLD && !state.alerted {
-                    state.alerted = true;
-                    alerts.push((
-                        "NTLM authentication fan-out",
-                        Severity::High,
-                        format!("{source} sent NTLM authentication to {unique_targets} hosts"),
-                    ));
-                }
-            }
-        }
+        self.record_ntlm_fanout(pkt);
 
         for (signature, severity, detail) in alerts {
             self.push_ids(IdsAlert {
@@ -294,5 +278,53 @@ impl SecurityEngine {
                 detail,
             });
         }
+    }
+
+    fn record_ntlm_fanout(&mut self, pkt: &Packet) {
+        if pkt.dst_port != Some(445)
+            || !is_internal_address(&pkt.src)
+            || !is_internal_address(&pkt.dst)
+            || !crate::analysis::stream::tcp_segment_payload(pkt)
+                .is_some_and(|(_, payload)| smb_wire::has_ntlm_authenticate(payload))
+        {
+            return;
+        }
+        let key = (pkt.src.clone(), service_scope(pkt));
+        if self.ntlm_fanout.len() >= MAX_SCAN_STATES && !self.ntlm_fanout.contains_key(&key) {
+            return;
+        }
+        let state = self.ntlm_fanout.entry(key).or_default();
+        state.last_seen = if state.targets.is_empty() { pkt.timestamp } else { state.last_seen.max(pkt.timestamp) };
+        if state.last_seen - pkt.timestamp > 300.0 {
+            return;
+        }
+        state.targets.retain(|_, (seen, _)| state.last_seen - *seen <= 300.0);
+        if state.targets.is_empty() {
+            state.alerted = false;
+        }
+        if let Some(prior) = state.targets.get_mut(&pkt.dst) {
+            if pkt.timestamp > prior.0 {
+                *prior = (pkt.timestamp, pkt.no);
+            }
+        } else if state.targets.len() < 256 {
+            state.targets.insert(pkt.dst.clone(), (pkt.timestamp, pkt.no));
+        }
+        let count = state.targets.len();
+        if count < NTLM_TARGET_THRESHOLD || state.alerted {
+            return;
+        }
+        state.alerted = true;
+        let related_packets = state.targets.values().map(|&(_, frame)| frame)
+            .filter(|&frame| frame != pkt.no).collect();
+        self.push_ids_finding(IdsFinding {
+            alert: IdsAlert {
+                pkt_no: pkt.no,
+                signature: "NTLM authentication fan-out",
+                severity: Severity::Medium,
+                detail: format!("{} sent SMB2 NTLM authentication to {count} internal hosts; outcomes unverified", pkt.src),
+            },
+            related_packets,
+            correlation_key: Some(format!("{:?}:{}", service_scope(pkt), pkt.src)),
+        });
     }
 }

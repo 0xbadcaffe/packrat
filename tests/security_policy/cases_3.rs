@@ -115,6 +115,65 @@ fn smb2_session_setup_reply(status: u32, flags: u8) -> Vec<u8> {
     payload
 }
 
+fn smb2_ntlm_request(message_type: u8) -> Vec<u8> {
+    let mut request = vec![0; 4 + 88 + 64];
+    request[3] = 88 + 64;
+    let message = &mut request[4..];
+    message[..6].copy_from_slice(b"\xfeSMB\x40\x00");
+    message[12] = 1;
+    message[64] = 25;
+    message[76] = 88;
+    message[78] = 64;
+    message[88..96].copy_from_slice(b"NTLMSSP\0");
+    message[96] = message_type;
+    request
+}
+
+#[test]
+fn ntlm_fanout_requires_smb2_authenticate_and_retains_scoped_evidence() {
+    let mut core = AnalysisCore::default();
+    let packet = |no: u64, target: u8, vlan: u16, payload: &[u8]| {
+        let mut frame = ipv4_tcp_packet(no, no as u32 * 1024, 0x18, payload);
+        frame.protocol = "SMB".into();
+        frame.src = "10.0.0.9".into();
+        frame.dst = format!("10.0.2.{target}");
+        frame.bytes[26..34].copy_from_slice(&[10, 0, 0, 9, 10, 0, 2, target]);
+        frame.bytes[36..38].copy_from_slice(&445_u16.to_be_bytes());
+        frame.dst_port = Some(445);
+        frame.vlan_id = Some(vlan);
+        frame
+    };
+    let negotiate = smb2_ntlm_request(1);
+    let authenticate = smb2_ntlm_request(3);
+    let mut outside_security_buffer = authenticate.clone();
+    outside_security_buffer[4 + 78] = 0;
+    let mut incomplete = authenticate.clone();
+    incomplete.pop();
+    let mut invalid_fields = authenticate.clone();
+    invalid_fields[4 + 88 + 12] = 8; // A nonempty response with an invalid offset.
+    for (batch, payload) in [
+        b"NTLMSSP\0".as_slice(), &negotiate, &outside_security_buffer, &incomplete, &invalid_fields,
+    ].into_iter().enumerate() {
+        for target in 1..=3 {
+            core.analyze(&packet(batch as u64 * 3 + u64::from(target), target, 10, payload));
+        }
+    }
+    for (no, target, vlan) in [(16, 1, 10), (17, 1, 10), (18, 2, 10), (19, 3, 20)] {
+        core.analyze(&packet(no, target, vlan, &authenticate));
+    }
+    assert!(core.alert_center.items.iter().all(|a| {
+        a.title != "NTLM authentication fan-out" && !a.title.contains("Pass-the-Hash")
+    }));
+
+    core.analyze(&packet(20, 3, 10, &authenticate));
+    let alert = core.alert_center.items.iter().find(|a| a.title == "NTLM authentication fan-out").unwrap();
+    assert_eq!(alert.packet_refs, [17, 18, 20]);
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "smb2.ntlm_authentication_fanout");
+    assert!(alert.detail.contains("outcomes unverified"));
+    assert!(core.incidents.incidents.is_empty(), "{:?}", core.incidents.incidents);
+}
+
 #[rstest]
 #[case(21, "ftp.not_logged_in_burst")]
 #[case(445, "smb2.logon_failure_burst")]

@@ -151,22 +151,6 @@ impl SecurityEngine {
             }
         }
 
-        // ── Pass-the-Hash ────────────────────────────────────────────────────
-        if dst_port == 445 {
-            let has_ntlm = Self::contains_str_ci(bytes, b"NTLMSSP");
-            let has_kerb = Self::contains_str_ci(bytes, b"Kerberos")
-                || Self::contains_str_ci(pkt.info.as_bytes(), b"kerberos");
-            if has_ntlm && !has_kerb {
-                // Heuristic: NTLM auth on SMB without Kerberos ticket
-                self.push_ids(IdsAlert {
-                    pkt_no: pkt.no,
-                    signature: "Pass-the-Hash (suspected)",
-                    severity: Severity::High,
-                    detail: format!("SMB NTLM auth (no Kerberos) from {}", pkt.src),
-                });
-            }
-        }
-
         // ── CVE-2021-44228 via DNS ───────────────────────────────────────────
         if dst_port == 53
             || src_port == 53

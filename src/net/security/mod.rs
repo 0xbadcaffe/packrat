@@ -102,7 +102,6 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "XSS Probe",
     "Heartbleed (CVE-2014-0160)",
     "PrintNightmare (CVE-2021-1675)",
-    "Pass-the-Hash (suspected)",
     "Log4Shell via DNS (CVE-2021-44228)",
 ];
 
@@ -121,6 +120,7 @@ mod ipv6_wire;
 mod protocol_policy;
 mod scans;
 mod signatures;
+mod smb_wire;
 mod tracking_helpers;
 mod types;
 mod vulnerabilities;
@@ -163,7 +163,7 @@ pub struct SecurityEngine {
     nxdomain_clients: HashMap<String, TimedCountState>,
     external_dns_pairs: HashMap<(String, String), f64>,
     admin_fanout: HashMap<(String, u16), TimedTargetState>,
-    ntlm_fanout: HashMap<String, TimedTargetState>,
+    ntlm_fanout: HashMap<(String, ServiceScope), NtlmFanoutState>,
     dhcp_vlans: HashMap<Option<u16>, DhcpVlanState>,
     ipv6_fragments: Ipv6FragmentReassembler,
     pub ipv6_reassembled: u64,

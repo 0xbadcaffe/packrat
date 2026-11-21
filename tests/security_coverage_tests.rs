@@ -98,11 +98,12 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "detects_dns_nxdomain_burst_txt_abuse_and_external_resolver_use",
     },
     CoverageGroup {
-        signatures: &[
-            "Administrative service fan-out",
-            "NTLM authentication fan-out",
-        ],
-        positive_test: "detects_administrative_and_ntlm_lateral_fanout",
+        signatures: &["Administrative service fan-out"],
+        positive_test: "detects_administrative_service_fanout",
+    },
+    CoverageGroup {
+        signatures: &["NTLM authentication fan-out"],
+        positive_test: "ntlm_fanout_requires_smb2_authenticate_and_retains_scoped_evidence",
     },
     CoverageGroup {
         signatures: &["DHCP server identity changed"],
@@ -158,7 +159,6 @@ const COVERAGE: &[CoverageGroup] = &[
             "XSS Probe",
             "Heartbleed (CVE-2014-0160)",
             "PrintNightmare (CVE-2021-1675)",
-            "Pass-the-Hash (suspected)",
             "Log4Shell via DNS (CVE-2021-44228)",
         ],
         positive_test: "shipped_signature_replays",
@@ -169,6 +169,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy_tests.rs"),
     include_str!("security_policy/cases_1.rs"),
     include_str!("security_policy/cases_2.rs"),
+    include_str!("security_policy/cases_3.rs"),
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("dns_transaction_tests.rs"),
     include_str!("industrial_policy_tests.rs"),

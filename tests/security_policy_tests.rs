@@ -50,7 +50,6 @@ fn fixture(name: &str) -> Packet {
             vec![0x18, 0x03, 0x02, 0xff, 0xff, 0x01, 0x00],
         ),
         "PrintNightmare (CVE-2021-1675)" => packet("SMB", 445, "", b"\x1c\x00SpoolSS".to_vec()),
-        "Pass-the-Hash (suspected)" => packet("SMB", 445, "", b"NTLMSSP authentication".to_vec()),
         "Log4Shell via DNS (CVE-2021-44228)" => {
             packet("DNS", 53, "query jndi callback", vec![0; 20])
         }

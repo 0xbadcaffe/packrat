@@ -190,6 +190,13 @@ pub(super) struct TimedTargetState {
 }
 
 #[derive(Debug, Default)]
+pub(super) struct NtlmFanoutState {
+    pub(super) targets: std::collections::BTreeMap<String, (f64, u64)>,
+    pub(super) last_seen: f64,
+    pub(super) alerted: bool,
+}
+
+#[derive(Debug, Default)]
 pub(super) struct DhcpVlanState {
     pub(super) servers: HashSet<Vec<u8>>,
     pub(super) clients: Vec<(f64, Vec<u8>)>,
@@ -286,7 +293,17 @@ pub(super) struct BfKey {
     pub(super) dst: String,
     pub(super) port: u16,
     pub(super) service: &'static str,
-    pub(super) scope: (Option<(u32, u32)>, Option<u16>, Option<u16>),
+    pub(super) scope: ServiceScope,
+}
+
+pub(super) type ServiceScope = (Option<(u32, u32)>, Option<u16>, Option<u16>);
+
+pub(super) fn service_scope(pkt: &Packet) -> ServiceScope {
+    (
+        pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
+        pkt.outer_vlan_id,
+        pkt.vlan_id,
+    )
 }
 
 pub(super) struct BfWindow {
