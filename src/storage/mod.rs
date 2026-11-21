@@ -6,3 +6,4 @@ pub mod theme_store;
 pub mod packet_archive;
 pub mod alert_jsonl;
 pub mod alert_evidence;
+pub mod alert_history;
