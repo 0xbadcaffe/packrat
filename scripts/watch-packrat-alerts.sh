@@ -28,6 +28,8 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
         if type == "string" then .[:$limit] else null end;
     def counter:
         if type == "number" and . >= 0 and floor == . then . else null end;
+    def observation_time:
+        if type == "number" and isfinite and . > 0 then . else null end;
     def evidence($alert):
         ([$alert.first_packet, $alert.packet_no, $alert.last_packet]
          + ($alert.packet_refs | if type == "array" then .[:128] else [] end))
@@ -53,6 +55,8 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
             detail: ($a.detail | text(512)),
             hits: ($a.hit_count | counter),
             last_packet: ($a.last_packet | counter),
+            first_seen: ($a.first_seen | observation_time),
+            last_seen: ($a.last_seen | observation_time),
             evidence_frame_count: ($frames | length),
             evidence_frames_internal: $frames,
             capture_id: ($a.capture_id | text(128)),
@@ -66,7 +70,9 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
         {seen: {}, slots: [], next: 0, emit: null};
         ([$alert.session_id, $alert.alert_id, $alert.capture_id] | tojson) as $key
         | .seen[$key] as $previous
-        | if $previous == $alert then
+        # A clock-only change is context for the next finding, not a notification.
+        | if ($previous | del(.first_seen, .last_seen)) ==
+             ($alert | del(.first_seen, .last_seen)) then
             .emit = null
           else
             if $previous == null then

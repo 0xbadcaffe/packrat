@@ -14,16 +14,18 @@ fixture() {
                 schema_version: 1, record_type: "alert", session_id: $session,
                 alert: {
                     id: $id, title: "Periodic traffic", severity: "MEDIUM", disposition: "New",
-                    detail: "observed\u001b[31m\nnotes", hit_count: 1, last_packet: 41, last_seen: 1,
+                    detail: "observed\u001b[31m\nnotes", hit_count: 1, last_packet: 41,
+                    first_seen: 1700000000.125, last_seen: 1700000000.125,
                     packet_refs: [41], bytes: [1, 2, 3], capture_id: "capture-a",
                     provenance: {rule_id:"traffic.periodic",revision:1,confidence:"heuristic",verification_hint:"Inspect the owner"}
                 }
             };
         alert("session-a"; 1) as $a |
-        $a, $a, ($a | .alert.last_seen = 2),
-        ($a | .alert.hit_count = 2 | .alert.last_packet = 42),
-        ($a | .alert.hit_count = 2 | .alert.last_packet = 42 | .alert.disposition = "Benign"),
-        ($a | .alert.hit_count = 2 | .alert.last_packet = 42 | .alert.disposition = "Benign"),
+        ($a | .alert.hit_count = 2 | .alert.last_packet = 42 | .alert.last_seen = 1700000001.25) as $updated |
+        $a, $a, ($a | .alert.last_seen = 1700000000.5),
+        $updated,
+        ($updated | .alert.disposition = "Benign"),
+        ($updated | .alert.disposition = "Benign"),
         alert("session-b"; 1),
         ($a | .alert.capture_id = "capture-b"),
         (alert("session-a"; "bad") | .alert.provenance = ["unexpected"])
@@ -35,6 +37,8 @@ fixture | bash "$watch" | jq -se '
     and map(.event) == ["first_seen","updated","updated","first_seen","first_seen"]
     and map(.session_id) == ["session-a","session-a","session-a","session-b","session-a"]
     and .[1].hits == 2 and .[1].last_packet == 42
+    and .[0].first_seen == 1700000000.125 and .[0].last_seen == .[0].first_seen
+    and .[1].first_seen == .[0].first_seen and .[1].last_seen == 1700000001.25
     and .[2].disposition == "Benign"
     and .[0].capture_id == "capture-a"
     and .[4].capture_id == "capture-b"
@@ -47,7 +51,8 @@ fixture | bash "$watch" | jq -se '
 
 jq -cn '
     {schema_version:1,record_type:"alert",session_id:"test",
-     alert:{id:9,first_packet:1,last_packet:4,packet_no:4,packet_refs:[1,2,4]}} as $alert |
+     alert:{id:9,first_packet:1,last_packet:4,packet_no:4,packet_refs:[1,2,4],
+            first_seen:"now",last_seen:-1}} as $alert |
     $alert,
     ($alert | .alert.packet_refs = [4,2,2,1,0,-1,2.5,null,"15"]),
     ($alert | .alert.packet_refs = [1,3,4]),
@@ -57,7 +62,8 @@ jq -cn '
 ' | bash "$watch" | jq -se '
     map(.event) == ["first_seen","updated","updated","updated"]
     and map(.evidence_frame_count) == [3,3,4,2]
-    and all(.[]; (has("evidence_frames_internal") or has("packet_refs") | not))
+    and all(.[]; .first_seen == null and .last_seen == null
+        and (has("evidence_frames_internal") or has("packet_refs") | not))
 ' >/dev/null
 
 jq -cn '
