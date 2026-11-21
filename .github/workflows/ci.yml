@@ -36,11 +36,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang jq libpcap-dev llvm shellcheck
 
-      - name: Test capture health watchdog
+      - name: Test capture monitoring scripts
         if: runner.os == 'Linux'
         run: |
           shellcheck scripts/watch-packrat-health.sh tests/test_watch_packrat_health.sh
+          shellcheck scripts/watch-packrat-alerts.sh tests/test_watch_packrat_alerts.sh
           bash tests/test_watch_packrat_health.sh
+          bash tests/test_watch_packrat_alerts.sh
 
       - name: cargo check
         run: cargo check --locked
