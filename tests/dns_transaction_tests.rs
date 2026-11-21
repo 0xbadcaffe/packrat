@@ -399,6 +399,58 @@ fn dns_collision_bucket_bounds_candidates_without_guessing_on_overflow() {
 }
 
 #[test]
+fn nxdomain_burst_counts_distinct_matched_names_and_keeps_packet_pairs() {
+    let mut core = AnalysisCore::default();
+    let make = |no: u64, id, name: &str, flags, vlan, opt_ext: Option<u8>| {
+        let mut query = dns_packet(no, false, "10.0.0.5", "10.0.0.53", id, name);
+        let mut reply = dns_packet(no + 1, true, "10.0.0.53", "10.0.0.5", id, name);
+        query.timestamp = no as f64 / 100.0;
+        reply.timestamp = (no + 1) as f64 / 100.0;
+        query.vlan_id = Some(vlan);
+        reply.vlan_id = Some(vlan);
+        reply.info = "Summary contains NXDOMAIN".into();
+        reply.bytes[44..46].copy_from_slice(&u16::to_be_bytes(flags));
+        if let Some(extended) = opt_ext {
+            reply.bytes[53] = 1; // ARCOUNT.
+            reply.bytes.extend([0, 0, 41, 4, 0, extended, 0, 0, 0, 0, 0]);
+            reply.length = reply.bytes.len() as u16;
+            reply.bytes[16..18].copy_from_slice(&(reply.length - 14).to_be_bytes());
+            reply.bytes[38..40].copy_from_slice(&(reply.length - 34).to_be_bytes());
+        }
+        [query, reply]
+    };
+    for i in 1..=20_u16 {
+        for pair in [
+            make(u64::from(i * 8), i, "Repeated.example", 0x8183, 20, None),
+            make(u64::from(i * 8 + 2), i + 20, &format!("ok{i}.example"), 0x8180, 30, None),
+            make(u64::from(i * 8 + 4), i + 40, &format!("trunc{i}.example"), 0x8383, 30, None),
+            make(u64::from(i * 8 + 6), i + 60, &format!("edns{i}.example"), 0x8183, 30, Some(1)),
+        ] {
+            for packet in &pair {
+                core.analyze(packet);
+            }
+            core.analyze(&pair[1]); // Duplicate response.
+        }
+    }
+    for i in 1..=19_u16 {
+        for packet in make(200 + u64::from(2 * i), i + 100, &format!("miss{i}.example"), 0x8183, 10, None) {
+            core.analyze(&packet);
+        }
+    }
+    assert!(core.alert_center.items.iter().all(|a| a.title != "DNS NXDOMAIN burst"));
+    for packet in make(240, 120, "miss20.example", 0x8183, 10, Some(0)) {
+        core.analyze(&packet);
+    }
+    let alert = core.alert_center.items.iter().find(|a| a.title == "DNS NXDOMAIN burst").unwrap();
+    let mut evidence = alert.packet_refs.clone();
+    evidence.sort_unstable();
+    assert_eq!(evidence, (202..=241).collect::<Vec<_>>());
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "dns.nxdomain_distinct_names");
+    assert_eq!(alert.severity, "MEDIUM");
+    assert!(core.incidents.incidents.is_empty());
+}
+
+#[test]
 fn dns_conflict_exports_the_query_and_both_replies_as_one_hit() {
     let mut core = AnalysisCore::default();
     for (first_packet, transaction_id) in [(1, 49), (4, 50)] {

@@ -25,7 +25,6 @@ impl SecurityEngine {
             lldp_chassis: HashMap::new(),
             beacon_flows: HashMap::new(),
             exfil_flows: HashMap::new(),
-            nxdomain_clients: HashMap::new(),
             external_dns_pairs: HashMap::new(),
             admin_fanout: Default::default(),
             ntlm_fanout: HashMap::new(),
@@ -61,7 +60,6 @@ impl SecurityEngine {
         self.lldp_chassis.clear();
         self.beacon_flows.clear();
         self.exfil_flows.clear();
-        self.nxdomain_clients.clear();
         self.external_dns_pairs.clear();
         self.admin_fanout.clear();
         self.ntlm_fanout.clear();

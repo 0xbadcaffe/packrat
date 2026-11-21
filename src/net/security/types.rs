@@ -187,13 +187,6 @@ pub(super) struct ExfilState {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct TimedCountState {
-    pub(super) timestamps: Vec<f64>,
-    pub(super) last_seen: f64,
-    pub(super) alerted: bool,
-}
-
-#[derive(Debug, Default)]
 pub(super) struct NtlmFanoutState {
     pub(super) targets: std::collections::BTreeMap<String, (f64, u64)>,
     pub(super) last_seen: f64,

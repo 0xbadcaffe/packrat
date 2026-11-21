@@ -91,11 +91,14 @@ const COVERAGE: &[CoverageGroup] = &[
     },
     CoverageGroup {
         signatures: &[
-            "DNS NXDOMAIN burst",
             "Oversized DNS TXT traffic",
             "Direct external DNS resolver use",
         ],
-        positive_test: "detects_dns_nxdomain_burst_txt_abuse_and_external_resolver_use",
+        positive_test: "detects_dns_txt_abuse_and_external_resolver_use",
+    },
+    CoverageGroup {
+        signatures: &["DNS NXDOMAIN burst"],
+        positive_test: "nxdomain_burst_counts_distinct_matched_names_and_keeps_packet_pairs",
     },
     CoverageGroup {
         signatures: &["Administrative service response fan-out"],

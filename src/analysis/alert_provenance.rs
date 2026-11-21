@@ -105,6 +105,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare concurrent DNS queries on the same client port and transaction ID before assigning the reply.",
         ),
         (
+            "IDS", "DNS NXDOMAIN burst", "dns.nxdomain_distinct_names", 1, Correlated,
+            "Review the queried names and client process; search suffixes and misconfiguration can also cause bursts.",
+        ),
+        (
             "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 2, DirectObservation,
             "Compare the distinct 401 responses with application logs; check expected challenges.",
         ),

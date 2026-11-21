@@ -212,23 +212,8 @@ fn http_authentication_burst_requires_distinct_wire_401_responses() {
 }
 
 #[test]
-fn detects_dns_nxdomain_burst_txt_abuse_and_external_resolver_use() {
+fn detects_dns_txt_abuse_and_external_resolver_use() {
     let mut security = SecurityEngine::default();
-    for index in 0..20_u64 {
-        let mut response = packet(
-            "DNS",
-            50000,
-            "Response NXDOMAIN missing.example",
-            vec![0; 100],
-        );
-        response.no = index + 1;
-        response.timestamp = index as f64;
-        response.src = "10.0.0.1".into();
-        response.dst = "10.0.0.5".into();
-        response.src_port = Some(53);
-        response.dst_port = Some(50000);
-        security.update(&response);
-    }
 
     let mut txt = packet("DNS", 53, "Query TXT encoded.example", vec![0; 600]);
     txt.src = "10.0.0.5".into();
@@ -236,12 +221,6 @@ fn detects_dns_nxdomain_burst_txt_abuse_and_external_resolver_use() {
     txt.length = 600;
     security.update(&txt);
 
-    assert!(
-        security
-            .ids_alerts
-            .iter()
-            .any(|alert| alert.signature == "DNS NXDOMAIN burst")
-    );
     assert!(
         security
             .ids_alerts

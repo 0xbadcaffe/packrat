@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 
 mod answers;
 mod correlation;
+mod negative_answers;
 
 use correlation::{ExchangeBucket, ReplyMatch};
 
@@ -25,6 +26,7 @@ pub struct DnsFinding {
 pub enum DnsFindingKind {
     ReplyWithoutObservedQuery,
     AmbiguousReply,
+    NxDomainBurst,
     QuestionMismatch,
     UnexpectedResponder,
     ConflictingResponse,
@@ -99,6 +101,7 @@ struct DnsMessage<'a> {
 #[derive(Debug, Default)]
 pub struct DnsTransactionTracker {
     exchanges: HashMap<TransactionKey, ExchangeBucket>,
+    negative_answers: negative_answers::NegativeAnswers,
 }
 
 impl DnsTransactionTracker {
@@ -231,6 +234,7 @@ impl DnsTransactionTracker {
                 ),
             });
         }
+        findings.extend(self.negative_answers.observe(scope, packet, query, &message));
         exchange.reply = Some(RecentResponse {
             reply_packet: packet.no,
             server: packet.src.clone(),
@@ -244,6 +248,7 @@ impl DnsTransactionTracker {
 
     pub fn clear(&mut self) {
         self.exchanges.clear();
+        self.negative_answers.clear();
     }
 
     fn insert_query(&mut self, key: TransactionKey, query: PendingQuery) {

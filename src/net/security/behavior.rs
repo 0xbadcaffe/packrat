@@ -168,47 +168,12 @@ impl SecurityEngine {
             || pkt.src_port == Some(53)
             || pkt.dst_port == Some(53);
 
-        self.nxdomain_clients.retain(|_, state| {
-            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 30.0
-        });
         self.external_dns_pairs.retain(|_, last_seen| {
             pkt.timestamp < *last_seen || pkt.timestamp - *last_seen <= 3600.0
         });
         self.ntlm_fanout.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 300.0
         });
-
-        if is_dns && Self::contains_str_ci(pkt.info.as_bytes(), b"nxdomain") {
-            let client = if pkt.src_port == Some(53) {
-                pkt.dst.clone()
-            } else {
-                pkt.src.clone()
-            };
-            if self.nxdomain_clients.len() < MAX_SCAN_STATES
-                || self.nxdomain_clients.contains_key(&client)
-            {
-                let state = self.nxdomain_clients.entry(client.clone()).or_default();
-                state.last_seen = pkt.timestamp;
-                state.timestamps.retain(|timestamp| {
-                    pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= 30.0
-                });
-                if state.timestamps.is_empty() {
-                    state.alerted = false;
-                }
-                state.timestamps.push(pkt.timestamp);
-                if state.timestamps.len() >= DNS_NXDOMAIN_THRESHOLD && !state.alerted {
-                    state.alerted = true;
-                    alerts.push((
-                        "DNS NXDOMAIN burst",
-                        Severity::Medium,
-                        format!(
-                            "{client} received {} NXDOMAIN responses within 30 seconds",
-                            state.timestamps.len()
-                        ),
-                    ));
-                }
-            }
-        }
 
         if is_dns && Self::contains_str_ci(pkt.info.as_bytes(), b"txt") && pkt.length > 512 {
             alerts.push((

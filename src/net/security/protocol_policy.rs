@@ -232,6 +232,7 @@ impl SecurityEngine {
                     ("DNS reply without observed query", Severity::Low)
                 }
                 DnsFindingKind::AmbiguousReply => ("DNS reply correlation ambiguous", Severity::Low),
+                DnsFindingKind::NxDomainBurst => ("DNS NXDOMAIN burst", Severity::Medium),
                 DnsFindingKind::QuestionMismatch => {
                     ("DNS transaction question mismatch", Severity::Critical)
                 }

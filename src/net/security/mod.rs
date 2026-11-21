@@ -43,7 +43,6 @@ const MAX_CONTROL_PLANE_IDENTITIES: usize = 1024;
 const BEACON_MIN_SAMPLES: usize = 7;
 const EXFIL_VOLUME_THRESHOLD: u64 = 1_000_000;
 const EXFIL_ENTROPY_THRESHOLD: u64 = 256_000;
-const DNS_NXDOMAIN_THRESHOLD: usize = 20;
 const LATERAL_TARGET_THRESHOLD: usize = 8;
 const NTLM_TARGET_THRESHOLD: usize = 3;
 const DHCP_STARVATION_THRESHOLD: usize = 64;
@@ -160,7 +159,6 @@ pub struct SecurityEngine {
     lldp_chassis: HashMap<[u8; 6], Vec<u8>>,
     beacon_flows: HashMap<BehaviorFlowKey, BeaconState>,
     exfil_flows: HashMap<ExfilKey, ExfilState>,
-    nxdomain_clients: HashMap<String, TimedCountState>,
     external_dns_pairs: HashMap<(String, String), f64>,
     admin_fanout: admin_fanout::AdminFanout,
     ntlm_fanout: HashMap<(String, ServiceScope), NtlmFanoutState>,
