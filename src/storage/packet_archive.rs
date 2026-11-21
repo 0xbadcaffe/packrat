@@ -1,11 +1,12 @@
 //! Durable packet bytes and a transactional, rebuildable metadata index.
 
 use crate::net::packet::Packet;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 pub struct PacketArchive {
     db: Connection,
@@ -58,7 +59,11 @@ impl PacketArchive {
                 byte_length INTEGER NOT NULL, sha256 TEXT NOT NULL, metadata TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS packet_time ON packets(timestamp);
             CREATE INDEX IF NOT EXISTS packet_source ON packets(source, timestamp);
-            CREATE INDEX IF NOT EXISTS packet_destination ON packets(destination, timestamp);",
+            CREATE INDEX IF NOT EXISTS packet_destination ON packets(destination, timestamp);
+            CREATE TABLE IF NOT EXISTS capture_frames (
+                capture_id TEXT NOT NULL, frame_number TEXT NOT NULL,
+                packet_id INTEGER NOT NULL REFERENCES packets(id),
+                PRIMARY KEY (capture_id, frame_number));",
         )
         .map_err(|error| error.to_string())?;
         let bytes = private_file(&directory.join("packets.bin"))?;
@@ -79,9 +84,29 @@ impl PacketArchive {
     }
 
     pub fn append(&mut self, packets: &[Packet]) -> Result<(), String> {
-        if packets
-            .iter()
-            .any(|packet| !packet.timestamp.is_finite() || packet.bytes.len() > 1_048_576)
+        self.append_entries(packets.iter().map(|packet| (None, packet)))
+    }
+
+    pub fn append_scoped(&mut self, capture_id: &str, packets: &[Packet]) -> Result<(), String> {
+        if !valid_capture_id(capture_id) {
+            return Err("Invalid archive capture ID".into());
+        }
+        self.append_entries(packets.iter().map(|packet| (Some(capture_id), packet)))
+    }
+
+    fn append_entries<'a>(
+        &mut self,
+        entries: impl Iterator<Item = (Option<&'a str>, &'a Packet)> + Clone,
+    ) -> Result<(), String> {
+        if entries
+            .clone()
+            .any(|(scope, _)| scope.is_some_and(|id| !valid_capture_id(id)))
+        {
+            return Err("Invalid archive capture ID".into());
+        }
+        if entries
+            .clone()
+            .any(|(_, packet)| !packet.timestamp.is_finite() || packet.bytes.len() > 1_048_576)
         {
             return Err("Invalid packet timestamp or archive record length".into());
         }
@@ -90,19 +115,28 @@ impl PacketArchive {
             .bytes
             .seek(SeekFrom::End(0))
             .map_err(|error| error.to_string())?;
-        for packet in packets {
+        for (capture_id, packet) in entries.clone() {
             let mut metadata = packet.clone();
             metadata.bytes.clear();
             let metadata = serde_json::to_string(&metadata).map_err(|error| error.to_string())?;
             let digest = format!("{:x}", Sha256::digest(&packet.bytes));
+            let frame_number = packet.no.to_string();
+            transaction.execute("INSERT INTO packets(frame_number,timestamp,source,destination,protocol,byte_offset,byte_length,sha256,metadata)
+                VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![frame_number, packet.timestamp,
+                packet.src, packet.dst, packet.protocol, i64::try_from(offset).map_err(|_| "Archive offset exceeds SQLite range")?, packet.bytes.len() as i64, digest, metadata])
+                .map_err(|error| error.to_string())?;
+            if let Some(capture_id) = capture_id {
+                transaction.execute(
+                    "INSERT INTO capture_frames(capture_id,frame_number,packet_id) VALUES (?1,?2,?3)",
+                    params![capture_id, frame_number, transaction.last_insert_rowid()],
+                ).map_err(|error| format!("Index archived capture frame: {error}"))?;
+            }
+            offset += packet.bytes.len() as u64;
+        }
+        for (_, packet) in entries {
             self.bytes
                 .write_all(&packet.bytes)
                 .map_err(|error| error.to_string())?;
-            transaction.execute("INSERT INTO packets(frame_number,timestamp,source,destination,protocol,byte_offset,byte_length,sha256,metadata)
-                VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![packet.no.to_string(), packet.timestamp,
-                packet.src, packet.dst, packet.protocol, i64::try_from(offset).map_err(|_| "Archive offset exceeds SQLite range")?, packet.bytes.len() as i64, digest, metadata])
-                .map_err(|error| error.to_string())?;
-            offset += packet.bytes.len() as u64;
         }
         self.bytes.sync_data().map_err(|error| error.to_string())?;
         transaction.commit().map_err(|error| error.to_string())
@@ -159,22 +193,64 @@ impl PacketArchive {
         packet.bytes = bytes;
         Ok(packet)
     }
+
+    pub fn packet_for_capture(
+        &mut self,
+        capture_id: &str,
+        frame_number: u64,
+    ) -> Result<Option<Packet>, String> {
+        if !valid_capture_id(capture_id) {
+            return Err("Invalid archive capture ID".into());
+        }
+        let has_scoped_index: bool = self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='capture_frames')",
+            [],
+            |row| row.get(0),
+        ).map_err(|error| error.to_string())?;
+        if !has_scoped_index {
+            return Ok(None);
+        }
+        let id = self.db.query_row(
+            "SELECT packet_id FROM capture_frames WHERE capture_id=?1 AND frame_number=?2",
+            params![capture_id, frame_number.to_string()],
+            |row| row.get(0),
+        ).optional().map_err(|error| error.to_string())?;
+        let Some(id) = id else { return Ok(None) };
+        let packet = self.packet(id)?;
+        if packet.no != frame_number {
+            return Err("Archive capture index points to a different frame".into());
+        }
+        Ok(Some(packet))
+    }
+}
+
+fn valid_capture_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 pub struct ArchiveWorker {
-    sender: Option<std::sync::mpsc::SyncSender<Packet>>,
+    sender: Option<std::sync::mpsc::SyncSender<ArchiveRecord>>,
     worker: Option<std::thread::JoinHandle<Result<(), String>>>,
+}
+
+struct ArchiveRecord {
+    capture_id: Option<Arc<str>>,
+    packet: Packet,
 }
 
 impl ArchiveWorker {
     pub fn open(directory: &Path) -> Result<Self, String> {
         let mut archive = PacketArchive::open(directory)?;
-        let (sender, receiver) = std::sync::mpsc::sync_channel::<Packet>(4096);
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<ArchiveRecord>(4096);
         let worker = std::thread::spawn(move || {
             while let Ok(first) = receiver.recv() {
                 let mut batch = vec![first];
                 batch.extend(receiver.try_iter().take(255));
-                archive.append(&batch)?;
+                archive.append_entries(
+                    batch.iter().map(|record| (record.capture_id.as_deref(), &record.packet)),
+                )?;
             }
             Ok(())
         });
@@ -185,10 +261,24 @@ impl ArchiveWorker {
     }
 
     pub fn record(&self, packet: &Packet) -> Result<(), String> {
+        self.queue_packet(None, packet)
+    }
+
+    pub fn record_scoped(&self, capture_id: &Arc<str>, packet: &Packet) -> Result<(), String> {
+        if !valid_capture_id(capture_id) {
+            return Err("Invalid archive capture ID".into());
+        }
+        self.queue_packet(Some(Arc::clone(capture_id)), packet)
+    }
+
+    fn queue_packet(&self, capture_id: Option<Arc<str>>, packet: &Packet) -> Result<(), String> {
         self.sender
             .as_ref()
             .ok_or("Archive closed")?
-            .try_send(packet.clone())
+            .try_send(ArchiveRecord {
+                capture_id,
+                packet: packet.clone(),
+            })
             .map_err(|error| format!("Packet archive unavailable or queue full: {error}"))
     }
 

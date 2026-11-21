@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\nShow archive packet count, recover a packet as JSON, import/export a capture, or find up to 1000 retained packet IDs."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\nShow archive packet count, recover a packet as JSON, import/export a capture, or find up to 1000 retained packet IDs."
         );
         return Ok(());
     };
@@ -57,6 +57,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     match action {
+        Some(flag) if flag == "--capture-frame" => {
+            let capture_id = args.next().ok_or("--capture-frame requires a capture ID")?;
+            let number = args.next().ok_or("--capture-frame requires a frame number")?.parse()?;
+            if args.next().is_some() {
+                return Err("Unexpected argument after frame number".into());
+            }
+            let packet = archive.packet_for_capture(&capture_id, number)?
+                .ok_or("Frame not found in the specified capture")?;
+            println!("{}", serde_json::to_string_pretty(&packet)?);
+        }
         Some(id) => println!(
             "{}",
             serde_json::to_string_pretty(&archive.packet(id.parse()?)?)?

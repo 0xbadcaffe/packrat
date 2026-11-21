@@ -81,3 +81,54 @@ fn archive_round_trip_recovers_uncommitted_tail_and_detects_tampering() {
     drop(archive);
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn scoped_archive_recovers_only_the_requested_capture_and_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let legacy = parse_ethernet(&[1, 1], 7, 1.0);
+    let first = parse_ethernet(&[2, 2], 7, 2.0);
+    let second = parse_ethernet(&[3, 3], 7, 3.0);
+    let mut worker = ArchiveWorker::open(path).unwrap();
+    worker.record(&legacy).unwrap();
+    worker.record_scoped(&Arc::from("capture-a"), &first).unwrap();
+    worker.record_scoped(&Arc::from("capture-b"), &second).unwrap();
+    worker.finish().unwrap();
+
+    let mut reader = PacketArchive::open_readonly(path).unwrap();
+    assert_eq!(reader.packet(1).unwrap().bytes, legacy.bytes);
+    assert_eq!(reader.packet_for_capture("capture-a", 7).unwrap().unwrap().bytes, first.bytes);
+    assert_eq!(reader.packet_for_capture("capture-b", 7).unwrap().unwrap().bytes, second.bytes);
+    assert!(reader.packet_for_capture("capture-c", 7).unwrap().is_none());
+    assert!(reader.packet_for_capture("capture-a", 8).unwrap().is_none());
+    assert!(reader.packet_for_capture("", 7).is_err());
+
+    let mut writer = PacketArchive::open(path).unwrap();
+    let new_frame = parse_ethernet(&[4, 4], 8, 4.0);
+    assert!(writer.append_scoped("capture-a", &[new_frame, second]).is_err());
+    assert_eq!(writer.count().unwrap(), 3);
+    assert_eq!(std::fs::metadata(path.join("packets.bin")).unwrap().len(), 6);
+    assert!(reader.packet_for_capture("capture-a", 8).unwrap().is_none());
+    assert_eq!(reader.packet_for_capture("capture-a", 7).unwrap().unwrap().bytes, first.bytes);
+}
+
+#[test]
+fn scoped_lookup_does_not_guess_for_legacy_archives() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let packet = parse_ethernet(&[1, 2, 3], 7, 1.0);
+    let mut writer = PacketArchive::open(path).unwrap();
+    writer.append(&[packet.clone()]).unwrap();
+    writer.db.execute("DROP TABLE capture_frames", []).unwrap();
+    drop(writer);
+
+    let mut reader = PacketArchive::open_readonly(path).unwrap();
+    assert_eq!(reader.packet(1).unwrap().bytes, packet.bytes);
+    assert!(reader.packet_for_capture("capture-a", 7).unwrap().is_none());
+    drop(reader);
+
+    let mut writer = PacketArchive::open(path).unwrap();
+    writer.append_scoped("capture-a", &[packet]).unwrap();
+    assert_eq!(writer.count().unwrap(), 2);
+    assert_eq!(writer.packet_for_capture("capture-a", 7).unwrap().unwrap().no, 7);
+}

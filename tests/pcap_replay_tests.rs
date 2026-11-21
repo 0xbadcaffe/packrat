@@ -113,3 +113,29 @@ fn archive_cli_imports_and_recovers_captured_packets() {
     std::fs::remove_file(path).unwrap();
     std::fs::remove_dir_all(archive).unwrap();
 }
+
+#[test]
+fn archive_cli_recovers_a_frame_only_from_the_requested_capture() {
+    use packrat_tui::storage::packet_archive::PacketArchive;
+
+    let directory = tempfile::tempdir().unwrap();
+    let packet = packrat_tui::net::parser::parse_ethernet(&ipv6_tcp_frame(), 17, 1.0);
+    let mut archive = PacketArchive::open(directory.path()).unwrap();
+    archive.append_scoped("capture-a", &[packet.clone()]).unwrap();
+    drop(archive);
+
+    let lookup = |capture: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+            .arg(directory.path())
+            .args(["--capture-frame", capture, "17"])
+            .output()
+            .unwrap()
+    };
+    let found = lookup("capture-a");
+    assert!(found.status.success());
+    let recovered: packrat_tui::net::packet::Packet = serde_json::from_slice(&found.stdout).unwrap();
+    assert_eq!(recovered.bytes, packet.bytes);
+    let missing = lookup("capture-b");
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("Frame not found"));
+}
