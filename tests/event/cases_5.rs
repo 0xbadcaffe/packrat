@@ -294,3 +294,36 @@ async fn search_backspace_removes_char() {
     event::handle(&mut app, key(KeyCode::Backspace));
     assert_eq!(app.search_query, "dn");
 }
+
+#[tokio::test]
+async fn uppercase_v_opens_selected_alert_with_its_packets() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Security;
+    app.security_tab = SecuritySubTab::Alerts;
+    app.packets.extend([packet(10), packet(20)]);
+    app.configure_core(|core| {
+        core.alert_center.record_correlated(
+            20,
+            2.0,
+            "IDS",
+            "HIGH",
+            "Beacon",
+            "periodic traffic",
+            "192.0.2.10>198.51.100.7",
+        );
+        core.alert_center.record_correlated(
+            10,
+            1.0,
+            "IDS",
+            "HIGH",
+            "Beacon",
+            "periodic traffic",
+            "192.0.2.10>198.51.100.7",
+        );
+    });
+
+    event::handle(&mut app, key(KeyCode::Char('V')));
+
+    assert_eq!(app.active_tab, Tab::Investigate);
+    assert_eq!(app.worklist.packet_nos(), vec![10, 20]);
+}

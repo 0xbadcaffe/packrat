@@ -46,6 +46,10 @@ pub(super) fn handle_security(app: &mut App, key: KeyEvent) {
                 app.pin_selected_alert();
                 return;
             }
+            KeyCode::Char('V') => {
+                app.investigate_selected_alert();
+                return;
+            }
             KeyCode::Char('r') => {
                 app.simulate_guard_response();
                 return;

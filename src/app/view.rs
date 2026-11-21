@@ -130,6 +130,10 @@ impl AppView<'_> {
                         ("State".into(), alert.disposition.to_string()),
                         ("Source".into(), alert.source.clone()),
                         ("Packet".into(), format!("#{}", alert.packet_no)),
+                        (
+                            "Matched packets".into(),
+                            alert.packet_refs.len().to_string(),
+                        ),
                         ("Reason".into(), alert.detail.clone()),
                         (
                             "Recommendation".into(),

@@ -68,6 +68,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         ("Security Tab", &[
             ("[/]",  "Previous / next detector view"),
             ("a c o w d u t b v i p", "Jump to common detector views"),
+            ("V",    "Open selected alert with matching packets in Investigate"),
+            ("m",    "Pin selected alert to the investigation tray"),
             ("l / y", "RouteLedger mode / promote observed routes"),
             ("r", "Refresh selected NetRegistry address with WHOIS"),
             ("C",    "Clear alerts and credentials"),

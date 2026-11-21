@@ -24,6 +24,27 @@ fn correlation_keys_keep_distinct_conversations_separate() {
 }
 
 #[test]
+fn retains_bounded_packet_references_for_correlated_alerts() {
+    let mut center = AlertCenter::default();
+    for packet_no in 1..=(MAX_ALERT_PACKET_REFS as u64 + 3) {
+        center.record_correlated(
+            packet_no,
+            packet_no as f64,
+            "IDS",
+            "HIGH",
+            "Probe",
+            "repeated finding",
+            "flow-a",
+        );
+    }
+
+    let alert = &center.items[0];
+    assert_eq!(alert.packet_refs.len(), MAX_ALERT_PACKET_REFS);
+    assert_eq!(alert.packet_refs.first(), Some(&4));
+    assert_eq!(alert.packet_refs.last(), Some(&131));
+}
+
+#[test]
 fn severity_filter_resets_and_bounds_selection() {
     let mut center = AlertCenter::default();
     center.record(1, "IDS", "LOW", "Low", "detail");

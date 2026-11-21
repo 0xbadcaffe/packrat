@@ -160,8 +160,11 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
                 ),
                 Span::styled(
                     format!(
-                        "  {} hits, packets #{}..#{}",
-                        item.hit_count, item.first_packet, item.last_packet
+                        "  {} hits, {} packet refs (#{}..#{})",
+                        item.hit_count,
+                        item.packet_refs.len(),
+                        item.first_packet,
+                        item.last_packet
                     ),
                     Style::default().fg(C_FG3()),
                 ),
@@ -174,7 +177,7 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(C_YELLOW()),
             )),
             Line::from(Span::styled(
-                "Enter review  C confirm  z benign  K contained  x close  f filter  r simulate Guard",
+                "V inspect packet set  m pin alert  Enter review  C confirm  z benign  x close",
                 Style::default().fg(C_FG2()),
             )),
         ]

@@ -101,6 +101,66 @@ fn pinned_packet_survives_live_eviction_and_both_project_modes() {
 }
 
 #[test]
+fn investigating_alert_pins_matching_packets_and_opens_workspace() {
+    let mut app = App::new_for_test();
+    app.packets.extend([packet(10), packet(20), packet(30)]);
+    app.core.edit().alert_center.record_correlated(
+        30,
+        3.0,
+        "IDS",
+        "HIGH",
+        "Beacon",
+        "periodic traffic",
+        "192.0.2.1>198.51.100.2",
+    );
+    app.core.edit().alert_center.record_correlated(
+        10,
+        1.0,
+        "IDS",
+        "HIGH",
+        "Beacon",
+        "periodic traffic",
+        "192.0.2.1>198.51.100.2",
+    );
+
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.active_tab, Tab::Investigate);
+    assert_eq!(app.worklist.packet_nos(), vec![10, 30]);
+    assert_eq!(app.worklist.active_packet_no(), Some(10));
+    assert!(app.worklist.items.contains(&InvestigationItem::Alert(1)));
+    assert!(app.worklist.retained_packet(10).is_some());
+    assert!(app.worklist.retained_packet(30).is_some());
+}
+
+#[test]
+fn alert_investigation_reports_packet_refs_missing_from_retention() {
+    let mut app = App::new_for_test();
+    app.packets.push_back(packet(20));
+    app.core.edit().alert_center.record_correlated(
+        10,
+        1.0,
+        "IDS",
+        "HIGH",
+        "Beacon",
+        "periodic traffic",
+        "flow-a",
+    );
+    app.core.edit().alert_center.record_correlated(
+        20,
+        2.0,
+        "IDS",
+        "HIGH",
+        "Beacon",
+        "periodic traffic",
+        "flow-a",
+    );
+
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.worklist.packet_nos(), vec![20]);
+    assert!(app.status_msg.as_deref().unwrap().contains("1 unavailable"));
+}
+
+#[test]
 fn pin_limits_fail_without_losing_or_silently_evicting_evidence() {
     let mut tray = InvestigationTray::default();
     for no in 0..InvestigationTray::MAX_RETAINED_PACKETS as u64 {

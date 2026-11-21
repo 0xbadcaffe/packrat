@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 const MAX_ALERTS: usize = 2_000;
+const MAX_ALERT_PACKET_REFS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum AutomationMode {
@@ -102,6 +103,8 @@ pub struct AlertItem {
     pub first_seen: f64,
     #[serde(default)]
     pub last_seen: f64,
+    #[serde(default)]
+    pub packet_refs: Vec<u64>,
 }
 
 fn one() -> u64 { 1 }
@@ -142,6 +145,15 @@ impl AlertCenter {
         for item in &mut items {
             if item.first_packet == 0 { item.first_packet = item.packet_no; }
             if item.last_packet == 0 { item.last_packet = item.packet_no; }
+            if item.packet_refs.is_empty() {
+                item.packet_refs.push(item.first_packet);
+                if item.last_packet != item.first_packet {
+                    item.packet_refs.push(item.last_packet);
+                }
+            }
+            if item.packet_refs.len() > MAX_ALERT_PACKET_REFS {
+                item.packet_refs.drain(..item.packet_refs.len() - MAX_ALERT_PACKET_REFS);
+            }
         }
         self.fingerprints = items.iter().map(fingerprint_for).collect();
         self.items = items;
@@ -194,6 +206,7 @@ impl AlertCenter {
                 item.packet_no = packet_no;
                 item.last_packet = packet_no;
                 item.last_seen = timestamp;
+                retain_packet_ref(item, packet_no);
                 item.hit_count = item.hit_count.saturating_add(1);
                 item.detail = detail;
                 let priority = priority_for(&severity);
@@ -225,6 +238,7 @@ impl AlertCenter {
             last_packet: packet_no,
             first_seen: timestamp,
             last_seen: timestamp,
+            packet_refs: vec![packet_no],
         });
         self.pending_exports.push(self.items.last().expect("just inserted alert").clone());
         if self.automation_mode != AutomationMode::Off && priority >= 80 {
@@ -297,6 +311,16 @@ impl AlertCenter {
         self.pending_pins.clear();
         self.pending_exports.clear();
     }
+}
+
+fn retain_packet_ref(alert: &mut AlertItem, packet_no: u64) {
+    if alert.packet_refs.contains(&packet_no) {
+        return;
+    }
+    if alert.packet_refs.len() == MAX_ALERT_PACKET_REFS {
+        alert.packet_refs.remove(0);
+    }
+    alert.packet_refs.push(packet_no);
 }
 
 fn fingerprint_for(item: &AlertItem) -> String {

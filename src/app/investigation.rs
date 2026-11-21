@@ -180,6 +180,78 @@ impl App {
         self.pin_investigation_item(InvestigationItem::Alert(id))
     }
 
+    pub fn investigate_selected_alert(&mut self) -> bool {
+        let core_handle = self.core.clone();
+        let Ok(Some(core)) = core_handle.try_read() else {
+            self.set_status("Analysis busy; retry alert investigation");
+            return false;
+        };
+        let Some(alert) = core.alert_center.selected_item().cloned() else {
+            self.set_status("No alert selected to investigate");
+            return false;
+        };
+        drop(core);
+
+        let mut packet_refs = Vec::with_capacity(alert.packet_refs.len() + 3);
+        for packet_no in [alert.first_packet, alert.packet_no]
+            .into_iter()
+            .chain(alert.packet_refs.iter().copied())
+            .chain([alert.last_packet])
+        {
+            if packet_no > 0 && !packet_refs.contains(&packet_no) {
+                packet_refs.push(packet_no);
+            }
+        }
+        packet_refs.sort_unstable();
+
+        let mut packets = Vec::with_capacity(packet_refs.len());
+        let mut unavailable = 0;
+        for packet_no in &packet_refs {
+            if let Some(packet) = self.packet_by_no(*packet_no) {
+                packets.push(packet.clone());
+            } else {
+                unavailable += 1;
+            }
+        }
+
+        let alert_item = InvestigationItem::Alert(alert.id);
+        self.project_dirty |= self.worklist.add(alert_item.clone());
+        let mut retained = Vec::with_capacity(packets.len());
+        for packet in packets {
+            match self.worklist.pin_packet(&packet) {
+                Ok(added) => {
+                    self.project_dirty |= added;
+                    retained.push(packet.no);
+                }
+                Err(_) => unavailable += 1,
+            }
+        }
+        self.worklist.open = true;
+        self.worklist.active = retained
+            .first()
+            .and_then(|packet_no| {
+                self.worklist
+                    .items
+                    .iter()
+                    .position(|item| *item == InvestigationItem::Packet(*packet_no))
+            })
+            .or_else(|| {
+                self.worklist
+                    .items
+                    .iter()
+                    .position(|item| *item == alert_item)
+            });
+        self.investigation_view = InvestigationView::Summary;
+        self.navigate_to(Tab::Investigate);
+        self.set_status(format!(
+            "Alert #{}: opened {} matching packets; {} unavailable",
+            alert.id,
+            retained.len(),
+            unavailable
+        ));
+        true
+    }
+
     pub fn pin_current_context(&mut self) -> bool {
         let core_handle = self.core.clone();
         let Ok(Some(core)) = core_handle.try_read() else {

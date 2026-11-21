@@ -50,6 +50,7 @@ fn operational_investigation_state_round_trips() {
         last_packet: 42,
         first_seen: 1.0,
         last_seen: 3.0,
+        packet_refs: vec![40, 42],
     });
     state.investigation_items = vec![
         SavedInvestigationItem::Packet(42),
