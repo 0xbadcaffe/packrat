@@ -6,6 +6,7 @@ usage() {
         'Environment: PACKRAT_HEALTH_PORT (9477), PACKRAT_HEALTH_INTERVAL (15 seconds),' \
         'PACKRAT_ALERT_SESSION (optional tmux session), PACKRAT_DISK_PATH (/),' \
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
+        'PACKRAT_ALERT_LOG (optional absolute alert path; requires pipeline checking),' \
         'PACKRAT_MIN_FREE_MIB (512). Health requests always use IPv4 loopback.'
 }
 
@@ -22,6 +23,7 @@ port=${PACKRAT_HEALTH_PORT:-9477}
 interval=${PACKRAT_HEALTH_INTERVAL:-15}
 alert_session=${PACKRAT_ALERT_SESSION:-}
 alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
+alert_log=${PACKRAT_ALERT_LOG:-}
 disk_path=${PACKRAT_DISK_PATH:-/}
 min_free=${PACKRAT_MIN_FREE_MIB:-512}
 if [[ ! $port =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )) ||
@@ -48,8 +50,12 @@ if [[ $alert_pipeline == 1 ]] && { [[ -z $alert_session ]] || ! command -v ps >/
     printf '%s\n' 'Pipeline checking requires ps and PACKRAT_ALERT_SESSION.' >&2
     exit 2
 fi
+if [[ -n $alert_log && ( $alert_log != /* || $alert_pipeline != 1 ) ]]; then
+    printf '%s\n' 'PACKRAT_ALERT_LOG requires an absolute path and PACKRAT_ALERT_PIPELINE=1.' >&2
+    exit 2
+fi
 
-alert_pipeline_alive() {
+alert_pipeline_tails() {
     local pane=$1
     [[ $pane =~ ^[1-9][0-9]*$ ]] || return 1
     LC_ALL=C ps -e -o pid= -o ppid= -o stat= -o comm= | awk -v pane="$pane" '
@@ -63,17 +69,36 @@ alert_pipeline_alive() {
                 for (steps = 0; ancestor > 1 && steps < 32; steps++) {
                     if (ancestor == pane) {
                         observed[roles[pid]] = 1
+                        if (roles[pid] == "tail") tails[pid] = 1
                         break
                     }
                     ancestor = parent[ancestor]
                 }
             }
-            exit !(observed["tail"] && observed["jq"])
+            if (!(observed["tail"] && observed["jq"])) exit 1
+            for (pid in tails) print pid
         }'
 }
 
+alert_log_followed() {
+    local pid arg follow
+    local -a args
+    while read -r pid; do
+        [[ $pid =~ ^[1-9][0-9]*$ ]] || continue
+        mapfile -d '' -t args < <(cat -- "/proc/$pid/cmdline" 2>/dev/null)
+        [[ ${#args[@]} -gt 1 && ${args[-1]} == "$alert_log" ]] || continue
+        follow=false
+        for arg in "${args[@]:1:${#args[@]}-2}"; do
+            [[ $arg != -- ]] || break
+            if [[ $arg == -F || $arg == --follow=name ]]; then follow=true; fi
+        done
+        if "$follow"; then return 0; fi
+    done <<< "$1"
+    return 1
+}
+
 read_health() {
-    local sample watcher=null pipeline=null pane_info dead pane disk=null free_kib
+    local sample watcher=null pipeline=null source=null tails pane_info dead pane disk=null free_kib
     sample=$(curl --disable --fail --silent --max-time 3 --noproxy '*' "http://127.0.0.1:$port/health") || sample=null
     if [[ -n $alert_session ]]; then
         watcher=false
@@ -82,7 +107,14 @@ read_health() {
         if [[ $dead == 0 ]]; then
             watcher=true
             if [[ $alert_pipeline == 1 ]]; then
-                if alert_pipeline_alive "$pane"; then pipeline=true; else pipeline=false; fi
+                if tails=$(alert_pipeline_tails "$pane"); then
+                    pipeline=true
+                    if [[ -n $alert_log ]]; then
+                        if alert_log_followed "$tails"; then source=true; else source=false; fi
+                    fi
+                else
+                    pipeline=false
+                fi
             fi
         fi
     fi
@@ -91,7 +123,7 @@ read_health() {
         disk=$((10#$free_kib / 1024))
     fi
     printf '%s\n' "$sample" | jq -Rcse \
-        --argjson watcher "$watcher" --argjson pipeline "$pipeline" \
+        --argjson watcher "$watcher" --argjson pipeline "$pipeline" --argjson source "$source" \
         --argjson disk "$disk" --argjson min_free "$min_free" \
         --argjson baseline "$baseline" '
         (try fromjson catch null) as $health |
@@ -120,8 +152,9 @@ read_health() {
                 then $drops - $baseline.drops else null end
             ),
             alert_saving: ($h.alert_saving // false),
-            alert_watcher_alive: (if $pipeline == false then false else $watcher end),
+            alert_watcher_alive: (if $pipeline == false or $source == false then false else $watcher end),
             alert_watcher_pipeline_alive: $pipeline,
+            alert_watcher_source_matches: $source,
             archive_paused: ($h.archive_paused // false),
             disk_free_mib: $disk,
             issues: [
@@ -139,7 +172,8 @@ read_health() {
                     (if $h.archive_paused == true then "archive_paused" else empty end)
                 end,
                 (if $watcher == false then "alert_watcher_unavailable"
-                 elif $pipeline == false then "alert_watcher_pipeline_inactive" else empty end),
+                 elif $pipeline == false then "alert_watcher_pipeline_inactive"
+                 elif $source == false then "alert_watcher_source_unverified" else empty end),
                 (if $disk == null then "disk_space_unknown"
                  elif $disk < $min_free then "disk_space_low" else empty end)
             ],

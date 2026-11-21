@@ -5,6 +5,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 watch="$root/scripts/watch-packrat-health.sh"
 
 export PACKRAT_HEALTH_PORT=9477 PACKRAT_ALERT_SESSION=packrat-alerts PACKRAT_MIN_FREE_MIB=512 PACKRAT_ALERT_PIPELINE=0
+unset PACKRAT_ALERT_LOG
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
@@ -28,6 +29,11 @@ ps() {
     printf '%s\n' "$PACKRAT_FAKE_PROCESSES"
 }
 
+cat() {
+    [[ $* == '-- /proc/94/cmdline' && -n ${PACKRAT_FAKE_TAIL_SOURCE:-} ]] || return 1
+    printf '%s\0' /usr/bin/tail -n 0 "$PACKRAT_FAKE_TAIL_FOLLOW" -- "$PACKRAT_FAKE_TAIL_SOURCE"
+}
+
 df() {
     printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
     printf '/dev/fake 2000000 100000 %s 5%% /\n' "$PACKRAT_FAKE_DISK"
@@ -39,7 +45,7 @@ sleep() {
     if (( PACKRAT_TEST_STEP == ${PACKRAT_FAKE_STEPS:-4} )); then exit 0; fi
 }
 
-export -f curl tmux ps df sleep
+export -f curl tmux ps cat df sleep
 bash -n "$watch"
 
 bash "$watch" --once | jq -e '
@@ -61,6 +67,33 @@ for parser in '95 2 S jq' '95 91 Z jq' '95 91 T jq'; do
     jq -e '.issues == ["alert_watcher_pipeline_inactive"] and .alert_watcher_alive == false
         and .alert_watcher_pipeline_alive == false' <<< "$output" >/dev/null
 done
+
+log='/var/lib/packrat lab/alerts.jsonl'
+export PACKRAT_FAKE_PROCESSES="$pipeline"$'\n95 91 S jq'
+PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
+    PACKRAT_FAKE_TAIL_SOURCE="$log" bash "$watch" --once | jq -e '
+    .issues == [] and .alert_watcher_alive and .alert_watcher_pipeline_alive and .alert_watcher_source_matches
+' >/dev/null
+
+for mode in wrong_log descriptor missing_args; do
+    source=$log
+    follow=-F
+    case $mode in
+        wrong_log) source="$log.old" ;;
+        descriptor) follow=-f ;;
+        missing_args) source= ;;
+    esac
+    status=0
+    output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW="$follow" \
+        PACKRAT_FAKE_TAIL_SOURCE="$source" bash "$watch" --once) || status=$?
+    [[ $status == 1 ]]
+    jq -e '.issues == ["alert_watcher_source_unverified"] and .alert_watcher_pipeline_alive
+        and .alert_watcher_alive == false and .alert_watcher_source_matches == false' <<< "$output" >/dev/null
+done
+
+status=0
+PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG=alerts.jsonl bash "$watch" --once >/dev/null 2>&1 || status=$?
+[[ $status == 2 ]]
 
 degraded='{"status":"ok","capture_active":false,"telemetry_fresh":false,"alert_saving":false,"alert_save_failed":true,"archive_paused":true}'
 status=0
