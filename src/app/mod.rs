@@ -151,6 +151,8 @@ pub struct App {
     pub tag_store: TagStore,
     pub notebook: Notebook,
     pub packet_archive: Option<crate::storage::packet_archive::ArchiveWorker>,
+    archive_capture_id: Option<std::sync::Arc<str>>,
+    archive_frame_high_water: u64,
     pub evidence_vault: EvidenceVault,
     pub telemetry: TelemetryHub,
     pub socket_scope: SocketScope,

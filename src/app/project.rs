@@ -158,6 +158,21 @@ impl App {
             return Err("Saved packet history exceeds analysis budget".into());
         }
         self.try_clear_packets()?;
+        if self.archive_capture_id.is_some() {
+            // Never let a newly accepted frame reuse a historical evidence number.
+            self.archive_frame_high_water = state
+                .alert_items
+                .iter()
+                .flat_map(|alert| {
+                    [alert.packet_no, alert.first_packet, alert.last_packet]
+                        .into_iter()
+                        .chain(alert.packet_refs.iter().copied())
+                })
+                .chain(tray.packet_nos())
+                .chain(state.embedded_packets.iter().map(|packet| packet.no))
+                .max()
+                .unwrap_or(0);
+        }
         if self.background_analysis_enabled() {
             self.enqueue_offline_packets(state.embedded_packets, true)?;
         } else {

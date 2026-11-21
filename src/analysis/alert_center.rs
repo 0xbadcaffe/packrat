@@ -105,6 +105,8 @@ pub struct AlertItem {
     pub last_seen: f64,
     #[serde(default)]
     pub packet_refs: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
 }
 
 fn one() -> u64 { 1 }
@@ -115,6 +117,7 @@ pub struct AlertCenter {
     pub selected: usize,
     pub severity_filter: AlertSeverityFilter,
     pub automation_mode: AutomationMode,
+    pub(crate) capture_id: Option<String>,
     next_id: u64,
     fingerprints: HashSet<String>,
     pending_pins: Vec<u64>,
@@ -128,6 +131,7 @@ impl Default for AlertCenter {
             selected: 0,
             severity_filter: AlertSeverityFilter::All,
             automation_mode: AutomationMode::Off,
+            capture_id: None,
             next_id: 0,
             fingerprints: HashSet::new(),
             pending_pins: Vec::new(),
@@ -220,10 +224,14 @@ impl AlertCenter {
         let title = title.into();
         let detail = detail.into();
         let correlation_key = correlation_key.into();
-        let fingerprint = format!("{source}\0{title}\0{correlation_key}");
+        let capture_id = self.capture_id.as_deref().unwrap_or_default();
+        let fingerprint = format!("{capture_id}\0{source}\0{title}\0{correlation_key}");
         if !self.fingerprints.insert(fingerprint) {
             if let Some(item) = self.items.iter_mut().find(|item| {
-                item.source == source && item.title == title && item.correlation_key == correlation_key
+                item.capture_id == self.capture_id
+                    && item.source == source
+                    && item.title == title
+                    && item.correlation_key == correlation_key
             }) {
                 item.packet_no = packet_no;
                 item.last_packet = packet_no;
@@ -261,6 +269,7 @@ impl AlertCenter {
             first_seen: timestamp,
             last_seen: timestamp,
             packet_refs: Vec::new(),
+            capture_id: self.capture_id.clone(),
         };
         retain_packet_refs(&mut item, packet_no, related_packets);
         self.pending_exports.push(item.clone());
@@ -356,7 +365,13 @@ fn retain_packet_refs(alert: &mut AlertItem, packet_no: u64, related_packets: &[
 }
 
 fn fingerprint_for(item: &AlertItem) -> String {
-    format!("{}\0{}\0{}", item.source, item.title, item.correlation_key)
+    format!(
+        "{}\0{}\0{}\0{}",
+        item.capture_id.as_deref().unwrap_or_default(),
+        item.source,
+        item.title,
+        item.correlation_key
+    )
 }
 
 fn priority_for(severity: &str) -> u8 {

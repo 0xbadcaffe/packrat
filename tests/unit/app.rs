@@ -161,6 +161,78 @@ fn alert_investigation_reports_packet_refs_missing_from_retention() {
 }
 
 #[test]
+fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
+    use crate::storage::packet_archive::{ArchiveWorker, PacketArchive};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::new_for_test();
+    app.set_packet_archive(ArchiveWorker::open(directory.path()).unwrap()).unwrap();
+    let capture_a = app.archive_capture_id.clone().unwrap();
+    let mut first = packet(90);
+    first.info = "first capture".into();
+    app.inject_packet(first);
+    app.inject_packet(packet(90));
+    assert_eq!(app.packets.iter().map(|packet| packet.no).collect::<Vec<_>>(), [1, 2]);
+    {
+        let mut core = app.core.edit();
+        core.alert_center.record(1, "IDS", "HIGH", "Evidence", "first capture");
+        core.alert_center.record(2, "IDS", "HIGH", "Evidence", "first capture");
+        assert_eq!(core.alert_center.items[0].capture_id.as_deref(), Some(capture_a.as_ref()));
+    }
+    let old_alerts = app.core.edit().alert_center.items.clone();
+    app.packets.clear();
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.worklist.packet_nos(), [1, 2]);
+    assert_eq!(app.worklist.retained_packet(1).unwrap().info, "first capture");
+    assert!(app.status_msg.as_deref().unwrap().contains("2 archived"));
+
+    app.try_clear_packets().unwrap();
+    let capture_b = app.archive_capture_id.clone().unwrap();
+    assert_ne!(capture_a, capture_b);
+    app.packet_archive = Some(ArchiveWorker::open(directory.path()).unwrap());
+    let mut second = packet(90);
+    second.info = "second capture".into();
+    app.inject_packet(second);
+    app.core.edit().alert_center.restore(old_alerts, AutomationMode::Off);
+    assert!(app.investigate_selected_alert());
+    assert!(app.worklist.packet_nos().is_empty());
+    assert!(app.status_msg.as_deref().unwrap().contains("2 unavailable"));
+
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+    let mut reader = PacketArchive::open_readonly(directory.path()).unwrap();
+    assert_eq!(reader.packet_for_capture(&capture_a, 1).unwrap().unwrap().info, "first capture");
+    assert_eq!(reader.packet_for_capture(&capture_b, 1).unwrap().unwrap().info, "second capture");
+}
+
+#[test]
+fn background_clear_updates_capture_scope_before_subsequent_findings() {
+    use crate::storage::packet_archive::ArchiveWorker;
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::new_for_test();
+    app.set_packet_archive(ArchiveWorker::open(directory.path()).unwrap()).unwrap();
+    let old = app.archive_capture_id.clone();
+    app.start_background_analysis().unwrap();
+    app.try_clear_packets().unwrap();
+    let current = app.archive_capture_id.clone().unwrap();
+    assert_ne!(old.as_deref(), Some(current.as_ref()));
+    app.inject_packet(packet(7));
+    app.configure_core(|core| {
+        core.alert_center.record(1, "IDS", "HIGH", "Evidence", "new generation");
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !app.analysis_idle() {
+        app.poll_analysis();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let observed = app.query_core(|core| core.alert_center.items[0].capture_id.clone());
+    assert_eq!(observed.flatten().as_deref(), Some(current.as_ref()));
+    assert_eq!(app.packets[0].no, 1);
+}
+
+#[test]
 fn pin_limits_fail_without_losing_or_silently_evicting_evidence() {
     let mut tray = InvestigationTray::default();
     for no in 0..InvestigationTray::MAX_RETAINED_PACKETS as u64 {

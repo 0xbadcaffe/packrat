@@ -110,6 +110,8 @@ impl App {
             tag_store: TagStore::default(),
             notebook: Notebook::default(),
             packet_archive: None,
+            archive_capture_id: None,
+            archive_frame_high_water: 0,
             evidence_vault: EvidenceVault::default(),
             telemetry: TelemetryHub::default(),
             socket_scope: SocketScope::default(),

@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct PacketArchive {
@@ -231,6 +231,7 @@ fn valid_capture_id(id: &str) -> bool {
 }
 
 pub struct ArchiveWorker {
+    directory: PathBuf,
     sender: Option<std::sync::mpsc::SyncSender<ArchiveRecord>>,
     worker: Option<std::thread::JoinHandle<Result<(), String>>>,
 }
@@ -255,9 +256,16 @@ impl ArchiveWorker {
             Ok(())
         });
         Ok(Self {
+            directory: directory.to_owned(),
             sender: Some(sender),
             worker: Some(worker),
         })
+    }
+
+    pub(crate) fn reader(&self) -> Result<PacketArchive, String> {
+        let archive = PacketArchive::open_readonly(&self.directory)?;
+        archive.db.busy_timeout(std::time::Duration::ZERO).map_err(|error| error.to_string())?;
+        Ok(archive)
     }
 
     pub fn record(&self, packet: &Packet) -> Result<(), String> {

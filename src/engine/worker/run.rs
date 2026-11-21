@@ -122,12 +122,13 @@ pub(super) fn run(
                     result,
                 }
             }
-            Command::Clear { generation: next } => {
+            Command::Clear { generation: next, capture_id } => {
                 if next != generation + 1 {
                     return Err("Invalid analysis clear generation".into());
                 }
                 generation = next;
                 core.clear();
+                core.alert_center.capture_id = capture_id;
                 history.clear();
                 history_bytes = 0;
                 analyzed = 0;

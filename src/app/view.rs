@@ -37,13 +37,14 @@ impl App {
             .map(|core| AppView { app: self, core }))
     }
 
-    pub fn replace_core(&mut self, core: AnalysisCore) {
+    pub fn replace_core(&mut self, mut core: AnalysisCore) {
         self.analysis_worker.take();
         self.pending_analysis.clear();
         self.pending_analysis_bytes = 0;
         self.pending_analysis_events.clear();
         self.packet_effects.clear();
         self.reset_inspection();
+        core.alert_center.capture_id = self.archive_capture_id.as_deref().map(str::to_owned);
         self.core = ReadCore::new(core);
     }
 }
@@ -130,6 +131,10 @@ impl AppView<'_> {
                         ("State".into(), alert.disposition.to_string()),
                         ("Source".into(), alert.source.clone()),
                         ("Packet".into(), format!("#{}", alert.packet_no)),
+                        (
+                            "Capture ID".into(),
+                            alert.capture_id.as_deref().unwrap_or("Unscoped").into(),
+                        ),
                         (
                             "Matched packets".into(),
                             alert.packet_refs.len().to_string(),

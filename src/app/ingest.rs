@@ -1,6 +1,27 @@
 use super::*;
 
 impl App {
+    pub fn set_packet_archive(
+        &mut self,
+        archive: crate::storage::packet_archive::ArchiveWorker,
+    ) -> Result<(), String> {
+        if self.analysis_worker.is_some() || self.packet_archive.is_some() {
+            return Err("Set the packet archive before starting background analysis".into());
+        }
+        let capture_id = Self::new_archive_capture_id();
+        self.archive_frame_high_water = self.packets.iter().map(|packet| packet.no).max().unwrap_or(0);
+        self.archive_capture_id = Some(capture_id.clone());
+        self.configure_core(move |core| {
+            core.alert_center.capture_id = Some(capture_id.to_string());
+        });
+        self.packet_archive = Some(archive);
+        Ok(())
+    }
+
+    pub(super) fn new_archive_capture_id() -> std::sync::Arc<str> {
+        format!("{:032x}", rand::random::<u128>()).into()
+    }
+
     pub fn ingest_packet(&mut self, pkt: Packet) {
         if let Err(error) = self.try_ingest_packet(pkt) {
             self.reject_analysis_packet(error);
@@ -45,10 +66,16 @@ impl App {
 
     pub(super) fn try_analyze_packet(
         &mut self,
-        pkt: Packet,
+        mut pkt: Packet,
         live: bool,
         restoring: bool,
     ) -> Result<(), SubmitError<Packet>> {
+        if self.archive_capture_id.is_some() && !restoring {
+            let Some(number) = self.archive_frame_high_water.checked_add(1) else {
+                return Err(SubmitError::Oversized(pkt));
+            };
+            pkt.no = number;
+        }
         if let Some(worker) = &mut self.analysis_worker {
             match worker.try_packet(pkt.clone(), live) {
                 Ok(sequence) => {
@@ -59,6 +86,7 @@ impl App {
                 Err(SubmitError::Oversized(_)) => return Err(SubmitError::Oversized(pkt)),
             }
         }
+        self.archive_frame_high_water = self.archive_frame_high_water.max(pkt.no);
         if !live {
             // Offline traffic shares detector state with the live view. Once
             // mixed, require a clean session before allowing host enforcement.
@@ -70,7 +98,10 @@ impl App {
             .packet_archive
             .as_ref()
             .filter(|_| !restoring)
-            .and_then(|archive| archive.record(&pkt).err())
+            .and_then(|archive| match &self.archive_capture_id {
+                Some(capture_id) => archive.record_scoped(capture_id, &pkt).err(),
+                None => archive.record(&pkt).err(),
+            })
         {
             self.abort_capture();
             self.capturing = false;

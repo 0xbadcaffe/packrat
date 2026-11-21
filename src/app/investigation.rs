@@ -181,6 +181,10 @@ impl App {
     }
 
     pub fn investigate_selected_alert(&mut self) -> bool {
+        if !self.analysis_generation_ready() {
+            self.set_status("Analysis busy; retry alert investigation");
+            return false;
+        }
         let core_handle = self.core.clone();
         let Ok(Some(core)) = core_handle.try_read() else {
             self.set_status("Analysis busy; retry alert investigation");
@@ -204,24 +208,48 @@ impl App {
         }
         packet_refs.sort_unstable();
 
-        let mut packets = Vec::with_capacity(packet_refs.len());
-        let mut unavailable = 0;
-        for packet_no in &packet_refs {
-            if let Some(packet) = self.packet_by_no(*packet_no) {
-                packets.push(packet.clone());
-            } else {
-                unavailable += 1;
-            }
-        }
-
         let alert_item = InvestigationItem::Alert(alert.id);
         self.project_dirty |= self.worklist.add(alert_item.clone());
-        let mut retained = Vec::with_capacity(packets.len());
-        for packet in packets {
+        let scope = alert.capture_id.as_deref();
+        let same_capture = scope.is_some() && scope == self.archive_capture_id.as_deref();
+        let allow_local = scope.is_none() || same_capture;
+        let mut reader = None;
+        let mut archive_error = false;
+        let mut unavailable = 0;
+        let mut archived = 0;
+        let mut retained = Vec::with_capacity(packet_refs.len());
+        for packet_no in packet_refs {
+            let local = allow_local.then(|| self.packet_by_no(packet_no)).flatten().cloned();
+            let from_archive = local.is_none() && same_capture;
+            let packet = if from_archive {
+                if reader.is_none() && !archive_error {
+                    match self.packet_archive.as_ref().map(|archive| archive.reader()) {
+                        Some(Ok(opened)) => reader = Some(opened),
+                        Some(Err(_)) => archive_error = true,
+                        None => {}
+                    }
+                }
+                reader.as_mut().and_then(|reader| {
+                    match reader.packet_for_capture(scope.unwrap_or_default(), packet_no) {
+                        Ok(packet) => packet,
+                        Err(_) => {
+                            archive_error = true;
+                            None
+                        }
+                    }
+                })
+            } else {
+                local
+            };
+            let Some(packet) = packet else {
+                unavailable += 1;
+                continue;
+            };
             match self.worklist.pin_packet(&packet) {
                 Ok(added) => {
                     self.project_dirty |= added;
                     retained.push(packet.no);
+                    archived += usize::from(from_archive);
                 }
                 Err(_) => unavailable += 1,
             }
@@ -244,10 +272,18 @@ impl App {
         self.investigation_view = InvestigationView::Summary;
         self.navigate_to(Tab::Investigate);
         self.set_status(format!(
-            "Alert #{}: opened {} matching packets; {} unavailable",
+            "Alert #{}: opened {} matching packets ({} archived); {} unavailable{}",
             alert.id,
             retained.len(),
-            unavailable
+            archived,
+            unavailable,
+            if archive_error {
+                " (archive read failed)"
+            } else if !allow_local {
+                " (different capture)"
+            } else {
+                ""
+            }
         ));
         true
     }

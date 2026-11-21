@@ -23,6 +23,7 @@ fn alert(hit_count: u64, packet_no: u64) -> AlertItem {
         } else {
             vec![1, packet_no]
         },
+        capture_id: None,
     }
 }
 
@@ -66,4 +67,22 @@ fn identical_alerts_from_a_new_session_are_kept() {
         .unwrap();
 
     assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 2);
+}
+
+#[test]
+fn saved_alert_qualifies_frame_numbers_with_the_capture_id() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let mut item = alert(2, 4);
+    item.capture_id = Some("capture-b".into());
+    AlertJsonlWriter::open(path.clone(), "process-a")
+        .unwrap()
+        .append_alerts(&[item])
+        .unwrap();
+
+    let record: ExistingAlertRecord =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(record.session_id, "process-a");
+    assert_eq!(record.alert.capture_id.as_deref(), Some("capture-b"));
+    assert_eq!(record.alert.packet_refs, [1, 4]);
 }

@@ -84,6 +84,7 @@ enum Command {
     },
     Clear {
         generation: u64,
+        capture_id: Option<String>,
     },
     Update {
         generation: u64,
@@ -306,11 +307,15 @@ impl AnalysisWorker {
     }
 
     pub fn try_clear(&mut self) -> Result<u64, String> {
+        self.try_clear_for_capture(None)
+    }
+
+    pub(crate) fn try_clear_for_capture(&mut self, capture_id: Option<String>) -> Result<u64, String> {
         let generation = self
             .generation
             .checked_add(1)
             .ok_or("Worker generation exhausted")?;
-        self.try_command(Command::Clear { generation })?;
+        self.try_command(Command::Clear { generation, capture_id })?;
         self.generation = generation;
         Ok(generation)
     }
