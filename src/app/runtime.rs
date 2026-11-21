@@ -162,6 +162,7 @@ impl App {
             evidence_exports: self.evidence_vault.exports.len(),
             packets_per_second: self.current_rate(),
             capturing: self.capturing,
+            capture_run_id: self.capture_handle.as_ref().map(crate::capture::CaptureTask::run_id),
             pcap_buffer_drops: self.pcap_buffer_drops(),
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),
             alert_save_failed: self.alert_save_error_reported.is_some() || core.alert_save_error.is_some(),

@@ -8,6 +8,7 @@ pub struct CaptureTask {
     handle: JoinHandle<Result<(), String>>,
     stop: Arc<AtomicBool>,
     loss: Arc<CaptureLoss>,
+    run_id: u64,
 }
 
 pub(crate) struct CaptureLoss(AtomicU64);
@@ -35,6 +36,7 @@ impl CaptureTask {
             handle: tokio::spawn(future),
             stop: Arc::new(AtomicBool::new(false)),
             loss: Arc::new(CaptureLoss::default()),
+            run_id: rand::random(),
         }
     }
 
@@ -53,7 +55,12 @@ impl CaptureTask {
             handle: tokio::task::spawn_blocking(move || work(worker_stop, worker_loss)),
             stop,
             loss,
+            run_id: rand::random(),
         }
+    }
+
+    pub(crate) fn run_id(&self) -> u64 {
+        self.run_id
     }
 
     pub fn pcap_buffer_drops(&self) -> Option<u32> {

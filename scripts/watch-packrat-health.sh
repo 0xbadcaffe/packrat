@@ -53,13 +53,24 @@ read_health() {
         disk=$((10#$free_kib / 1024))
     fi
     printf '%s\n' "$sample" | jq -Rcse \
-        --argjson watcher "$watcher" --argjson disk "$disk" --argjson min_free "$min_free" '
+        --argjson watcher "$watcher" --argjson disk "$disk" --argjson min_free "$min_free" \
+        --argjson baseline "$baseline" '
         (try fromjson catch null) as $health |
         (if ($health|type) == "object" then $health else {} end) as $h |
+        ($h.capture_run_id | if type == "string" and test("^[0-9a-f]{16}$") then . else null end) as $run |
+        ($h.pcap_buffer_drops | if type == "number" and . >= 0 and . <= 4294967295 and floor == .
+                                 then . else null end) as $drops |
+        ($h.status == "ok" and $h.telemetry_fresh == true and $h.capture_active == true) as $usable |
         {
             capture_active: ($h.capture_active // false),
+            capture_run_id: $run,
             telemetry_fresh: ($h.telemetry_fresh // false),
-            pcap_buffer_drops: ($h.pcap_buffer_drops // null),
+            pcap_buffer_drops: $drops,
+            pcap_buffer_drops_delta: (
+                if $usable and $run != null and $drops != null and $baseline.run == $run
+                   and $drops >= $baseline.drops
+                then $drops - $baseline.drops else null end
+            ),
             alert_saving: ($h.alert_saving // false),
             alert_watcher_alive: $watcher,
             archive_paused: ($h.archive_paused // false),
@@ -71,30 +82,39 @@ read_health() {
                     (if $h.capture_active != true then "capture_inactive" else empty end),
                     (if $h.alert_save_failed == true then "alert_save_failed"
                      elif $h.alert_saving != true then "alert_saving_disabled" else empty end),
-                    (if ($h.pcap_buffer_drops|type) == "number" then
-                         if $h.pcap_buffer_drops > 0 then "pcap_buffer_drops" else empty end
+                    (if $drops != null then
+                         if $drops > 0 then "pcap_buffer_drops" else empty end
                      else "pcap_stats_unavailable" end),
                     (if $h.archive_paused == true then "archive_paused" else empty end)
                 end,
                 (if $watcher == false then "alert_watcher_unavailable" else empty end),
                 (if $disk == null then "disk_space_unknown"
                  elif $disk < $min_free then "disk_space_low" else empty end)
-            ]
+            ],
+            next_baseline: (
+                if $usable and $run != null and $drops != null then {run:$run,drops:$drops}
+                elif $usable and $run != $baseline.run then null
+                else $baseline end
+            )
         }'
 }
 
 previous=
+baseline=null
 while :; do
     if ! state=$(read_health); then
-        state='{"issues":["monitor_input_error"]}'
+        state=$(jq -cn --argjson baseline "$baseline" '{issues:["monitor_input_error"],next_baseline:$baseline}')
     fi
-    issues=$(jq -c '.issues' <<< "$state") || exit 2
-    if [[ $issues != "$previous" ]] || "$once"; then
-        jq -c --arg time "$(date -u +%FT%TZ)" '. + {record_type:"capture_health", timestamp:$time}' <<< "$state"
-        previous=$issues
+    change_key=$(jq -c '[.issues, .capture_run_id, .pcap_buffer_drops]' <<< "$state") || exit 2
+    if [[ $change_key != "$previous" ]] || "$once"; then
+        jq -c --arg time "$(date -u +%FT%TZ)" '
+            del(.next_baseline) + {record_type:"capture_health", timestamp:$time}
+        ' <<< "$state"
+        previous=$change_key
     fi
     if "$once"; then
-        if [[ $issues == '[]' ]]; then exit 0; else exit 1; fi
+        if jq -e '.issues == []' <<< "$state" >/dev/null; then exit 0; else exit 1; fi
     fi
+    baseline=$(jq -c '.next_baseline' <<< "$state") || exit 2
     sleep "$interval"
 done

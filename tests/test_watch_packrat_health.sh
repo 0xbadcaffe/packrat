@@ -10,6 +10,10 @@ export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
 curl() {
     [[ ${*: -1} == 'http://127.0.0.1:9477/health' && $1 == --disable ]] || return 2
+    if [[ -n ${PACKRAT_FAKE_SAMPLES:-} ]]; then
+        jq -ce --argjson n "$PACKRAT_TEST_STEP" '.[$n] | objects' <<< "$PACKRAT_FAKE_SAMPLES"
+        return
+    fi
     if [[ $PACKRAT_FAKE_HEALTH == unreachable || $PACKRAT_TEST_STEP == 2 ]]; then return 22; fi
     printf '%s\n' "$PACKRAT_FAKE_HEALTH"
 }
@@ -27,7 +31,7 @@ df() {
 sleep() {
     PACKRAT_TEST_STEP=$((PACKRAT_TEST_STEP + 1))
     export PACKRAT_TEST_STEP
-    if (( PACKRAT_TEST_STEP == 4 )); then exit 0; fi
+    if (( PACKRAT_TEST_STEP == ${PACKRAT_FAKE_STEPS:-4} )); then exit 0; fi
 }
 
 export -f curl tmux df sleep
@@ -62,4 +66,24 @@ PACKRAT_HEALTH_PORT='9477/path' bash "$watch" --once >/dev/null 2>&1 || status=$
 [[ $status == 2 ]]
 
 bash "$watch" | jq -se 'map(.issues) == [[], ["health_unreachable"], []]' >/dev/null
+
+samples=$(jq -cn '
+    def sample($id;$drops):
+        {status:"ok",telemetry_fresh:true,capture_active:true,alert_saving:true,
+         capture_run_id:$id,pcap_buffer_drops:$drops};
+    "000000000000000a" as $a | "000000000000000b" as $b |
+    [
+        sample($a;4), sample($a;4), sample($a;7),
+        null, sample($a;12),
+        sample($b;20), sample($b;1), sample($b;3)
+    ]
+')
+PACKRAT_FAKE_STEPS=8 PACKRAT_FAKE_SAMPLES="$samples" bash "$watch" | jq -se '
+    length == 7
+    and map(.pcap_buffer_drops) == [4, 7, null, 12, 20, 1, 3]
+    and map(.pcap_buffer_drops_delta) == [null, 3, null, 5, null, null, 2]
+    and .[2].issues == ["health_unreachable"]
+    and all(.[]; has("next_baseline") | not)
+' >/dev/null
+
 printf '%s\n' 'Packrat health watcher tests passed'
