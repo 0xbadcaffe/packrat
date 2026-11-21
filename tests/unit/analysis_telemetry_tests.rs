@@ -49,3 +49,54 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     hub.inner.write().unwrap().updated_at = Instant::now().checked_sub(Duration::from_secs(6));
     assert_eq!(health()["telemetry_fresh"], false);
 }
+
+#[tokio::test]
+async fn telemetry_waits_for_complete_headers_and_bounds_request_size() {
+    let listener = bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(serve(listener, TelemetryHub::default()));
+    let mut health = TcpStream::connect(address).await.unwrap();
+    health.write_all(b"GET /hea").await.unwrap();
+    assert!(timeout(Duration::from_millis(25), health.read_u8()).await.is_err());
+    health.write_all(b"lth HTTP/1.1\r\nHost: localhost\r\n\r").await.unwrap();
+    assert!(timeout(Duration::from_millis(25), health.read_u8()).await.is_err());
+    health.write_all(b"\n").await.unwrap();
+    let mut response = String::new();
+    timeout(Duration::from_secs(1), health.read_to_string(&mut response)).await.unwrap().unwrap();
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    let (_, body) = response.split_once("\r\n\r\n").unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(body).unwrap()["service"], "packrat");
+
+    let mut client = TcpStream::connect(address).await.unwrap();
+    let mut request = b"GET /health HTTP/1.1\r\nX-Filler: ".to_vec();
+    request.resize(MAX_REQUEST_BYTES, b'x');
+    client.write_all(&request).await.unwrap();
+    response.clear();
+    timeout(Duration::from_secs(1), client.read_to_string(&mut response)).await.unwrap().unwrap();
+    assert!(response.starts_with("HTTP/1.1 431 "));
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
+}
+
+#[tokio::test]
+async fn incomplete_telemetry_connection_expires_and_queued_request_is_served() {
+    let listener = bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(serve_with_limits(
+        listener, TelemetryHub::default(), 1, Duration::from_millis(150),
+    ));
+    let mut incomplete = TcpStream::connect(address).await.unwrap();
+    incomplete.write_all(b"GET /metrics HTTP/1.1\r\n").await.unwrap();
+    let mut queued = TcpStream::connect(address).await.unwrap();
+    queued.write_all(b"GET /metrics HTTP/1.0\r\n\r\n").await.unwrap();
+    assert!(timeout(Duration::from_millis(25), queued.read_u8()).await.is_err());
+
+    let mut response = String::new();
+    timeout(Duration::from_secs(1), incomplete.read_to_string(&mut response)).await.unwrap().unwrap();
+    assert!(response.is_empty());
+    timeout(Duration::from_secs(1), queued.read_to_string(&mut response)).await.unwrap().unwrap();
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.contains("packrat_capture_active 0"));
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
+}

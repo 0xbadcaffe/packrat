@@ -6,6 +6,12 @@ use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinSet;
+use tokio::time::timeout;
+
+const MAX_TELEMETRY_CONNECTIONS: usize = 16;
+const TELEMETRY_DEADLINE: Duration = Duration::from_secs(2);
+const MAX_REQUEST_BYTES: usize = 2048;
 
 #[derive(Debug, Clone, Default)]
 pub struct TelemetrySnapshot {
@@ -155,27 +161,56 @@ pub async fn bind(address: SocketAddr) -> std::io::Result<TcpListener> {
 }
 
 pub async fn serve(listener: TcpListener, hub: TelemetryHub) {
-    while let Ok((stream, _peer)) = listener.accept().await {
-        let hub = hub.clone();
-        tokio::spawn(async move {
-            let _ = serve_connection(stream, hub).await;
-        });
+    serve_with_limits(listener, hub, MAX_TELEMETRY_CONNECTIONS, TELEMETRY_DEADLINE).await;
+}
+
+async fn serve_with_limits(
+    listener: TcpListener,
+    hub: TelemetryHub,
+    limit: usize,
+    deadline: Duration,
+) {
+    let mut active = JoinSet::new();
+    loop {
+        tokio::select! {
+            _ = active.join_next(), if !active.is_empty() => {}
+            accepted = listener.accept(), if active.len() < limit => {
+                let Ok((stream, _peer)) = accepted else { break };
+                let hub = hub.clone();
+                active.spawn(async move {
+                    let _ = timeout(deadline, serve_connection(stream, hub)).await;
+                });
+            }
+        }
     }
 }
 
 async fn serve_connection(mut stream: TcpStream, hub: TelemetryHub) -> std::io::Result<()> {
-    let mut request = [0_u8; 2048];
-    let size = stream.read(&mut request).await?;
-    let first_line = std::str::from_utf8(&request[..size])
-        .ok()
-        .and_then(|request| request.lines().next())
-        .unwrap_or("");
-    let (status, content_type, body) = if first_line.starts_with("GET /metrics ") {
-        ("200 OK", "application/openmetrics-text; version=1.0.0; charset=utf-8", hub.snapshot().openmetrics())
-    } else if first_line.starts_with("GET /health ") {
-        ("200 OK", "application/json", hub.health())
-    } else {
-        ("404 Not Found", "text/plain; charset=utf-8", "not found\n".to_string())
+    let mut request = [0_u8; MAX_REQUEST_BYTES];
+    let mut used = 0;
+    let route = loop {
+        let size = stream.read(&mut request[used..]).await?;
+        if size == 0 {
+            return Ok(());
+        }
+        let new_end = used + size;
+        if request[used.saturating_sub(3)..new_end].windows(4).any(|w| w == b"\r\n\r\n") {
+            break request_line(&request[..new_end]);
+        }
+        used = new_end;
+        if used == request.len() {
+            break Err("431 Request Header Fields Too Large");
+        }
+    };
+    let (status, content_type, body) = match route {
+        Ok(("GET", "/metrics")) => (
+            "200 OK",
+            "application/openmetrics-text; version=1.0.0; charset=utf-8",
+            hub.snapshot().openmetrics(),
+        ),
+        Ok(("GET", "/health")) => ("200 OK", "application/json", hub.health()),
+        Ok(_) => ("404 Not Found", "text/plain; charset=utf-8", "not found\n".into()),
+        Err(status) => (status, "text/plain; charset=utf-8", format!("{status}\n")),
     };
     let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -183,6 +218,17 @@ async fn serve_connection(mut stream: TcpStream, hub: TelemetryHub) -> std::io::
     );
     stream.write_all(response.as_bytes()).await?;
     stream.shutdown().await
+}
+
+fn request_line(request: &[u8]) -> Result<(&str, &str), &'static str> {
+    const BAD_REQUEST: &str = "400 Bad Request";
+    let end = request.windows(2).position(|w| w == b"\r\n").ok_or(BAD_REQUEST)?;
+    let mut fields = std::str::from_utf8(&request[..end]).map_err(|_| BAD_REQUEST)?.split(' ');
+    match (fields.next(), fields.next(), fields.next(), fields.next()) {
+        (Some(method), Some(path), Some("HTTP/1.0" | "HTTP/1.1"), None)
+            if !method.is_empty() && path.starts_with('/') => Ok((method, path)),
+        _ => Err(BAD_REQUEST),
+    }
 }
 
 #[cfg(test)]
