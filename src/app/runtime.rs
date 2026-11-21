@@ -133,6 +133,10 @@ impl App {
         self.rate_tick
     }
 
+    pub(crate) fn pcap_buffer_drops(&self) -> Option<u32> {
+        self.capture_handle.as_ref()?.pcap_buffer_drops()
+    }
+
     pub(super) fn refresh_telemetry(&self) {
         let core_handle = self.core.clone();
         let Ok(Some(core)) = core_handle.try_read() else {
@@ -158,6 +162,11 @@ impl App {
             evidence_exports: self.evidence_vault.exports.len(),
             packets_per_second: self.current_rate(),
             capturing: self.capturing,
+            pcap_buffer_drops: self.pcap_buffer_drops(),
+            alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),
+            alert_save_failed: self.alert_save_error_reported.is_some() || core.alert_save_error.is_some(),
+            archive_enabled: self.packet_archive.is_some(),
+            archive_paused: self.packet_archive.as_ref().and_then(|archive| archive.pause_reason()).is_some(),
             latency_p95_ms: self.wire_pulse.p95_ms().unwrap_or(0.0),
             enriched_addresses: self.net_registry.observed.len(),
         });

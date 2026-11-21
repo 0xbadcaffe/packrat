@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -20,13 +21,18 @@ pub struct TelemetrySnapshot {
     pub evidence_exports: usize,
     pub packets_per_second: u32,
     pub capturing: bool,
+    pub pcap_buffer_drops: Option<u32>,
+    pub alert_saving: bool,
+    pub alert_save_failed: bool,
+    pub archive_enabled: bool,
+    pub archive_paused: bool,
     pub latency_p95_ms: f64,
     pub enriched_addresses: usize,
 }
 
 impl TelemetrySnapshot {
     pub fn openmetrics(&self) -> String {
-        format!(
+        let mut metrics = format!(
             concat!(
                 "# TYPE packrat_packets_observed_total counter\n",
                 "packrat_packets_observed_total {}\n",
@@ -52,11 +58,20 @@ impl TelemetrySnapshot {
                 "packrat_packets_per_second {}\n",
                 "# TYPE packrat_capture_active gauge\n",
                 "packrat_capture_active {}\n",
+                "# TYPE packrat_capture_pcap_stats_available gauge\n",
+                "packrat_capture_pcap_stats_available {}\n",
+                "# TYPE packrat_alert_saving gauge\n",
+                "packrat_alert_saving {}\n",
+                "# TYPE packrat_alert_save_failed gauge\n",
+                "packrat_alert_save_failed {}\n",
+                "# TYPE packrat_archive_enabled gauge\n",
+                "packrat_archive_enabled {}\n",
+                "# TYPE packrat_archive_paused gauge\n",
+                "packrat_archive_paused {}\n",
                 "# TYPE packrat_latency_p95_milliseconds gauge\n",
                 "packrat_latency_p95_milliseconds {:.3}\n",
                 "# TYPE packrat_enriched_addresses gauge\n",
                 "packrat_enriched_addresses {}\n",
-                "# EOF\n"
             ),
             self.packets_total,
             self.bytes_total,
@@ -70,26 +85,68 @@ impl TelemetrySnapshot {
             self.evidence_exports,
             self.packets_per_second,
             u8::from(self.capturing),
+            u8::from(self.pcap_buffer_drops.is_some()),
+            u8::from(self.alert_saving),
+            u8::from(self.alert_save_failed),
+            u8::from(self.archive_enabled),
+            u8::from(self.archive_paused),
             self.latency_p95_ms,
             self.enriched_addresses,
-        )
+        );
+        if let Some(dropped) = self.pcap_buffer_drops {
+            metrics.push_str(&format!(
+                "# TYPE packrat_capture_pcap_buffer_drops gauge\npackrat_capture_pcap_buffer_drops {dropped}\n"
+            ));
+        }
+        metrics.push_str("# EOF\n");
+        metrics
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct TelemetryHub {
-    inner: Arc<RwLock<TelemetrySnapshot>>,
+    inner: Arc<RwLock<TelemetryState>>,
+}
+
+#[derive(Debug, Default)]
+struct TelemetryState {
+    snapshot: TelemetrySnapshot,
+    updated_at: Option<Instant>,
 }
 
 impl TelemetryHub {
     pub fn publish(&self, snapshot: TelemetrySnapshot) {
         if let Ok(mut current) = self.inner.write() {
-            *current = snapshot;
+            *current = TelemetryState {
+                snapshot,
+                updated_at: Some(Instant::now()),
+            };
         }
     }
 
     pub fn snapshot(&self) -> TelemetrySnapshot {
-        self.inner.read().map(|snapshot| snapshot.clone()).unwrap_or_default()
+        self.inner.read().map(|state| state.snapshot.clone()).unwrap_or_default()
+    }
+
+    fn health(&self) -> String {
+        let (snapshot, updated_at) = self
+            .inner
+            .read()
+            .map(|state| (state.snapshot.clone(), state.updated_at))
+            .unwrap_or_default();
+        let age = updated_at.map(|time| time.elapsed());
+        let body = serde_json::json!({
+            "status": "ok",
+            "service": "packrat",
+            "telemetry_fresh": age.is_some_and(|age| age <= Duration::from_secs(5)),
+            "capture_active": snapshot.capturing,
+            "pcap_buffer_drops": snapshot.pcap_buffer_drops,
+            "alert_saving": snapshot.alert_saving,
+            "alert_save_failed": snapshot.alert_save_failed,
+            "archive_enabled": snapshot.archive_enabled,
+            "archive_paused": snapshot.archive_paused,
+        });
+        format!("{body}\n")
     }
 }
 
@@ -116,7 +173,7 @@ async fn serve_connection(mut stream: TcpStream, hub: TelemetryHub) -> std::io::
     let (status, content_type, body) = if first_line.starts_with("GET /metrics ") {
         ("200 OK", "application/openmetrics-text; version=1.0.0; charset=utf-8", hub.snapshot().openmetrics())
     } else if first_line.starts_with("GET /health ") {
-        ("200 OK", "application/json", "{\"status\":\"ok\",\"service\":\"packrat\"}\n".to_string())
+        ("200 OK", "application/json", hub.health())
     } else {
         ("404 Not Found", "text/plain; charset=utf-8", "not found\n".to_string())
     };

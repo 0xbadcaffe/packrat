@@ -4,7 +4,7 @@ use pcap::{Active, Capture};
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc::Sender;
 
-use crate::capture::{CaptureSource, CaptureTask};
+use crate::capture::{CaptureLoss, CaptureSource, CaptureTask};
 use crate::net::packet::{Packet, CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use crate::net::parser::parse_captured;
 
@@ -17,14 +17,16 @@ pub struct LiveCapture {
 impl CaptureSource for LiveCapture {
     fn run(self, tx: Sender<Packet>) -> CaptureTask {
         // pcap is a blocking API — run it on a dedicated blocking thread.
-        CaptureTask::blocking(move |stop| {
+        CaptureTask::blocking_with_loss(move |stop, loss| {
             #[cfg(feature = "real-capture")]
             {
                 let mut cap = open_capture(&self)?;
                 let link_type = u32::try_from(cap.get_datalink().0).map_err(|_| "Invalid capture link type")?;
                 let mut counter = 0u64;
+                let mut next_stats = std::time::Instant::now();
 
                 while !stop.load(Ordering::Acquire) && !tx.is_closed() {
+                    sample_drops(&mut cap, &loss, &mut next_stats);
                     let raw = match cap.next_packet() {
                         Ok(raw) => raw,
                         Err(pcap::Error::TimeoutExpired | pcap::Error::NoMorePackets) => {
@@ -58,6 +60,7 @@ impl CaptureSource for LiveCapture {
                             Err(tokio::sync::mpsc::error::TrySendError::Full(pending)) => {
                                 if stop.load(Ordering::Acquire) { return Ok(()); }
                                 pkt = pending;
+                                sample_drops(&mut cap, &loss, &mut next_stats);
                                 std::thread::sleep(std::time::Duration::from_millis(1));
                             }
                         }
@@ -67,10 +70,19 @@ impl CaptureSource for LiveCapture {
 
             #[cfg(not(feature = "real-capture"))]
             {
-                let _ = (self, tx, stop);
+                let _ = (self, tx, stop, loss);
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(feature = "real-capture")]
+fn sample_drops(cap: &mut Capture<Active>, loss: &CaptureLoss, next: &mut std::time::Instant) {
+    let now = std::time::Instant::now();
+    if now >= *next {
+        loss.publish(cap.stats().ok().map(|stats| stats.dropped));
+        *next = now + std::time::Duration::from_secs(1);
     }
 }
 

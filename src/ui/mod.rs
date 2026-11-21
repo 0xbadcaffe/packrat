@@ -369,6 +369,13 @@ fn draw_packet_comparison(f: &mut Frame, comparison: &crate::analysis::packet_co
 }
 
 fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
+    let drop_span = app
+        .pcap_buffer_drops()
+        .filter(|&count| count > 0)
+        .map_or_else(
+            || Span::raw(""),
+            |count| Span::styled(format!("│ pcap drops:{count} "), Style::default().fg(C_YELLOW())),
+        );
     let archive_span = if app
         .packet_archive
         .as_ref()
@@ -419,6 +426,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         cap_indicator,
         rec_indicator,
         archive_span,
+        drop_span,
         Span::styled("│ ", Style::default().fg(C_FG3())),
         Span::styled(format!("pkts:{} ", app.filtered.len()), Style::default().fg(C_FG2())),
         Span::styled(format!("total:{} ", app.packets.len()), Style::default().fg(C_FG2())),
