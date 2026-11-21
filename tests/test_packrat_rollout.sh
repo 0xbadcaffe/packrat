@@ -5,6 +5,32 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=scripts/packrat-rollout.sh
 source "$root/scripts/packrat-rollout.sh"
 
+(
+    backup_dir=/backup
+    stage_log=$(alert_log_for_session "$bridge_session")
+    primary_log=$(alert_log_for_session "$main_session")
+    [[ $stage_log == /backup/stage-data/packrat/alerts.jsonl ]]
+    [[ $primary_log == "$data_dir/alerts.jsonl" ]]
+
+    tmux() { printf '%s\n' "$*"; }
+    [[ $(launch_capture "$bridge_session" /candidate) == \
+        "new-session -d -s $bridge_session -c / -x 150 -y 40 sudo -n -H env XDG_DATA_HOME=/backup/stage-data /candidate" ]]
+    [[ $(launch_capture "$main_session" /candidate) == \
+        "new-session -d -s $main_session -c / -x 150 -y 40 sudo -n -H /candidate --telemetry-listen $health_addr" ]]
+
+    sudo() {
+        [[ $* == '-n ls -l /proc/42/fd' ]] || return 1
+        printf 'l-wx------ 1 root root 64 6 -> %s\n' "$mock_fd"
+    }
+    mock_fd=$stage_log
+    alerts_ready 42 "$stage_log"
+    if alerts_ready 42 "$primary_log"; then exit 1; fi
+    mock_fd="$stage_log.1"
+    if alerts_ready 42 "$stage_log"; then exit 1; fi
+    mock_fd="$stage_log (deleted)"
+    if alerts_ready 42 "$stage_log"; then exit 1; fi
+)
+
 prepare_backup_and_stage() {
     trace+=("backup")
     backup_dir=/backup

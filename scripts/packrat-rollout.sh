@@ -55,7 +55,17 @@ health_ready() {
 }
 
 alerts_ready() {
-    sudo -n ls -l "/proc/$1/fd" | grep -F -- " -> $data_dir/alerts.jsonl" >/dev/null
+    sudo -n ls -l "/proc/$1/fd" | awk -v suffix=" -> $2" '
+        substr($0, length($0) - length(suffix) + 1) == suffix { found=1 }
+        END { exit !found }'
+}
+
+alert_log_for_session() {
+    if [[ $1 == "$bridge_session" ]]; then
+        printf '%s\n' "$backup_dir/stage-data/packrat/alerts.jsonl"
+    else
+        printf '%s\n' "$data_dir/alerts.jsonl"
+    fi
 }
 
 preflight() {
@@ -83,7 +93,8 @@ preflight() {
         return 1
     }
     health_ready || { error "Current capture telemetry or alert logging is unhealthy"; return 1; }
-    alerts_ready "$pid" && sudo -n test -f "$data_dir/alerts.jsonl"
+    alerts_ready "$pid" "$(alert_log_for_session "$main_session")" &&
+        sudo -n test -f "$data_dir/alerts.jsonl"
 }
 
 prepare_backup_and_stage() {
@@ -108,14 +119,29 @@ replace_installed() {
     return 1
 }
 
+launch_capture() {
+    local session=$1 executable=$2
+    case $session in
+        "$main_session")
+            tmux new-session -d -s "$session" -c / -x 150 -y 40 \
+                sudo -n -H "$executable" --telemetry-listen "$health_addr"
+            ;;
+        "$bridge_session")
+            [[ -n $backup_dir ]] || return 1
+            tmux new-session -d -s "$session" -c / -x 150 -y 40 \
+                sudo -n -H env "XDG_DATA_HOME=$backup_dir/stage-data" "$executable"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 start_capture() {
-    local session=$1 executable=$2 index attempt count pid baseline=
-    local -a args=()
-    if [[ $session == "$main_session" ]]; then args=(--telemetry-listen "$health_addr"); fi
+    local session=$1 executable=$2 index attempt count pid log baseline=
+    log=$(alert_log_for_session "$session")
     index=$(printf '%s\n' /sys/class/net/* | LC_ALL=C sort |
         awk -F / -v iface="$interface" '$NF == iface { print NR-1 }')
     [[ $index =~ ^[0-9]+$ ]] || return 1
-    tmux new-session -d -s "$session" -c / -x 150 -y 40 sudo -n -H "$executable" "${args[@]}" || return 1
+    launch_capture "$session" "$executable" || return 1
     for attempt in {1..10}; do
         if pane "$session" | grep -F 'Select network interface' >/dev/null; then break; fi
         sleep 1
@@ -130,7 +156,7 @@ start_capture() {
         if [[ $count =~ ^[0-9]+$ ]]; then
             if [[ -n $baseline ]] && (( count > baseline )); then
                 pid=$(capture_pid "$session" "$executable") || return 1
-                if alerts_ready "$pid" && { [[ $session != "$main_session" ]] || health_ready; }; then
+                if alerts_ready "$pid" "$log" && { [[ $session != "$main_session" ]] || health_ready; }; then
                     printf '%s: %s packet count increased to %s\n' "$session" "$interface" "$count"
                     return 0
                 fi
@@ -169,6 +195,7 @@ retire_bridge() {
 rollout() {
     prepare_backup_and_stage || { error "Backup or staging failed; current capture not stopped"; return 1; }
     printf 'Rollback binary: %s/packrat\n' "$backup_dir"
+    printf 'Staging alert log: %s\n' "$(alert_log_for_session "$bridge_session")"
     if ! start_capture "$bridge_session" "$stage_binary"; then
         error "Candidate did not pass staging; current capture was not stopped"
         retire_bridge || error "Inspect $bridge_session before retrying"
