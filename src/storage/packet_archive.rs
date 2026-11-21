@@ -6,7 +6,24 @@ use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArchiveLimits {
+    pub max_payload_bytes: u64,
+    pub max_frames: u64,
+    pub reserve_free_bytes: u64,
+}
+
+impl Default for ArchiveLimits {
+    fn default() -> Self {
+        Self {
+            max_payload_bytes: 256 * 1024 * 1024,
+            max_frames: 100_000,
+            reserve_free_bytes: 512 * 1024 * 1024,
+        }
+    }
+}
 
 pub struct PacketArchive {
     db: Connection,
@@ -234,6 +251,8 @@ pub struct ArchiveWorker {
     directory: PathBuf,
     sender: Option<std::sync::mpsc::SyncSender<ArchiveRecord>>,
     worker: Option<std::thread::JoinHandle<Result<(), String>>>,
+    pause_reason: Arc<OnceLock<&'static str>>,
+    pause_reported: bool,
 }
 
 struct ArchiveRecord {
@@ -243,15 +262,65 @@ struct ArchiveRecord {
 
 impl ArchiveWorker {
     pub fn open(directory: &Path) -> Result<Self, String> {
+        Self::open_with_limits(directory, ArchiveLimits::default())
+    }
+
+    pub fn open_with_limits(directory: &Path, limits: ArchiveLimits) -> Result<Self, String> {
         let mut archive = PacketArchive::open(directory)?;
+        let mut frames = archive.count()?;
+        let mut bytes = archive.bytes.metadata().map_err(|error| error.to_string())?.len();
+        let pause_reason = Arc::new(OnceLock::new());
+        let worker_pause = Arc::clone(&pause_reason);
+        let worker_directory = directory.to_owned();
         let (sender, receiver) = std::sync::mpsc::sync_channel::<ArchiveRecord>(4096);
         let worker = std::thread::spawn(move || {
             while let Ok(first) = receiver.recv() {
                 let mut batch = vec![first];
                 batch.extend(receiver.try_iter().take(255));
-                archive.append_entries(
-                    batch.iter().map(|record| (record.capture_id.as_deref(), &record.packet)),
-                )?;
+                let available =
+                    fs2::available_space(&worker_directory).map_err(|error| error.to_string())?;
+                let writable = available.saturating_sub(limits.reserve_free_bytes);
+                let mut pending_bytes = 0_u64;
+                let mut allowed = 0;
+                let mut reason = None;
+                for record in &batch {
+                    let next = pending_bytes.saturating_add(record.packet.bytes.len() as u64);
+                    if frames.saturating_add(allowed as u64) >= limits.max_frames {
+                        reason = Some("frame limit reached");
+                    } else if bytes.saturating_add(next) > limits.max_payload_bytes {
+                        reason = Some("packet-byte limit reached");
+                    // Leave headroom for SQLite index pages and the WAL.
+                    } else if next.saturating_add((allowed as u64 + 1) * 64 * 1024) > writable {
+                        reason = Some("filesystem free-space reserve reached");
+                    }
+                    if reason.is_some() {
+                        break;
+                    }
+                    pending_bytes = next;
+                    allowed += 1;
+                }
+                if allowed > 0 {
+                    archive.append_entries(
+                        batch[..allowed]
+                            .iter()
+                            .map(|record| (record.capture_id.as_deref(), &record.packet)),
+                    )?;
+                    frames += allowed as u64;
+                    bytes += pending_bytes;
+                }
+                let reason = reason.or_else(|| {
+                    if frames >= limits.max_frames {
+                        Some("frame limit reached")
+                    } else if bytes >= limits.max_payload_bytes {
+                        Some("packet-byte limit reached")
+                    } else {
+                        None
+                    }
+                });
+                if let Some(reason) = reason {
+                    let _ = worker_pause.set(reason);
+                    break;
+                }
             }
             Ok(())
         });
@@ -259,7 +328,22 @@ impl ArchiveWorker {
             directory: directory.to_owned(),
             sender: Some(sender),
             worker: Some(worker),
+            pause_reason,
+            pause_reported: false,
         })
+    }
+
+    pub fn pause_reason(&self) -> Option<&'static str> {
+        self.pause_reason.get().copied()
+    }
+
+    pub(crate) fn take_pause_notice(&mut self) -> Option<&'static str> {
+        let reason = self.pause_reason()?;
+        if self.pause_reported {
+            return None;
+        }
+        self.pause_reported = true;
+        Some(reason)
     }
 
     pub(crate) fn reader(&self) -> Result<PacketArchive, String> {
@@ -280,14 +364,20 @@ impl ArchiveWorker {
     }
 
     fn queue_packet(&self, capture_id: Option<Arc<str>>, packet: &Packet) -> Result<(), String> {
-        self.sender
+        if self.pause_reason().is_some() {
+            return Ok(());
+        }
+        let result = self.sender
             .as_ref()
             .ok_or("Archive closed")?
             .try_send(ArchiveRecord {
                 capture_id,
                 packet: packet.clone(),
-            })
-            .map_err(|error| format!("Packet archive unavailable or queue full: {error}"))
+            });
+        if self.pause_reason().is_some() {
+            return Ok(());
+        }
+        result.map_err(|error| format!("Packet archive unavailable or queue full: {error}"))
     }
 
     pub fn poll_error(&mut self) -> Option<String> {

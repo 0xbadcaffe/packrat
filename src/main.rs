@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
     let packet_archive = options
         .archive_path
         .as_ref()
-        .map(|path| storage::packet_archive::ArchiveWorker::open(path))
+        .map(|path| storage::packet_archive::ArchiveWorker::open_with_limits(path, options.archive_limits))
         .transpose()
         .map_err(anyhow::Error::msg)?;
 

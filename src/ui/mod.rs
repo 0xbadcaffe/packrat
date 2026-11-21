@@ -119,7 +119,6 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
     } else {
         Span::raw("")
     };
-
     // IOC hit badge
     let ioc_hits = app.core.ioc_engine.hit_count();
     let ioc_span = if ioc_hits > 0 {
@@ -370,6 +369,16 @@ fn draw_packet_comparison(f: &mut Frame, comparison: &crate::analysis::packet_co
 }
 
 fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
+    let archive_span = if app
+        .packet_archive
+        .as_ref()
+        .and_then(|archive| archive.pause_reason())
+        .is_some()
+    {
+        Span::styled("│ Archive paused ", Style::default().fg(C_YELLOW()))
+    } else {
+        Span::raw("")
+    };
     let cap_indicator = if app.capturing {
         Span::styled("● LIVE ", Style::default().fg(C_GREEN()).add_modifier(Modifier::BOLD))
     } else {
@@ -409,6 +418,7 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" ", Style::default()),
         cap_indicator,
         rec_indicator,
+        archive_span,
         Span::styled("│ ", Style::default().fg(C_FG3())),
         Span::styled(format!("pkts:{} ", app.filtered.len()), Style::default().fg(C_FG2())),
         Span::styled(format!("total:{} ", app.packets.len()), Style::default().fg(C_FG2())),

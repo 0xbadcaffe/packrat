@@ -38,6 +38,13 @@ impl App {
             self.capturing = false;
             self.set_status(format!("Capture stopped: archive write failed: {error}"));
         }
+        if let Some(reason) = self
+            .packet_archive
+            .as_mut()
+            .and_then(|archive| archive.take_pause_notice())
+        {
+            self.set_status(format!("Archive paused: {reason}; capture and analysis are unaffected"));
+        }
         if let Some(result) = self.capture_handle.as_mut().and_then(|task| task.result()) {
             self.capture_handle = None;
             self.capturing = false;

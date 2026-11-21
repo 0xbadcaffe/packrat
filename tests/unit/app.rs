@@ -233,6 +233,31 @@ fn background_clear_updates_capture_scope_before_subsequent_findings() {
 }
 
 #[test]
+fn capture_keeps_running_after_the_archive_frame_limit() {
+    use crate::storage::packet_archive::{ArchiveLimits, ArchiveWorker, PacketArchive};
+
+    let directory = tempfile::tempdir().unwrap();
+    let limits = ArchiveLimits {
+        max_frames: 1,
+        reserve_free_bytes: 0,
+        ..ArchiveLimits::default()
+    };
+    let mut app = App::new_for_test();
+    app.set_packet_archive(ArchiveWorker::open_with_limits(directory.path(), limits).unwrap())
+        .unwrap();
+    app.capturing = true;
+    app.ingest_packet(packet(10));
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+    app.tick();
+    assert!(app.capturing);
+    assert!(app.status_msg.as_deref().unwrap().contains("Archive paused"));
+    app.ingest_packet(packet(11));
+    assert!(app.capturing);
+    assert_eq!(app.packets.len(), 2);
+    assert_eq!(PacketArchive::open_readonly(directory.path()).unwrap().count().unwrap(), 1);
+}
+
+#[test]
 fn pin_limits_fail_without_losing_or_silently_evicting_evidence() {
     let mut tray = InvestigationTray::default();
     for no in 0..InvestigationTray::MAX_RETAINED_PACKETS as u64 {

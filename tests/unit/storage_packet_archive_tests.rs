@@ -132,3 +132,46 @@ fn scoped_lookup_does_not_guess_for_legacy_archives() {
     assert_eq!(writer.count().unwrap(), 2);
     assert_eq!(writer.packet_for_capture("capture-a", 7).unwrap().unwrap().no, 7);
 }
+
+#[test]
+fn archive_payload_cap_keeps_committed_evidence_and_never_overwrites() {
+    let directory = tempfile::tempdir().unwrap();
+    let limits = ArchiveLimits {
+        max_payload_bytes: 7,
+        reserve_free_bytes: 0,
+        ..ArchiveLimits::default()
+    };
+    let frame = |number| parse_ethernet(&[1, 2, 3], number, number as f64);
+    let mut worker = ArchiveWorker::open_with_limits(directory.path(), limits).unwrap();
+    for number in 1..=9 {
+        worker.record(&frame(number)).unwrap();
+    }
+    worker.finish().unwrap();
+    assert_eq!(worker.pause_reason(), Some("packet-byte limit reached"));
+    assert_eq!(worker.take_pause_notice(), worker.pause_reason());
+    assert_eq!(worker.take_pause_notice(), None);
+    worker.record(&frame(10)).unwrap();
+
+    let mut worker = ArchiveWorker::open_with_limits(directory.path(), limits).unwrap();
+    worker.record(&frame(11)).unwrap();
+    worker.finish().unwrap();
+    assert_eq!(worker.pause_reason(), Some("packet-byte limit reached"));
+    let mut archive = PacketArchive::open_readonly(directory.path()).unwrap();
+    assert_eq!(archive.count().unwrap(), 2);
+    assert_eq!(archive.packet(2).unwrap().no, 2);
+    assert_eq!(std::fs::metadata(directory.path().join("packets.bin")).unwrap().len(), 6);
+}
+
+#[test]
+fn archive_pauses_before_using_the_free_space_reserve() {
+    let directory = tempfile::tempdir().unwrap();
+    let limits = ArchiveLimits {
+        reserve_free_bytes: u64::MAX,
+        ..ArchiveLimits::default()
+    };
+    let mut worker = ArchiveWorker::open_with_limits(directory.path(), limits).unwrap();
+    worker.record(&parse_ethernet(&[1, 2, 3], 1, 1.0)).unwrap();
+    worker.finish().unwrap();
+    assert_eq!(worker.pause_reason(), Some("filesystem free-space reserve reached"));
+    assert_eq!(PacketArchive::open_readonly(directory.path()).unwrap().count().unwrap(), 0);
+}

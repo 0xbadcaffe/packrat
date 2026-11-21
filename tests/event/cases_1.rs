@@ -10,6 +10,19 @@ async fn app_new_for_test_ok() {
 }
 
 #[test]
+fn archive_budget_flags_require_an_archive_and_positive_limits() {
+    let parsed = app::parse_startup_args([
+        "--archive-max-frames", "50", "--archive", "/tmp/archive", "--archive-max-mib", "3",
+    ]).unwrap();
+    let CliAction::Run(options) = parsed else { panic!("Expected run options") };
+    assert_eq!(options.archive_limits.max_frames, 50);
+    assert_eq!(options.archive_limits.max_payload_bytes, 3 * 1024 * 1024);
+    assert!(app::parse_startup_args(["--archive-max-mib", "256"]).is_err());
+    assert!(app::parse_startup_args(["--archive", "capture", "--archive-max-frames", "0"]).is_err());
+    assert!(app::parse_startup_args(["--archive", "capture", "--archive-max-mib", "18446744073709551615"]).is_err());
+}
+
+#[test]
 fn parse_startup_args_defaults_to_capture() {
     assert_eq!(
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
@@ -29,6 +42,7 @@ fn parse_startup_args_defaults_to_capture() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_limits: Default::default(),
         })
     );
 }
@@ -53,6 +67,7 @@ fn parse_startup_args_enables_simulation() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_limits: Default::default(),
         })
     );
     assert_eq!(
@@ -73,6 +88,7 @@ fn parse_startup_args_enables_simulation() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_limits: Default::default(),
         })
     );
 }
@@ -115,6 +131,7 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_limits: Default::default(),
         })
     );
 }
@@ -140,6 +157,7 @@ fn parse_startup_args_accepts_key_log_path() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_limits: Default::default(),
         })
     );
 }
