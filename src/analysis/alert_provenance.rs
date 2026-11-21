@@ -73,6 +73,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Identify the server and legacy dependency; verify SMBv1 configuration and pilot removal before disabling it.",
         ),
         (
+            "IDS", "NBNS WPAD address reply", "nbns.wpad_address_reply", 1, DirectObservation,
+            "Check whether the responder is an approved proxy discovery service and whether the client used it.",
+        ),
+        (
             "IDS", "Administrative service response fan-out", "tcp.admin_service_response_fanout", 1, Correlated,
             "Inspect the retained SYN and SYN-ACK pairs; confirm completed sessions and expected management activity.",
         ),

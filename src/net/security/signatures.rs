@@ -48,20 +48,22 @@ impl SecurityEngine {
             });
         }
 
-        // ── NBNS poisoning ──────────────────────────────────────────────────
-        if dst_port == 137
-            && (Self::contains_str_ci(pkt.protocol.as_bytes(), b"udp")
-                || Self::contains_str_ci(pkt.protocol.as_bytes(), b"nbns"))
+        if src_port == 137
+            && let Some((id, address, count)) = nbns_wire::wpad_address_reply(pkt)
         {
-            let nbns_sig: &[u8] = &[0x00, 0x20, 0x43, 0x4b];
-            if Self::contains_bytes(bytes, nbns_sig) {
-                self.push_ids(IdsAlert {
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
                     pkt_no: pkt.no,
-                    signature: "NBNS WPAD Poisoning",
+                    signature: "NBNS WPAD address reply",
                     severity: Severity::Medium,
-                    detail: format!("NBNS WPAD query from {}", pkt.src),
-                });
-            }
+                    detail: format!(
+                        "{} returned a WPAD address to {} (transaction 0x{id:04x}, first address {address}, total {count}); client use unverified",
+                        pkt.src, pkt.dst
+                    ),
+                },
+                related_packets: Vec::new(),
+                correlation_key: Some(format!("{:?}:{}>{}", service_scope(pkt), pkt.src, pkt.dst)),
+            });
         }
 
         // ── Directory traversal ─────────────────────────────────────────────

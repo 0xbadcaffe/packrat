@@ -95,7 +95,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "SMBv1 server response",
     "Log4Shell (CVE-2021-44228)",
     "Shellcode NOP sled",
-    "NBNS WPAD Poisoning",
+    "NBNS WPAD address reply",
     "Directory Traversal",
     "SQL Injection Probe",
     "XSS Probe",
@@ -116,6 +116,7 @@ mod http_tls;
 mod identities;
 mod ipv4_wire;
 mod ipv6_wire;
+mod nbns_wire;
 mod protocol_policy;
 mod scans;
 mod signatures;

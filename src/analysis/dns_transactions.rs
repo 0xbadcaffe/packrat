@@ -325,7 +325,7 @@ fn parse_message(bytes: &[u8]) -> Option<DnsMessage<'_>> {
     })
 }
 
-fn parse_name(bytes: &[u8], start: usize) -> Option<(String, usize)> {
+pub(crate) fn parse_name(bytes: &[u8], start: usize) -> Option<(String, usize)> {
     let mut labels = Vec::new();
     let mut cursor = start;
     let mut end = None;
@@ -375,7 +375,7 @@ fn parse_name(bytes: &[u8], start: usize) -> Option<(String, usize)> {
     None
 }
 
-fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
+pub(crate) fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
     let raw = packet.bytes.as_slice();
     let mut network = 14usize;
     let mut ether_type = u16::from_be_bytes([*raw.get(12)?, *raw.get(13)?]);

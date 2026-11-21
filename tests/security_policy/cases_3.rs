@@ -56,6 +56,56 @@ fn analyze_ipv6(core: &mut AnalysisCore, no: u64, bytes: &[u8]) {
     core.analyze(&parse_ethernet(bytes, no, no as f64 / 1000.0));
 }
 
+#[test]
+fn wpad_finding_requires_a_complete_nbns_address_reply() {
+    let mut core = AnalysisCore::default();
+    let frame = |no, source: u16, dest: u16, payload: &[u8]| {
+        let mut raw = vec![0; 42];
+        raw[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+        raw[14] = 0x45;
+        raw[16..18].copy_from_slice(&(28 + payload.len() as u16).to_be_bytes());
+        raw[23] = 17;
+        raw[26..34].copy_from_slice(&[10, 0, 0, 53, 10, 0, 0, 5]);
+        raw[34..36].copy_from_slice(&source.to_be_bytes());
+        raw[36..38].copy_from_slice(&dest.to_be_bytes());
+        raw[38..40].copy_from_slice(&(8 + payload.len() as u16).to_be_bytes());
+        raw.extend_from_slice(payload);
+        parse_ethernet(&raw, no, no as f64)
+    };
+    let mut reply = vec![0, 42, 0x85, 0, 0, 0, 0, 1, 0, 0, 0, 0, 32];
+    for &byte in b"WPAD           \0" {
+        reply.extend([b'A' + (byte >> 4), b'A' + (byte & 15)]);
+    }
+    reply.extend([0, 0, 0x20, 0, 1, 0, 0, 0, 60, 0, 6, 0, 0, 192, 0, 2, 10]);
+    let mut query = reply[..46].to_vec();
+    query[2..8].copy_from_slice(&[1, 0, 0, 1, 0, 0]);
+    query.extend([0, 0x20, 0, 1]);
+    let mut other_name = reply.clone();
+    other_name[13] = b'A';
+    let mut truncated = reply.clone();
+    truncated.pop();
+    let mut failed = reply.clone();
+    failed[3] = 3;
+    for input in [
+        frame(1, 50_000, 137, &query),
+        frame(2, 50_000, 137, b"\0\x20CK"),
+        frame(3, 137, 50_000, &other_name),
+        frame(4, 137, 50_000, &truncated),
+        frame(5, 137, 50_000, &failed),
+    ] {
+        core.analyze(&input);
+    }
+    assert!(core.alert_center.items.is_empty());
+    core.analyze(&frame(6, 137, 50_000, &reply));
+    let alerts = &core.alert_center.items;
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].packet_refs, [6]);
+    assert_eq!(alerts[0].provenance.as_ref().unwrap().rule_id, "nbns.wpad_address_reply");
+    assert!(alerts[0].detail.contains("192.0.2.10"));
+    assert!(alerts[0].detail.contains("client use unverified"));
+    assert!(core.incidents.incidents.is_empty());
+}
+
 #[rstest]
 #[case(false)]
 #[case(true)]

@@ -160,10 +160,13 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "legacy_smb_alert_requires_a_complete_successful_server_reply",
     },
     CoverageGroup {
+        signatures: &["NBNS WPAD address reply"],
+        positive_test: "wpad_finding_requires_a_complete_nbns_address_reply",
+    },
+    CoverageGroup {
         signatures: &[
             "Log4Shell (CVE-2021-44228)",
             "Shellcode NOP sled",
-            "NBNS WPAD Poisoning",
             "Directory Traversal",
             "SQL Injection Probe",
             "XSS Probe",
