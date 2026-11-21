@@ -8,10 +8,12 @@ use sha2::{Digest, Sha256};
 mod answers;
 mod correlation;
 mod external_resolver;
+mod investigation;
 mod negative_answers;
 mod record_wire;
 
 use correlation::{ExchangeBucket, ReplyMatch};
+pub use investigation::{DnsExchangeEvidence, DnsReplyEvidence};
 
 const TRANSACTION_TTL_SECS: f64 = 30.0;
 const RESPONSE_TTL_SECS: f64 = 5.0;
@@ -79,12 +81,26 @@ struct PendingQuery {
 
 #[derive(Debug, Clone)]
 struct RecentResponse {
-    reply_packet: u64,
-    server: String,
+    first: DnsReplyEvidence,
     question: Question,
     fingerprint: [u8; 32],
     answer_fingerprint: Option<[u8; 32]>,
     timestamp: f64,
+    alternates: Vec<DnsReplyEvidence>,
+    alternates_omitted: bool,
+}
+
+impl RecentResponse {
+    fn remember_alternate(&mut self, packet: &Packet, message: &DnsMessage<'_>) {
+        if self.first.packet == packet.no || self.alternates.iter().any(|reply| reply.packet == packet.no) {
+            return;
+        }
+        if self.alternates.len() == 8 {
+            self.alternates_omitted = true;
+            return;
+        }
+        self.alternates.push(DnsReplyEvidence::from_reply(packet, message));
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -176,14 +192,15 @@ impl DnsTransactionTracker {
         };
         let query = &exchange.query;
         let fingerprint = Sha256::digest(message.bytes).into();
-        if let Some(previous) = &exchange.reply {
-            if previous.server != packet.src {
+        if let Some(previous) = &mut exchange.reply {
+            if previous.first.resolver != packet.src {
+                previous.remember_alternate(packet, &message);
                 return vec![DnsFinding {
                     kind: DnsFindingKind::ConflictingResponse,
-                    related_packets: vec![query.packet_no, previous.reply_packet],
+                    related_packets: vec![query.packet_no, previous.first.packet],
                     detail: format!(
                         "transaction 0x{:04x} for {} received competing replies from {} and {}",
-                        message.id, previous.question.name, previous.server, packet.src
+                        message.id, previous.question.name, previous.first.resolver, packet.src
                     ),
                 }];
             }
@@ -206,12 +223,13 @@ impl DnsTransactionTracker {
                         ),
                     }
                 };
+                previous.remember_alternate(packet, &message);
                 return vec![DnsFinding {
                     kind,
-                    related_packets: vec![query.packet_no, previous.reply_packet],
+                    related_packets: vec![query.packet_no, previous.first.packet],
                     detail: format!(
                         "transaction 0x{:04x} for {} received {difference} from resolver {}",
-                        message.id, previous.question.name, previous.server,
+                        message.id, previous.question.name, previous.first.resolver,
                     ),
                 }];
             }
@@ -256,12 +274,13 @@ impl DnsTransactionTracker {
             });
         }
         exchange.reply = Some(RecentResponse {
-            reply_packet: packet.no,
-            server: packet.src.clone(),
+            first: DnsReplyEvidence::from_reply(packet, &message),
             question: message.question,
             fingerprint,
             answer_fingerprint: answers::answer_fingerprint(message.bytes, message.answer_offset),
             timestamp: packet.timestamp,
+            alternates: Vec::new(),
+            alternates_omitted: false,
         });
         findings
     }

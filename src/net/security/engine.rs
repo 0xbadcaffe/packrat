@@ -1,6 +1,10 @@
 use super::*;
 
 impl SecurityEngine {
+    pub fn dns_exchange_for_packet(&self, packet: &Packet) -> Option<crate::analysis::dns_transactions::DnsExchangeEvidence> {
+        self.dns_transactions.exchange_for_packet(packet)
+    }
+
     pub fn new() -> Self {
         Self {
             findings: DetectionBatch::default(),

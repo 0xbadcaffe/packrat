@@ -247,8 +247,8 @@ impl App {
             }
         }
         self.worklist.open = true;
-        self.worklist.active = retained
-            .first()
+        self.worklist.active = retained.iter().find(|&&frame| frame == alert.packet_no)
+            .or_else(|| retained.first())
             .and_then(|packet_no| {
                 self.worklist
                     .items

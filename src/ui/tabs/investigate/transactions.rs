@@ -2,6 +2,13 @@ use super::*;
 use crate::analysis::transactions::{HttpMessage, MessageState, MultiplexedMessage, is_http2};
 
 pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
+    if let Some(packet) = app.active_investigation_packet()
+        && (packet.protocol.eq_ignore_ascii_case("DNS")
+            || packet.src_port == Some(53) || packet.dst_port == Some(53))
+    {
+        super::transactions_dns::draw(f, app, packet, area);
+        return;
+    }
     if app
         .active_investigation_packet()
         .is_some_and(|packet| packet.protocol.eq_ignore_ascii_case("QUIC"))

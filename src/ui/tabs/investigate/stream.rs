@@ -5,9 +5,9 @@ pub(super) fn draw_flow(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
     let rows: Vec<Row> = app
         .core
         .flow_tracker
-        .sorted_flows(&app.flows_sort)
+        .flows
+        .get(&key)
         .into_iter()
-        .filter(|flow| flow.key == key)
         .map(|flow| {
             Row::new(vec![
                 Cell::from(format!(

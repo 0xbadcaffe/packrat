@@ -10,6 +10,9 @@ mod txt_reply_tests;
 #[path = "dns_transaction/external_resolver_tests.rs"]
 mod external_resolver_tests;
 
+#[path = "dns_transaction/investigation_tests.rs"]
+mod investigation_tests;
+
 fn dns_packet(
     no: u64,
     response: bool,
