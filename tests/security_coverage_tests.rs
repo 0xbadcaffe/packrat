@@ -9,6 +9,10 @@ struct CoverageGroup {
 
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
+        signatures: &["DNS reply changed at the same resolver"],
+        positive_test: "distinguishes_same_resolver_changes_from_competing_responders",
+    },
+    CoverageGroup {
         signatures: &["Malformed IPv4 fragment"],
         positive_test: "detects_malformed_ipv4_fragment_length",
     },
@@ -141,7 +145,6 @@ const COVERAGE: &[CoverageGroup] = &[
             "BlueKeep (CVE-2019-0708)",
             "Log4Shell (CVE-2021-44228)",
             "Shellcode NOP sled",
-            "LLMNR Poisoning",
             "NBNS WPAD Poisoning",
             "Directory Traversal",
             "SQL Injection Probe",

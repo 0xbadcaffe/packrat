@@ -20,6 +20,7 @@ pub enum DnsFindingKind {
     QuestionMismatch,
     UnexpectedResponder,
     ConflictingResponse,
+    ChangedReply,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -103,12 +104,21 @@ impl DnsTransactionTracker {
         };
         let fingerprint = stable_hash(message.bytes);
         if let Some(previous) = self.recent.get(&key) {
-            if previous.server != packet.src || previous.fingerprint != fingerprint {
+            if previous.server != packet.src {
                 return vec![DnsFinding {
                     kind: DnsFindingKind::ConflictingResponse,
                     detail: format!(
                         "transaction 0x{:04x} for {} received competing replies from {} and {}",
                         message.id, previous.question.name, previous.server, packet.src
+                    ),
+                }];
+            }
+            if previous.fingerprint != fingerprint {
+                return vec![DnsFinding {
+                    kind: DnsFindingKind::ChangedReply,
+                    detail: format!(
+                        "transaction 0x{:04x} for {} received different reply bytes from resolver {}",
+                        message.id, previous.question.name, previous.server
                     ),
                 }];
             }
@@ -162,6 +172,7 @@ impl DnsTransactionTracker {
     }
 
     fn insert_query(&mut self, key: TransactionKey, query: PendingQuery) {
+        self.recent.remove(&key);
         if self.pending.len() >= MAX_TRANSACTIONS && !self.pending.contains_key(&key) {
             if let Some(oldest) = self
                 .pending

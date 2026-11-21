@@ -238,6 +238,9 @@ impl SecurityEngine {
                 DnsFindingKind::ConflictingResponse => {
                     ("Conflicting DNS responses", Severity::Critical)
                 }
+                DnsFindingKind::ChangedReply => {
+                    ("DNS reply changed at the same resolver", Severity::Medium)
+                }
             };
             self.push_ids(IdsAlert {
                 pkt_no: pkt.no,

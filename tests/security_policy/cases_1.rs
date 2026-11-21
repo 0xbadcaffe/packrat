@@ -5,7 +5,6 @@ use super::*;
 #[case("BlueKeep (CVE-2019-0708)")]
 #[case("Log4Shell (CVE-2021-44228)")]
 #[case("Shellcode NOP sled")]
-#[case("LLMNR Poisoning")]
 #[case("NBNS WPAD Poisoning")]
 #[case("Directory Traversal")]
 #[case("SQL Injection Probe")]

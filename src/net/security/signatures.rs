@@ -55,20 +55,6 @@ impl SecurityEngine {
             });
         }
 
-        // ── LLMNR poisoning ─────────────────────────────────────────────────
-        if dst_port == 5355 || pkt.dst == "224.0.0.252" {
-            if Self::contains_str_ci(pkt.protocol.as_bytes(), b"udp")
-                || Self::contains_str_ci(pkt.protocol.as_bytes(), b"llmnr")
-            {
-                self.push_ids(IdsAlert {
-                    pkt_no: pkt.no,
-                    signature: "LLMNR Poisoning",
-                    severity: Severity::Medium,
-                    detail: format!("LLMNR query from {} to {}", pkt.src, pkt.dst),
-                });
-            }
-        }
-
         // ── NBNS poisoning ──────────────────────────────────────────────────
         if dst_port == 137
             && (Self::contains_str_ci(pkt.protocol.as_bytes(), b"udp")

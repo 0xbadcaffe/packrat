@@ -1,6 +1,7 @@
 use packrat_tui::analysis::dns_transactions::{DnsFindingKind, DnsTransactionTracker};
 use packrat_tui::net::packet::Packet;
 use packrat_tui::net::security::SecurityEngine;
+use packrat_tui::net::security::Severity;
 
 fn dns_packet(
     no: u64,
@@ -147,6 +148,35 @@ fn security_engine_emits_dns_integrity_alert() {
         .ids_alerts
         .iter()
         .any(|alert| alert.signature == "Unexpected DNS responder"));
+}
+
+#[test]
+fn distinguishes_same_resolver_changes_from_competing_responders() {
+    let mut engine = SecurityEngine::default();
+    let query = dns_packet(1, false, "10.0.0.5", "10.0.0.53", 49, "safe.example");
+    let reply = dns_packet(2, true, "10.0.0.53", "10.0.0.5", 49, "safe.example");
+    let mut changed = reply.clone();
+    changed.bytes[45] ^= 0x80;
+    engine.update(&query);
+    engine.update(&reply);
+    engine.update(&reply);
+    assert!(engine.ids_alerts.is_empty());
+
+    engine.update(&changed);
+    assert_eq!(engine.ids_alerts.len(), 1);
+    assert_eq!(engine.ids_alerts[0].signature, "DNS reply changed at the same resolver");
+    assert_eq!(engine.ids_alerts[0].severity, Severity::Medium);
+}
+
+#[test]
+fn new_query_can_reuse_a_recently_completed_transaction_id() {
+    let mut tracker = DnsTransactionTracker::default();
+    for (no, name) in [(1, "first.example"), (3, "next.example")] {
+        let query = dns_packet(no, false, "10.0.0.5", "10.0.0.53", 49, name);
+        let reply = dns_packet(no + 1, true, "10.0.0.53", "10.0.0.5", 49, name);
+        assert!(tracker.observe(&query).is_empty());
+        assert!(tracker.observe(&reply).is_empty());
+    }
 }
 
 #[test]
