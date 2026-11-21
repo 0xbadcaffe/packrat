@@ -65,27 +65,27 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the echo requests match expected diagnostics or discovery.",
         ),
         (
-            "IDS", "Conflicting DNS responses", "dns.competing_responders", 1, Correlated,
+            "IDS", "Conflicting DNS responses", "dns.competing_responders", 2, Correlated,
             "Compare the query and both replies; verify which resolvers were authorized.",
         ),
         (
-            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 1, Correlated,
+            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 2, Correlated,
             "Compare answer records and response codes; check expected resolver behavior.",
         ),
         (
-            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 1, Heuristic,
+            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 2, Heuristic,
             "Decode both replies before concluding that their answers differ.",
         ),
         (
-            "IDS", "DNS transaction question mismatch", "dns.question_mismatch", 1, Correlated,
+            "IDS", "DNS transaction question mismatch", "dns.question_mismatch", 2, Correlated,
             "Compare the question name, type, and class in the query and reply.",
         ),
         (
-            "IDS", "Unexpected DNS responder", "dns.unexpected_responder", 1, Correlated,
+            "IDS", "Unexpected DNS responder", "dns.unexpected_responder", 2, Correlated,
             "Check the configured resolver and whether a forwarding or failover path was expected.",
         ),
         (
-            "IDS", "Unsolicited DNS response", "dns.unmatched_response", 1, Heuristic,
+            "IDS", "Unsolicited DNS response", "dns.unmatched_response", 2, Heuristic,
             "Check capture start, packet drops, and visibility of the query direction.",
         ),
         (

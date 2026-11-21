@@ -30,9 +30,33 @@ pub enum DnsFindingKind {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct TransactionKey {
+    scope: DnsScope,
     client: String,
     client_port: u16,
     id: u16,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+struct DnsScope {
+    interface: Option<(u32, u32)>,
+    outer_vlan: Option<u16>,
+    inner_vlan: Option<u16>,
+}
+
+impl DnsScope {
+    fn from_packet(packet: &Packet) -> Self {
+        Self {
+            interface: packet.capture.as_ref().map(|capture| {
+                (capture.section_id, capture.interface_id)
+            }),
+            outer_vlan: packet.outer_vlan_id,
+            inner_vlan: packet.vlan_id,
+        }
+    }
+}
+
+pub(crate) fn alert_correlation_key(packet: &Packet) -> String {
+    format!("{:?}:{}>{}", DnsScope::from_packet(packet), packet.src, packet.dst)
 }
 
 #[derive(Debug, Clone)]
@@ -87,10 +111,12 @@ impl DnsTransactionTracker {
         let Some(message) = parse_message(payload) else {
             return Vec::new();
         };
+        let scope = DnsScope::from_packet(packet);
 
         if !message.response && destination_port == 53 {
             self.insert_query(
                 TransactionKey {
+                    scope,
                     client: packet.src.clone(),
                     client_port: source_port,
                     id: message.id,
@@ -109,6 +135,7 @@ impl DnsTransactionTracker {
         }
 
         let key = TransactionKey {
+            scope,
             client: packet.dst.clone(),
             client_port: destination_port,
             id: message.id,

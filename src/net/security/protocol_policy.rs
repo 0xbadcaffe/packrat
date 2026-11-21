@@ -245,15 +245,16 @@ impl SecurityEngine {
                     ("DNS answer set changed at the same resolver", Severity::Medium)
                 }
             };
-            self.push_ids_with_evidence(
-                IdsAlert {
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
                     pkt_no: pkt.no,
                     signature,
                     severity,
                     detail: finding.detail,
                 },
-                finding.related_packets,
-            );
+                related_packets: finding.related_packets,
+                correlation_key: Some(crate::analysis::dns_transactions::alert_correlation_key(pkt)),
+            });
         }
     }
 }

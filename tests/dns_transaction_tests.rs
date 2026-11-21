@@ -1,6 +1,6 @@
 use packrat_tui::analysis::dns_transactions::{DnsFindingKind, DnsTransactionTracker};
 use packrat_tui::engine::AnalysisCore;
-use packrat_tui::net::packet::Packet;
+use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, Packet, TimestampResolution};
 use packrat_tui::net::security::SecurityEngine;
 use packrat_tui::net::security::Severity;
 
@@ -139,6 +139,65 @@ fn detects_unsolicited_unexpected_and_competing_responses() {
         tracker.observe(&expected)[0].kind,
         DnsFindingKind::ConflictingResponse
     );
+}
+
+#[test]
+fn dns_integrity_keeps_transactions_and_alert_evidence_within_capture_scope() {
+    let baseline = (0, 0, Some(20), Some(10));
+    for other in [
+        (1, 0, Some(20), Some(10)),
+        (0, 1, Some(20), Some(10)),
+        (0, 0, Some(21), Some(10)),
+        (0, 0, Some(20), Some(11)),
+        (0, 0, None, None),
+    ] {
+        let mut core = AnalysisCore::default();
+        for (no, response, name, resolver, scope) in [
+            (1, false, "one.example", "10.0.0.53", baseline),
+            (2, false, "two.example", "10.0.0.54", other),
+            (3, true, "one.example", "10.0.0.53", baseline),
+            (4, true, "two.example", "10.0.0.54", other),
+            (5, true, "one.example", "10.0.0.55", baseline),
+            (6, true, "two.example", "10.0.0.55", other),
+        ] {
+            let (source, destination) = if response {
+                (resolver, "10.0.0.5")
+            } else {
+                ("10.0.0.5", resolver)
+            };
+            let mut packet = dns_packet(no, response, source, destination, 7, name);
+            let (section, interface, outer, inner) = scope;
+            packet.outer_vlan_id = outer;
+            packet.vlan_id = inner;
+            packet.capture = Some(CaptureMetadata {
+                timestamp: Some(CaptureTimestamp {
+                    ticks: no,
+                    resolution: TimestampResolution::Decimal(0),
+                    offset_seconds: 0,
+                }),
+                captured_length: u32::from(packet.length),
+                wire_length: u32::from(packet.length),
+                link_type: 1,
+                interface_id: interface,
+                section_id: section,
+                interface_name: None,
+                comments: Vec::new(),
+            });
+            core.analyze(&packet);
+        }
+        let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| {
+            alert.provenance.as_ref().is_some_and(|p| p.rule_id.starts_with("dns."))
+        }).collect();
+        assert_eq!(alerts.len(), 2, "{other:?}");
+        for (last_packet, expected) in [(5, [1, 3, 5]), (6, [2, 4, 6])] {
+            let alert = alerts.iter().find(|a| a.last_packet == last_packet).unwrap();
+            let rule = alert.provenance.as_ref().unwrap();
+            assert_eq!(rule.rule_id, "dns.competing_responders");
+            assert_eq!(rule.revision, 2);
+            assert_eq!(alert.hit_count, 1);
+            assert_eq!(alert.packet_refs, expected, "{other:?}");
+        }
+    }
 }
 
 #[test]
