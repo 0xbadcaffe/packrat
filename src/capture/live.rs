@@ -34,15 +34,14 @@ impl CaptureSource for LiveCapture {
                         }
                         Err(error) => return Err(format!("Capture read failed: {error}")),
                     };
-                    if !(0..1_000_000).contains(&raw.header.ts.tv_usec) || raw.header.len < raw.header.caplen {
-                        return Err("Invalid capture timestamp or packet length".into());
+                    if raw.header.len < raw.header.caplen {
+                        return Err("Invalid capture packet length".into());
                     }
                     let metadata = CaptureMetadata {
-                        timestamp: Some(CaptureTimestamp {
-                            ticks: raw.header.ts.tv_usec as u64,
-                            resolution: TimestampResolution::Decimal(6),
-                            offset_seconds: raw.header.ts.tv_sec as i64,
-                        }),
+                        timestamp: Some(pcap_timestamp(
+                            raw.header.ts.tv_sec as i64,
+                            raw.header.ts.tv_usec as i64,
+                        )?),
                         captured_length: raw.header.caplen,
                         wire_length: raw.header.len,
                         link_type,
@@ -75,6 +74,27 @@ impl CaptureSource for LiveCapture {
             Ok(())
         })
     }
+}
+
+#[cfg(feature = "real-capture")]
+fn pcap_timestamp(seconds: i64, micros: i64) -> Result<CaptureTimestamp, String> {
+    if !(0..1_000_000).contains(&micros) {
+        return Err("Invalid capture timestamp fraction".into());
+    }
+    // PCAPNG assigns the clock offset to the interface, not each packet.
+    let (ticks, offset_seconds) = if let Ok(seconds) = u64::try_from(seconds) {
+        let ticks = seconds.checked_mul(1_000_000)
+            .and_then(|ticks| ticks.checked_add(micros as u64))
+            .ok_or("Capture timestamp exceeds the supported range")?;
+        (ticks, 0)
+    } else {
+        (micros as u64, seconds)
+    };
+    Ok(CaptureTimestamp {
+        ticks,
+        resolution: TimestampResolution::Decimal(6),
+        offset_seconds,
+    })
 }
 
 #[cfg(feature = "real-capture")]
