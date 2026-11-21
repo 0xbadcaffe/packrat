@@ -5,6 +5,7 @@ usage() {
     printf '%s\n' 'Usage: bash watch-packrat-health.sh [--once]' \
         'Environment: PACKRAT_HEALTH_PORT (9477), PACKRAT_HEALTH_INTERVAL (15 seconds),' \
         'PACKRAT_ALERT_SESSION (optional tmux session), PACKRAT_DISK_PATH (/),' \
+        'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
         'PACKRAT_MIN_FREE_MIB (512). Health requests always use IPv4 loopback.'
 }
 
@@ -20,6 +21,7 @@ if (( $# > 1 )); then usage >&2; exit 2; fi
 port=${PACKRAT_HEALTH_PORT:-9477}
 interval=${PACKRAT_HEALTH_INTERVAL:-15}
 alert_session=${PACKRAT_ALERT_SESSION:-}
+alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
 disk_path=${PACKRAT_DISK_PATH:-/}
 min_free=${PACKRAT_MIN_FREE_MIB:-512}
 if [[ ! $port =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )) ||
@@ -38,14 +40,50 @@ if [[ -n $alert_session ]] && ! command -v tmux >/dev/null; then
     printf '%s\n' 'tmux is required when PACKRAT_ALERT_SESSION is set.' >&2
     exit 2
 fi
+if [[ $alert_pipeline != 0 && $alert_pipeline != 1 ]]; then
+    printf '%s\n' 'PACKRAT_ALERT_PIPELINE must be 0 or 1.' >&2
+    exit 2
+fi
+if [[ $alert_pipeline == 1 ]] && { [[ -z $alert_session ]] || ! command -v ps >/dev/null; }; then
+    printf '%s\n' 'Pipeline checking requires ps and PACKRAT_ALERT_SESSION.' >&2
+    exit 2
+fi
+
+alert_pipeline_alive() {
+    local pane=$1
+    [[ $pane =~ ^[1-9][0-9]*$ ]] || return 1
+    LC_ALL=C ps -e -o pid= -o ppid= -o stat= -o comm= | awk -v pane="$pane" '
+        {
+            parent[$1] = $2
+            if ($3 !~ /^[TtZX]/ && ($4 == "tail" || $4 == "jq")) roles[$1] = $4
+        }
+        END {
+            for (pid in roles) {
+                ancestor = pid
+                for (steps = 0; ancestor > 1 && steps < 32; steps++) {
+                    if (ancestor == pane) {
+                        observed[roles[pid]] = 1
+                        break
+                    }
+                    ancestor = parent[ancestor]
+                }
+            }
+            exit !(observed["tail"] && observed["jq"])
+        }'
+}
 
 read_health() {
-    local sample watcher=null disk=null free_kib
+    local sample watcher=null pipeline=null pane_info dead pane disk=null free_kib
     sample=$(curl --disable --fail --silent --max-time 3 --noproxy '*' "http://127.0.0.1:$port/health") || sample=null
     if [[ -n $alert_session ]]; then
         watcher=false
-        if [[ $(tmux display-message -p -t "=$alert_session:" '#{pane_dead}' 2>/dev/null) == 0 ]]; then
+        pane_info=$(tmux display-message -p -t "=$alert_session:" '#{pane_dead} #{pane_pid}' 2>/dev/null) || pane_info=
+        read -r dead pane <<< "$pane_info"
+        if [[ $dead == 0 ]]; then
             watcher=true
+            if [[ $alert_pipeline == 1 ]]; then
+                if alert_pipeline_alive "$pane"; then pipeline=true; else pipeline=false; fi
+            fi
         fi
     fi
     free_kib=$(LC_ALL=C df -Pk -- "$disk_path" 2>/dev/null | awk 'NR == 2 { print $4 }') || free_kib=
@@ -53,7 +91,8 @@ read_health() {
         disk=$((10#$free_kib / 1024))
     fi
     printf '%s\n' "$sample" | jq -Rcse \
-        --argjson watcher "$watcher" --argjson disk "$disk" --argjson min_free "$min_free" \
+        --argjson watcher "$watcher" --argjson pipeline "$pipeline" \
+        --argjson disk "$disk" --argjson min_free "$min_free" \
         --argjson baseline "$baseline" '
         (try fromjson catch null) as $health |
         (if ($health|type) == "object" then $health else {} end) as $h |
@@ -72,7 +111,8 @@ read_health() {
                 then $drops - $baseline.drops else null end
             ),
             alert_saving: ($h.alert_saving // false),
-            alert_watcher_alive: $watcher,
+            alert_watcher_alive: (if $pipeline == false then false else $watcher end),
+            alert_watcher_pipeline_alive: $pipeline,
             archive_paused: ($h.archive_paused // false),
             disk_free_mib: $disk,
             issues: [
@@ -87,7 +127,8 @@ read_health() {
                      else "pcap_stats_unavailable" end),
                     (if $h.archive_paused == true then "archive_paused" else empty end)
                 end,
-                (if $watcher == false then "alert_watcher_unavailable" else empty end),
+                (if $watcher == false then "alert_watcher_unavailable"
+                 elif $pipeline == false then "alert_watcher_pipeline_inactive" else empty end),
                 (if $disk == null then "disk_space_unknown"
                  elif $disk < $min_free then "disk_space_low" else empty end)
             ],
