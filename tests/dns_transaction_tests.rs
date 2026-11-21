@@ -131,7 +131,7 @@ fn reply_without_observed_query_is_a_visibility_alert_not_an_incident() {
     assert!(alert.detail.contains("no matching query retained"));
     let rule = alert.provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "dns.unmatched_response");
-    assert_eq!(rule.revision, 3);
+    assert_eq!(rule.revision, 4);
     assert_eq!(rule.confidence.to_string(), "Heuristic");
     assert!(core.incidents.incidents.is_empty());
 
@@ -215,7 +215,7 @@ fn dns_integrity_keeps_transactions_and_alert_evidence_within_capture_scope() {
             let alert = alerts.iter().find(|a| a.last_packet == last_packet).unwrap();
             let rule = alert.provenance.as_ref().unwrap();
             assert_eq!(rule.rule_id, "dns.competing_responders");
-            assert_eq!(rule.revision, 2);
+            assert_eq!(rule.revision, 3);
             assert_eq!(alert.hit_count, 1);
             assert_eq!(alert.packet_refs, expected, "{other:?}");
         }
@@ -330,6 +330,72 @@ fn new_query_can_reuse_a_recently_completed_transaction_id() {
         assert!(tracker.observe(&query).is_empty());
         assert!(tracker.observe(&reply).is_empty());
     }
+}
+
+#[test]
+fn parallel_dns_queries_can_reuse_the_same_id_and_port() {
+    let client = "10.0.0.5";
+    for (second_resolver, second_question) in [
+        ("10.0.0.54", "first.example"),
+        ("10.0.0.53", "second.example"),
+        ("10.0.0.54", "second.example"),
+    ] {
+        let mut tracker = DnsTransactionTracker::default();
+        for packet in [
+            dns_packet(1, false, client, "10.0.0.53", 42, "first.example"),
+            dns_packet(2, false, client, second_resolver, 42, second_question),
+            dns_packet(3, true, second_resolver, client, 42, second_question),
+            dns_packet(4, true, "10.0.0.53", client, 42, "first.example"),
+            dns_packet(5, true, second_resolver, client, 42, second_question),
+        ] {
+            assert!(tracker.observe(&packet).is_empty(), "frame {}", packet.no);
+        }
+    }
+}
+
+#[test]
+fn ambiguous_reply_does_not_consume_candidate_queries() {
+    let mut core = AnalysisCore::default();
+    let client = "10.0.0.5";
+    for packet in [
+        dns_packet(1, false, client, "10.0.0.53", 42, "first.example"),
+        dns_packet(2, false, client, "10.0.0.54", 42, "second.example"),
+        dns_packet(3, true, "10.0.0.53", client, 42, "second.example"),
+        dns_packet(4, true, "10.0.0.53", client, 42, "first.example"),
+        dns_packet(5, true, "10.0.0.54", client, 42, "second.example"),
+        dns_packet(6, true, "10.0.0.55", client, 42, "first.example"),
+    ] {
+        core.analyze(&packet);
+    }
+    let by_rule = |rule_id| core.alert_center.items.iter().find(|alert| {
+        alert.provenance.as_ref().is_some_and(|p| p.rule_id == rule_id)
+    }).unwrap();
+    assert_eq!(core.alert_center.items.len(), 2);
+    let ambiguous = by_rule("dns.ambiguous_reply");
+    assert_eq!(ambiguous.severity, "LOW");
+    assert_eq!(ambiguous.packet_refs, [3]);
+    let conflict = by_rule("dns.competing_responders");
+    assert_eq!(conflict.severity, "CRITICAL");
+    assert_eq!(conflict.packet_refs, [1, 4, 6]);
+}
+
+#[test]
+fn dns_collision_bucket_bounds_candidates_without_guessing_on_overflow() {
+    let mut tracker = DnsTransactionTracker::default();
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    for number in 1..=6 {
+        let query = dns_packet(number, false, client, resolver, 42, &format!("name{number}.example"));
+        assert!(tracker.observe(&query).is_empty());
+    }
+    let reply = dns_packet(7, true, resolver, client, 42, "name6.example");
+    assert_eq!(tracker.observe(&reply)[0].kind, DnsFindingKind::AmbiguousReply);
+    let retained = dns_packet(8, true, resolver, client, 42, "name1.example");
+    assert!(tracker.observe(&retained).is_empty());
+    let query = dns_packet(40, false, client, resolver, 42, "reused.example");
+    let reply = dns_packet(41, true, resolver, client, 42, "reused.example");
+    assert!(tracker.observe(&query).is_empty());
+    assert!(tracker.observe(&reply).is_empty());
 }
 
 #[test]

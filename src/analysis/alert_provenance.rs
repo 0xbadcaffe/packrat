@@ -77,28 +77,32 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the retained SYN and SYN-ACK pairs; confirm completed sessions and expected management activity.",
         ),
         (
-            "IDS", "Conflicting DNS responses", "dns.competing_responders", 2, Correlated,
+            "IDS", "Conflicting DNS responses", "dns.competing_responders", 3, Correlated,
             "Compare the query and both replies; verify which resolvers were authorized.",
         ),
         (
-            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 2, Correlated,
+            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 3, Correlated,
             "Compare answer records and response codes; check expected resolver behavior.",
         ),
         (
-            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 2, Heuristic,
+            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 3, Heuristic,
             "Decode both replies before concluding that their answers differ.",
         ),
         (
-            "IDS", "DNS transaction question mismatch", "dns.question_mismatch", 2, Correlated,
+            "IDS", "DNS transaction question mismatch", "dns.question_mismatch", 3, Correlated,
             "Compare the question name, type, and class in the query and reply.",
         ),
         (
-            "IDS", "Unexpected DNS responder", "dns.unexpected_responder", 2, Correlated,
+            "IDS", "Unexpected DNS responder", "dns.unexpected_responder", 3, Correlated,
             "Check the configured resolver and whether a forwarding or failover path was expected.",
         ),
         (
-            "IDS", "DNS reply without observed query", "dns.unmatched_response", 3, Heuristic,
+            "IDS", "DNS reply without observed query", "dns.unmatched_response", 4, Heuristic,
             "Check capture start, packet drops, query-direction visibility, and the DNS correlation window.",
+        ),
+        (
+            "IDS", "DNS reply correlation ambiguous", "dns.ambiguous_reply", 1, Heuristic,
+            "Compare concurrent DNS queries on the same client port and transaction ID before assigning the reply.",
         ),
         (
             "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 2, DirectObservation,

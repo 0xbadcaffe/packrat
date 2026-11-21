@@ -141,6 +141,10 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "reply_without_observed_query_is_a_visibility_alert_not_an_incident",
     },
     CoverageGroup {
+        signatures: &["DNS reply correlation ambiguous"],
+        positive_test: "ambiguous_reply_does_not_consume_candidate_queries",
+    },
+    CoverageGroup {
         signatures: &[
             "Unexpected DNS responder",
             "Conflicting DNS responses",

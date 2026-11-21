@@ -6,6 +6,9 @@ use crate::net::packet::Packet;
 use sha2::{Digest, Sha256};
 
 mod answers;
+mod correlation;
+
+use correlation::{ExchangeBucket, ReplyMatch};
 
 const TRANSACTION_TTL_SECS: f64 = 30.0;
 const RESPONSE_TTL_SECS: f64 = 5.0;
@@ -21,6 +24,7 @@ pub struct DnsFinding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DnsFindingKind {
     ReplyWithoutObservedQuery,
+    AmbiguousReply,
     QuestionMismatch,
     UnexpectedResponder,
     ConflictingResponse,
@@ -69,7 +73,6 @@ struct PendingQuery {
 
 #[derive(Debug, Clone)]
 struct RecentResponse {
-    query_packet: u64,
     reply_packet: u64,
     server: String,
     question: Question,
@@ -95,13 +98,11 @@ struct DnsMessage<'a> {
 
 #[derive(Debug, Default)]
 pub struct DnsTransactionTracker {
-    pending: HashMap<TransactionKey, PendingQuery>,
-    recent: HashMap<TransactionKey, RecentResponse>,
+    exchanges: HashMap<TransactionKey, ExchangeBucket>,
 }
 
 impl DnsTransactionTracker {
     pub fn observe(&mut self, packet: &Packet) -> Vec<DnsFinding> {
-        self.prune(packet.timestamp);
         let Some((source_port, destination_port, payload)) = udp_payload(packet) else {
             return Vec::new();
         };
@@ -140,12 +141,38 @@ impl DnsTransactionTracker {
             client_port: destination_port,
             id: message.id,
         };
+        let (exchange, ambiguous) = if let Some(bucket) = self.exchanges.get_mut(&key) {
+            bucket.expire(packet.timestamp);
+            match bucket.find_reply(packet.timestamp, &packet.src, &message.question) {
+                ReplyMatch::Matched(index) => (Some(&mut bucket.entries[index]), false),
+                ReplyMatch::Missing => (None, false),
+                ReplyMatch::Ambiguous => (None, true),
+            }
+        } else {
+            (None, false)
+        };
+        let Some(exchange) = exchange else {
+            let reason = if ambiguous {
+                "could not uniquely correlate a retained query"
+            } else {
+                "no matching query retained"
+            };
+            return vec![DnsFinding {
+                kind: if ambiguous { DnsFindingKind::AmbiguousReply } else { DnsFindingKind::ReplyWithoutObservedQuery },
+                related_packets: Vec::new(),
+                detail: format!(
+                    "{reason} for transaction 0x{:04x} from {} to {}:{}",
+                    message.id, packet.src, packet.dst, destination_port
+                ),
+            }];
+        };
+        let query = &exchange.query;
         let fingerprint = Sha256::digest(message.bytes).into();
-        if let Some(previous) = self.recent.get(&key) {
+        if let Some(previous) = &exchange.reply {
             if previous.server != packet.src {
                 return vec![DnsFinding {
                     kind: DnsFindingKind::ConflictingResponse,
-                    related_packets: vec![previous.query_packet, previous.reply_packet],
+                    related_packets: vec![query.packet_no, previous.reply_packet],
                     detail: format!(
                         "transaction 0x{:04x} for {} received competing replies from {} and {}",
                         message.id, previous.question.name, previous.server, packet.src
@@ -173,7 +200,7 @@ impl DnsTransactionTracker {
                 };
                 return vec![DnsFinding {
                     kind,
-                    related_packets: vec![previous.query_packet, previous.reply_packet],
+                    related_packets: vec![query.packet_no, previous.reply_packet],
                     detail: format!(
                         "transaction 0x{:04x} for {} received {difference} from resolver {}",
                         message.id, previous.question.name, previous.server,
@@ -182,17 +209,6 @@ impl DnsTransactionTracker {
             }
             return Vec::new();
         }
-
-        let Some(query) = self.pending.remove(&key) else {
-            return vec![DnsFinding {
-                kind: DnsFindingKind::ReplyWithoutObservedQuery,
-                related_packets: Vec::new(),
-                detail: format!(
-                    "no matching query retained for transaction 0x{:04x} from {} to {}:{}",
-                    message.id, packet.src, packet.dst, destination_port
-                ),
-            }];
-        };
 
         let mut findings = Vec::new();
         if query.question != message.question {
@@ -215,62 +231,32 @@ impl DnsTransactionTracker {
                 ),
             });
         }
-        self.insert_response(
-            key,
-            RecentResponse {
-                query_packet: query.packet_no,
-                reply_packet: packet.no,
-                server: packet.src.clone(),
-                question: message.question,
-                fingerprint,
-                answer_fingerprint: answers::answer_fingerprint(message.bytes, message.answer_offset),
-                timestamp: packet.timestamp,
-            },
-        );
+        exchange.reply = Some(RecentResponse {
+            reply_packet: packet.no,
+            server: packet.src.clone(),
+            question: message.question,
+            fingerprint,
+            answer_fingerprint: answers::answer_fingerprint(message.bytes, message.answer_offset),
+            timestamp: packet.timestamp,
+        });
         findings
     }
 
     pub fn clear(&mut self) {
-        self.pending.clear();
-        self.recent.clear();
+        self.exchanges.clear();
     }
 
     fn insert_query(&mut self, key: TransactionKey, query: PendingQuery) {
-        self.recent.remove(&key);
-        if self.pending.len() >= MAX_TRANSACTIONS && !self.pending.contains_key(&key) {
-            if let Some(oldest) = self
-                .pending
-                .iter()
-                .min_by(|left, right| left.1.timestamp.total_cmp(&right.1.timestamp))
-                .map(|(key, _)| key.clone())
-            {
-                self.pending.remove(&oldest);
+        if self.exchanges.len() >= MAX_TRANSACTIONS && !self.exchanges.contains_key(&key) {
+            self.exchanges.retain(|_, bucket| {
+                bucket.expire(query.timestamp);
+                !bucket.is_empty()
+            });
+            if self.exchanges.len() >= MAX_TRANSACTIONS {
+                return;
             }
         }
-        self.pending.insert(key, query);
-    }
-
-    fn insert_response(&mut self, key: TransactionKey, response: RecentResponse) {
-        if self.recent.len() >= MAX_TRANSACTIONS && !self.recent.contains_key(&key) {
-            if let Some(oldest) = self
-                .recent
-                .iter()
-                .min_by(|left, right| left.1.timestamp.total_cmp(&right.1.timestamp))
-                .map(|(key, _)| key.clone())
-            {
-                self.recent.remove(&oldest);
-            }
-        }
-        self.recent.insert(key, response);
-    }
-
-    fn prune(&mut self, now: f64) {
-        self.pending.retain(|_, query| {
-            now < query.timestamp || now - query.timestamp <= TRANSACTION_TTL_SECS
-        });
-        self.recent.retain(|_, response| {
-            now < response.timestamp || now - response.timestamp <= RESPONSE_TTL_SECS
-        });
+        self.exchanges.entry(key).or_default().record(query);
     }
 }
 
