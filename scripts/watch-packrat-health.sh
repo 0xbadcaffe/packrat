@@ -99,12 +99,16 @@ read_health() {
         ($h.capture_run_id | if type == "string" and test("^[0-9a-f]{16}$") then . else null end) as $run |
         ($h.pcap_buffer_drops | if type == "number" and . >= 0 and . <= 4294967295 and floor == .
                                  then . else null end) as $drops |
+        ($h.capture_queue | if type == "object" and (.depth | type == "number")
+           and (.capacity | type == "number") and .capacity > 0 and .depth >= 0 and .depth <= .capacity
+           then . else null end) as $queue |
         ($h.status == "ok" and $h.telemetry_fresh == true and $h.capture_active == true) as $usable |
         {
             capture_active: ($h.capture_active // false),
             capture_run_id: $run,
             telemetry_fresh: ($h.telemetry_fresh // false),
             pcap_buffer_drops: $drops,
+            capture_queue: $queue,
             pcap_buffer_drops_delta: (
                 if $usable and $run != null and $drops != null and $baseline.run == $run
                    and $drops >= $baseline.drops
@@ -125,6 +129,8 @@ read_health() {
                     (if $drops != null then
                          if $drops > 0 then "pcap_buffer_drops" else empty end
                      else "pcap_stats_unavailable" end),
+                    (if $h.capture_active == true and $queue != null and $queue.depth * 4 >= $queue.capacity * 3
+                     then "capture_queue_high" else empty end),
                     (if $h.archive_paused == true then "archive_paused" else empty end)
                 end,
                 (if $watcher == false then "alert_watcher_unavailable"

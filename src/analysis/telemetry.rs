@@ -13,6 +13,14 @@ const MAX_TELEMETRY_CONNECTIONS: usize = 16;
 const TELEMETRY_DEADLINE: Duration = Duration::from_secs(2);
 const MAX_REQUEST_BYTES: usize = 2048;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct CaptureQueueTelemetry {
+    pub depth: usize,
+    pub capacity: usize,
+    pub dispatch_waiting: bool,
+    pub analysis_packets_pending: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TelemetrySnapshot {
     pub packets_total: u64,
@@ -28,6 +36,7 @@ pub struct TelemetrySnapshot {
     pub packets_per_second: u32,
     pub capturing: bool,
     pub capture_run_id: Option<u64>,
+    pub capture_queue: CaptureQueueTelemetry,
     pub pcap_buffer_drops: Option<u32>,
     pub alert_saving: bool,
     pub alert_save_failed: bool,
@@ -105,6 +114,14 @@ impl TelemetrySnapshot {
                 "# TYPE packrat_capture_pcap_buffer_drops gauge\npackrat_capture_pcap_buffer_drops {dropped}\n"
             ));
         }
+        for (name, value) in [
+            ("capture_queue_depth", self.capture_queue.depth),
+            ("capture_queue_capacity", self.capture_queue.capacity),
+            ("capture_dispatch_waiting", usize::from(self.capture_queue.dispatch_waiting)),
+            ("analysis_packets_pending", self.capture_queue.analysis_packets_pending),
+        ] {
+            metrics.push_str(&format!("# TYPE packrat_{name} gauge\npackrat_{name} {value}\n"));
+        }
         metrics.push_str("# EOF\n");
         metrics
     }
@@ -122,6 +139,12 @@ struct TelemetryState {
 }
 
 impl TelemetryHub {
+    pub(crate) fn publish_capture_queue(&self, queue: CaptureQueueTelemetry) {
+        if let Ok(mut state) = self.inner.write() {
+            state.snapshot.capture_queue = queue;
+        }
+    }
+
     pub fn publish(&self, snapshot: TelemetrySnapshot) {
         if let Ok(mut current) = self.inner.write() {
             *current = TelemetryState {
@@ -148,6 +171,7 @@ impl TelemetryHub {
             "telemetry_fresh": age.is_some_and(|age| age <= Duration::from_secs(5)),
             "capture_active": snapshot.capturing,
             "capture_run_id": snapshot.capture_run_id.map(|id| format!("{id:016x}")),
+            "capture_queue": snapshot.capture_queue,
             "pcap_buffer_drops": snapshot.pcap_buffer_drops,
             "alert_saving": snapshot.alert_saving,
             "alert_save_failed": snapshot.alert_save_failed,

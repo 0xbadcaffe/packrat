@@ -7,12 +7,14 @@ impl App {
         receiver: &mut tokio::sync::mpsc::Receiver<Packet>,
         pending: &mut Option<Packet>,
     ) -> Result<(), String> {
+        self.capture_dispatch_waiting = false;
         let submit = |app: &mut App, packet: Packet, pending: &mut Option<Packet>| match app
             .try_ingest_packet(packet)
         {
             Ok(()) => Ok(true),
             Err(SubmitError::Full(packet)) => {
                 *pending = Some(packet);
+                app.capture_dispatch_waiting = true;
                 Ok(false)
             }
             Err(SubmitError::Oversized(_)) => {

@@ -53,6 +53,22 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert_eq!(health()["telemetry_fresh"], false);
 }
 
+#[test]
+fn queue_pressure_does_not_claim_packet_loss_or_refresh_analysis_health() {
+    let hub = TelemetryHub::default();
+    hub.publish_capture_queue(CaptureQueueTelemetry {
+        depth: 75, capacity: 100, dispatch_waiting: true, analysis_packets_pending: 8,
+    });
+    let health: serde_json::Value = serde_json::from_str(&hub.health()).unwrap();
+    assert_eq!(health["telemetry_fresh"], false);
+    assert!(health["pcap_buffer_drops"].is_null());
+    assert_eq!(health["capture_queue"]["depth"], 75);
+    let metrics = hub.snapshot().openmetrics();
+    assert!(metrics.contains("packrat_capture_queue_depth 75\n"));
+    assert!(metrics.contains("packrat_capture_dispatch_waiting 1\n"));
+    assert!(metrics.contains("packrat_analysis_packets_pending 8\n"));
+}
+
 #[tokio::test]
 async fn telemetry_waits_for_complete_headers_and_bounds_request_size() {
     let listener = bind("127.0.0.1:0".parse().unwrap()).await.unwrap();

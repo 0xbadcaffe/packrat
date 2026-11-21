@@ -138,8 +138,16 @@ impl App {
     }
 
     pub(super) fn refresh_telemetry(&self) {
+        let capacity = self.packet_tx.max_capacity();
+        let queue = crate::analysis::telemetry::CaptureQueueTelemetry {
+            depth: capacity.saturating_sub(self.packet_tx.capacity()),
+            capacity,
+            dispatch_waiting: self.capture_dispatch_waiting,
+            analysis_packets_pending: self.packet_effects.len(),
+        };
         let core_handle = self.core.clone();
         let Ok(Some(core)) = core_handle.try_read() else {
+            self.telemetry.publish_capture_queue(queue);
             return;
         };
         self.telemetry.publish(TelemetrySnapshot {
@@ -163,6 +171,7 @@ impl App {
             packets_per_second: self.current_rate(),
             capturing: self.capturing,
             capture_run_id: self.capture_handle.as_ref().map(crate::capture::CaptureTask::run_id),
+            capture_queue: queue,
             pcap_buffer_drops: self.pcap_buffer_drops(),
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),
             alert_save_failed: self.alert_save_error_reported.is_some() || core.alert_save_error.is_some(),

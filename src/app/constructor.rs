@@ -63,6 +63,7 @@ impl App {
             capturing: false,
             capture_handle: None,
             packet_tx,
+            capture_dispatch_waiting: false,
             picking_iface: startup_mode != StartupMode::Simulation,
             iface_list,
             iface_sel: 0,

@@ -108,6 +108,7 @@ pub struct App {
     pub capturing: bool,
     capture_handle: Option<crate::capture::CaptureTask>,
     packet_tx: Sender<Packet>,
+    capture_dispatch_waiting: bool,
     pub picking_iface: bool,
     pub iface_list: Vec<String>,
     pub iface_sel: usize,

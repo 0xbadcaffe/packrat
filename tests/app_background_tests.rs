@@ -127,7 +127,8 @@ fn synthetic_flood_retains_rate_debt_while_respecting_each_tick_budget() {
 
 #[test]
 fn live_dispatch_keeps_the_rejected_packet_and_unread_capture_tail() {
-    let mut app = App::new_for_test();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let mut app = App::new(tx.clone());
     app.capturing = true;
     app.start_background_analysis().unwrap();
     let (started, start) = std::sync::mpsc::channel();
@@ -138,7 +139,6 @@ fn live_dispatch_keeps_the_rejected_packet_and_unread_capture_tail() {
     });
     app.poll_analysis();
     start.recv_timeout(Duration::from_secs(3)).unwrap();
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
     for no in 1..=600 {
         tx.try_send(packets::tcp(no, 100, 0x18, b"data")).unwrap();
     }
@@ -151,6 +151,11 @@ fn live_dispatch_keeps_the_rejected_packet_and_unread_capture_tail() {
     let retained = pending.as_ref().unwrap().no;
     app.dispatch_capture(&mut rx, &mut pending).unwrap();
     assert_eq!(pending.as_ref().unwrap().no, retained);
+    app.tick();
+    let pressure = app.telemetry.snapshot().capture_queue;
+    assert_eq!(pressure.capacity, 1024);
+    assert_eq!(pressure.depth, rx.len());
+    assert!(pressure.dispatch_waiting && pressure.analysis_packets_pending > 0);
     release.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while !rx.is_empty() || pending.is_some() || !app.analysis_idle() {
@@ -164,6 +169,11 @@ fn live_dispatch_keeps_the_rejected_packet_and_unread_capture_tail() {
         app.packets.iter().map(|p| p.no).collect::<Vec<_>>(),
         (1..=600).collect::<Vec<_>>()
     );
+    app.tick();
+    let drained = app.telemetry.snapshot().capture_queue;
+    assert_eq!(drained.depth, 0);
+    assert_eq!(drained.analysis_packets_pending, 0);
+    assert!(!drained.dispatch_waiting);
     app.stop_background_analysis().unwrap();
 }
 
