@@ -105,20 +105,18 @@ impl SecurityEngine {
         let src_port = pkt.src_port.unwrap_or(0);
         let bytes = &pkt.bytes;
 
+        let http_failure = matches!(src_port, 80 | 443 | 8080)
+            .then(|| crate::analysis::stream::tcp_segment_payload(pkt))
+            .flatten()
+            .filter(|(_, payload)| is_http_unauthorized(payload))
+            .map(|(sequence, _)| (dst_port, sequence));
         let service: Option<&'static str> = match dst_port {
+            _ if http_failure.is_some() => Some("HTTP"),
             22 => Some("SSH"),
             21 => {
                 let p = Self::ascii_payload(bytes, 54);
                 if p.contains("530 Login incorrect") || p.contains("530 Failed") {
                     Some("FTP")
-                } else {
-                    None
-                }
-            }
-            80 | 443 => {
-                let info = &pkt.info;
-                if info.contains("401") {
-                    Some("HTTP")
                 } else {
                     None
                 }
@@ -146,25 +144,64 @@ impl SecurityEngine {
         };
 
         if let Some(svc) = service {
-            let key = BfKey {
-                src: pkt.src.clone(),
-                dst: pkt.dst.clone(),
-                port: dst_port,
+            let key = if http_failure.is_some() {
+                BfKey {
+                    src: pkt.dst.clone(),
+                    dst: pkt.src.clone(),
+                    port: src_port,
+                }
+            } else {
+                BfKey {
+                    src: pkt.src.clone(),
+                    dst: pkt.dst.clone(),
+                    port: dst_port,
+                }
             };
             let now = pkt.timestamp;
+            if self.bf_windows.len() >= MAX_ENTRIES && !self.bf_windows.contains_key(&key) {
+                if let Some(oldest) = self
+                    .bf_windows
+                    .iter()
+                    .min_by(|(_, a), (_, b)| {
+                        let last = |window: &BfWindow| {
+                            window
+                                .observations
+                                .last()
+                                .map_or(f64::NEG_INFINITY, |entry| entry.0)
+                        };
+                        last(a).total_cmp(&last(b))
+                    })
+                    .map(|(key, _)| key.clone())
+                {
+                    self.bf_windows.remove(&oldest);
+                }
+            }
             let window = self.bf_windows.entry(key.clone()).or_insert(BfWindow {
-                timestamps: Vec::new(),
+                observations: Vec::new(),
                 service: svc,
                 alerted: false,
             });
 
             // Prune events older than 30 seconds
-            window.timestamps.retain(|&t| now - t <= 30.0);
-            window.timestamps.push(now);
+            window
+                .observations
+                .retain(|&(t, _)| (0.0..=30.0).contains(&(now - t)));
+            if window.observations.is_empty() {
+                window.alerted = false;
+            }
+            if http_failure.is_some()
+                && window.observations.iter().any(|&(_, token)| token == http_failure)
+            {
+                return;
+            }
+            if window.observations.len() == 5 {
+                window.observations.remove(0);
+            }
+            window.observations.push((now, http_failure));
 
-            if !window.alerted && window.timestamps.len() >= 5 {
+            if !window.alerted && window.observations.len() >= 5 {
                 window.alerted = true;
-                let attempts = window.timestamps.len();
+                let attempts = window.observations.len();
                 let svc_static = window.service;
                 if self.brute_force.len() >= MAX_ENTRIES {
                     self.brute_force.remove(0);
@@ -181,4 +218,18 @@ impl SecurityEngine {
             }
         }
     }
+}
+
+fn is_http_unauthorized(payload: &[u8]) -> bool {
+    let Some(status) = payload
+        .strip_prefix(b"HTTP/1.1 ")
+        .or_else(|| payload.strip_prefix(b"HTTP/1.0 "))
+        .and_then(|line| line.strip_prefix(b"401 "))
+    else {
+        return false;
+    };
+    status
+        .iter()
+        .position(|byte| matches!(byte, b'\r' | b'\n'))
+        .is_some_and(|end| status.get(end..end + 2) == Some(b"\r\n"))
 }

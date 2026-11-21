@@ -4,6 +4,17 @@ impl SecurityEngine {
     // ─── C2 Beacon and Exfiltration Correlation ─────────────────────────────
 
     pub(super) fn check_beacon_and_exfiltration(&mut self, pkt: &Packet) {
+        if ![&pkt.src, &pkt.dst].into_iter().all(|address| {
+            match address.parse::<std::net::IpAddr>() {
+                Ok(std::net::IpAddr::V4(ip)) => {
+                    !ip.is_multicast() && !ip.is_broadcast() && !ip.is_unspecified()
+                }
+                Ok(std::net::IpAddr::V6(ip)) => !ip.is_multicast() && !ip.is_unspecified(),
+                Err(_) => false,
+            }
+        }) {
+            return;
+        }
         self.beacon_flows.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
         });

@@ -65,6 +65,7 @@ pub use assembler::StreamAssembler;
 use sequence::*;
 pub use tools::{StreamMatch, StreamOverlayState, export_segments, search_segments};
 pub use wire::tcp_payload_offset;
+pub(crate) use wire::tcp_segment_payload;
 use wire::*;
 
 // ─── Stream key ───────────────────────────────────────────────────────────────

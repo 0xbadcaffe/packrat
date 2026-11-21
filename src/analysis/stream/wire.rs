@@ -12,6 +12,14 @@ pub fn tcp_payload_offset(packet: &Packet) -> usize {
     tcp_view(packet).map_or(packet.bytes.len(), |view| view.payload)
 }
 
+pub(crate) fn tcp_segment_payload(packet: &Packet) -> Option<(u32, &[u8])> {
+    let view = tcp_view(packet)?;
+    let sequence = u32::from_be_bytes(
+        packet.bytes.get(view.header + 4..view.header + 8)?.try_into().ok()?,
+    );
+    Some((sequence, packet.bytes.get(view.payload..view.end)?))
+}
+
 pub(super) fn tcp_view(packet: &Packet) -> Option<TcpView> {
     if packet
         .capture

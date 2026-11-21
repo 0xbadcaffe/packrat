@@ -94,6 +94,76 @@ fn detects_large_high_entropy_outbound_transfer() {
 }
 
 #[test]
+fn group_traffic_does_not_trigger_beacon_or_outbound_transfer_rules() {
+    let mut security = SecurityEngine::default();
+    for destination in ["255.255.255.255", "224.0.0.7", "ff02::1"] {
+        for i in 0..18 {
+            let mut sample = behavior_packet(i, i as f64 * 10.0, 60_000, Vec::new());
+            sample.dst = destination.into();
+            if destination.contains(':') {
+                sample.src = "fe80::5".into();
+            }
+            security.update(&sample);
+        }
+    }
+    assert!(!security.ids_alerts.iter().any(|alert| matches!(
+        alert.signature,
+        "Periodic command-and-control beacon"
+            | "Large asymmetric outbound transfer"
+            | "High-entropy outbound transfer"
+    )));
+}
+
+#[test]
+fn ordinary_llmnr_queries_do_not_indicate_poisoning() {
+    let mut security = SecurityEngine::default();
+    for destination in ["224.0.0.252", "ff02::1:3"] {
+        let mut query = packet("LLMNR", 5355, "Standard query", vec![0; 20]);
+        query.dst = destination.into();
+        security.update(&query);
+    }
+    assert!(security.ids_alerts.is_empty());
+}
+
+#[test]
+fn http_authentication_burst_requires_distinct_wire_401_responses() {
+    let mut security = SecurityEngine::default();
+    for i in 1..=5_u64 {
+        let mut packet = ipv4_tcp_packet(i, i as u32 * 100, 0x18, b"not an HTTP response");
+        packet.info = "TCP Seq=401".into();
+        security.update(&packet);
+    }
+    assert!(security.brute_force.is_empty());
+
+    let response = |no: u64, sequence: u32| {
+        let mut packet = ipv4_tcp_packet(no, sequence, 0x18, b"HTTP/1.1 401 Unauthorized\r\n\r\n");
+        packet.bytes[34..36].copy_from_slice(&80_u16.to_be_bytes());
+        packet.bytes[36..38].copy_from_slice(&50000_u16.to_be_bytes());
+        packet.src_port = Some(80);
+        packet.dst_port = Some(50000);
+        packet.protocol = "HTTP".into();
+        packet
+    };
+    for i in 6..=10 {
+        security.update(&response(i, 10_000));
+    }
+    assert!(security.brute_force.is_empty());
+
+    for i in 11..=14 {
+        security.update(&response(i, i as u32 * 1000));
+    }
+    assert_eq!(security.brute_force.len(), 1);
+    let alert = &security.brute_force[0];
+    assert_eq!((alert.src_ip.as_str(), alert.dst_ip.as_str(), alert.port), ("10.0.0.5", "203.0.113.9", 80));
+    assert_eq!(alert.attempts, 5);
+
+    for i in 50..=54 {
+        security.update(&response(i, i as u32 * 1000));
+    }
+    assert_eq!(security.brute_force.len(), 2);
+}
+
+#[test]
 fn detects_dns_nxdomain_burst_txt_abuse_and_external_resolver_use() {
     let mut security = SecurityEngine::default();
     for index in 0..20_u64 {

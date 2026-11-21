@@ -248,7 +248,7 @@ pub(super) struct BfKey {
 }
 
 pub(super) struct BfWindow {
-    pub(super) timestamps: Vec<f64>,
+    pub(super) observations: Vec<(f64, Option<(u16, u32)>)>,
     pub(super) service: &'static str,
     pub(super) alerted: bool,
 }

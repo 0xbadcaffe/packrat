@@ -87,6 +87,7 @@ impl AnalysisCore {
             );
         }
         for alert in &findings.authentication {
+            let observation = if alert.service == "HTTP" { "HTTP 401 responses" } else { "attempts" };
             self.alert_center.record_correlated(
                 pkt.no,
                 pkt.timestamp,
@@ -94,7 +95,7 @@ impl AnalysisCore {
                 "HIGH",
                 format!("{} authentication burst", alert.service),
                 format!(
-                    "{} attempts from {} to {}:{}",
+                    "{} {observation} for client {} and service {}:{}",
                     alert.attempts, alert.src_ip, alert.dst_ip, alert.port
                 ),
                 format!("{}>{}:{}", alert.src_ip, alert.dst_ip, alert.port),
