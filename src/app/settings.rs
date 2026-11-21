@@ -135,17 +135,28 @@ impl App {
             return;
         }
 
-        match crate::storage::alert_jsonl::AlertJsonlWriter::open_default() {
+        match crate::storage::alert_jsonl::AlertJsonlWriter::open_default_for_session(
+            &self.alert_session_id,
+        ) {
             Ok(writer) => {
                 let path = writer.path().display().to_string();
                 self.configure_core(move |core| {
-                    core.alert_jsonl_writer = Some(writer);
-                    core.alert_save_error = None;
-                    core.alert_center.drain_pending_exports();
+                    let mut writer = writer;
+                    let pending = core.alert_center.drain_pending_exports();
+                    match writer.backfill(&core.alert_center.items, &pending) {
+                        Ok(()) => {
+                            core.alert_jsonl_writer = Some(writer);
+                            core.alert_save_error = None;
+                        }
+                        Err(error) => {
+                            core.alert_jsonl_writer = None;
+                            core.alert_save_error = Some(error);
+                        }
+                    }
                 });
                 self.save_alerts = true;
                 self.alert_save_error_reported = None;
-                self.set_status(format!("Saving new alerts to {path}"));
+                self.set_status(format!("Saving current and new alerts to {path}"));
             }
             Err(error) => self.set_status(format!("Could not enable alert saving: {error}")),
         }

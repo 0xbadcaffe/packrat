@@ -7,6 +7,7 @@ impl App {
 
     pub fn new_with_mode(packet_tx: Sender<Packet>, startup_mode: StartupMode) -> Self {
         let preferences = theme_store::load();
+        let alert_session_id = crate::storage::alert_jsonl::new_session_id();
         let iface_list = list_interfaces(startup_mode == StartupMode::Simulation);
         let selected_iface = iface_list.first().cloned().unwrap_or_default();
         let mut core = AnalysisCore::default();
@@ -19,7 +20,9 @@ impl App {
             _ => AutomationMode::Off,
         };
         let (save_alerts, alert_save_error) = if preferences.save_alerts {
-            match crate::storage::alert_jsonl::AlertJsonlWriter::open_default() {
+            match crate::storage::alert_jsonl::AlertJsonlWriter::open_default_for_session(
+                &alert_session_id,
+            ) {
                 Ok(writer) => {
                     core.alert_jsonl_writer = Some(writer);
                     (true, None)
@@ -171,6 +174,7 @@ impl App {
             ui_refresh_ms: preferences.ui_refresh_ms,
             capture_timeout_ms: preferences.capture_timeout_ms,
             save_alerts,
+            alert_session_id,
             alert_save_error_reported,
             persist_preferences: true,
             current_project_name: None,
