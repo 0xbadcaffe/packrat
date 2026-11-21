@@ -10,7 +10,8 @@
 //!   - analyst notebook entries
 //!   - operator graph summary (node count, edge count, top-scored nodes)
 
-use std::path::Path;
+use std::{io::Write, path::Path};
+use crate::analysis::alert_provenance::AlertProvenance;
 use crate::app::App;
 
 // ─── Bundle struct (serde-serialised) ────────────────────────────────────────
@@ -95,12 +96,16 @@ struct AlertRecord {
 #[derive(serde::Serialize)]
 struct FindingRecord<'a> {
     id: u64,
+    capture_id: Option<&'a str>,
+    provenance: Option<&'a AlertProvenance>,
     source: &'a str,
     title: &'a str,
     severity: &'a str,
     disposition: String,
     priority: u8,
     hit_count: u64,
+    packet_no: u64,
+    packet_refs: Vec<u64>,
     first_packet: u64,
     last_packet: u64,
     first_seen: f64,
@@ -217,16 +222,26 @@ pub fn export(app: &App, path: &Path) -> Result<String, String> {
         .map_err(|e| format!("serialize: {e}"))?;
     drop(bundle);
     drop(view);
-    std::fs::write(path, &json)
+    write_private_report(path, json.as_bytes())
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path.display().to_string())
 }
 
-/// Build a case bundle path with a timestamp and write it next to the binary.
+fn write_private_report(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut pending = tempfile::NamedTempFile::new_in(parent)?;
+    pending.write_all(bytes)?;
+    pending.as_file().sync_all()?;
+    pending.persist_noclobber(path)?;
+    Ok(())
+}
+
+/// Write a timestamped case bundle to the current or home directory.
 pub fn export_auto(app: &App) -> Result<String, String> {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default().as_secs();
+        .unwrap_or_default().as_nanos();
     let filename = format!("packrat_case_{ts}.json");
     // Try CWD, then ~/
     let candidates = [
@@ -309,12 +324,16 @@ fn build<'a>(app: &'a crate::app::AppView<'_>) -> CaseBundle<'a> {
 
     let findings = app.core.alert_center.items.iter().map(|item| FindingRecord {
         id: item.id,
+        capture_id: item.capture_id.as_deref(),
+        provenance: item.provenance.as_ref(),
         source: &item.source,
         title: &item.title,
         severity: &item.severity,
         disposition: item.disposition.to_string(),
         priority: item.priority,
         hit_count: item.hit_count,
+        packet_no: item.packet_no,
+        packet_refs: item.evidence_frame_numbers(),
         first_packet: item.first_packet,
         last_packet: item.last_packet,
         first_seen: item.first_seen,
