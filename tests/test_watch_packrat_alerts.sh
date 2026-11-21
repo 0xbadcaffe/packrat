@@ -25,17 +25,19 @@ fixture() {
         ($a | .alert.hit_count = 2 | .alert.last_packet = 42 | .alert.disposition = "Benign"),
         ($a | .alert.hit_count = 2 | .alert.last_packet = 42 | .alert.disposition = "Benign"),
         alert("session-b"; 1),
+        ($a | .alert.capture_id = "capture-b"),
         (alert("session-a"; "bad") | .alert.provenance = ["unexpected"])
     '
 }
 
 fixture | bash "$watch" | jq -se '
-    length == 4
-    and map(.event) == ["first_seen","updated","updated","first_seen"]
-    and map(.session_id) == ["session-a","session-a","session-a","session-b"]
+    length == 5
+    and map(.event) == ["first_seen","updated","updated","first_seen","first_seen"]
+    and map(.session_id) == ["session-a","session-a","session-a","session-b","session-a"]
     and .[1].hits == 2 and .[1].last_packet == 42
     and .[2].disposition == "Benign"
     and .[0].capture_id == "capture-a"
+    and .[4].capture_id == "capture-b"
     and .[0].rule_id == "traffic.periodic" and .[0].confidence == "heuristic"
     and .[0].verify == "Inspect the owner"
     and all(.[]; .record_type == "capture_alert" and (has("bytes") or has("packet_refs") | not))

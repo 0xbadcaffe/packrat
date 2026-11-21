@@ -1,16 +1,24 @@
 //! Append-only, versioned JSONL export of Alert Center findings.
 
-use std::collections::HashSet;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use crate::analysis::alert_center::AlertItem;
 
+pub(super) const MAX_ALERT_LINE: usize = 1_048_576;
+const MAX_SAVED_ALERTS: usize = 4096;
+
+type SnapshotKey = (u64, Option<[u8; 32]>);
+type SnapshotDigest = [u8; 32];
+
 pub struct AlertJsonlWriter {
     path: PathBuf,
     session_id: String,
-    written_snapshots: HashSet<String>,
+    latest_snapshots: BTreeMap<SnapshotKey, SnapshotDigest>,
+    needs_separator: bool,
     writer: BufWriter<File>,
 }
 
@@ -23,9 +31,60 @@ struct AlertRecord<'a> {
 }
 
 #[derive(serde::Deserialize)]
-struct ExistingAlertRecord {
-    session_id: String,
-    alert: AlertItem,
+pub(super) struct ExistingAlertRecord {
+    schema_version: u8,
+    record_type: String,
+    pub(super) session_id: String,
+    pub(super) alert: AlertItem,
+}
+
+impl ExistingAlertRecord {
+    pub(super) fn decode(line: &[u8]) -> Option<Self> {
+        let record = serde_json::from_slice::<Self>(line).ok()?;
+        (record.schema_version == 1 && record.record_type == "alert").then_some(record)
+    }
+}
+
+pub(super) fn next_alert_line(
+    reader: &mut impl BufRead,
+    line: &mut Vec<u8>,
+) -> std::io::Result<bool> {
+    loop {
+        line.clear();
+        let count = (&mut *reader)
+            .take((MAX_ALERT_LINE + 1) as u64)
+            .read_until(b'\n', line)?;
+        if count <= MAX_ALERT_LINE {
+            return Ok(count != 0);
+        }
+        if !line.ends_with(b"\n") {
+            reader.skip_until(b'\n')?;
+        }
+    }
+}
+
+fn snapshot_key(alert: &AlertItem) -> SnapshotKey {
+    (
+        alert.id,
+        alert.capture_id.as_ref().map(|id| Sha256::digest(id.as_bytes()).into()),
+    )
+}
+
+fn snapshot_digest(alert: &AlertItem) -> Result<SnapshotDigest, String> {
+    let bytes = serde_json::to_vec(alert).map_err(|error| format!("Serialize alert snapshot: {error}"))?;
+    Ok(Sha256::digest(bytes).into())
+}
+
+fn remember(
+    snapshots: &mut BTreeMap<SnapshotKey, SnapshotDigest>,
+    key: SnapshotKey,
+    digest: SnapshotDigest,
+) {
+    snapshots.insert(key, digest);
+    if snapshots.len() > MAX_SAVED_ALERTS {
+        // The live alert queue evicts the oldest IDs first.
+        snapshots.pop_first();
+    }
 }
 
 pub fn new_session_id() -> String {
@@ -59,32 +118,47 @@ impl AlertJsonlWriter {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("Create alert export directory: {error}"))?;
 
-        let mut written_snapshots = HashSet::new();
+        let mut latest_snapshots = BTreeMap::new();
         match File::open(&path) {
             Ok(existing) => {
-                for line in BufReader::new(existing).lines().map_while(Result::ok) {
-                    let Ok(record) = serde_json::from_str::<ExistingAlertRecord>(&line) else {
+                let mut reader = BufReader::new(existing);
+                let mut line = Vec::new();
+                while next_alert_line(&mut reader, &mut line)
+                    .map_err(|error| format!("Read alert JSONL file {}: {error}", path.display()))?
+                {
+                    let Some(record) = ExistingAlertRecord::decode(&line) else {
                         continue;
                     };
-                    if record.session_id == session_id {
-                        if let Ok(snapshot) = serde_json::to_string(&record.alert) {
-                            written_snapshots.insert(snapshot);
-                        }
+                    if record.session_id == session_id && let Ok(digest) = snapshot_digest(&record.alert) {
+                        remember(&mut latest_snapshots, snapshot_key(&record.alert), digest);
                     }
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("Read alert JSONL file {}: {error}", path.display())),
         }
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path)
             .map_err(|error| format!("Open alert JSONL file {}: {error}", path.display()))?;
+        let needs_separator = if file.metadata().map_err(|error| error.to_string())?.len() > 0 {
+            let mut last = [0];
+            file.seek(SeekFrom::End(-1)).and_then(|_| file.read_exact(&mut last))
+                .map_err(|error| format!("Read alert JSONL terminator: {error}"))?;
+            last[0] != b'\n'
+        } else {
+            false
+        };
         Ok(Self {
             path,
             session_id: session_id.to_owned(),
-            written_snapshots,
+            latest_snapshots,
+            needs_separator,
             writer: BufWriter::new(file),
         })
     }
@@ -98,36 +172,43 @@ impl AlertJsonlWriter {
         existing_alerts: &[AlertItem],
         pending_alerts: &[AlertItem],
     ) -> Result<(), String> {
-        let mut alerts = Vec::with_capacity(existing_alerts.len() + pending_alerts.len());
-        alerts.extend_from_slice(existing_alerts);
-        alerts.extend_from_slice(pending_alerts);
-        self.append_alerts(&alerts)
+        let latest: BTreeMap<_, _> = pending_alerts.iter()
+            .chain(existing_alerts)
+            .map(|alert| (snapshot_key(alert), alert))
+            .collect();
+        self.write_alerts(latest.into_values())
     }
 
     pub fn append_alerts(&mut self, alerts: &[AlertItem]) -> Result<(), String> {
-        if alerts.is_empty() {
-            return Ok(());
-        }
+        self.write_alerts(alerts.iter())
+    }
+
+    fn write_alerts<'a>(&mut self, alerts: impl IntoIterator<Item = &'a AlertItem>) -> Result<(), String> {
         for alert in alerts {
-            let snapshot = serde_json::to_string(alert)
-                .map_err(|error| format!("Serialize alert snapshot: {error}"))?;
-            if self.written_snapshots.contains(&snapshot) {
+            let key = snapshot_key(alert);
+            let digest = snapshot_digest(alert)?;
+            if self.latest_snapshots.get(&key) == Some(&digest) {
                 continue;
             }
-            serde_json::to_writer(
-                &mut self.writer,
-                &AlertRecord {
-                    schema_version: 1,
-                    record_type: "alert",
-                    session_id: &self.session_id,
-                    alert,
-                },
-            )
+            let mut record = serde_json::to_vec(&AlertRecord {
+                schema_version: 1,
+                record_type: "alert",
+                session_id: &self.session_id,
+                alert,
+            })
             .map_err(|error| format!("Serialize alert JSONL record: {error}"))?;
+            if record.len() >= MAX_ALERT_LINE {
+                return Err("Alert JSONL record exceeds the export size limit".into());
+            }
+            record.push(b'\n');
+            if self.needs_separator {
+                record.insert(0, b'\n');
+            }
             self.writer
-                .write_all(b"\n")
+                .write_all(&record)
                 .map_err(|error| format!("Write alert JSONL record: {error}"))?;
-            self.written_snapshots.insert(snapshot);
+            self.needs_separator = false;
+            remember(&mut self.latest_snapshots, key, digest);
         }
         self.writer
             .flush()

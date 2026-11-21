@@ -55,7 +55,7 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
 
     foreach (inputs | record) as $alert (
         {seen: {}, slots: [], next: 0, emit: null};
-        ([$alert.session_id, $alert.alert_id] | tojson) as $key
+        ([$alert.session_id, $alert.alert_id, $alert.capture_id] | tojson) as $key
         | .seen[$key] as $previous
         | if $previous == $alert then
             .emit = null

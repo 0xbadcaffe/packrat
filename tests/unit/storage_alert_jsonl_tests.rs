@@ -87,3 +87,74 @@ fn saved_alert_qualifies_frame_numbers_with_the_capture_id() {
     assert_eq!(record.alert.capture_id.as_deref(), Some("capture-b"));
     assert_eq!(record.alert.packet_refs, [1, 4]);
 }
+
+fn read_log(path: &std::path::Path) -> Vec<ExistingAlertRecord> {
+    std::fs::read_to_string(path).unwrap().lines()
+        .filter_map(|line| ExistingAlertRecord::decode(line.as_bytes()))
+        .collect()
+}
+
+#[test]
+fn disposition_can_return_to_a_previously_logged_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let original = alert(1, 1);
+    let mut reviewed = original.clone();
+    reviewed.disposition = AlertDisposition::Reviewing;
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    writer.append_alerts(&[original.clone(), reviewed]).unwrap();
+    drop(writer);
+
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    writer.append_alerts(&[original.clone(), original]).unwrap();
+    let records = read_log(&path);
+    assert_eq!(records.iter().map(|row| row.alert.disposition).collect::<Vec<_>>(), [
+        AlertDisposition::New, AlertDisposition::Reviewing, AlertDisposition::New
+    ]);
+}
+
+#[test]
+fn backfill_cannot_replace_current_alert_with_stale_pending_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    writer.append_alerts(&[alert(1, 1)]).unwrap();
+    let mut pending_only = alert(2, 4);
+    pending_only.id = 2;
+    writer.backfill(&[alert(3, 3)], &[alert(2, 2), pending_only]).unwrap();
+    let records = read_log(&path);
+    assert_eq!(records.iter().map(|row| (row.alert.id, row.alert.hit_count)).collect::<Vec<_>>(), [
+        (1, 1), (1, 3), (2, 2)
+    ]);
+}
+
+#[test]
+fn saved_snapshot_index_stays_bounded_when_reopening_long_logs() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    let snapshots: Vec<_> = (1..=MAX_SAVED_ALERTS as u64 + 1).map(|id| {
+        let mut item = alert(1, id);
+        item.id = id;
+        item
+    }).collect();
+    writer.append_alerts(&snapshots).unwrap();
+    assert_eq!(writer.latest_snapshots.len(), MAX_SAVED_ALERTS);
+    drop(writer);
+    let writer = AlertJsonlWriter::open(path, "session-a").unwrap();
+    assert_eq!(writer.latest_snapshots.len(), MAX_SAVED_ALERTS);
+    assert!(!writer.latest_snapshots.contains_key(&(1, None)));
+    assert!(writer.latest_snapshots.contains_key(&(MAX_SAVED_ALERTS as u64 + 1, None)));
+}
+
+#[test]
+fn reopening_after_a_torn_line_does_not_lose_the_next_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    std::fs::write(&path, b"{\"alert\":").unwrap();
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    writer.append_alerts(&[alert(1, 1)]).unwrap();
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(contents.starts_with("{\"alert\":\n"));
+    assert_eq!(read_log(&path).len(), 1);
+}

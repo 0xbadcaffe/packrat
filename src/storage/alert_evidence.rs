@@ -1,27 +1,19 @@
 //! Scoped, read-only export of the packet evidence behind an alert snapshot.
 
 use anyhow::{Context, Result, anyhow, ensure};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs::{DirBuilder, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::Path;
 
 use crate::analysis::alert_center::{AlertItem, MAX_ALERT_PACKET_REFS};
 use crate::export::pcapng::PcapNgWriter;
 use crate::storage::packet_archive::PacketArchive;
+use super::alert_jsonl::{ExistingAlertRecord, next_alert_line};
 
-const MAX_ALERT_LINE: usize = 1_048_576;
 const MANIFEST: &str = "manifest.json";
 const PCAP: &str = "evidence.pcapng";
-
-#[derive(Deserialize)]
-struct AlertRow {
-    schema_version: u8,
-    record_type: String,
-    session_id: String,
-    alert: AlertItem,
-}
 
 #[derive(Serialize)]
 pub struct EvidenceExportSummary {
@@ -141,23 +133,14 @@ fn export_into(
 fn latest_alert(log: &Path, session_id: &str, alert_id: u64) -> Result<AlertItem> {
     let mut reader = BufReader::new(File::open(log).context("Open saved alert log")?);
     let mut line = Vec::new();
-    let mut selected = None;
-    loop {
-        line.clear();
-        let count = (&mut reader).take((MAX_ALERT_LINE + 1) as u64).read_until(b'\n', &mut line)?;
-        if count == 0 {
-            break;
-        }
-        if count > MAX_ALERT_LINE {
-            if !line.ends_with(b"\n") {
-                reader.skip_until(b'\n')?;
-            }
-            continue;
-        }
-        let Ok(row) = serde_json::from_slice::<AlertRow>(&line) else { continue };
-        if row.schema_version == 1 && row.record_type == "alert"
-            && row.session_id == session_id && row.alert.id == alert_id
-        {
+    let mut selected: Option<AlertItem> = None;
+    while next_alert_line(&mut reader, &mut line)? {
+        let Some(row) = ExistingAlertRecord::decode(&line) else { continue };
+        if row.session_id == session_id && row.alert.id == alert_id {
+            ensure!(
+                selected.as_ref().is_none_or(|item| item.capture_id == row.alert.capture_id),
+                "Alert ID is ambiguous across captures in the specified session"
+            );
             selected = Some(row.alert);
         }
     }

@@ -1,6 +1,7 @@
 use super::*;
 use crate::analysis::alert_center::AlertCenter;
 use crate::net::parser::parse_ethernet;
+use crate::storage::alert_jsonl::MAX_ALERT_LINE;
 
 fn snapshot(capture_id: Option<&str>) -> AlertItem {
     let mut center = AlertCenter::default();
@@ -44,6 +45,8 @@ fn ambiguous_or_corrupted_evidence_does_not_leave_a_bundle() {
     let result = export_alert_evidence(&mut archive, &log, "session", 1, &output);
     assert!(result.err().unwrap().to_string().contains("no capture ID"));
     assert!(!output.exists());
+    drop(writer);
+    let mut writer = File::create(&log).unwrap();
 
     let first = parse_ethernet(&[1, 2, 3], 1, 1.0);
     let second = parse_ethernet(&[4, 5, 6], 2, 2.0);
@@ -56,4 +59,16 @@ fn ambiguous_or_corrupted_evidence_does_not_leave_a_bundle() {
     let result = export_alert_evidence(&mut archive, &log, "session", 1, &output);
     assert!(result.err().unwrap().to_string().contains("integrity"));
     assert!(!output.exists());
+}
+
+#[test]
+fn alert_id_reused_across_capture_scopes_is_not_resolved_implicitly() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("alerts.jsonl");
+    let mut writer = File::create(&log).unwrap();
+    append_record(&mut writer, &snapshot(Some("capture-a")));
+    append_record(&mut writer, &snapshot(Some("capture-b")));
+    drop(writer);
+    let error = latest_alert(&log, "session", 1).unwrap_err();
+    assert!(error.to_string().contains("ambiguous across captures"));
 }
