@@ -40,7 +40,24 @@ fixture | bash "$watch" | jq -se '
     and .[4].capture_id == "capture-b"
     and .[0].rule_id == "traffic.periodic" and .[0].confidence == "heuristic"
     and .[0].verify == "Inspect the owner"
-    and all(.[]; .record_type == "capture_alert" and (has("bytes") or has("packet_refs") | not))
+    and map(.evidence_frame_count) == [1,2,2,1,1]
+    and all(.[]; .record_type == "capture_alert"
+        and (has("bytes") or has("packet_refs") or has("evidence_frames_internal") | not))
+' >/dev/null
+
+jq -cn '
+    {schema_version:1,record_type:"alert",session_id:"test",
+     alert:{id:9,first_packet:1,last_packet:4,packet_no:4,packet_refs:[1,2,4]}} as $alert |
+    $alert,
+    ($alert | .alert.packet_refs = [4,2,2,1,0,-1,2.5,null,"15"]),
+    ($alert | .alert.packet_refs = [1,3,4]),
+    ($alert | .alert.packet_refs = [1,3,4,5]),
+    ($alert | .alert.packet_refs = "legacy"),
+    ($alert | .alert.detail = ("x" * 1048576))
+' | bash "$watch" | jq -se '
+    map(.event) == ["first_seen","updated","updated","updated"]
+    and map(.evidence_frame_count) == [3,3,4,2]
+    and all(.[]; (has("evidence_frames_internal") or has("packet_refs") | not))
 ' >/dev/null
 
 jq -cn '

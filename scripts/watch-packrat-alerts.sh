@@ -28,14 +28,21 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
         if type == "string" then .[:$limit] else null end;
     def counter:
         if type == "number" and . >= 0 and floor == . then . else null end;
+    def evidence($alert):
+        ([$alert.first_packet, $alert.packet_no, $alert.last_packet]
+         + ($alert.packet_refs | if type == "array" then .[:128] else [] end))
+        | map(counter | select(. != null and . > 0))
+        | unique;
     def record:
-        (try fromjson catch empty)
+        select(utf8bytelength <= 1048576)
+        | (try fromjson catch empty)
         | objects
         | select(.record_type == "alert" and .schema_version == 1)
         | select((.session_id | type == "string" and length > 0 and length <= 128)
                  and (.alert | type == "object"))
         | select((.alert.id | counter) != null)
         | .alert as $a
+        | evidence($a) as $frames
         | (if ($a.provenance | type) == "object" then $a.provenance else {} end) as $rule
         | {
             session_id,
@@ -46,6 +53,8 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
             detail: ($a.detail | text(512)),
             hits: ($a.hit_count | counter),
             last_packet: ($a.last_packet | counter),
+            evidence_frame_count: ($frames | length),
+            evidence_frames_internal: $frames,
             capture_id: ($a.capture_id | text(128)),
             rule_id: ($rule.rule_id | text(128)),
             revision: ($rule.revision | counter),
@@ -67,7 +76,7 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
                 | .next = ((.next + 1) % $limit)
             else . end
             | .seen[$key] = $alert
-            | .emit = ($alert + {
+            | .emit = (($alert | del(.evidence_frames_internal)) + {
                 record_type: "capture_alert",
                 event: (if $previous == null then "first_seen" else "updated" end)
             })
