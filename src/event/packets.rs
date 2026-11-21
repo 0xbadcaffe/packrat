@@ -72,6 +72,9 @@ pub(super) fn handle_investigate(app: &mut App, key: KeyEvent) {
     }
 
     match key.code {
+        KeyCode::Enter if app.investigation_view == InvestigationView::Transactions => {
+            app.next_dns_evidence_frame();
+        }
         KeyCode::Char('[') => app.investigation_prev_view(),
         KeyCode::Char(']') => app.investigation_next_view(),
         KeyCode::Char('n') | KeyCode::Down => app.worklist_next_packet(),

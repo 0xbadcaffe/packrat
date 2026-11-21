@@ -67,6 +67,7 @@ mod inspection_http3;
 mod inspection_snapshot;
 mod inspection_tools;
 mod investigation;
+mod investigation_dns;
 mod live_dispatch;
 mod view;
 pub use view::AppView;
