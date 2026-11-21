@@ -63,7 +63,7 @@ impl SecurityEngine {
                     self.record_syn_arrival(pkt, port, source_port, sequence);
                     if port == 22 && complete && control == SYN {
                         self.record_service_observation(
-                            pkt, "SSH", false, port, Some((source_port, sequence)),
+                            pkt, "SSH", false, port, (source_port, sequence),
                         );
                     }
                 }

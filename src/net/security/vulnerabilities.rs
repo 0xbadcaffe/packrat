@@ -98,55 +98,24 @@ impl SecurityEngine {
         }
     }
 
-    // ─── Brute Force Detection ────────────────────────────────────────────────
+    // ─── Repeated Service Observations ────────────────────────────────────────
 
     pub(super) fn check_brute_force(&mut self, pkt: &Packet) {
-        let dst_port = pkt.dst_port.unwrap_or(0);
-        let src_port = pkt.src_port.unwrap_or(0);
-        let bytes = &pkt.bytes;
-
-        let http_failure = matches!(src_port, 80 | 443 | 8080)
-            .then(|| crate::analysis::stream::tcp_segment_payload(pkt))
-            .flatten()
-            .filter(|(_, payload)| is_http_unauthorized(payload))
-            .map(|(sequence, _)| (dst_port, sequence));
-        let service: Option<&'static str> = match dst_port {
-            _ if http_failure.is_some() => Some("HTTP"),
-            21 => {
-                let p = Self::ascii_payload(bytes, 54);
-                if p.contains("530 Login incorrect") || p.contains("530 Failed") {
-                    Some("FTP")
-                } else {
-                    None
-                }
-            }
-            445 => {
-                if Self::contains_str_ci(bytes, b"NTLMSSP") {
-                    Some("SMB")
-                } else {
-                    None
-                }
-            }
-            _ => {
-                // Check response side
-                if src_port == 21 {
-                    let p = Self::ascii_payload(bytes, 54);
-                    if p.contains("530 Login incorrect") || p.contains("530 Failed") {
-                        Some("FTP")
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
+        let (Some(server_port @ (21 | 80 | 443 | 445 | 8080)), Some(client_port)) =
+            (pkt.src_port, pkt.dst_port)
+        else {
+            return;
         };
-
-        if let Some(service) = service {
-            let response = http_failure.is_some();
-            let port = if response { src_port } else { dst_port };
-            self.record_service_observation(pkt, service, response, port, http_failure);
-        }
+        let Some((sequence, payload)) = crate::analysis::stream::tcp_segment_payload(pkt) else {
+            return;
+        };
+        let service = match server_port {
+            21 if is_ftp_not_logged_in(payload) => "FTP",
+            445 if is_smb2_logon_failure(payload) => "SMB",
+            80 | 443 | 8080 if is_http_unauthorized(payload) => "HTTP",
+            _ => return,
+        };
+        self.record_service_observation(pkt, service, true, server_port, (client_port, sequence));
     }
 
     pub(super) fn record_service_observation(
@@ -155,7 +124,7 @@ impl SecurityEngine {
         service: &'static str,
         response: bool,
         port: u16,
-        token: Option<(u16, u32)>,
+        token: (u16, u32),
     ) {
         let (client, server) = if response { (&pkt.dst, &pkt.src) } else { (&pkt.src, &pkt.dst) };
         let key = BfKey {
@@ -199,9 +168,7 @@ impl SecurityEngine {
         if window.observations.is_empty() {
             window.alerted = false;
         }
-        if token.is_some()
-            && window.observations.iter().any(|entry| entry.transport_token == token)
-        {
+        if window.observations.iter().any(|entry| entry.transport_token == token) {
             return;
         }
         if window.observations.len() == 5 {
@@ -230,6 +197,34 @@ impl SecurityEngine {
             self.brute_force.push(alert);
         }
     }
+}
+
+fn is_ftp_not_logged_in(payload: &[u8]) -> bool {
+    payload.strip_prefix(b"530 ").is_some_and(|line| {
+        let Some(end) = line.iter().position(|&byte| matches!(byte, b'\r' | b'\n')) else {
+            return false;
+        };
+        line.get(end..end + 2) == Some(b"\r\n")
+            && line[..end].iter().all(|&byte| byte.is_ascii_graphic() || byte == b' ')
+    })
+}
+
+fn is_smb2_logon_failure(payload: &[u8]) -> bool {
+    // Direct-hosted SMB: one complete, non-compound SMB2 error response.
+    let Some(prefix) = payload.first_chunk::<4>() else { return false };
+    let length = u32::from_be_bytes(*prefix) as usize;
+    if prefix[0] != 0 || length < 72 {
+        return false;
+    }
+    let Some(message) = payload.get(4..4 + length) else { return false };
+    let error_data_bytes = u32::from_le_bytes(message[68..72].try_into().unwrap()) as usize;
+    message[..6] == *b"\xfeSMB\x40\x00"
+        && message[8..12] == 0xc000_006d_u32.to_le_bytes()
+        && message[12..14] == 1_u16.to_le_bytes()
+        && message[16] & 1 != 0
+        && message[20..24] == [0; 4]
+        && message[64..66] == 9_u16.to_le_bytes()
+        && error_data_bytes <= message.len() - 72
 }
 
 fn is_http_unauthorized(payload: &[u8]) -> bool {

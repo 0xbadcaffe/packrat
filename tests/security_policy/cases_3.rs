@@ -103,6 +103,72 @@ fn ssh_burst_counts_unique_connection_starts_and_keeps_scopes_separate(#[case] i
     assert!(core.incidents.incidents.is_empty());
 }
 
+fn smb2_session_setup_reply(status: u32, flags: u8) -> Vec<u8> {
+    let mut payload = vec![0; 4 + 73];
+    payload[3] = 73;
+    let message = &mut payload[4..];
+    message[..6].copy_from_slice(b"\xfeSMB\x40\x00");
+    message[8..12].copy_from_slice(&status.to_le_bytes());
+    message[12..14].copy_from_slice(&1_u16.to_le_bytes());
+    message[16] = flags;
+    message[64..66].copy_from_slice(&9_u16.to_le_bytes());
+    payload
+}
+
+#[rstest]
+#[case(21, "ftp.not_logged_in_burst")]
+#[case(445, "smb2.logon_failure_burst")]
+fn logon_reply_bursts_require_complete_server_evidence(#[case] port: u16, #[case] rule_id: &str) {
+    let mut core = AnalysisCore::default();
+    let mut track = |no, sequence, from_server, payload: &[u8]| {
+        let mut packet = ipv4_tcp_packet(no, sequence, 0x18, payload);
+        let (source, destination) = if from_server { (port, 50_000_u16) } else { (50_000, port) };
+        packet.bytes[34..36].copy_from_slice(&source.to_be_bytes());
+        packet.bytes[36..38].copy_from_slice(&destination.to_be_bytes());
+        packet.src_port = Some(source);
+        packet.dst_port = Some(destination);
+        core.analyze(&packet);
+    };
+    let (valid, ignored) = if port == 21 {
+        (
+            b"530 Please log in first\r\n".to_vec(),
+            vec![b"200 530 Login incorrect\r\n".to_vec(), b"530 Login incorrect".to_vec()],
+        )
+    } else {
+        let valid = smb2_session_setup_reply(0xc000_006d, 1);
+        let mut incomplete = valid.clone();
+        incomplete.pop();
+        (
+            valid,
+            vec![
+                smb2_session_setup_reply(0xc000_0016, 1),
+                smb2_session_setup_reply(0xc000_006d, 0),
+                incomplete,
+                b"NTLMSSP\0".to_vec(),
+            ],
+        )
+    };
+    for no in 1..=5 {
+        track(no, no as u32, false, &valid);
+    }
+    for (index, payload) in ignored.iter().enumerate() {
+        for i in 0..5 {
+            let no = 6 + (index as u64 * 5) + i;
+            track(no, no as u32, true, payload);
+        }
+    }
+    for (no, sequence) in [(26, 100), (27, 100), (28, 101), (29, 102), (30, 103), (31, 104)] {
+        track(no, sequence, true, &valid);
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|a| a.source == "AUTH").collect();
+    assert_eq!(alerts.len(), 1);
+    let alert = alerts[0];
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, rule_id);
+    assert_eq!(alert.packet_refs, [26, 28, 29, 30, 31]);
+    assert!(alert.detail.contains(&format!("client 10.0.0.5 and service 203.0.113.9:{port}")));
+}
+
 #[test]
 fn ipv6_tcp_scan_counts_only_complete_initial_syns_through_extensions() {
     let mut core = AnalysisCore::default();

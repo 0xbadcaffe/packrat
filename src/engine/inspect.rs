@@ -98,6 +98,8 @@ impl AnalysisCore {
                     "distinct TCP SYNs (authentication outcome not observable)",
                 ),
                 "HTTP" => ("MEDIUM", "HTTP authentication burst".into(), "HTTP 401 responses"),
+                "FTP" => ("MEDIUM", "FTP not-logged-in reply burst".into(), "FTP 530 replies"),
+                "SMB" => ("MEDIUM", "SMB2 logon failure burst".into(), "SMB2 SESSION_SETUP logon failures"),
                 service => ("HIGH", format!("{service} authentication burst"), "attempts"),
             };
             let scope = (

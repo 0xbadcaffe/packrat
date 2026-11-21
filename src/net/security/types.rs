@@ -297,7 +297,7 @@ pub(super) struct BfWindow {
 pub(super) struct AuthObservation {
     pub(super) timestamp: f64,
     pub(super) packet_no: u64,
-    pub(super) transport_token: Option<(u16, u32)>,
+    pub(super) transport_token: (u16, u32),
 }
 
 // ─── HTTP Record ──────────────────────────────────────────────────────────────
