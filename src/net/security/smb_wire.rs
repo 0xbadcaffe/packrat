@@ -1,14 +1,35 @@
-fn session_setup(payload: &[u8], response: bool) -> Option<&[u8]> {
+fn direct_tcp_message(payload: &[u8]) -> Option<&[u8]> {
     let prefix = payload.first_chunk::<4>()?;
-    let length = u32::from_be_bytes(*prefix) as usize;
-    if prefix[0] != 0 || length < 64 {
+    if prefix[0] != 0 {
         return None;
     }
-    let message = payload.get(4..4 + length)?;
+    let length = u32::from_be_bytes(*prefix) as usize;
+    payload.get(4..4 + length)
+}
+
+fn session_setup(payload: &[u8], response: bool) -> Option<&[u8]> {
+    let message = direct_tcp_message(payload).filter(|message| message.len() >= 64)?;
     (message[..6] == *b"\xfeSMB\x40\x00"
         && message[12..14] == 1_u16.to_le_bytes()
         && (message[16] & 1 != 0) == response
         && message[20..24] == [0; 4]).then_some(message)
+}
+
+pub(super) fn is_successful_legacy_reply(payload: &[u8]) -> bool {
+    let Some(message) = direct_tcp_message(payload).filter(|message| message.len() >= 35) else {
+        return false;
+    };
+    if !message.starts_with(b"\xffSMB")
+        || message[4] == 0x72 // Dialect negotiation alone does not establish SMBv1 use.
+        || message[5..9] != [0; 4]
+        || message[9] & 0x80 == 0
+    {
+        return false;
+    }
+    let count_offset = 33 + usize::from(message[32]) * 2;
+    let Some(count) = message.get(count_offset..count_offset + 2) else { return false };
+    let size = usize::from(u16::from_le_bytes([count[0], count[1]]));
+    count_offset + 2 + size == message.len()
 }
 
 pub(super) fn is_smb2_logon_failure(payload: &[u8]) -> bool {

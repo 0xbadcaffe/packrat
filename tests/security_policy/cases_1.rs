@@ -1,8 +1,6 @@
 use super::*;
 
 #[rstest]
-#[case("EternalBlue")]
-#[case("BlueKeep (CVE-2019-0708)")]
 #[case("Log4Shell (CVE-2021-44228)")]
 #[case("Shellcode NOP sled")]
 #[case("NBNS WPAD Poisoning")]
@@ -10,7 +8,6 @@ use super::*;
 #[case("SQL Injection Probe")]
 #[case("XSS Probe")]
 #[case("Heartbleed (CVE-2014-0160)")]
-#[case("PrintNightmare (CVE-2021-1675)")]
 #[case("Log4Shell via DNS (CVE-2021-44228)")]
 fn shipped_signature_replays(#[case] signature: &str) {
     let mut security = SecurityEngine::default();

@@ -148,9 +148,11 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "detects_unexpected_and_competing_responses",
     },
     CoverageGroup {
+        signatures: &["SMBv1 server response"],
+        positive_test: "legacy_smb_alert_requires_a_complete_successful_server_reply",
+    },
+    CoverageGroup {
         signatures: &[
-            "EternalBlue",
-            "BlueKeep (CVE-2019-0708)",
             "Log4Shell (CVE-2021-44228)",
             "Shellcode NOP sled",
             "NBNS WPAD Poisoning",
@@ -158,7 +160,6 @@ const COVERAGE: &[CoverageGroup] = &[
             "SQL Injection Probe",
             "XSS Probe",
             "Heartbleed (CVE-2014-0160)",
-            "PrintNightmare (CVE-2021-1675)",
             "Log4Shell via DNS (CVE-2021-44228)",
         ],
         positive_test: "shipped_signature_replays",

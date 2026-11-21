@@ -6,30 +6,23 @@ impl SecurityEngine {
         let src_port = pkt.src_port.unwrap_or(0);
         let bytes = &pkt.bytes;
 
-        // ── EternalBlue ─────────────────────────────────────────────────────
-        if dst_port == 445 {
-            let sig1: &[u8] = &[0x00, 0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00];
-            if Self::contains_bytes(bytes, sig1) || Self::contains_str_ci(bytes, b"SMBr") {
-                self.push_ids(IdsAlert {
+        if src_port == 445
+            && crate::analysis::stream::tcp_segment_payload(pkt)
+                .is_some_and(|(_, payload)| smb_wire::is_successful_legacy_reply(payload))
+        {
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
                     pkt_no: pkt.no,
-                    signature: "EternalBlue",
-                    severity: Severity::Critical,
-                    detail: format!("SMB exploit signature on port 445 from {}", pkt.src),
-                });
-            }
-        }
-
-        // ── BlueKeep ────────────────────────────────────────────────────────
-        if dst_port == 3389 && bytes.len() > 100 {
-            let sig: &[u8] = &[0x03, 0x00, 0x00];
-            if bytes.starts_with(sig) || Self::contains_bytes(bytes, sig) {
-                self.push_ids(IdsAlert {
-                    pkt_no: pkt.no,
-                    signature: "BlueKeep (CVE-2019-0708)",
-                    severity: Severity::Critical,
-                    detail: format!("RDP anomalous TPKT from {} len={}", pkt.src, bytes.len()),
-                });
-            }
+                    signature: "SMBv1 server response",
+                    severity: Severity::Medium,
+                    detail: format!(
+                        "{} sent a successful SMBv1 response to {}; patch and exploitation status unverified",
+                        pkt.src, pkt.dst
+                    ),
+                },
+                related_packets: Vec::new(),
+                correlation_key: Some(format!("{:?}:{}>{}", service_scope(pkt), pkt.src, pkt.dst)),
+            });
         }
 
         // ── Log4Shell ───────────────────────────────────────────────────────
@@ -132,22 +125,6 @@ impl SecurityEngine {
                         ),
                     });
                 }
-            }
-        }
-
-        // ── PrintNightmare ───────────────────────────────────────────────────
-        if dst_port == 445 || dst_port == 135 {
-            let sig_pn: &[u8] = &[0x1c, 0x00];
-            if Self::contains_bytes(bytes, sig_pn)
-                && (Self::contains_str_ci(bytes, b"SpoolSS")
-                    || Self::contains_bytes(bytes, &[0x6e, 0x64, 0x72, 0x76]))
-            {
-                self.push_ids(IdsAlert {
-                    pkt_no: pkt.no,
-                    signature: "PrintNightmare (CVE-2021-1675)",
-                    severity: Severity::Critical,
-                    detail: format!("Print Spooler RPC from {} on port {dst_port}", pkt.src),
-                });
             }
         }
 

@@ -69,6 +69,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the source normally contacts these hosts and corroborate with server logon events.",
         ),
         (
+            "IDS", "SMBv1 server response", "smb1.successful_server_response", 1, DirectObservation,
+            "Identify the server and legacy dependency; verify SMBv1 configuration and pilot removal before disabling it.",
+        ),
+        (
             "IDS", "Administrative service response fan-out", "tcp.admin_service_response_fanout", 1, Correlated,
             "Inspect the retained SYN and SYN-ACK pairs; confirm completed sessions and expected management activity.",
         ),

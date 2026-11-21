@@ -177,6 +177,72 @@ fn smb2_session_setup_reply(status: u32, flags: u8) -> Vec<u8> {
     payload
 }
 
+#[test]
+fn legacy_smb_alert_requires_a_complete_successful_server_reply() {
+    let mut core = AnalysisCore::default();
+    let make_reply = |no, payload: &[u8]| {
+        let mut packet = ipv4_tcp_packet(no, no as u32 * 1024, 0x18, payload);
+        packet.bytes[34..36].copy_from_slice(&445_u16.to_be_bytes());
+        packet.bytes[36..38].copy_from_slice(&50_000_u16.to_be_bytes());
+        packet.src_port = Some(445);
+        packet.dst_port = Some(50_000);
+        packet.protocol = "SMB".into();
+        packet
+    };
+    let mut echo = vec![0; 4 + 41];
+    echo[3] = 41;
+    let message = &mut echo[4..];
+    message[..4].copy_from_slice(b"\xffSMB");
+    message[4] = 0x2b;
+    message[9] = 0x80;
+    message[32..37].copy_from_slice(&[1, 1, 0, 4, 0]);
+    message[37..].copy_from_slice(b"ping");
+    let mut negotiate = echo.clone();
+    negotiate[8] = 0x72;
+    let mut failed = echo.clone();
+    failed[9] = 1;
+    let mut request = echo.clone();
+    request[13] = 0;
+    let mut truncated = echo.clone();
+    truncated.pop();
+    let mut malformed = echo.clone();
+    malformed[39] = 32;
+    let modern = smb2_session_setup_reply(0, 1);
+    for (index, payload) in [
+        &negotiate, &failed, &request, &truncated, &malformed, &modern,
+    ].into_iter().enumerate() {
+        core.analyze(&make_reply(index as u64 + 1, payload));
+    }
+    assert!(core.alert_center.items.is_empty());
+
+    core.analyze(&make_reply(7, &echo));
+    let alert = core.alert_center.items.iter().find(|a| a.title == "SMBv1 server response").unwrap();
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.packet_refs, [7]);
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "smb1.successful_server_response");
+    assert!(alert.detail.contains("exploitation status unverified"));
+    assert!(core.incidents.incidents.is_empty());
+}
+
+#[test]
+fn ordinary_protocol_headers_and_text_do_not_open_cve_incidents() {
+    let mut core = AnalysisCore::default();
+    let mut tpkt = vec![0; 112];
+    tpkt[..4].copy_from_slice(&[3, 0, 0, 112]);
+    for (no, port, payload) in [
+        (1, 3389_u16, tpkt.as_slice()),
+        (2, 445, b"Service label SMBr"),
+        (3, 135, b"\x1c\x00SpoolSS status"),
+    ] {
+        let mut packet = ipv4_tcp_packet(no, 100, 0x18, payload);
+        packet.bytes[36..38].copy_from_slice(&port.to_be_bytes());
+        packet.dst_port = Some(port);
+        core.analyze(&packet);
+    }
+    assert!(core.incidents.incidents.is_empty());
+    assert!(core.alert_center.items.iter().all(|a| a.severity != "CRITICAL"));
+}
+
 fn smb2_ntlm_request(message_type: u8) -> Vec<u8> {
     let mut request = vec![0; 4 + 88 + 64];
     request[3] = 88 + 64;

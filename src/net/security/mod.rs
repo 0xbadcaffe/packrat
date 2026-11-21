@@ -92,8 +92,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "Conflicting DNS responses",
     "DNS reply changed at the same resolver",
     "DNS answer set changed at the same resolver",
-    "EternalBlue",
-    "BlueKeep (CVE-2019-0708)",
+    "SMBv1 server response",
     "Log4Shell (CVE-2021-44228)",
     "Shellcode NOP sled",
     "NBNS WPAD Poisoning",
@@ -101,7 +100,6 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "SQL Injection Probe",
     "XSS Probe",
     "Heartbleed (CVE-2014-0160)",
-    "PrintNightmare (CVE-2021-1675)",
     "Log4Shell via DNS (CVE-2021-44228)",
 ];
 
