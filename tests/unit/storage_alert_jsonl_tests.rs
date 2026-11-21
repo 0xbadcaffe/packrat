@@ -158,3 +158,47 @@ fn reopening_after_a_torn_line_does_not_lose_the_next_snapshot() {
     assert!(contents.starts_with("{\"alert\":\n"));
     assert_eq!(read_log(&path).len(), 1);
 }
+
+#[cfg(unix)]
+#[test]
+fn saved_alerts_follow_renamed_logs_without_replaying_old_snapshots() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let previous = directory.path().join("alerts.jsonl.1");
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    let first = alert(1, 1);
+    writer.append_alerts(std::slice::from_ref(&first)).unwrap();
+    std::fs::rename(&path, &previous).unwrap();
+
+    writer.append_alerts(&[]).unwrap();
+    assert!(!path.exists());
+    writer.append_alerts(&[first, alert(2, 2)]).unwrap();
+    let old = read_log(&previous);
+    let current = read_log(&path);
+    assert_eq!(old.len(), 1);
+    assert_eq!(old[0].alert.hit_count, 1);
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0].session_id, "session-a");
+    assert_eq!(current[0].alert.packet_refs, [1, 2]);
+    assert_eq!(current[0].alert.hit_count, 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn rotated_replacement_with_a_torn_record_preserves_the_next_alert() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let previous = directory.path().join("alerts.jsonl.1");
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    writer.append_alerts(&[alert(1, 1)]).unwrap();
+    std::fs::rename(&path, &previous).unwrap();
+    std::fs::write(&path, b"{\"alert\":").unwrap();
+
+    writer.append_alerts(&[alert(2, 2), alert(3, 3)]).unwrap();
+    assert!(std::fs::read_to_string(&path).unwrap().starts_with("{\"alert\":\n"));
+    assert_eq!(read_log(&previous).len(), 1);
+    assert_eq!(
+        read_log(&path).iter().map(|record| record.alert.hit_count).collect::<Vec<_>>(),
+        [2, 3],
+    );
+}

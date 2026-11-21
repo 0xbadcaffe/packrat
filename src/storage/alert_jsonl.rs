@@ -137,29 +137,13 @@ impl AlertJsonlWriter {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("Read alert JSONL file {}: {error}", path.display())),
         }
-        let mut options = OpenOptions::new();
-        options.create(true).read(true).append(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&path)
-            .map_err(|error| format!("Open alert JSONL file {}: {error}", path.display()))?;
-        let needs_separator = if file.metadata().map_err(|error| error.to_string())?.len() > 0 {
-            let mut last = [0];
-            file.seek(SeekFrom::End(-1)).and_then(|_| file.read_exact(&mut last))
-                .map_err(|error| format!("Read alert JSONL terminator: {error}"))?;
-            last[0] != b'\n'
-        } else {
-            false
-        };
+        let (writer, needs_separator) = open_append(&path)?;
         Ok(Self {
             path,
             session_id: session_id.to_owned(),
             latest_snapshots,
             needs_separator,
-            writer: BufWriter::new(file),
+            writer,
         })
     }
 
@@ -184,6 +168,8 @@ impl AlertJsonlWriter {
     }
 
     fn write_alerts<'a>(&mut self, alerts: impl IntoIterator<Item = &'a AlertItem>) -> Result<(), String> {
+        #[cfg(unix)]
+        let mut checked_rotation = false;
         for alert in alerts {
             let key = snapshot_key(alert);
             let digest = snapshot_digest(alert)?;
@@ -200,6 +186,12 @@ impl AlertJsonlWriter {
             if record.len() >= MAX_ALERT_LINE {
                 return Err("Alert JSONL record exceeds the export size limit".into());
             }
+            // Avoid filesystem checks on the packet path when there is no new snapshot.
+            #[cfg(unix)]
+            if !checked_rotation {
+                self.follow_rotation()?;
+                checked_rotation = true;
+            }
             record.push(b'\n');
             if self.needs_separator {
                 record.insert(0, b'\n');
@@ -214,6 +206,45 @@ impl AlertJsonlWriter {
             .flush()
             .map_err(|error| format!("Flush alert JSONL file: {error}"))
     }
+
+    #[cfg(unix)]
+    fn follow_rotation(&mut self) -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+
+        let current = self.writer.get_ref().metadata()
+            .map_err(|error| format!("Stat open alert JSONL file: {error}"))?;
+        match std::fs::metadata(&self.path) {
+            Ok(path) if (path.dev(), path.ino()) == (current.dev(), current.ino()) => return Ok(()),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Stat alert JSONL file {}: {error}", self.path.display())),
+        }
+        self.writer.flush()
+            .map_err(|error| format!("Flush rotated alert JSONL file: {error}"))?;
+        (self.writer, self.needs_separator) = open_append(&self.path)?;
+        Ok(())
+    }
+}
+
+fn open_append(path: &std::path::Path) -> Result<(BufWriter<File>, bool), String> {
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)
+        .map_err(|error| format!("Open alert JSONL file {}: {error}", path.display()))?;
+    let needs_separator = if file.metadata().map_err(|error| error.to_string())?.len() > 0 {
+        let mut last = [0];
+        file.seek(SeekFrom::End(-1)).and_then(|_| file.read_exact(&mut last))
+            .map_err(|error| format!("Read alert JSONL terminator: {error}"))?;
+        last[0] != b'\n'
+    } else {
+        false
+    };
+    Ok((BufWriter::new(file), needs_separator))
 }
 
 #[cfg(test)]
