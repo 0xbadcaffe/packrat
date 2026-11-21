@@ -52,6 +52,7 @@ const MAX_PACKETS: usize = 10_000;
 pub const INCIDENT_ANALYSIS_SECTION: usize = 11;
 pub const SETTINGS_COUNT: usize = 11;
 
+mod alert_evidence;
 mod analysis_results;
 mod background;
 mod capture_control;

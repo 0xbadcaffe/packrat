@@ -36,3 +36,18 @@ fn view_drawer_keeps_selected_tool_visible_on_short_terminals() {
     app.activate_view_menu_selection();
     assert_eq!(app.active_tab, Tab::OperatorGraph);
 }
+
+#[test]
+fn selected_alert_shows_evidence_availability_and_keeps_the_action_visible() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Security;
+    app.security_tab = packrat_tui::app::SecuritySubTab::Alerts;
+    app.configure_core(|core| {
+        core.alert_center.record(7, "IDS", "HIGH", "Horizontal host scan", "Distinct targets");
+    });
+    for (width, height) in [(80, 24), (140, 40)] {
+        let text = screen(&app, width, height);
+        assert!(text.contains("0/1 retained; 1 unavailable; capture ID not recorded"), "{text}");
+        assert!(text.contains("V inspect packet set"), "{text}");
+    }
+}

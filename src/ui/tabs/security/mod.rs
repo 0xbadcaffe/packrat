@@ -76,7 +76,7 @@ fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
 fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(6), Constraint::Length(8)])
+        .constraints([Constraint::Min(6), Constraint::Length(9)])
         .split(area);
     let visible_indices = app.core.alert_center.visible_indices();
     let visible_rows = chunks[0].height.saturating_sub(3) as usize;
@@ -177,6 +177,10 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(C_FG3()),
             )),
             Line::from(Span::styled(&item.detail, Style::default().fg(C_FG()))),
+            Line::from(Span::styled(
+                app.alert_evidence_status(item),
+                Style::default().fg(C_FG2()),
+            )),
             Line::from(Span::styled(
                 item.provenance.as_ref().map(|rule| rule.verification_hint.as_str())
                     .or(item.recommendation.as_deref())

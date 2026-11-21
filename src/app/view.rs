@@ -145,10 +145,7 @@ impl AppView<'_> {
                             "Capture ID".into(),
                             alert.capture_id.as_deref().unwrap_or("Unscoped").into(),
                         ),
-                        (
-                            "Matched packets".into(),
-                            alert.packet_refs.len().to_string(),
-                        ),
+                        ("Packet evidence".into(), self.alert_evidence_status(alert)),
                         ("Reason".into(), alert.detail.clone()),
                         (
                             "Recommendation".into(),

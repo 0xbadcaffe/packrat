@@ -1,4 +1,5 @@
 use super::*;
+use super::alert_evidence::AlertEvidenceScope;
 
 impl App {
     pub fn active_investigation_packet(&self) -> Option<&Packet> {
@@ -201,8 +202,9 @@ impl App {
         let alert_item = InvestigationItem::Alert(alert.id);
         self.project_dirty |= self.worklist.add(alert_item.clone());
         let scope = alert.capture_id.as_deref();
-        let same_capture = scope.is_some() && scope == self.archive_capture_id.as_deref();
-        let allow_local = scope.is_none() || same_capture;
+        let evidence_scope = self.alert_evidence_scope(&alert);
+        let same_capture = evidence_scope == AlertEvidenceScope::CurrentCapture;
+        let allow_local = evidence_scope != AlertEvidenceScope::DifferentCapture;
         let mut reader = None;
         let mut archive_error = false;
         let mut unavailable = 0;
