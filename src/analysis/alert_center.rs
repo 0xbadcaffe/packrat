@@ -269,7 +269,8 @@ impl AlertCenter {
             self.pending_pins.push(self.next_id);
         }
         if self.items.len() > MAX_ALERTS {
-            self.items.remove(0);
+            let evicted = self.items.remove(0);
+            self.fingerprints.remove(&fingerprint_for(&evicted));
             self.selected = self.selected.saturating_sub(1);
         }
         true

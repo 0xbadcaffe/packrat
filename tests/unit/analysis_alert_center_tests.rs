@@ -87,3 +87,21 @@ fn restored_alerts_continue_with_unique_ids_and_deduplication() {
     assert_eq!(restored.items[1].id, 2);
     assert_eq!(restored.items[0].disposition, AlertDisposition::Reviewing);
 }
+
+#[test]
+fn evicted_alert_can_recur_without_growing_the_fingerprint_index() {
+    let mut center = AlertCenter::default();
+    for index in 0..=MAX_ALERTS {
+        assert!(center.record(index as u64 + 1, "IDS", "HIGH", format!("Probe {index}"), "detail"));
+    }
+    assert_eq!(center.items.len(), MAX_ALERTS);
+    assert_eq!(center.fingerprints.len(), MAX_ALERTS);
+    assert!(center.items.iter().all(|item| item.id != 1));
+
+    assert!(center.record(MAX_ALERTS as u64 + 2, "IDS", "HIGH", "Probe 0", "recurrence"));
+    assert_eq!(center.items.last().unwrap().title, "Probe 0");
+    assert_eq!(center.items.last().unwrap().hit_count, 1);
+    assert_eq!(center.fingerprints.len(), MAX_ALERTS);
+    assert!(!center.record(MAX_ALERTS as u64 + 3, "IDS", "HIGH", "Probe 0", "repeat"));
+    assert_eq!(center.items.last().unwrap().hit_count, 2);
+}
