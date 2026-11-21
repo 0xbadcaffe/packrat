@@ -21,13 +21,15 @@ pub(super) fn has_conflicting_tcp_overlap(
     })
 }
 
-pub(super) fn evict_oldest_scan_source(states: &mut HashMap<String, SourceScanState>) {
+pub(super) fn evict_oldest_scan_source(states: &mut HashMap<ScanSourceKey, SourceScanState>) {
     if states.len() < MAX_SCAN_STATES {
         return;
     }
     if let Some(oldest) = states
         .iter()
-        .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+        .min_by(|left, right| {
+            left.1.last_seen.total_cmp(&right.1.last_seen).then(left.0.cmp(right.0))
+        })
         .map(|(key, _)| key.clone())
     {
         states.remove(&oldest);

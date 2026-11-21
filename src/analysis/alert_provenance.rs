@@ -49,11 +49,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Identify the owning process and expected interval before escalating.",
         ),
         (
-            "IDS", "Horizontal host scan", "scan.horizontal", 1, Heuristic,
+            "IDS", "Horizontal host scan", "scan.horizontal", 2, Heuristic,
             "Compare destinations and completed handshakes; check expected discovery or monitoring.",
         ),
         (
-            "IDS", "Vertical port scan", "scan.vertical", 1, Heuristic,
+            "IDS", "Vertical port scan", "scan.vertical", 2, Heuristic,
             "Compare destination ports and completed handshakes; check scheduled scanning.",
         ),
         (

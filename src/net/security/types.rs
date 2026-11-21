@@ -64,8 +64,16 @@ pub(super) enum TcpFrame<'a> {
 #[derive(Debug)]
 pub(super) struct ScanProbe {
     pub(super) timestamp: f64,
+    pub(super) packet_no: u64,
     pub(super) destination: String,
     pub(super) port: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(super) struct ScanSourceKey {
+    pub(super) address: String,
+    pub(super) transport: &'static str,
+    pub(super) vlan: (Option<u16>, Option<u16>),
 }
 
 #[derive(Debug, Default)]

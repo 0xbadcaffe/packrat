@@ -301,6 +301,47 @@ fn detects_vertical_and_horizontal_scan_windows() {
 }
 
 #[test]
+fn scan_evidence_deduplicates_targets_and_stays_in_its_vlan_and_transport() {
+    use packrat_tui::engine::AnalysisCore;
+
+    let mut core = AnalysisCore::default();
+    for index in 1..=6_u8 {
+        let mut primary = tcp_probe(u64::from(index), [10, 0, 0, index], 443, 0x02, f64::from(index));
+        primary.vlan_id = Some(10);
+        core.analyze(&primary);
+        let mut other_vlan = tcp_probe(u64::from(index) + 20, [10, 0, 0, index + 6], 443, 0x02, f64::from(index));
+        other_vlan.vlan_id = Some(20);
+        core.analyze(&other_vlan);
+        let mut udp = other_vlan.clone();
+        udp.no += 20;
+        udp.vlan_id = Some(10);
+        udp.protocol = "UDP".into();
+        udp.bytes.truncate(42);
+        udp.bytes[16..18].copy_from_slice(&28_u16.to_be_bytes());
+        udp.bytes[23] = 17;
+        udp.bytes[38..40].copy_from_slice(&8_u16.to_be_bytes());
+        udp.length = 42;
+        core.analyze(&udp);
+    }
+    for no in 61..=80 {
+        let mut repeat = tcp_probe(no, [10, 0, 0, 1], 443, 0x02, 7.0);
+        repeat.vlan_id = Some(10);
+        core.analyze(&repeat);
+    }
+    assert!(!core.alert_center.items.iter().any(|alert| alert.title == "Horizontal host scan"));
+    for index in 7..=12_u8 {
+        let mut probe = tcp_probe(u64::from(index) + 100, [10, 0, 0, index], 443, 0x02, f64::from(index) + 1.0);
+        probe.vlan_id = Some(10);
+        core.analyze(&probe);
+    }
+    let alert = core.alert_center.items.iter()
+        .find(|alert| alert.title == "Horizontal host scan").unwrap();
+    assert_eq!(alert.hit_count, 1);
+    assert_eq!(alert.packet_refs, [80, 2, 3, 4, 5, 6, 107, 108, 109, 110, 111, 112]);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 2);
+}
+
+#[test]
 fn detects_tcp_stealth_scan_flag_patterns() {
     let mut security = SecurityEngine::default();
     security.update(&tcp_probe(1, [10, 0, 0, 5], 80, 0x00, 1.0));

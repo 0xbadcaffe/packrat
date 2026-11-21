@@ -35,6 +35,7 @@ const TCP_STATE_TTL_SECS: f64 = 300.0;
 const SCAN_WINDOW_SECS: f64 = 15.0;
 const SYN_FLOOD_WINDOW_SECS: f64 = 1.0;
 const SCAN_UNIQUE_THRESHOLD: usize = 12;
+const MAX_SCAN_PROBES_PER_SOURCE: usize = 128;
 const SYN_FLOOD_THRESHOLD: usize = 100;
 const MAX_SCAN_STATES: usize = 512;
 const RA_FLOOD_THRESHOLD: usize = 20;
@@ -152,7 +153,7 @@ pub struct SecurityEngine {
     dns_accum: HashMap<String, DnsAccum>,
     fragment_states: HashMap<FragmentKey, FragmentState>,
     tcp_integrity: HashMap<TcpFlowKey, TcpIntegrityState>,
-    scan_sources: HashMap<String, SourceScanState>,
+    scan_sources: HashMap<ScanSourceKey, SourceScanState>,
     syn_flood_targets: HashMap<(String, u16), SynFloodState>,
     ndp_bindings: HashMap<[u8; 16], [u8; 6]>,
     router_advertisements: HashMap<[u8; 6], RouterAdvertisementState>,
