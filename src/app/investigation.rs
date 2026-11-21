@@ -204,14 +204,14 @@ impl App {
         let scope = alert.capture_id.as_deref();
         let evidence_scope = self.alert_evidence_scope(&alert);
         let same_capture = evidence_scope == AlertEvidenceScope::CurrentCapture;
-        let allow_local = evidence_scope != AlertEvidenceScope::DifferentCapture;
+        let scope_mismatch = evidence_scope.local_mismatch();
         let mut reader = None;
         let mut archive_error = false;
         let mut unavailable = 0;
         let mut archived = 0;
         let mut retained = Vec::with_capacity(packet_refs.len());
         for packet_no in packet_refs {
-            let local = allow_local.then(|| self.packet_by_no(packet_no)).flatten().cloned();
+            let local = scope_mismatch.is_none().then(|| self.packet_by_no(packet_no)).flatten().cloned();
             let from_archive = local.is_none() && same_capture;
             let packet = if from_archive {
                 if reader.is_none() && !archive_error {
@@ -269,13 +269,9 @@ impl App {
             retained.len(),
             archived,
             unavailable,
-            if archive_error {
-                " (archive read failed)"
-            } else if !allow_local {
-                " (different capture)"
-            } else {
-                ""
-            }
+            scope_mismatch
+                .or(archive_error.then_some("archive read failed"))
+                .map_or_else(String::new, |reason| format!(" ({reason})"))
         ));
         true
     }

@@ -6,11 +6,23 @@ pub(super) enum AlertEvidenceScope {
     Unscoped,
     CurrentCapture,
     DifferentCapture,
+    MissingCaptureId,
+}
+
+impl AlertEvidenceScope {
+    pub(super) fn local_mismatch(self) -> Option<&'static str> {
+        match self {
+            Self::DifferentCapture => Some("different capture"),
+            Self::MissingCaptureId => Some("capture ID not recorded"),
+            Self::Unscoped | Self::CurrentCapture => None,
+        }
+    }
 }
 
 impl App {
     pub(super) fn alert_evidence_scope(&self, alert: &AlertItem) -> AlertEvidenceScope {
         match alert.capture_id.as_deref() {
+            None if self.capture_id.is_some() => AlertEvidenceScope::MissingCaptureId,
             None => AlertEvidenceScope::Unscoped,
             scope if scope == self.capture_id.as_deref() => AlertEvidenceScope::CurrentCapture,
             _ => AlertEvidenceScope::DifferentCapture,
@@ -23,8 +35,8 @@ impl App {
             return "No packet references".into();
         }
         let scope = self.alert_evidence_scope(alert);
-        if scope == AlertEvidenceScope::DifferentCapture {
-            return format!("0/{} retained here; different capture", frames.len());
+        if let Some(reason) = scope.local_mismatch() {
+            return format!("0/{} verified here; {reason}", frames.len());
         }
 
         let truncated = |packet: &Packet| packet.capture.as_ref().is_some_and(|meta| meta.truncated());

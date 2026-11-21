@@ -186,6 +186,30 @@ fn alert_evidence_preview_distinguishes_truncated_pins_and_missing_frames() {
 }
 
 #[test]
+fn unscoped_alert_does_not_open_overlapping_live_or_pinned_frames() {
+    let mut app = App::new_for_test();
+    app.capture_id = Some(App::new_capture_id());
+    app.packets.extend([packet(10), packet(11)]);
+    app.worklist.pin_packet(&packet(10)).unwrap();
+    let alert = {
+        let mut core = app.core.edit();
+        core.alert_center.record(10, "IDS", "HIGH", "Legacy alert", "missing capture ID");
+        core.alert_center.items[0].packet_refs = vec![10, 11];
+        core.alert_center.items[0].clone()
+    };
+
+    assert!(alert.capture_id.is_none());
+    assert_eq!(
+        app.alert_evidence_status(&alert),
+        "0/2 verified here; capture ID not recorded"
+    );
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.worklist.packet_nos(), [10]);
+    assert_eq!(app.worklist.active_packet_no(), None);
+    assert!(app.status_msg.as_deref().unwrap().contains("2 unavailable (capture ID not recorded)"));
+}
+
+#[test]
 fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     use crate::storage::packet_archive::{ArchiveWorker, PacketArchive};
 
@@ -217,7 +241,7 @@ fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     app.try_clear_packets().unwrap();
     let capture_b = app.capture_id.clone().unwrap();
     assert_ne!(capture_a, capture_b);
-    assert_eq!(app.alert_evidence_status(&old_alerts[0]), "0/2 retained here; different capture");
+    assert_eq!(app.alert_evidence_status(&old_alerts[0]), "0/2 verified here; different capture");
     app.packet_archive = Some(ArchiveWorker::open(directory.path()).unwrap());
     let mut second = packet(90);
     second.info = "second capture".into();
