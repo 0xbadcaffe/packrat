@@ -98,8 +98,8 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "detects_dns_nxdomain_burst_txt_abuse_and_external_resolver_use",
     },
     CoverageGroup {
-        signatures: &["Administrative service fan-out"],
-        positive_test: "detects_administrative_service_fanout",
+        signatures: &["Administrative service response fan-out"],
+        positive_test: "administrative_fanout_requires_scoped_syn_ack_pairs",
     },
     CoverageGroup {
         signatures: &["NTLM authentication fan-out"],

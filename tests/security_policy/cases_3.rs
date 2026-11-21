@@ -59,6 +59,68 @@ fn analyze_ipv6(core: &mut AnalysisCore, no: u64, bytes: &[u8]) {
 #[rstest]
 #[case(false)]
 #[case(true)]
+fn administrative_fanout_requires_scoped_syn_ack_pairs(#[case] ipv6: bool) {
+    let mut core = AnalysisCore::default();
+    let make = |no: u64, host: u8, response: bool, ack: u32, vlan: u16| {
+        let (sequence, flag, source_port, destination_port) = if response {
+            (200_u32, 0x12, 445_u16, 50_000_u16)
+        } else {
+            (u32::MAX, 0x02, 50_000, 445)
+        };
+        let mut tcp = [0; 20];
+        tcp[..2].copy_from_slice(&source_port.to_be_bytes());
+        tcp[2..4].copy_from_slice(&destination_port.to_be_bytes());
+        tcp[4..8].copy_from_slice(&sequence.to_be_bytes());
+        tcp[8..12].copy_from_slice(&ack.to_be_bytes());
+        tcp[12] = 0x50;
+        tcp[13] = flag;
+        let raw = if ipv6 {
+            let mut raw = ipv6_frame(u16::from(host), 6, &tcp);
+            raw[22..24].copy_from_slice(&[0xfd, 0]);
+            raw[38..40].copy_from_slice(&[0xfd, 0]);
+            if response {
+                for i in 22..38 { raw.swap(i, i + 16); }
+            }
+            raw
+        } else {
+            let mut raw = ipv4_tcp_packet(no, sequence, flag, &[]).bytes;
+            let (client, server) = ([10, 0, 0, 9], [10, 0, 1, host]);
+            let (source, destination) = if response { (server, client) } else { (client, server) };
+            raw[26..30].copy_from_slice(&source);
+            raw[30..34].copy_from_slice(&destination);
+            raw[34..54].copy_from_slice(&tcp);
+            raw
+        };
+        let mut packet = parse_ethernet(&raw, no, no as f64 / 100.0);
+        packet.vlan_id = Some(vlan);
+        packet
+    };
+    const TITLE: &str = "Administrative service response fan-out";
+    for host in 1..=8 {
+        core.analyze(&make(u64::from(host), host, false, 0, 10));
+    }
+    for host in 1..=8 {
+        let base = 8 + u64::from(host) * 3;
+        core.analyze(&make(base, host, true, 1, 10));
+        core.analyze(&make(base + 1, host, true, 0, 20));
+        if host < 8 {
+            core.analyze(&make(base + 2, host, true, 0, 10));
+        }
+    }
+    core.analyze(&make(34, 1, true, 0, 10));
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+
+    core.analyze(&make(35, 8, true, 0, 10));
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(alert.packet_refs, [1, 13, 2, 16, 3, 19, 4, 22, 5, 25, 6, 28, 7, 31, 8, 35]);
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "tcp.admin_service_response_fanout");
+    assert!(alert.detail.contains("login outcomes unverified"));
+}
+
+#[rstest]
+#[case(false)]
+#[case(true)]
 fn ssh_burst_counts_unique_connection_starts_and_keeps_scopes_separate(#[case] ipv6: bool) {
     let mut core = AnalysisCore::default();
     let make_packet = |no: u64, sequence: u32, flags: u8, vlan: u16| {

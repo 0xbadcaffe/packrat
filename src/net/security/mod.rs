@@ -77,7 +77,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "DNS NXDOMAIN burst",
     "Oversized DNS TXT traffic",
     "Direct external DNS resolver use",
-    "Administrative service fan-out",
+    "Administrative service response fan-out",
     "NTLM authentication fan-out",
     "DHCP server identity changed",
     "DHCP client identity burst",
@@ -105,6 +105,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "Log4Shell via DNS (CVE-2021-44228)",
 ];
 
+mod admin_fanout;
 mod behavior;
 mod control_plane;
 mod dns;
@@ -162,7 +163,7 @@ pub struct SecurityEngine {
     exfil_flows: HashMap<ExfilKey, ExfilState>,
     nxdomain_clients: HashMap<String, TimedCountState>,
     external_dns_pairs: HashMap<(String, String), f64>,
-    admin_fanout: HashMap<(String, u16), TimedTargetState>,
+    admin_fanout: admin_fanout::AdminFanout,
     ntlm_fanout: HashMap<(String, ServiceScope), NtlmFanoutState>,
     dhcp_vlans: HashMap<Option<u16>, DhcpVlanState>,
     ipv6_fragments: Ipv6FragmentReassembler,

@@ -13,19 +13,30 @@ impl SecurityEngine {
         });
         let ipv6 = ipv6_probe(&pkt.bytes);
         let tcp = match ipv6 {
-            Some(Ipv6Probe::Tcp { flags, sequence, source_port, destination_port }) => {
-                Some((flags, sequence, Some(source_port), Some(destination_port), true))
-            }
+            Some(Ipv6Probe::Tcp(signal)) => Some(signal),
             _ => match parse_ipv4_tcp_frame(&pkt.bytes) {
-                Some(TcpFrame::Segment(segment)) => Some((
-                    segment.flags, segment.sequence, pkt.src_port, pkt.dst_port, segment.complete,
-                )),
+                Some(TcpFrame::Segment(segment)) => {
+                    let (source, destination) = if segment.from_a {
+                        (segment.key.endpoint_a, segment.key.endpoint_b)
+                    } else {
+                        (segment.key.endpoint_b, segment.key.endpoint_a)
+                    };
+                    Some(TcpSignal {
+                        flags: segment.flags,
+                        sequence: segment.sequence,
+                        acknowledgement: segment.acknowledgement,
+                        source_port: source.1,
+                        destination_port: destination.1,
+                        complete: segment.complete,
+                    })
+                }
                 _ => None,
             },
         };
         let mut alerts = Vec::new();
 
-        if let Some((flags, sequence, source_port, destination_port, complete)) = tcp {
+        if let Some(signal) = tcp {
+            let TcpSignal { flags, sequence, source_port, destination_port, complete, .. } = signal;
             const FIN: u8 = 0x01;
             const SYN: u8 = 0x02;
             const RST: u8 = 0x04;
@@ -52,22 +63,21 @@ impl SecurityEngine {
                         "{kind} probe from {} to {}:{}",
                         pkt.src,
                         pkt.dst,
-                        destination_port.unwrap_or(0)
+                        destination_port
                     ),
                 ));
             }
 
-            if flags & (SYN | ACK | FIN | RST) == SYN && let Some(port) = destination_port {
-                self.record_scan_probe(pkt, port, "TCP");
-                if let Some(source_port) = source_port {
-                    self.record_syn_arrival(pkt, port, source_port, sequence);
-                    if port == 22 && complete && control == SYN {
-                        self.record_service_observation(
-                            pkt, "SSH", false, port, (source_port, sequence),
-                        );
-                    }
+            if flags & (SYN | ACK | FIN | RST) == SYN {
+                self.record_scan_probe(pkt, destination_port, "TCP");
+                self.record_syn_arrival(pkt, destination_port, source_port, sequence);
+                if destination_port == 22 && complete && control == SYN {
+                    self.record_service_observation(
+                        pkt, "SSH", false, destination_port, (source_port, sequence),
+                    );
                 }
             }
+            self.record_admin_tcp(pkt, signal);
         } else if let Some(Ipv6Probe::EmptyUdp(port)) = ipv6 {
             self.record_scan_probe(pkt, port, "UDP");
         } else if is_empty_ipv4_udp_probe(&pkt.bytes) {

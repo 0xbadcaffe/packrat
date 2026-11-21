@@ -69,6 +69,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the source normally contacts these hosts and corroborate with server logon events.",
         ),
         (
+            "IDS", "Administrative service response fan-out", "tcp.admin_service_response_fanout", 1, Correlated,
+            "Inspect the retained SYN and SYN-ACK pairs; confirm completed sessions and expected management activity.",
+        ),
+        (
             "IDS", "Conflicting DNS responses", "dns.competing_responders", 2, Correlated,
             "Compare the query and both replies; verify which resolvers were authorized.",
         ),

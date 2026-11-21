@@ -174,9 +174,6 @@ impl SecurityEngine {
         self.external_dns_pairs.retain(|_, last_seen| {
             pkt.timestamp < *last_seen || pkt.timestamp - *last_seen <= 3600.0
         });
-        self.admin_fanout.retain(|_, state| {
-            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 60.0
-        });
         self.ntlm_fanout.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 300.0
         });
@@ -243,28 +240,6 @@ impl SecurityEngine {
                 || self.external_dns_pairs.contains_key(&key)
             {
                 self.external_dns_pairs.insert(key, pkt.timestamp);
-            }
-        }
-
-        let destination_port = pkt.dst_port.unwrap_or(0);
-        if is_internal_address(&pkt.src)
-            && is_internal_address(&pkt.dst)
-            && matches!(destination_port, 22 | 135 | 139 | 445 | 3389 | 5985 | 5986)
-        {
-            let key = (pkt.src.clone(), destination_port);
-            if self.admin_fanout.len() < MAX_SCAN_STATES || self.admin_fanout.contains_key(&key) {
-                let state = self.admin_fanout.entry(key).or_default();
-                state.last_seen = pkt.timestamp;
-                record_timed_target(state, pkt.timestamp, &pkt.dst, 60.0);
-                let unique_targets = unique_timed_targets(state);
-                if unique_targets >= LATERAL_TARGET_THRESHOLD && !state.alerted {
-                    state.alerted = true;
-                    alerts.push((
-                        "Administrative service fan-out",
-                        Severity::High,
-                        format!("{} contacted {unique_targets} internal hosts on port {destination_port}", pkt.src),
-                    ));
-                }
             }
         }
 

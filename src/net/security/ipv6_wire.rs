@@ -63,12 +63,14 @@ pub(super) fn ipv6_probe(raw: &[u8]) -> Option<Ipv6Probe> {
             if !(20..=transport.len()).contains(&header_length) {
                 return None;
             }
-            Some(Ipv6Probe::Tcp {
+            Some(Ipv6Probe::Tcp(TcpSignal {
                 flags: transport[13],
                 sequence: u32::from_be_bytes(transport[4..8].try_into().ok()?),
+                acknowledgement: u32::from_be_bytes(transport[8..12].try_into().ok()?),
                 source_port: read_port(0)?,
                 destination_port: read_port(2)?,
-            })
+                complete: true,
+            }))
         }
         17 if transport.len() == 8 && transport[4..6] == [0, 8] => {
             Some(Ipv6Probe::EmptyUdp(read_port(2)?))

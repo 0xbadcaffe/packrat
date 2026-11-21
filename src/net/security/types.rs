@@ -52,6 +52,7 @@ pub(super) struct TcpSegment<'a> {
     pub(super) key: TcpFlowKey,
     pub(super) from_a: bool,
     pub(super) sequence: u32,
+    pub(super) acknowledgement: u32,
     pub(super) flags: u8,
     pub(super) complete: bool,
     pub(super) payload: &'a [u8],
@@ -130,9 +131,19 @@ pub(super) struct Ipv6Inspection<'a> {
 
 #[derive(Clone, Copy)]
 pub(super) enum Ipv6Probe {
-    Tcp { flags: u8, sequence: u32, source_port: u16, destination_port: u16 },
+    Tcp(TcpSignal),
     EmptyUdp(u16),
     EchoRequest,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct TcpSignal {
+    pub(super) flags: u8,
+    pub(super) sequence: u32,
+    pub(super) acknowledgement: u32,
+    pub(super) source_port: u16,
+    pub(super) destination_port: u16,
+    pub(super) complete: bool,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -178,13 +189,6 @@ pub(super) struct ExfilState {
 #[derive(Debug, Default)]
 pub(super) struct TimedCountState {
     pub(super) timestamps: Vec<f64>,
-    pub(super) last_seen: f64,
-    pub(super) alerted: bool,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct TimedTargetState {
-    pub(super) targets: Vec<(f64, String)>,
     pub(super) last_seen: f64,
     pub(super) alerted: bool,
 }

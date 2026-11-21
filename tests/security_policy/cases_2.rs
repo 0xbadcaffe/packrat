@@ -255,25 +255,6 @@ fn detects_dns_nxdomain_burst_txt_abuse_and_external_resolver_use() {
 }
 
 #[test]
-fn detects_administrative_service_fanout() {
-    let mut security = SecurityEngine::default();
-    for index in 1..=8_u8 {
-        let mut smb = packet("SMB", 445, "", vec![0; 64]);
-        smb.no = index as u64;
-        smb.timestamp = index as f64;
-        smb.src = "10.0.0.5".into();
-        smb.dst = format!("10.0.1.{index}");
-        security.update(&smb);
-    }
-    assert!(
-        security
-            .ids_alerts
-            .iter()
-            .any(|alert| alert.signature == "Administrative service fan-out")
-    );
-}
-
-#[test]
 fn detects_new_dhcp_server_authority_per_vlan() {
     let mut security = SecurityEngine::default();
     security.update(&dhcp_packet(

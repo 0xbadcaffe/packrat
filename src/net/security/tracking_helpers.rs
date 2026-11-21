@@ -120,30 +120,3 @@ pub(super) fn is_internal_address(address: &str) -> bool {
         Err(_) => false,
     }
 }
-
-pub(super) fn record_timed_target(
-    state: &mut TimedTargetState,
-    timestamp: f64,
-    target: &str,
-    window: f64,
-) {
-    state
-        .targets
-        .retain(|(seen, _)| timestamp < *seen || timestamp - *seen <= window);
-    if state.targets.is_empty() {
-        state.alerted = false;
-    }
-    state.targets.push((timestamp, target.to_string()));
-    if state.targets.len() > 256 {
-        state.targets.remove(0);
-    }
-}
-
-pub(super) fn unique_timed_targets(state: &TimedTargetState) -> usize {
-    state
-        .targets
-        .iter()
-        .map(|(_, target)| target.as_str())
-        .collect::<HashSet<_>>()
-        .len()
-}

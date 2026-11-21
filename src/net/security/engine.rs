@@ -27,7 +27,7 @@ impl SecurityEngine {
             exfil_flows: HashMap::new(),
             nxdomain_clients: HashMap::new(),
             external_dns_pairs: HashMap::new(),
-            admin_fanout: HashMap::new(),
+            admin_fanout: Default::default(),
             ntlm_fanout: HashMap::new(),
             dhcp_vlans: HashMap::new(),
             ipv6_fragments: Ipv6FragmentReassembler::default(),
