@@ -76,7 +76,7 @@ fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
 fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(6), Constraint::Length(7)])
+        .constraints([Constraint::Min(6), Constraint::Length(8)])
         .split(area);
     let visible_indices = app.core.alert_center.visible_indices();
     let visible_rows = chunks[0].height.saturating_sub(3) as usize;
@@ -169,10 +169,17 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(C_FG3()),
                 ),
             ]),
+            Line::from(Span::styled(
+                item.provenance.as_ref().map_or_else(
+                    || "Rule provenance not recorded".into(),
+                    |rule| format!("{}  |  Evidence: {}", rule.rule_label(), rule.confidence),
+                ),
+                Style::default().fg(C_FG3()),
+            )),
             Line::from(Span::styled(&item.detail, Style::default().fg(C_FG()))),
             Line::from(Span::styled(
-                item.recommendation
-                    .as_deref()
+                item.provenance.as_ref().map(|rule| rule.verification_hint.as_str())
+                    .or(item.recommendation.as_deref())
                     .unwrap_or("No automated recommendation; inspect and classify manually."),
                 Style::default().fg(C_YELLOW()),
             )),

@@ -24,6 +24,7 @@ fn alert(hit_count: u64, packet_no: u64) -> AlertItem {
             vec![1, packet_no]
         },
         capture_id: None,
+        provenance: None,
     }
 }
 

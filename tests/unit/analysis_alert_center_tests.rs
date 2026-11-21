@@ -105,3 +105,54 @@ fn evicted_alert_can_recur_without_growing_the_fingerprint_index() {
     assert!(!center.record(MAX_ALERTS as u64 + 3, "IDS", "HIGH", "Probe 0", "repeat"));
     assert_eq!(center.items.last().unwrap().hit_count, 2);
 }
+
+#[test]
+fn registered_rules_record_confidence_independently_of_severity() {
+    use crate::analysis::alert_provenance::EvidenceConfidence;
+
+    let mut center = AlertCenter::default();
+    center.record(7, "IDS", "HIGH", "Horizontal host scan", "detected a fan-out");
+    center.record(8, "AUTH", "MEDIUM", "HTTP authentication burst", "observed 401s");
+    let alerts = center.drain_pending_exports();
+    let scan = alerts[0].provenance.as_ref().unwrap();
+    assert_eq!(scan.rule_id, "scan.horizontal");
+    assert_eq!(scan.revision, 1);
+    assert_eq!(scan.confidence, EvidenceConfidence::Heuristic);
+    assert!(scan.verification_hint.contains("handshakes"));
+    assert_eq!(
+        alerts[1].provenance.as_ref().unwrap().confidence,
+        EvidenceConfidence::DirectObservation
+    );
+    assert_eq!(alerts[1].severity, "MEDIUM");
+    assert!(alerts[1].recommendation.is_none());
+
+    let value = serde_json::to_value(&alerts[1]).unwrap();
+    assert_eq!(value["provenance"]["confidence"], "direct_observation");
+    let restored: AlertItem = serde_json::from_value(value).unwrap();
+    assert_eq!(restored.provenance, alerts[1].provenance);
+}
+
+#[test]
+fn unknown_and_legacy_alerts_do_not_inherit_provenance() {
+    let mut center = AlertCenter::default();
+    center.record(1, "RULE", "HIGH", "Horizontal host scan", "user-supplied name");
+    assert!(center.items[0].provenance.is_none());
+    center.record(2, "IDS", "HIGH", "Horizontal host scan", "new detector");
+    let mut legacy = serde_json::to_value(&center.items[1]).unwrap();
+    legacy.as_object_mut().unwrap().remove("provenance");
+    let legacy = serde_json::from_value(legacy).unwrap();
+    center.restore(vec![legacy], AutomationMode::Off);
+    assert!(center.items[0].provenance.is_none());
+}
+
+#[test]
+fn registered_detector_rule_ids_are_unique_and_reference_shipped_rules() {
+    let mut rule_ids = HashSet::new();
+    for &(source, title, id, revision, _, hint) in alert_provenance::RULES {
+        assert!(rule_ids.insert(id));
+        assert!(revision > 0 && !hint.is_empty());
+        if source == "IDS" {
+            assert!(crate::net::security::DETECTOR_SIGNATURES.contains(&title));
+        }
+    }
+}

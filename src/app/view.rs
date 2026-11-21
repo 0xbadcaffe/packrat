@@ -130,6 +130,16 @@ impl AppView<'_> {
                         ("Priority".into(), alert.priority.to_string()),
                         ("State".into(), alert.disposition.to_string()),
                         ("Source".into(), alert.source.clone()),
+                        (
+                            "Rule".into(),
+                            alert.provenance.as_ref().map(|rule| rule.rule_label())
+                                .unwrap_or_else(|| "Not recorded".into()),
+                        ),
+                        (
+                            "Evidence confidence".into(),
+                            alert.provenance.as_ref().map(|rule| rule.confidence.to_string())
+                                .unwrap_or_else(|| "Not recorded".into()),
+                        ),
                         ("Packet".into(), format!("#{}", alert.packet_no)),
                         (
                             "Capture ID".into(),
@@ -143,8 +153,10 @@ impl AppView<'_> {
                         (
                             "Recommendation".into(),
                             alert
-                                .recommendation
-                                .clone()
+                                .provenance
+                                .as_ref()
+                                .map(|rule| rule.verification_hint.clone())
+                                .or_else(|| alert.recommendation.clone())
                                 .unwrap_or_else(|| "manual review".into()),
                         ),
                     ],

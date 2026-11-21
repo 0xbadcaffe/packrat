@@ -1,6 +1,7 @@
 //! Unified, deterministic queue for findings produced by Packrat analyzers.
 
 use std::collections::HashSet;
+use super::alert_provenance::{self, AlertProvenance};
 
 const MAX_ALERTS: usize = 2_000;
 const MAX_ALERT_PACKET_REFS: usize = 128;
@@ -107,6 +108,8 @@ pub struct AlertItem {
     pub packet_refs: Vec<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<AlertProvenance>,
 }
 
 fn one() -> u64 { 1 }
@@ -252,6 +255,7 @@ impl AlertCenter {
         let priority = priority_for(&severity);
         let recommendation = (self.automation_mode == AutomationMode::Triage)
             .then(|| recommendation_for(&source, &severity));
+        let provenance = alert_provenance::lookup(&source, &title);
         let mut item = AlertItem {
             id: self.next_id,
             packet_no,
@@ -270,6 +274,7 @@ impl AlertCenter {
             last_seen: timestamp,
             packet_refs: Vec::new(),
             capture_id: self.capture_id.clone(),
+            provenance,
         };
         retain_packet_refs(&mut item, packet_no, related_packets);
         self.pending_exports.push(item.clone());
