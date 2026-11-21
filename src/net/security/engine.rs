@@ -136,7 +136,14 @@ impl SecurityEngine {
     // ─── IDS Signatures ──────────────────────────────────────────────────────
 
     pub(super) fn push_ids(&mut self, alert: IdsAlert) {
-        self.findings.ids.push(alert.clone());
+        self.push_ids_with_evidence(alert, Vec::new());
+    }
+
+    pub(super) fn push_ids_with_evidence(&mut self, alert: IdsAlert, related_packets: Vec<u64>) {
+        self.findings.ids.push(super::findings::IdsFinding {
+            alert: alert.clone(),
+            related_packets,
+        });
         debug_assert!(
             DETECTOR_SIGNATURES.contains(&alert.signature),
             "detector signature lacks replay coverage registration: {}",

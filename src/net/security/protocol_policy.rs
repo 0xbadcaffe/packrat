@@ -242,12 +242,15 @@ impl SecurityEngine {
                     ("DNS reply changed at the same resolver", Severity::Medium)
                 }
             };
-            self.push_ids(IdsAlert {
-                pkt_no: pkt.no,
-                signature,
-                severity,
-                detail: finding.detail,
-            });
+            self.push_ids_with_evidence(
+                IdsAlert {
+                    pkt_no: pkt.no,
+                    signature,
+                    severity,
+                    detail: finding.detail,
+                },
+                finding.related_packets,
+            );
         }
     }
 }

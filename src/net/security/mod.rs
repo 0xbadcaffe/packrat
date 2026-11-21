@@ -109,7 +109,7 @@ mod control_plane;
 mod dns;
 mod engine;
 mod findings;
-pub use findings::DetectionBatch;
+pub use findings::{DetectionBatch, IdsFinding};
 mod fragments;
 mod http_policy;
 mod http_tls;

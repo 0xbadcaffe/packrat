@@ -12,6 +12,7 @@ const MAX_TRANSACTIONS: usize = 2_048;
 pub struct DnsFinding {
     pub kind: DnsFindingKind,
     pub detail: String,
+    pub related_packets: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +33,7 @@ struct TransactionKey {
 
 #[derive(Debug, Clone)]
 struct PendingQuery {
+    packet_no: u64,
     server: String,
     question: Question,
     timestamp: f64,
@@ -39,6 +41,8 @@ struct PendingQuery {
 
 #[derive(Debug, Clone)]
 struct RecentResponse {
+    query_packet: u64,
+    reply_packet: u64,
     server: String,
     question: Question,
     fingerprint: u64,
@@ -86,6 +90,7 @@ impl DnsTransactionTracker {
                     id: message.id,
                 },
                 PendingQuery {
+                    packet_no: packet.no,
                     server: packet.dst.clone(),
                     question: message.question,
                     timestamp: packet.timestamp,
@@ -107,6 +112,7 @@ impl DnsTransactionTracker {
             if previous.server != packet.src {
                 return vec![DnsFinding {
                     kind: DnsFindingKind::ConflictingResponse,
+                    related_packets: vec![previous.query_packet, previous.reply_packet],
                     detail: format!(
                         "transaction 0x{:04x} for {} received competing replies from {} and {}",
                         message.id, previous.question.name, previous.server, packet.src
@@ -116,6 +122,7 @@ impl DnsTransactionTracker {
             if previous.fingerprint != fingerprint {
                 return vec![DnsFinding {
                     kind: DnsFindingKind::ChangedReply,
+                    related_packets: vec![previous.query_packet, previous.reply_packet],
                     detail: format!(
                         "transaction 0x{:04x} for {} received different reply bytes from resolver {}",
                         message.id, previous.question.name, previous.server
@@ -128,6 +135,7 @@ impl DnsTransactionTracker {
         let Some(query) = self.pending.remove(&key) else {
             return vec![DnsFinding {
                 kind: DnsFindingKind::UnsolicitedResponse,
+                related_packets: Vec::new(),
                 detail: format!(
                     "unsolicited transaction 0x{:04x} from {} to {}:{}",
                     message.id, packet.src, packet.dst, destination_port
@@ -139,6 +147,7 @@ impl DnsTransactionTracker {
         if query.question != message.question {
             findings.push(DnsFinding {
                 kind: DnsFindingKind::QuestionMismatch,
+                related_packets: vec![query.packet_no],
                 detail: format!(
                     "transaction 0x{:04x} question changed from {} to {}",
                     message.id, query.question.name, message.question.name
@@ -148,6 +157,7 @@ impl DnsTransactionTracker {
         if query.server != packet.src {
             findings.push(DnsFinding {
                 kind: DnsFindingKind::UnexpectedResponder,
+                related_packets: vec![query.packet_no],
                 detail: format!(
                     "transaction 0x{:04x} expected {} but reply came from {}",
                     message.id, query.server, packet.src
@@ -157,6 +167,8 @@ impl DnsTransactionTracker {
         self.insert_response(
             key,
             RecentResponse {
+                query_packet: query.packet_no,
+                reply_packet: packet.no,
                 server: packet.src.clone(),
                 question: message.question,
                 fingerprint,

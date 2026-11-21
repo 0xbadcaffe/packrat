@@ -1,4 +1,5 @@
 use packrat_tui::analysis::dns_transactions::{DnsFindingKind, DnsTransactionTracker};
+use packrat_tui::engine::AnalysisCore;
 use packrat_tui::net::packet::Packet;
 use packrat_tui::net::security::SecurityEngine;
 use packrat_tui::net::security::Severity;
@@ -177,6 +178,31 @@ fn new_query_can_reuse_a_recently_completed_transaction_id() {
         assert!(tracker.observe(&query).is_empty());
         assert!(tracker.observe(&reply).is_empty());
     }
+}
+
+#[test]
+fn dns_conflict_exports_the_query_and_both_replies_as_one_hit() {
+    let mut core = AnalysisCore::default();
+    for (first_packet, transaction_id) in [(1, 49), (4, 50)] {
+        let query = dns_packet(first_packet, false, "10.0.0.5", "10.0.0.53", transaction_id, "safe.example");
+        let reply = dns_packet(first_packet + 1, true, "10.0.0.53", "10.0.0.5", transaction_id, "safe.example");
+        let conflict = dns_packet(first_packet + 2, true, "10.0.0.54", "10.0.0.5", transaction_id, "safe.example");
+        for packet in [query, reply, conflict] {
+            core.analyze_with_history(&packet, std::iter::empty());
+        }
+    }
+    let alerts = core.alert_center.drain_pending_exports();
+    let conflicts: Vec<_> = alerts
+        .iter()
+        .filter(|alert| alert.title == "Conflicting DNS responses")
+        .collect();
+    assert_eq!(conflicts.len(), 2);
+    assert_eq!(conflicts[0].hit_count, 1);
+    assert_eq!(conflicts[0].packet_refs, [1, 2, 3]);
+    assert_eq!(conflicts[1].id, conflicts[0].id);
+    assert_eq!(conflicts[1].hit_count, 2);
+    assert_eq!(conflicts[1].packet_no, 6);
+    assert_eq!(conflicts[1].packet_refs, [1, 2, 3, 4, 5, 6]);
 }
 
 #[test]

@@ -193,6 +193,28 @@ impl AlertCenter {
         detail: impl Into<String>,
         correlation_key: impl Into<String>,
     ) -> bool {
+        self.record_correlated_with_evidence(
+            (packet_no, &[]),
+            timestamp,
+            source,
+            severity,
+            title,
+            detail,
+            correlation_key,
+        )
+    }
+
+    pub(crate) fn record_correlated_with_evidence(
+        &mut self,
+        evidence: (u64, &[u64]),
+        timestamp: f64,
+        source: impl Into<String>,
+        severity: impl Into<String>,
+        title: impl Into<String>,
+        detail: impl Into<String>,
+        correlation_key: impl Into<String>,
+    ) -> bool {
+        let (packet_no, related_packets) = evidence;
         let source = source.into();
         let severity = severity.into().to_uppercase();
         let title = title.into();
@@ -206,7 +228,7 @@ impl AlertCenter {
                 item.packet_no = packet_no;
                 item.last_packet = packet_no;
                 item.last_seen = timestamp;
-                retain_packet_ref(item, packet_no);
+                retain_packet_refs(item, packet_no, related_packets);
                 item.hit_count = item.hit_count.saturating_add(1);
                 item.detail = detail;
                 let priority = priority_for(&severity);
@@ -222,7 +244,7 @@ impl AlertCenter {
         let priority = priority_for(&severity);
         let recommendation = (self.automation_mode == AutomationMode::Triage)
             .then(|| recommendation_for(&source, &severity));
-        self.items.push(AlertItem {
+        let mut item = AlertItem {
             id: self.next_id,
             packet_no,
             source,
@@ -238,9 +260,11 @@ impl AlertCenter {
             last_packet: packet_no,
             first_seen: timestamp,
             last_seen: timestamp,
-            packet_refs: vec![packet_no],
-        });
-        self.pending_exports.push(self.items.last().expect("just inserted alert").clone());
+            packet_refs: Vec::new(),
+        };
+        retain_packet_refs(&mut item, packet_no, related_packets);
+        self.pending_exports.push(item.clone());
+        self.items.push(item);
         if self.automation_mode != AutomationMode::Off && priority >= 80 {
             self.pending_pins.push(self.next_id);
         }
@@ -321,6 +345,13 @@ fn retain_packet_ref(alert: &mut AlertItem, packet_no: u64) {
         alert.packet_refs.remove(0);
     }
     alert.packet_refs.push(packet_no);
+}
+
+fn retain_packet_refs(alert: &mut AlertItem, packet_no: u64, related_packets: &[u64]) {
+    for &related in related_packets {
+        retain_packet_ref(alert, related);
+    }
+    retain_packet_ref(alert, packet_no);
 }
 
 fn fingerprint_for(item: &AlertItem) -> String {

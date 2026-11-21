@@ -42,7 +42,8 @@ impl AnalysisCore {
             std::collections::HashMap::new()
         };
         let findings = self.security.inspect(pkt);
-        for alert in &findings.ids {
+        for finding in &findings.ids {
+            let alert = &finding.alert;
             self.operator_graph.on_ids_alert(
                 alert.signature,
                 &alert.severity.to_string(),
@@ -51,8 +52,8 @@ impl AnalysisCore {
                 alert.pkt_no,
                 pkt.timestamp,
             );
-            self.alert_center.record_correlated(
-                alert.pkt_no,
+            self.alert_center.record_correlated_with_evidence(
+                (alert.pkt_no, &finding.related_packets),
                 pkt.timestamp,
                 "IDS",
                 alert.severity.to_string(),
@@ -141,6 +142,7 @@ impl AnalysisCore {
         let critical_ids: Vec<(String, String)> = findings
             .ids
             .iter()
+            .map(|finding| &finding.alert)
             .filter(|alert| matches!(alert.severity, crate::net::security::Severity::Critical))
             .map(|alert| (alert.signature.to_string(), alert.detail.clone()))
             .collect();
