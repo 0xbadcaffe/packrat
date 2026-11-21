@@ -44,6 +44,12 @@ jobs:
           bash tests/test_watch_packrat_health.sh
           bash tests/test_watch_packrat_alerts.sh
 
+      - name: Test supervised capture rollout
+        if: runner.os == 'Linux'
+        run: |
+          shellcheck -x scripts/packrat-rollout.sh tests/test_packrat_rollout.sh
+          bash tests/test_packrat_rollout.sh
+
       - name: cargo check
         run: cargo check --locked
 
