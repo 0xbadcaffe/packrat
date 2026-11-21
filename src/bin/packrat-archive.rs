@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\nShow archive counts, recover packets, export scoped alert evidence, import/export a capture, or find retained packet IDs."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID]\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID]"
         );
         return Ok(());
     };
@@ -57,22 +57,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     match action {
-        Some(flag) if flag == "--alert-evidence" => {
-            let log = args.next().ok_or("--alert-evidence requires an alert log")?;
-            let session = args.next().ok_or("--alert-evidence requires a session ID")?;
-            let id = args.next().ok_or("--alert-evidence requires an alert ID")?.parse()?;
-            let output = args.next().ok_or("--alert-evidence requires a new output directory")?;
+        Some(flag) if matches!(flag.as_str(), "--alert-evidence" | "--alert-status") => {
+            use packrat_tui::storage::alert_evidence::{alert_evidence_availability, export_scoped_alert_evidence};
+            let log = args.next().ok_or("Alert command requires an alert log")?;
+            let session = args.next().ok_or("Alert command requires a session ID")?;
+            let id = args.next().ok_or("Alert command requires an alert ID")?.parse()?;
+            let output = if flag == "--alert-evidence" {
+                Some(args.next().ok_or("--alert-evidence requires a new output directory")?)
+            } else {
+                None
+            };
+            let capture_filter = match args.next().as_deref() {
+                Some("--capture-id") => Some(args.next().filter(|id| !id.is_empty()).ok_or("--capture-id requires a capture ID")?),
+                Some(_) => return Err("Expected --capture-id after positional arguments".into()),
+                None => None,
+            };
             if args.next().is_some() {
-                return Err("Unexpected argument after output directory".into());
+                return Err("Unexpected argument after capture ID".into());
             }
-            let summary = packrat_tui::storage::alert_evidence::export_alert_evidence(
-                &mut archive,
-                std::path::Path::new(&log),
-                &session,
-                id,
-                std::path::Path::new(&output),
-            )?;
-            println!("{}", serde_json::to_string(&summary)?);
+            let log = std::path::Path::new(&log);
+            let scope = capture_filter.as_deref();
+            if let Some(output) = output {
+                let summary = export_scoped_alert_evidence(
+                    &mut archive, log, &session, id, scope, std::path::Path::new(&output),
+                )?;
+                println!("{}", serde_json::to_string(&summary)?);
+            } else {
+                let status = alert_evidence_availability(&mut archive, log, &session, id, scope)?;
+                println!("{}", serde_json::to_string(&status)?);
+            }
         }
         Some(flag) if flag == "--capture-frame" => {
             let capture_id = args.next().ok_or("--capture-frame requires a capture ID")?;

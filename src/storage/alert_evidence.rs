@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::analysis::alert_center::{AlertItem, MAX_ALERT_PACKET_REFS};
 use crate::export::pcapng::PcapNgWriter;
-use crate::storage::packet_archive::PacketArchive;
+use crate::storage::packet_archive::{PacketArchive, valid_capture_id};
 use super::alert_jsonl::{ExistingAlertRecord, next_alert_line};
 
 const MANIFEST: &str = "manifest.json";
@@ -19,6 +19,30 @@ const PCAP: &str = "evidence.pcapng";
 pub struct EvidenceExportSummary {
     pub recovered_frames: usize,
     pub missing_frames: usize,
+}
+
+#[derive(Serialize)]
+pub struct EvidenceAvailability {
+    pub session_id: String,
+    pub capture_id: String,
+    pub alert_id: u64,
+    pub frames: Vec<FrameAvailability>,
+}
+
+#[derive(Serialize)]
+pub struct FrameAvailability {
+    pub frame_number: u64,
+    pub status: FrameStatus,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameStatus {
+    Complete,
+    Truncated,
+    LengthUnknown,
+    Missing,
+    Unreadable,
 }
 
 #[derive(Serialize)]
@@ -47,13 +71,19 @@ pub fn export_alert_evidence(
     alert_id: u64,
     output: &Path,
 ) -> Result<EvidenceExportSummary> {
-    let alert = latest_alert(log, session_id, alert_id)?;
-    ensure!(alert.packet_refs.len() <= MAX_ALERT_PACKET_REFS, "Alert packet reference limit exceeded");
-    let capture_id = alert.capture_id.as_deref().ok_or_else(|| {
-        anyhow!("Alert has no capture ID; archive lookup would be ambiguous")
-    })?;
-    let frames = alert.evidence_frame_numbers();
-    ensure!(!frames.is_empty(), "Alert does not reference any frames");
+    export_scoped_alert_evidence(archive, log, session_id, alert_id, None, output)
+}
+
+pub fn export_scoped_alert_evidence(
+    archive: &mut PacketArchive,
+    log: &Path,
+    session_id: &str,
+    alert_id: u64,
+    capture_filter: Option<&str>,
+    output: &Path,
+) -> Result<EvidenceExportSummary> {
+    let alert = latest_alert(log, session_id, alert_id, capture_filter)?;
+    let (capture_id, frames) = scoped_frames(&alert)?;
 
     let mut builder = DirBuilder::new();
     #[cfg(unix)]
@@ -69,6 +99,49 @@ pub fn export_alert_evidence(
         let _ = std::fs::remove_dir(output);
     }
     result
+}
+
+pub fn alert_evidence_availability(
+    archive: &mut PacketArchive,
+    log: &Path,
+    session_id: &str,
+    alert_id: u64,
+    capture_filter: Option<&str>,
+) -> Result<EvidenceAvailability> {
+    let alert = latest_alert(log, session_id, alert_id, capture_filter)?;
+    let (capture_id, frames) = scoped_frames(&alert)?;
+    let frames = frames.into_iter().map(|frame_number| {
+        let status = match archive.packet_for_capture(capture_id, frame_number) {
+            Ok(Some(packet)) => match packet.capture {
+                Some(metadata) if metadata.captured_length as usize != packet.bytes.len()
+                    || metadata.wire_length < metadata.captured_length => FrameStatus::Unreadable,
+                Some(metadata) if metadata.truncated() => FrameStatus::Truncated,
+                Some(_) => FrameStatus::Complete,
+                None => FrameStatus::LengthUnknown,
+            },
+            Ok(None) => FrameStatus::Missing,
+            Err(_) => FrameStatus::Unreadable,
+        };
+        FrameAvailability { frame_number, status }
+    }).collect();
+    Ok(EvidenceAvailability {
+        session_id: session_id.to_owned(),
+        capture_id: capture_id.to_owned(),
+        alert_id,
+        frames,
+    })
+}
+
+fn scoped_frames(alert: &AlertItem) -> Result<(&str, Vec<u64>)> {
+    ensure!(alert.packet_refs.len() <= MAX_ALERT_PACKET_REFS, "Alert packet reference limit exceeded");
+    let capture_id = alert.capture_id.as_deref().ok_or_else(|| {
+        anyhow!("Alert has no capture ID; archive lookup would be ambiguous")
+    })?;
+    ensure!(valid_capture_id(capture_id), "Invalid archive capture ID");
+    let frames = alert.evidence_frame_numbers();
+    ensure!(!frames.is_empty(), "Alert does not reference any frames");
+
+    Ok((capture_id, frames))
 }
 
 fn export_into(
@@ -130,16 +203,18 @@ fn export_into(
     Ok(summary)
 }
 
-fn latest_alert(log: &Path, session_id: &str, alert_id: u64) -> Result<AlertItem> {
+fn latest_alert(log: &Path, session_id: &str, alert_id: u64, capture_filter: Option<&str>) -> Result<AlertItem> {
     let mut reader = BufReader::new(File::open(log).context("Open saved alert log")?);
     let mut line = Vec::new();
     let mut selected: Option<AlertItem> = None;
     while next_alert_line(&mut reader, &mut line)? {
         let Some(row) = ExistingAlertRecord::decode(&line) else { continue };
-        if row.session_id == session_id && row.alert.id == alert_id {
+        if row.session_id == session_id && row.alert.id == alert_id
+            && capture_filter.is_none_or(|scope| row.alert.capture_id.as_deref() == Some(scope))
+        {
             ensure!(
                 selected.as_ref().is_none_or(|item| item.capture_id == row.alert.capture_id),
-                "Alert ID is ambiguous across captures in the specified session"
+                "Alert ID is ambiguous across captures in the specified session; specify --capture-id"
             );
             selected = Some(row.alert);
         }

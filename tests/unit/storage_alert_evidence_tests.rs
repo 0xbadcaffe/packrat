@@ -28,9 +28,9 @@ fn oversized_log_lines_do_not_hide_following_valid_records() {
     append_record(&mut writer, &snapshot(Some("capture-a")));
     drop(writer);
 
-    let item = latest_alert(&log, "session", 1).unwrap();
+    let item = latest_alert(&log, "session", 1, None).unwrap();
     assert_eq!(item.capture_id.as_deref(), Some("capture-a"));
-    assert!(latest_alert(&log, "nonexistent-session", 1).is_err());
+    assert!(latest_alert(&log, "nonexistent-session", 1, None).is_err());
 }
 
 #[test]
@@ -69,6 +69,9 @@ fn alert_id_reused_across_capture_scopes_is_not_resolved_implicitly() {
     append_record(&mut writer, &snapshot(Some("capture-a")));
     append_record(&mut writer, &snapshot(Some("capture-b")));
     drop(writer);
-    let error = latest_alert(&log, "session", 1).unwrap_err();
+    let error = latest_alert(&log, "session", 1, None).unwrap_err();
     assert!(error.to_string().contains("ambiguous across captures"));
+    let item = latest_alert(&log, "session", 1, Some("capture-a")).unwrap();
+    assert_eq!(item.capture_id.as_deref(), Some("capture-a"));
+    assert!(latest_alert(&log, "session", 1, Some("missing-capture")).is_err());
 }
