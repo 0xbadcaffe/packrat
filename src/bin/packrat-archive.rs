@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\nShow archive packet count, recover a packet as JSON, import/export a capture, or find up to 1000 retained packet IDs."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\nShow archive counts, recover packets, export scoped alert evidence, import/export a capture, or find retained packet IDs."
         );
         return Ok(());
     };
@@ -57,6 +57,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     match action {
+        Some(flag) if flag == "--alert-evidence" => {
+            let log = args.next().ok_or("--alert-evidence requires an alert log")?;
+            let session = args.next().ok_or("--alert-evidence requires a session ID")?;
+            let id = args.next().ok_or("--alert-evidence requires an alert ID")?.parse()?;
+            let output = args.next().ok_or("--alert-evidence requires a new output directory")?;
+            if args.next().is_some() {
+                return Err("Unexpected argument after output directory".into());
+            }
+            let summary = packrat_tui::storage::alert_evidence::export_alert_evidence(
+                &mut archive,
+                std::path::Path::new(&log),
+                &session,
+                id,
+                std::path::Path::new(&output),
+            )?;
+            println!("{}", serde_json::to_string(&summary)?);
+        }
         Some(flag) if flag == "--capture-frame" => {
             let capture_id = args.next().ok_or("--capture-frame requires a capture ID")?;
             let number = args.next().ok_or("--capture-frame requires a frame number")?.parse()?;

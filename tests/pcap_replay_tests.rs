@@ -139,3 +139,72 @@ fn archive_cli_recovers_a_frame_only_from_the_requested_capture() {
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("Frame not found"));
 }
+
+#[test]
+fn archive_cli_exports_latest_scoped_alert_with_provenance_and_missing_frames() {
+    use packrat_tui::analysis::alert_center::AlertCenter;
+    use packrat_tui::storage::packet_archive::PacketArchive;
+    use sha2::{Digest, Sha256};
+
+    let directory = tempfile::tempdir().unwrap();
+    let archive_path = directory.path().join("archive");
+    let mut archive = PacketArchive::open(&archive_path).unwrap();
+    let frame = ipv6_tcp_frame();
+    let mut other_bytes = frame.clone();
+    other_bytes[0] ^= 1;
+    let exact = packrat_tui::net::parser::parse_ethernet(&frame, 7, 1.0);
+    let other = packrat_tui::net::parser::parse_ethernet(&other_bytes, 7, 1.0);
+    let missing_in_a = packrat_tui::net::parser::parse_ethernet(&other_bytes, 8, 2.0);
+    archive.append_scoped("capture-a", &[exact]).unwrap();
+    archive.append_scoped("capture-b", &[other, missing_in_a]).unwrap();
+    drop(archive);
+
+    let mut alerts = AlertCenter::default();
+    alerts.record(7, "IDS", "HIGH", "Horizontal host scan", "first snapshot");
+    let mut first = alerts.items[0].clone();
+    first.capture_id = Some("capture-a".into());
+    let mut latest = first.clone();
+    latest.packet_no = 8;
+    latest.last_packet = 8;
+    latest.packet_refs = vec![8, 7, 7];
+    latest.hit_count = 2;
+    let mut wrong_session = latest.clone();
+    wrong_session.capture_id = Some("capture-b".into());
+    let record = |session, alert| serde_json::json!({
+        "schema_version": 1, "record_type": "alert", "session_id":session, "alert": alert
+    });
+    let log = directory.path().join("alerts.jsonl");
+    std::fs::write(
+        &log,
+        format!("{}\nnot-json\n{}\n{}\n", record("session-a", first), record("session-a", latest), record("session-b", wrong_session)),
+    ).unwrap();
+
+    let output = directory.path().join("evidence");
+    let export = || std::process::Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&archive_path)
+        .arg("--alert-evidence")
+        .arg(&log)
+        .args(["session-a", "1"])
+        .arg(&output)
+        .output().unwrap();
+    let result = export();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let summary: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(summary, serde_json::json!({"recovered_frames":1,"missing_frames":1}));
+
+    let path = output.join("evidence.pcapng");
+    let packets = read_pcap(&path).unwrap();
+    assert_eq!(packets.len(), 1);
+    assert_eq!(packets[0].bytes, frame);
+    let digest = format!("{:x}", Sha256::digest(std::fs::read(&path).unwrap()));
+    let manifest_bytes = std::fs::read(output.join("manifest.json")).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+    assert_eq!(manifest["alert"]["provenance"]["rule_id"], "scan.horizontal");
+    assert_eq!(manifest["alert"]["provenance"]["revision"], 2);
+    assert_eq!(manifest["alert"]["hit_count"], 2);
+    assert_eq!(manifest["capture"]["source_frame_numbers"], serde_json::json!([7]));
+    assert_eq!(manifest["missing_frame_numbers"], serde_json::json!([8]));
+    assert_eq!(manifest["capture"]["sha256"], digest);
+    assert!(!export().status.success());
+    assert_eq!(std::fs::read(output.join("manifest.json")).unwrap(), manifest_bytes);
+}

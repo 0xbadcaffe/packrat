@@ -5,3 +5,4 @@ pub mod project_store;
 pub mod theme_store;
 pub mod packet_archive;
 pub mod alert_jsonl;
+pub mod alert_evidence;

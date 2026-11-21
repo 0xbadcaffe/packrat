@@ -196,17 +196,7 @@ impl App {
         };
         drop(core);
 
-        let mut packet_refs = Vec::with_capacity(alert.packet_refs.len() + 3);
-        for packet_no in [alert.first_packet, alert.packet_no]
-            .into_iter()
-            .chain(alert.packet_refs.iter().copied())
-            .chain([alert.last_packet])
-        {
-            if packet_no > 0 && !packet_refs.contains(&packet_no) {
-                packet_refs.push(packet_no);
-            }
-        }
-        packet_refs.sort_unstable();
+        let packet_refs = alert.evidence_frame_numbers();
 
         let alert_item = InvestigationItem::Alert(alert.id);
         self.project_dirty |= self.worklist.add(alert_item.clone());

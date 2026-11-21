@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use super::alert_provenance::{self, AlertProvenance};
 
 const MAX_ALERTS: usize = 2_000;
-const MAX_ALERT_PACKET_REFS: usize = 128;
+pub(crate) const MAX_ALERT_PACKET_REFS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum AutomationMode {
@@ -110,6 +110,18 @@ pub struct AlertItem {
     pub capture_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<AlertProvenance>,
+}
+
+impl AlertItem {
+    pub(crate) fn evidence_frame_numbers(&self) -> Vec<u64> {
+        let mut frames = Vec::with_capacity(self.packet_refs.len() + 3);
+        frames.extend([self.first_packet, self.packet_no, self.last_packet]);
+        frames.extend(self.packet_refs.iter().copied());
+        frames.retain(|&number| number > 0);
+        frames.sort_unstable();
+        frames.dedup();
+        frames
+    }
 }
 
 fn one() -> u64 { 1 }
