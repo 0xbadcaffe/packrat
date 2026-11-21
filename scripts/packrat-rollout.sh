@@ -68,6 +68,10 @@ alert_log_for_session() {
     fi
 }
 
+primary_alert_log_stamp() {
+    sudo -n stat --format='%d:%i:%s:%y:%z' -- "$data_dir/alerts.jsonl"
+}
+
 preflight() {
     local pid
     local -a current_args
@@ -193,11 +197,19 @@ retire_bridge() {
 }
 
 rollout() {
+    local alert_log_before alert_log_now
+    alert_log_before=$(primary_alert_log_stamp) && [[ -n $alert_log_before ]] ||
+        { error "Cannot check the primary alert log; current capture not stopped"; return 1; }
     prepare_backup_and_stage || { error "Backup or staging failed; current capture not stopped"; return 1; }
     printf 'Rollback binary: %s/packrat\n' "$backup_dir"
     printf 'Staging alert log: %s\n' "$(alert_log_for_session "$bridge_session")"
     if ! start_capture "$bridge_session" "$stage_binary"; then
         error "Candidate did not pass staging; current capture was not stopped"
+        retire_bridge || error "Inspect $bridge_session before retrying"
+        return 1
+    fi
+    if ! alert_log_now=$(primary_alert_log_stamp) || [[ $alert_log_now != "$alert_log_before" ]]; then
+        error "Primary alert log changed or is unavailable; review its evidence before retrying. Current capture not stopped."
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi

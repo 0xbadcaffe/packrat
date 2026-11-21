@@ -31,6 +31,25 @@ source "$root/scripts/packrat-rollout.sh"
     if alerts_ready 42 "$stage_log"; then exit 1; fi
 )
 
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+data_dir=$scratch
+sudo() {
+    [[ $1 == -n && $2 == stat ]] || return 1
+    shift
+    command "$@"
+}
+
+printf '%s\n' 'initial alert' >"$data_dir/alerts.jsonl"
+stamp=$(primary_alert_log_stamp)
+[[ $(primary_alert_log_stamp) == "$stamp" ]]
+printf '%s\n' 'new alert' >>"$data_dir/alerts.jsonl"
+[[ $(primary_alert_log_stamp) != "$stamp" ]]
+stamp=$(primary_alert_log_stamp)
+cp -p -- "$data_dir/alerts.jsonl" "$data_dir/replacement"
+mv -T -- "$data_dir/replacement" "$data_dir/alerts.jsonl"
+[[ $(primary_alert_log_stamp) != "$stamp" ]]
+
 prepare_backup_and_stage() {
     trace+=("backup")
     backup_dir=/backup
@@ -42,6 +61,10 @@ start_capture() {
     local session=$1 binary=$2
     trace+=("start:$session:$binary")
     if [[ $session == "$bridge_session" ]]; then
+        case $scenario in
+            new_alert) printf '%s\n' 'new finding in primary' >>"$data_dir/alerts.jsonl" ;;
+            log_disappears) mv -- "$data_dir/alerts.jsonl" "$data_dir/alerts.saved" ;;
+        esac
         [[ $scenario != stage_fail ]]
     else
         main_starts=$((main_starts + 1))
@@ -78,6 +101,10 @@ run_scenario() {
 
 run_scenario backup_fail 1 backup
 run_scenario stage_fail 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario new_alert 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario log_disappears 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario log_missing 1
+mv -- "$data_dir/alerts.saved" "$data_dir/alerts.jsonl"
 run_scenario cannot_stop 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat
 run_scenario success 0 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat retire-stage
