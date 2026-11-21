@@ -36,13 +36,15 @@ pub(super) fn evict_oldest_scan_source(states: &mut HashMap<ScanSourceKey, Sourc
     }
 }
 
-pub(super) fn evict_oldest_syn_target(states: &mut HashMap<(String, u16), SynFloodState>) {
+pub(super) fn evict_oldest_syn_target(states: &mut HashMap<SynTargetKey, SynFloodState>) {
     if states.len() < MAX_SCAN_STATES {
         return;
     }
     if let Some(oldest) = states
         .iter()
-        .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+        .min_by(|left, right| {
+            left.1.last_seen.total_cmp(&right.1.last_seen).then(left.0.cmp(right.0))
+        })
         .map(|(key, _)| key.clone())
     {
         states.remove(&oldest);

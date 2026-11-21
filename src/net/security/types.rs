@@ -88,9 +88,25 @@ pub(super) struct SourceScanState {
 
 #[derive(Debug, Default)]
 pub(super) struct SynFloodState {
-    pub(super) timestamps: Vec<f64>,
+    pub(super) attempts: Vec<SynAttempt>,
     pub(super) alerted: bool,
     pub(super) last_seen: f64,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct SynTargetKey {
+    pub(super) address: String,
+    pub(super) port: u16,
+    pub(super) vlan: (Option<u16>, Option<u16>),
+}
+
+#[derive(Debug)]
+pub(super) struct SynAttempt {
+    pub(super) source: String,
+    pub(super) source_port: u16,
+    pub(super) sequence: u32,
+    pub(super) timestamp: f64,
+    pub(super) packet_no: u64,
 }
 
 #[derive(Debug, Default)]

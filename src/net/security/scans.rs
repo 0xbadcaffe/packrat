@@ -11,15 +11,13 @@ impl SecurityEngine {
             pkt.timestamp < state.last_seen
                 || pkt.timestamp - state.last_seen <= SYN_FLOOD_WINDOW_SECS
         });
-        evict_oldest_syn_target(&mut self.syn_flood_targets);
-
         let tcp_flags = match parse_ipv4_tcp_frame(&pkt.bytes) {
-            Some(TcpFrame::Segment(segment)) => Some(segment.flags),
+            Some(TcpFrame::Segment(segment)) => Some((segment.flags, segment.sequence)),
             _ => None,
         };
         let mut alerts = Vec::new();
 
-        if let Some(flags) = tcp_flags {
+        if let Some((flags, sequence)) = tcp_flags {
             const FIN: u8 = 0x01;
             const SYN: u8 = 0x02;
             const RST: u8 = 0x04;
@@ -53,7 +51,9 @@ impl SecurityEngine {
 
             if flags & (SYN | ACK | FIN | RST) == SYN && let Some(port) = pkt.dst_port {
                 self.record_scan_probe(pkt, port, "TCP");
-                self.record_syn_flood(pkt, port, &mut alerts);
+                if let Some(source_port) = pkt.src_port {
+                    self.record_syn_arrival(pkt, port, source_port, sequence);
+                }
             }
         } else if is_empty_ipv4_udp_probe(&pkt.bytes) {
             if let Some(port) = pkt.dst_port {
@@ -184,34 +184,70 @@ impl SecurityEngine {
         }
     }
 
-    pub(super) fn record_syn_flood(
+    fn record_syn_arrival(
         &mut self,
         pkt: &Packet,
         port: u16,
-        alerts: &mut Vec<(&'static str, Severity, String)>,
+        source_port: u16,
+        sequence: u32,
     ) {
-        let key = (pkt.dst.clone(), port);
+        let key = SynTargetKey {
+            address: pkt.dst.clone(),
+            port,
+            vlan: (pkt.outer_vlan_id, pkt.vlan_id),
+        };
+        if !self.syn_flood_targets.contains_key(&key) {
+            evict_oldest_syn_target(&mut self.syn_flood_targets);
+        }
         let state = self.syn_flood_targets.entry(key).or_default();
-        state.last_seen = pkt.timestamp;
-        state.timestamps.retain(|timestamp| {
-            pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= SYN_FLOOD_WINDOW_SECS
-        });
-        if state.timestamps.is_empty() {
+        state.last_seen = if state.attempts.is_empty() {
+            pkt.timestamp
+        } else {
+            state.last_seen.max(pkt.timestamp)
+        };
+        if state.last_seen - pkt.timestamp > SYN_FLOOD_WINDOW_SECS {
+            return;
+        }
+        // Keep distinct attempts within one second of the latest observed packet.
+        state.attempts.retain(|attempt| state.last_seen - attempt.timestamp <= SYN_FLOOD_WINDOW_SECS);
+        if state.attempts.is_empty() {
             state.alerted = false;
         }
-        state.timestamps.push(pkt.timestamp);
-        if state.timestamps.len() >= SYN_FLOOD_THRESHOLD && !state.alerted {
+        if state.attempts.iter().any(|attempt| {
+            attempt.source == pkt.src && attempt.source_port == source_port && attempt.sequence == sequence
+        }) {
+            return;
+        }
+        if state.attempts.len() == SYN_FLOOD_THRESHOLD {
+            let oldest = state.attempts.iter().enumerate()
+                .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp))
+                .map(|(index, _)| index).unwrap_or(0);
+            state.attempts.remove(oldest);
+        }
+        state.attempts.push(SynAttempt {
+            source: pkt.src.clone(),
+            source_port,
+            sequence,
+            timestamp: pkt.timestamp,
+            packet_no: pkt.no,
+        });
+        if state.attempts.len() == SYN_FLOOD_THRESHOLD && !state.alerted {
             state.alerted = true;
-            alerts.push((
-                "SYN flood",
-                Severity::Critical,
-                format!(
-                    "{}:{} received {} SYN packets within one second",
-                    pkt.dst,
-                    port,
-                    state.timestamps.len()
-                ),
-            ));
+            let related_packets = state.attempts.iter().map(|attempt| attempt.packet_no)
+                .filter(|&number| number != pkt.no).collect();
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "SYN arrival spike",
+                    severity: Severity::High,
+                    detail: format!(
+                        "{}:{} received {SYN_FLOOD_THRESHOLD} distinct TCP SYN attempts within one second; service impact is unverified",
+                        pkt.dst, port,
+                    ),
+                },
+                related_packets,
+                correlation_key: Some(format!("{:?}:[{}]:{port}", (pkt.outer_vlan_id, pkt.vlan_id), pkt.dst)),
+            });
         }
     }
 }

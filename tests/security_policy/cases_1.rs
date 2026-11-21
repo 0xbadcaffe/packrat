@@ -357,7 +357,7 @@ fn detects_tcp_stealth_scan_flag_patterns() {
 }
 
 #[test]
-fn detects_syn_flood_within_one_second() {
+fn detects_distinct_syn_arrival_spike_within_one_second() {
     let mut security = SecurityEngine::default();
     for index in 0..100_u64 {
         security.update(&tcp_probe(
@@ -370,8 +370,8 @@ fn detects_syn_flood_within_one_second() {
     }
 
     assert!(security.ids_alerts.iter().any(|alert| {
-        alert.signature == "SYN flood"
-            && alert.severity == packrat_tui::net::security::Severity::Critical
+        alert.signature == "SYN arrival spike"
+            && alert.severity == packrat_tui::net::security::Severity::High
     }));
 }
 

@@ -49,8 +49,8 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "detects_vertical_and_horizontal_scan_windows",
     },
     CoverageGroup {
-        signatures: &["SYN flood"],
-        positive_test: "detects_syn_flood_within_one_second",
+        signatures: &["SYN arrival spike"],
+        positive_test: "detects_distinct_syn_arrival_spike_within_one_second",
     },
     CoverageGroup {
         signatures: &["ICMP address sweep"],
