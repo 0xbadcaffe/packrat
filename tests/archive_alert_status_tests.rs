@@ -75,4 +75,32 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
     let packets = packrat_tui::pcap_replay::read_pcap(&export.join("evidence.pcapng")).unwrap();
     assert_eq!(packets.len(), 1);
     assert_eq!(packets[0].bytes, [9; 14]);
+
+    let verify = || Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--verify-evidence").arg(&export).output().unwrap();
+    let result = verify();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(), json!({
+        "session_id":"s", "capture_id":"capture-b", "alert_id":1, "recovered_frames":1,
+        "missing_frames":0, "capture_sha256_verified":true
+    }));
+
+    let manifest = export.join("manifest.json");
+    let original = std::fs::read(&manifest).unwrap();
+    let mut altered: Value = serde_json::from_slice(&original).unwrap();
+    altered["capture"]["source_frame_numbers"] = json!([3]);
+    std::fs::write(&manifest, serde_json::to_vec(&altered).unwrap()).unwrap();
+    let result = verify();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("mapping does not match alert references"));
+    std::fs::write(&manifest, original).unwrap();
+
+    let capture = export.join("evidence.pcapng");
+    let mut bytes = std::fs::read(&capture).unwrap();
+    let frame = bytes.windows(14).position(|slice| slice == [9; 14]).unwrap();
+    bytes[frame] = 8;
+    std::fs::write(&capture, bytes).unwrap();
+    let result = verify();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("SHA-256 mismatch"));
 }

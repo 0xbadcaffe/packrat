@@ -7,12 +7,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID]\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID]"
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID]\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID]\n       packrat-archive --verify-evidence EVIDENCE_DIR"
         );
         return Ok(());
     };
     if path == "--alerts" {
         return list_alerts(args);
+    }
+    if path == "--verify-evidence" {
+        let directory = args.next().ok_or("--verify-evidence requires an evidence directory")?;
+        if args.next().is_some() {
+            return Err("Unexpected argument after evidence directory".into());
+        }
+        let summary = packrat_tui::storage::alert_evidence::verify_alert_evidence(std::path::Path::new(&directory))?;
+        println!("{}", serde_json::to_string(&summary)?);
+        return Ok(());
     }
     let action = args.next();
     if action.as_deref() == Some("--import") {

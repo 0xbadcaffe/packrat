@@ -75,3 +75,21 @@ fn alert_id_reused_across_capture_scopes_is_not_resolved_implicitly() {
     assert_eq!(item.capture_id.as_deref(), Some("capture-a"));
     assert!(latest_alert(&log, "session", 1, Some("missing-capture")).is_err());
 }
+
+#[test]
+fn evidence_verification_accepts_an_all_missing_manifest_without_claiming_a_digest() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("alerts.jsonl");
+    let output = temp.path().join("evidence");
+    let mut writer = File::create(&log).unwrap();
+    append_record(&mut writer, &snapshot(Some("capture-a")));
+    drop(writer);
+    let mut archive = PacketArchive::open(&temp.path().join("archive")).unwrap();
+    export_alert_evidence(&mut archive, &log, "session", 1, &output).unwrap();
+    let report = verify_alert_evidence(&output).unwrap();
+    assert_eq!(report.recovered_frames, 0);
+    assert_eq!(report.missing_frames, 1);
+    assert_eq!(report.capture_sha256_verified, None);
+    File::create(output.join(PCAP)).unwrap();
+    assert!(verify_alert_evidence(&output).err().unwrap().to_string().contains("does not reference"));
+}

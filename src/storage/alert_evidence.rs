@@ -12,6 +12,9 @@ use crate::export::pcapng::PcapNgWriter;
 use crate::storage::packet_archive::{PacketArchive, valid_capture_id};
 use super::alert_jsonl::{ExistingAlertRecord, next_alert_line};
 
+mod verify;
+pub use verify::{VerifiedEvidence, verify_alert_evidence};
+
 const MANIFEST: &str = "manifest.json";
 const PCAP: &str = "evidence.pcapng";
 
