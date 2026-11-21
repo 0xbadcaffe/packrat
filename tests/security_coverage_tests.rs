@@ -182,6 +182,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy/cases_1.rs"),
     include_str!("security_policy/cases_2.rs"),
     include_str!("security_policy/cases_3.rs"),
+    include_str!("security_policy/tcp_reset_cases.rs"),
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("dns_transaction_tests.rs"),
     include_str!("dns_transaction/txt_reply_tests.rs"),

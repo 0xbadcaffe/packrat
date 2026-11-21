@@ -128,44 +128,39 @@ impl SecurityEngine {
             });
         }
 
+        if !segment.complete {
+            return;
+        }
+        let scope = service_scope(pkt);
+        let key = (scope, segment.key.clone());
         self.tcp_integrity.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= TCP_STATE_TTL_SECS
         });
-        if !self.tcp_integrity.contains_key(&segment.key)
+        if !self.tcp_integrity.contains_key(&key)
             && self.tcp_integrity.len() >= MAX_TCP_FLOWS
         {
             if let Some(oldest) = self
                 .tcp_integrity
                 .iter()
-                .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+                .min_by(|left, right| {
+                    left.1.last_seen.total_cmp(&right.1.last_seen).then(left.0.cmp(right.0))
+                })
                 .map(|(key, _)| key.clone())
             {
                 self.tcp_integrity.remove(&oldest);
             }
         }
 
-        let mut alerts = Vec::new();
-        let state = self.tcp_integrity.entry(segment.key.clone()).or_default();
-        state.last_seen = pkt.timestamp;
+        let state = self.tcp_integrity.entry(key).or_default();
+        let in_time_order = pkt.timestamp >= state.last_seen;
+        state.last_seen = state.last_seen.max(pkt.timestamp);
 
-        if segment.flags & SYN != 0 {
+        if in_time_order && segment.flags & (SYN | RST) == SYN {
             state.from_a.clear();
             state.from_b.clear();
-            state.reset_seen = false;
+            state.reset = None;
             state.overlap_alerted = false;
             state.post_reset_alerted = false;
-        }
-
-        if state.reset_seen && !segment.payload.is_empty() && !state.post_reset_alerted {
-            state.post_reset_alerted = true;
-            alerts.push((
-                "TCP payload after reset",
-                Severity::High,
-                format!(
-                    "Payload continued after an observed TCP reset from {} to {}",
-                    pkt.src, pkt.dst
-                ),
-            ));
         }
 
         let slices = if segment.from_a {
@@ -173,17 +168,31 @@ impl SecurityEngine {
         } else {
             &mut state.from_b
         };
+        let mut post_reset = None;
+        let mut overlap = None;
         if !segment.payload.is_empty() {
+            if !state.post_reset_alerted
+                && segment.flags & RST == 0
+                && let Some(reset) = state.reset
+                && (0.0..=TCP_STATE_TTL_SECS).contains(&(pkt.timestamp - reset.timestamp))
+                && !slices.iter().any(|slice| {
+                    slice.start == segment.sequence && slice.data == segment.payload
+                })
+            {
+                state.post_reset_alerted = true;
+                post_reset = Some(reset);
+            }
             if !state.overlap_alerted && has_conflicting_tcp_overlap(slices, &segment) {
                 state.overlap_alerted = true;
-                alerts.push((
-                    "Conflicting TCP retransmission",
-                    Severity::Critical,
-                    format!(
+                overlap = Some(IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "Conflicting TCP retransmission",
+                    severity: Severity::Critical,
+                    detail: format!(
                         "Overlapping TCP sequence ranges contain different bytes from {} to {}",
                         pkt.src, pkt.dst
                     ),
-                ));
+                });
             }
             if slices.len() < MAX_TCP_SLICES_PER_DIRECTION {
                 slices.push(FragmentSlice {
@@ -193,17 +202,39 @@ impl SecurityEngine {
             }
         }
 
-        if segment.flags & RST != 0 {
-            state.reset_seen = true;
+        if in_time_order && segment.flags & (SYN | FIN | RST) == RST {
+            state.reset = Some(TcpResetObservation {
+                packet_no: pkt.no,
+                timestamp: pkt.timestamp,
+                sequence: segment.sequence,
+                from_a: segment.from_a,
+            });
         }
 
-        for (signature, severity, detail) in alerts {
-            self.push_ids(IdsAlert {
-                pkt_no: pkt.no,
-                signature,
-                severity,
-                detail,
+        if let Some(reset) = post_reset {
+            let (src, dst) = if segment.from_a {
+                (segment.key.endpoint_a, segment.key.endpoint_b)
+            } else {
+                (segment.key.endpoint_b, segment.key.endpoint_a)
+            };
+            let direction = if reset.from_a == segment.from_a { "same" } else { "opposite" };
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "TCP payload after reset",
+                    severity: Severity::Medium,
+                    detail: format!(
+                        "TCP {}:{} to {}:{}: payload seq {} followed reset frame #{} ({} direction, seq {}); reset acceptance and on-wire ordering unverified",
+                        std::net::Ipv4Addr::from(src.0), src.1, std::net::Ipv4Addr::from(dst.0), dst.1,
+                        segment.sequence, reset.packet_no, direction, reset.sequence,
+                    ),
+                },
+                related_packets: vec![reset.packet_no],
+                correlation_key: Some(format!("{scope:?}:{:?}", segment.key)),
             });
+        }
+        if let Some(alert) = overlap {
+            self.push_ids(alert);
         }
     }
 }

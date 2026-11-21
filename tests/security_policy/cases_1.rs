@@ -245,20 +245,6 @@ fn detects_illegal_and_malformed_tcp_headers() {
 }
 
 #[test]
-fn detects_tcp_payload_continuing_after_reset() {
-    let mut security = SecurityEngine::default();
-    security.update(&ipv4_tcp_packet(1, 100, 0x04, b""));
-    security.update(&ipv4_tcp_packet(2, 101, 0x18, b"unexpected"));
-
-    assert!(
-        security
-            .ids_alerts
-            .iter()
-            .any(|alert| alert.signature == "TCP payload after reset")
-    );
-}
-
-#[test]
 fn detects_vertical_and_horizontal_scan_windows() {
     let mut vertical = SecurityEngine::default();
     for index in 0..12_u16 {

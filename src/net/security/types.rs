@@ -32,10 +32,18 @@ pub(super) struct Ipv4Fragment<'a> {
     pub(super) malformed_length: bool,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct TcpFlowKey {
     pub(super) endpoint_a: ([u8; 4], u16),
     pub(super) endpoint_b: ([u8; 4], u16),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TcpResetObservation {
+    pub(super) packet_no: u64,
+    pub(super) timestamp: f64,
+    pub(super) sequence: u32,
+    pub(super) from_a: bool,
 }
 
 #[derive(Debug, Default)]
@@ -43,7 +51,7 @@ pub(super) struct TcpIntegrityState {
     pub(super) from_a: Vec<FragmentSlice>,
     pub(super) from_b: Vec<FragmentSlice>,
     pub(super) last_seen: f64,
-    pub(super) reset_seen: bool,
+    pub(super) reset: Option<TcpResetObservation>,
     pub(super) overlap_alerted: bool,
     pub(super) post_reset_alerted: bool,
 }

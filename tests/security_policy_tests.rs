@@ -274,3 +274,5 @@ mod cases_1;
 mod cases_2;
 #[path = "security_policy/cases_3.rs"]
 mod cases_3;
+#[path = "security_policy/tcp_reset_cases.rs"]
+mod tcp_reset_cases;

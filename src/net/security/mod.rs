@@ -152,7 +152,7 @@ pub struct SecurityEngine {
     bf_windows: HashMap<BfKey, BfWindow>,
     dns_accum: HashMap<String, DnsAccum>,
     fragment_states: HashMap<FragmentKey, FragmentState>,
-    tcp_integrity: HashMap<TcpFlowKey, TcpIntegrityState>,
+    tcp_integrity: HashMap<(ServiceScope, TcpFlowKey), TcpIntegrityState>,
     scan_sources: HashMap<ScanSourceKey, SourceScanState>,
     syn_flood_targets: HashMap<SynTargetKey, SynFloodState>,
     ndp_bindings: HashMap<[u8; 16], [u8; 6]>,
