@@ -140,10 +140,15 @@ impl SecurityEngine {
     }
 
     pub(super) fn push_ids_with_evidence(&mut self, alert: IdsAlert, related_packets: Vec<u64>) {
-        self.findings.ids.push(super::findings::IdsFinding {
-            alert: alert.clone(),
+        self.push_ids_finding(IdsFinding {
+            alert,
             related_packets,
+            correlation_key: None,
         });
+    }
+
+    pub(super) fn push_ids_finding(&mut self, finding: IdsFinding) {
+        let alert = &finding.alert;
         debug_assert!(
             DETECTOR_SIGNATURES.contains(&alert.signature),
             "detector signature lacks replay coverage registration: {}",
@@ -152,6 +157,7 @@ impl SecurityEngine {
         if self.ids_alerts.len() >= MAX_ENTRIES {
             self.ids_alerts.remove(0);
         }
-        self.ids_alerts.push(alert);
+        self.ids_alerts.push(alert.clone());
+        self.findings.ids.push(finding);
     }
 }

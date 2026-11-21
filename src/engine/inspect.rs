@@ -59,7 +59,10 @@ impl AnalysisCore {
                 alert.severity.to_string(),
                 alert.signature,
                 &alert.detail,
-                format!("{}>{}", pkt.src, pkt.dst),
+                finding
+                    .correlation_key
+                    .clone()
+                    .unwrap_or_else(|| format!("{}>{}", pkt.src, pkt.dst)),
             );
         }
         for anomaly in &findings.arp {

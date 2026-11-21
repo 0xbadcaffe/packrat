@@ -21,41 +21,9 @@ impl SecurityEngine {
         self.exfil_flows.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
         });
-        evict_oldest_beacon(&mut self.beacon_flows);
         evict_oldest_exfil(&mut self.exfil_flows);
-
+        self.check_periodic_traffic(pkt);
         let mut alerts = Vec::new();
-        if pkt.src_port.is_some() && pkt.dst_port.is_some() {
-            let key = BehaviorFlowKey {
-                source: pkt.src.clone(),
-                destination: pkt.dst.clone(),
-                source_port: pkt.src_port.unwrap_or(0),
-                destination_port: pkt.dst_port.unwrap_or(0),
-                protocol: pkt.protocol.clone(),
-            };
-            let state = self.beacon_flows.entry(key).or_default();
-            state.last_seen = pkt.timestamp;
-            state.timestamps.push(pkt.timestamp);
-            state.sizes.push(pkt.length);
-            if state.timestamps.len() > 32 {
-                state.timestamps.remove(0);
-                state.sizes.remove(0);
-            }
-            if !state.alerted && beacon_pattern(state) {
-                state.alerted = true;
-                alerts.push((
-                    "Periodic command-and-control beacon",
-                    Severity::High,
-                    format!(
-                        "Regular fixed-size communication from {} to {}:{}",
-                        pkt.src,
-                        pkt.dst,
-                        pkt.dst_port.unwrap_or(0)
-                    ),
-                ));
-            }
-        }
-
         let source_internal = is_internal_address(&pkt.src);
         let destination_internal = is_internal_address(&pkt.dst);
         if source_internal != destination_internal {
@@ -125,6 +93,71 @@ impl SecurityEngine {
                 detail,
             });
         }
+    }
+
+    fn check_periodic_traffic(&mut self, pkt: &Packet) {
+        let (Some(source_port), Some(destination_port)) = (pkt.src_port, pkt.dst_port) else {
+            return;
+        };
+        let source = (pkt.src.as_str(), source_port);
+        let destination = (pkt.dst.as_str(), destination_port);
+        let (first, second, direction) = if source <= destination {
+            (source, destination, 0)
+        } else {
+            (destination, source, 1)
+        };
+        let key = BehaviorFlowKey {
+            first: (first.0.into(), first.1),
+            second: (second.0.into(), second.1),
+            protocol: pkt.protocol.clone(),
+            vlan: (pkt.outer_vlan_id, pkt.vlan_id),
+        };
+        if !self.beacon_flows.contains_key(&key) {
+            evict_oldest_beacon(&mut self.beacon_flows);
+        }
+        let state = self.beacon_flows.entry(key).or_default();
+        state.last_seen = state.last_seen.max(pkt.timestamp);
+        if state.alerted {
+            return;
+        }
+        let samples = &mut state.directions[direction];
+        if samples.last().is_some_and(|sample| pkt.timestamp <= sample.timestamp) {
+            return;
+        }
+        samples.retain(|sample| pkt.timestamp - sample.timestamp <= 3600.0);
+        if samples.len() == 32 {
+            samples.remove(0);
+        }
+        samples.push(BeaconSample {
+            timestamp: pkt.timestamp,
+            size: pkt.length,
+            packet_no: pkt.no,
+        });
+        if !beacon_pattern(samples) {
+            return;
+        }
+        state.alerted = true;
+        let related_packets = samples[..samples.len() - 1]
+            .iter()
+            .map(|sample| sample.packet_no)
+            .collect();
+        let count = samples.len();
+        self.push_ids_finding(IdsFinding {
+            alert: IdsAlert {
+                pkt_no: pkt.no,
+                signature: "Periodic fixed-size traffic",
+                severity: Severity::Medium,
+                detail: format!(
+                    "{count} regularly timed, similar-size packets from {}:{} to {}:{}; timing alone does not establish command-and-control",
+                    pkt.src, source_port, pkt.dst, destination_port,
+                ),
+            },
+            related_packets,
+            correlation_key: Some(format!(
+                "{} [{:?},{:?}] [{}]:{}<>[{}]:{}",
+                pkt.protocol, pkt.outer_vlan_id, pkt.vlan_id, first.0, first.1, second.0, second.1,
+            )),
+        });
     }
 
     // ─── DNS Abuse and Lateral Movement ─────────────────────────────────────

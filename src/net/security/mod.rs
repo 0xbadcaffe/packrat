@@ -70,7 +70,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "IPv6 neighbor binding changed",
     "STP topology change",
     "LLDP chassis identity changed",
-    "Periodic command-and-control beacon",
+    "Periodic fixed-size traffic",
     "Large asymmetric outbound transfer",
     "High-entropy outbound transfer",
     "DNS NXDOMAIN burst",

@@ -14,4 +14,5 @@ pub struct DetectionBatch {
 pub struct IdsFinding {
     pub alert: IdsAlert,
     pub related_packets: Vec<u64>,
+    pub correlation_key: Option<String>,
 }

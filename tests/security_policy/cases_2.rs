@@ -27,7 +27,7 @@ fn detects_stp_topology_change_and_lldp_identity_change() {
 }
 
 #[test]
-fn detects_periodic_fixed_size_command_and_control_beacon() {
+fn detects_periodic_fixed_size_traffic() {
     let mut security = SecurityEngine::default();
     for index in 0..7_u64 {
         security.update(&behavior_packet(
@@ -41,7 +41,7 @@ fn detects_periodic_fixed_size_command_and_control_beacon() {
         security
             .ids_alerts
             .iter()
-            .any(|alert| { alert.signature == "Periodic command-and-control beacon" })
+            .any(|alert| alert.signature == "Periodic fixed-size traffic")
     );
 
     let mut irregular = SecurityEngine::default();
@@ -60,8 +60,39 @@ fn detects_periodic_fixed_size_command_and_control_beacon() {
         !irregular
             .ids_alerts
             .iter()
-            .any(|alert| { alert.signature == "Periodic command-and-control beacon" })
+            .any(|alert| alert.signature == "Periodic fixed-size traffic")
     );
+}
+
+#[test]
+fn periodic_traffic_alerts_once_per_conversation_and_keeps_directional_evidence() {
+    use packrat_tui::engine::AnalysisCore;
+
+    let mut core = AnalysisCore::default();
+    for sample in 0..7 {
+        for source_port in [50000, 50001] {
+            let no = sample * 4 + if source_port == 50000 { 1 } else { 3 };
+            let mut outbound = behavior_packet(no, sample as f64 * 10.0, 120, vec![0; 120]);
+            outbound.src_port = Some(source_port);
+            let mut inbound = outbound.clone();
+            std::mem::swap(&mut inbound.src, &mut inbound.dst);
+            std::mem::swap(&mut inbound.src_port, &mut inbound.dst_port);
+            inbound.no += 1;
+            inbound.timestamp += 0.5;
+            core.analyze(&outbound);
+            core.analyze(&inbound);
+        }
+        if sample < 6 {
+            assert!(!core.alert_center.items.iter().any(|alert| alert.title == "Periodic fixed-size traffic"));
+        }
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter()
+        .filter(|alert| alert.title == "Periodic fixed-size traffic").collect();
+    assert_eq!(alerts.len(), 2);
+    assert_ne!(alerts[0].correlation_key, alerts[1].correlation_key);
+    assert_eq!(alerts[0].severity, "MEDIUM");
+    assert_eq!(alerts[0].packet_refs, [1, 5, 9, 13, 17, 21, 25]);
+    assert_eq!(alerts[1].packet_refs, [3, 7, 11, 15, 19, 23, 27]);
 }
 
 #[test]
@@ -108,7 +139,7 @@ fn group_traffic_does_not_trigger_beacon_or_outbound_transfer_rules() {
     }
     assert!(!security.ids_alerts.iter().any(|alert| matches!(
         alert.signature,
-        "Periodic command-and-control beacon"
+        "Periodic fixed-size traffic"
             | "Large asymmetric outbound transfer"
             | "High-entropy outbound transfer"
     )));

@@ -101,19 +101,24 @@ pub(super) struct Ipv6Inspection<'a> {
     pub(super) transport: &'a [u8],
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct BehaviorFlowKey {
-    pub(super) source: String,
-    pub(super) destination: String,
-    pub(super) source_port: u16,
-    pub(super) destination_port: u16,
+    pub(super) first: (String, u16),
+    pub(super) second: (String, u16),
     pub(super) protocol: String,
+    pub(super) vlan: (Option<u16>, Option<u16>),
+}
+
+#[derive(Debug)]
+pub(super) struct BeaconSample {
+    pub(super) timestamp: f64,
+    pub(super) size: u16,
+    pub(super) packet_no: u64,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct BeaconState {
-    pub(super) timestamps: Vec<f64>,
-    pub(super) sizes: Vec<u16>,
+    pub(super) directions: [Vec<BeaconSample>; 2],
     pub(super) last_seen: f64,
     pub(super) alerted: bool,
 }

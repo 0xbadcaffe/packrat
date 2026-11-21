@@ -53,7 +53,9 @@ pub(super) fn evict_oldest_beacon(states: &mut HashMap<BehaviorFlowKey, BeaconSt
     }
     if let Some(oldest) = states
         .iter()
-        .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+        .min_by(|left, right| {
+            left.1.last_seen.total_cmp(&right.1.last_seen).then(left.0.cmp(right.0))
+        })
         .map(|(key, _)| key.clone())
     {
         states.remove(&oldest);
@@ -73,40 +75,30 @@ pub(super) fn evict_oldest_exfil(states: &mut HashMap<ExfilKey, ExfilState>) {
     }
 }
 
-pub(super) fn beacon_pattern(state: &BeaconState) -> bool {
-    if state.timestamps.len() < BEACON_MIN_SAMPLES || state.sizes.len() < BEACON_MIN_SAMPLES {
+pub(super) fn beacon_pattern(samples: &[BeaconSample]) -> bool {
+    if samples.len() < BEACON_MIN_SAMPLES {
         return false;
     }
-    let intervals = state
-        .timestamps
-        .windows(2)
-        .map(|pair| pair[1] - pair[0])
-        .filter(|interval| *interval > 0.0)
-        .collect::<Vec<_>>();
-    if intervals.len() + 1 < BEACON_MIN_SAMPLES {
-        return false;
-    }
-    let duration = state.timestamps.last().copied().unwrap_or(0.0)
-        - state.timestamps.first().copied().unwrap_or(0.0);
-    let interval_mean = intervals.iter().sum::<f64>() / intervals.len() as f64;
+    let duration = samples[samples.len() - 1].timestamp - samples[0].timestamp;
+    let count = (samples.len() - 1) as f64;
+    let interval_mean = duration / count;
     if duration < 30.0 || interval_mean < 1.0 {
         return false;
     }
-    let interval_variance = intervals
-        .iter()
-        .map(|interval| (interval - interval_mean).powi(2))
+    let interval_variance = samples
+        .windows(2)
+        .map(|pair| (pair[1].timestamp - pair[0].timestamp - interval_mean).powi(2))
         .sum::<f64>()
-        / intervals.len() as f64;
+        / count;
     let interval_cv = interval_variance.sqrt() / interval_mean;
 
-    let size_mean =
-        state.sizes.iter().map(|size| f64::from(*size)).sum::<f64>() / state.sizes.len() as f64;
-    let size_variance = state
-        .sizes
+    let size_mean = samples.iter().map(|sample| f64::from(sample.size)).sum::<f64>()
+        / samples.len() as f64;
+    let size_variance = samples
         .iter()
-        .map(|size| (f64::from(*size) - size_mean).powi(2))
+        .map(|sample| (f64::from(sample.size) - size_mean).powi(2))
         .sum::<f64>()
-        / state.sizes.len() as f64;
+        / samples.len() as f64;
     let size_cv = if size_mean > 0.0 {
         size_variance.sqrt() / size_mean
     } else {

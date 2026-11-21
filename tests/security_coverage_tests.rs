@@ -75,8 +75,8 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "detects_stp_topology_change_and_lldp_identity_change",
     },
     CoverageGroup {
-        signatures: &["Periodic command-and-control beacon"],
-        positive_test: "detects_periodic_fixed_size_command_and_control_beacon",
+        signatures: &["Periodic fixed-size traffic"],
+        positive_test: "detects_periodic_fixed_size_traffic",
     },
     CoverageGroup {
         signatures: &[
