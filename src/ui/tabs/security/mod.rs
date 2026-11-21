@@ -48,7 +48,7 @@ fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
         SecuritySubTab::DnsTunnel => "DNS Tunnels",
         SecuritySubTab::HttpAnalytics => "HTTP Analytics",
         SecuritySubTab::TlsWeakness => "TLS Weaknesses",
-        SecuritySubTab::BruteForce => "Brute Force",
+        SecuritySubTab::BruteForce => "Service Bursts",
         SecuritySubTab::VulnHits => "Vulnerability Hits",
         SecuritySubTab::IocHits => "IOC Hits",
         SecuritySubTab::VlanIntel => "VLAN Intelligence",

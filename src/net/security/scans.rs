@@ -14,18 +14,18 @@ impl SecurityEngine {
         let ipv6 = ipv6_probe(&pkt.bytes);
         let tcp = match ipv6 {
             Some(Ipv6Probe::Tcp { flags, sequence, source_port, destination_port }) => {
-                Some((flags, sequence, Some(source_port), Some(destination_port)))
+                Some((flags, sequence, Some(source_port), Some(destination_port), true))
             }
             _ => match parse_ipv4_tcp_frame(&pkt.bytes) {
                 Some(TcpFrame::Segment(segment)) => Some((
-                    segment.flags, segment.sequence, pkt.src_port, pkt.dst_port,
+                    segment.flags, segment.sequence, pkt.src_port, pkt.dst_port, segment.complete,
                 )),
                 _ => None,
             },
         };
         let mut alerts = Vec::new();
 
-        if let Some((flags, sequence, source_port, destination_port)) = tcp {
+        if let Some((flags, sequence, source_port, destination_port, complete)) = tcp {
             const FIN: u8 = 0x01;
             const SYN: u8 = 0x02;
             const RST: u8 = 0x04;
@@ -61,6 +61,11 @@ impl SecurityEngine {
                 self.record_scan_probe(pkt, port, "TCP");
                 if let Some(source_port) = source_port {
                     self.record_syn_arrival(pkt, port, source_port, sequence);
+                    if port == 22 && complete && control == SYN {
+                        self.record_service_observation(
+                            pkt, "SSH", false, port, Some((source_port, sequence)),
+                        );
+                    }
                 }
             }
         } else if let Some(Ipv6Probe::EmptyUdp(port)) = ipv6 {

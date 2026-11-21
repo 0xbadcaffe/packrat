@@ -89,8 +89,12 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check capture start, packet drops, query-direction visibility, and the DNS correlation window.",
         ),
         (
-            "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 1, DirectObservation,
+            "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 2, DirectObservation,
             "Compare the distinct 401 responses with application logs; check expected challenges.",
+        ),
+        (
+            "AUTH", "SSH connection-start burst", "ssh.connection_start_burst", 1, DirectObservation,
+            "Check handshake completion and compare with SSH server logs for authentication outcomes.",
         ),
     ]
 };

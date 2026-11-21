@@ -136,6 +136,7 @@ pub(super) fn parse_ipv4_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
         from_a,
         sequence,
         flags: raw[tcp_offset + 13],
+        complete: fragment_field & 0x2000 == 0 && total_len <= raw.len() - ip_offset,
         payload: &raw[payload_start..packet_end],
     }))
 }

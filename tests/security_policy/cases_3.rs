@@ -56,6 +56,53 @@ fn analyze_ipv6(core: &mut AnalysisCore, no: u64, bytes: &[u8]) {
     core.analyze(&parse_ethernet(bytes, no, no as f64 / 1000.0));
 }
 
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn ssh_burst_counts_unique_connection_starts_and_keeps_scopes_separate(#[case] ipv6: bool) {
+    let mut core = AnalysisCore::default();
+    let make_packet = |no: u64, sequence: u32, flags: u8, vlan: u16| {
+        let mut packet = if ipv6 {
+            let mut tcp = [0; 20];
+            tcp[..2].copy_from_slice(&50000_u16.to_be_bytes());
+            tcp[2..4].copy_from_slice(&22_u16.to_be_bytes());
+            tcp[4..8].copy_from_slice(&sequence.to_be_bytes());
+            tcp[12] = 0x50;
+            tcp[13] = flags;
+            parse_ethernet(&ipv6_frame(5, 6, &tcp), no, no as f64 / 100.0)
+        } else {
+            let mut packet = tcp_probe(no, [10, 0, 0, 5], 22, flags, no as f64 / 100.0);
+            packet.bytes[38..42].copy_from_slice(&sequence.to_be_bytes());
+            packet
+        };
+        packet.vlan_id = Some(vlan);
+        packet
+    };
+    for no in 1..=5 {
+        core.analyze(&make_packet(no, no as u32, 0x18, 10));
+        core.analyze(&make_packet(no + 5, no as u32, 0x12, 10));
+        core.analyze(&make_packet(no + 10, 100, 0x02, 10));
+    }
+    for no in 16..=23 {
+        core.analyze(&make_packet(no, no as u32, 0x02, if no % 2 == 0 { 20 } else { 30 }));
+    }
+    assert!(core.alert_center.items.iter().all(|a| a.source != "AUTH"));
+
+    core.analyze(&make_packet(24, 24, 0x02, 20));
+    core.analyze(&make_packet(25, 25, 0x02, 30));
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|a| a.source == "AUTH").collect();
+    assert_eq!(alerts.len(), 2);
+    for (ending, refs) in [(24, [16, 18, 20, 22, 24]), (25, [17, 19, 21, 23, 25])] {
+        let alert = alerts.iter().find(|a| a.last_packet == ending).unwrap();
+        assert_eq!(alert.title, "SSH connection-start burst");
+        assert_eq!(alert.severity, "MEDIUM");
+        assert_eq!(alert.packet_refs, refs);
+        assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "ssh.connection_start_burst");
+        assert!(alert.detail.contains("authentication outcome not observable"));
+    }
+    assert!(core.incidents.incidents.is_empty());
+}
+
 #[test]
 fn ipv6_tcp_scan_counts_only_complete_initial_syns_through_extensions() {
     let mut core = AnalysisCore::default();

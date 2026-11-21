@@ -91,22 +91,31 @@ impl AnalysisCore {
             );
         }
         for alert in &findings.authentication {
-            let (severity, observation) = if alert.service == "HTTP" {
-                ("MEDIUM", "HTTP 401 responses")
-            } else {
-                ("HIGH", "attempts")
+            let (severity, title, observation) = match alert.service {
+                "SSH" => (
+                    "MEDIUM",
+                    "SSH connection-start burst".into(),
+                    "distinct TCP SYNs (authentication outcome not observable)",
+                ),
+                "HTTP" => ("MEDIUM", "HTTP authentication burst".into(), "HTTP 401 responses"),
+                service => ("HIGH", format!("{service} authentication burst"), "attempts"),
             };
+            let scope = (
+                pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
+                pkt.outer_vlan_id,
+                pkt.vlan_id,
+            );
             self.alert_center.record_correlated_with_evidence(
                 (pkt.no, &alert.packet_refs),
                 pkt.timestamp,
                 "AUTH",
                 severity,
-                format!("{} authentication burst", alert.service),
+                title,
                 format!(
                     "{} {observation} for client {} and service {}:{}",
                     alert.attempts, alert.src_ip, alert.dst_ip, alert.port
                 ),
-                format!("{}>{}:{}", alert.src_ip, alert.dst_ip, alert.port),
+                format!("{scope:?}:{}>{}:{}", alert.src_ip, alert.dst_ip, alert.port),
             );
         }
         for weakness in &findings.tls {

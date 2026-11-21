@@ -425,7 +425,7 @@ pub(super) fn draw_brute(f: &mut Frame, app: &App, area: Rect) {
         cell_hdr("Src IP"),
         cell_hdr("Dst IP"),
         cell_hdr("Port/Svc"),
-        cell_hdr("Attempts"),
+        cell_hdr("Count"),
     ])
     .height(1);
 
@@ -450,7 +450,7 @@ pub(super) fn draw_brute(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let title = format!(" Brute-Force Alerts ({}) ", alerts.len());
+    let title = format!(" Service Bursts ({}) ", alerts.len());
     let table = Table::new(
         std::iter::once(header).chain(rows).collect::<Vec<_>>(),
         [
@@ -466,7 +466,7 @@ pub(super) fn draw_brute(f: &mut Frame, app: &App, area: Rect) {
     render_hint(
         f,
         area,
-        "Repeated auth failures from same source (SSH, FTP, HTTP, SMB)",
+        "SSH: TCP connection starts; verify authentication in server logs",
     );
 }
 

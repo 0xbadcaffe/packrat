@@ -112,7 +112,6 @@ impl SecurityEngine {
             .map(|(sequence, _)| (dst_port, sequence));
         let service: Option<&'static str> = match dst_port {
             _ if http_failure.is_some() => Some("HTTP"),
-            22 => Some("SSH"),
             21 => {
                 let p = Self::ascii_payload(bytes, 54);
                 if p.contains("530 Login incorrect") || p.contains("530 Failed") {
@@ -143,87 +142,92 @@ impl SecurityEngine {
             }
         };
 
-        if let Some(svc) = service {
-            let key = if http_failure.is_some() {
-                BfKey {
-                    src: pkt.dst.clone(),
-                    dst: pkt.src.clone(),
-                    port: src_port,
-                }
-            } else {
-                BfKey {
-                    src: pkt.src.clone(),
-                    dst: pkt.dst.clone(),
-                    port: dst_port,
-                }
-            };
-            let now = pkt.timestamp;
-            if self.bf_windows.len() >= MAX_ENTRIES && !self.bf_windows.contains_key(&key) {
-                if let Some(oldest) = self
-                    .bf_windows
-                    .iter()
-                    .min_by(|(_, a), (_, b)| {
-                        let last = |window: &BfWindow| {
-                            window
-                                .observations
-                                .last()
-                                .map_or(f64::NEG_INFINITY, |entry| entry.timestamp)
-                        };
-                        last(a).total_cmp(&last(b))
-                    })
-                    .map(|(key, _)| key.clone())
-                {
-                    self.bf_windows.remove(&oldest);
-                }
-            }
-            let window = self.bf_windows.entry(key.clone()).or_insert(BfWindow {
-                observations: Vec::new(),
-                service: svc,
-                alerted: false,
-            });
+        if let Some(service) = service {
+            let response = http_failure.is_some();
+            let port = if response { src_port } else { dst_port };
+            self.record_service_observation(pkt, service, response, port, http_failure);
+        }
+    }
 
-            // Prune events older than 30 seconds
-            window
-                .observations
-                .retain(|entry| (0.0..=30.0).contains(&(now - entry.timestamp)));
-            if window.observations.is_empty() {
-                window.alerted = false;
-            }
-            if http_failure.is_some()
-                && window
-                    .observations
-                    .iter()
-                    .any(|entry| entry.http_token == http_failure)
+    pub(super) fn record_service_observation(
+        &mut self,
+        pkt: &Packet,
+        service: &'static str,
+        response: bool,
+        port: u16,
+        token: Option<(u16, u32)>,
+    ) {
+        let (client, server) = if response { (&pkt.dst, &pkt.src) } else { (&pkt.src, &pkt.dst) };
+        let key = BfKey {
+            src: client.clone(),
+            dst: server.clone(),
+            port,
+            service,
+            scope: (
+                pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
+                pkt.outer_vlan_id,
+                pkt.vlan_id,
+            ),
+        };
+        let now = pkt.timestamp;
+        if self.bf_windows.len() >= MAX_ENTRIES && !self.bf_windows.contains_key(&key) {
+            if let Some(oldest) = self
+                .bf_windows
+                .iter()
+                .min_by(|(_, a), (_, b)| {
+                    let last = |window: &BfWindow| {
+                        window
+                            .observations
+                            .last()
+                            .map_or(f64::NEG_INFINITY, |entry| entry.timestamp)
+                    };
+                    last(a).total_cmp(&last(b))
+                })
+                .map(|(key, _)| key.clone())
             {
-                return;
+                self.bf_windows.remove(&oldest);
             }
-            if window.observations.len() == 5 {
-                window.observations.remove(0);
-            }
-            window.observations.push(AuthObservation {
-                timestamp: now,
-                packet_no: pkt.no,
-                http_token: http_failure,
-            });
+        }
+        let window = self.bf_windows.entry(key.clone()).or_insert(BfWindow {
+            observations: Vec::new(),
+            alerted: false,
+        });
 
-            if !window.alerted && window.observations.len() >= 5 {
-                window.alerted = true;
-                let attempts = window.observations.len();
-                let svc_static = window.service;
-                if self.brute_force.len() >= MAX_ENTRIES {
-                    self.brute_force.remove(0);
-                }
-                let alert = BruteForceAlert {
-                    src_ip: key.src,
-                    dst_ip: key.dst,
-                    port: key.port,
-                    attempts,
-                    service: svc_static,
-                    packet_refs: window.observations.iter().map(|entry| entry.packet_no).collect(),
-                };
-                self.findings.authentication.push(alert.clone());
-                self.brute_force.push(alert);
+        window
+            .observations
+            .retain(|entry| (0.0..=30.0).contains(&(now - entry.timestamp)));
+        if window.observations.is_empty() {
+            window.alerted = false;
+        }
+        if token.is_some()
+            && window.observations.iter().any(|entry| entry.transport_token == token)
+        {
+            return;
+        }
+        if window.observations.len() == 5 {
+            window.observations.remove(0);
+        }
+        window.observations.push(AuthObservation {
+            timestamp: now,
+            packet_no: pkt.no,
+            transport_token: token,
+        });
+
+        if !window.alerted && window.observations.len() >= 5 {
+            window.alerted = true;
+            if self.brute_force.len() >= MAX_ENTRIES {
+                self.brute_force.remove(0);
             }
+            let alert = BruteForceAlert {
+                src_ip: key.src,
+                dst_ip: key.dst,
+                port,
+                attempts: window.observations.len(),
+                service,
+                packet_refs: window.observations.iter().map(|entry| entry.packet_no).collect(),
+            };
+            self.findings.authentication.push(alert.clone());
+            self.brute_force.push(alert);
         }
     }
 }

@@ -53,6 +53,7 @@ pub(super) struct TcpSegment<'a> {
     pub(super) from_a: bool,
     pub(super) sequence: u32,
     pub(super) flags: u8,
+    pub(super) complete: bool,
     pub(super) payload: &'a [u8],
 }
 
@@ -284,18 +285,19 @@ pub(super) struct BfKey {
     pub(super) src: String,
     pub(super) dst: String,
     pub(super) port: u16,
+    pub(super) service: &'static str,
+    pub(super) scope: (Option<(u32, u32)>, Option<u16>, Option<u16>),
 }
 
 pub(super) struct BfWindow {
     pub(super) observations: Vec<AuthObservation>,
-    pub(super) service: &'static str,
     pub(super) alerted: bool,
 }
 
 pub(super) struct AuthObservation {
     pub(super) timestamp: f64,
     pub(super) packet_no: u64,
-    pub(super) http_token: Option<(u16, u32)>,
+    pub(super) transport_token: Option<(u16, u32)>,
 }
 
 // ─── HTTP Record ──────────────────────────────────────────────────────────────
