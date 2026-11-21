@@ -6,10 +6,12 @@ pub(super) fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
         return None;
     }
     let payload_len = usize::from(u16::from_be_bytes([raw[ip_offset + 4], raw[ip_offset + 5]]));
-    let packet_end = (ip_offset + 40 + payload_len).min(raw.len());
+    let declared_end = ip_offset + 40 + payload_len;
+    let packet_end = declared_end.min(raw.len());
     let mut next_header = raw[ip_offset + 6];
     let mut cursor = ip_offset + 40;
     let mut extension_count = 0usize;
+    let mut fragmented = false;
 
     while matches!(next_header, 0 | 43 | 44 | 51 | 60) && cursor < packet_end {
         extension_count += 1;
@@ -17,6 +19,7 @@ pub(super) fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
             break;
         }
         let current = next_header;
+        fragmented |= current == 44;
         next_header = *raw.get(cursor)?;
         let length = match current {
             44 => 8,
@@ -29,14 +32,50 @@ pub(super) fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
     Some(Ipv6Inspection {
         hop_limit: raw[ip_offset + 7],
         source: raw[ip_offset + 8..ip_offset + 24].try_into().ok()?,
+        destination: raw[ip_offset + 24..ip_offset + 40].try_into().ok()?,
         next_header,
         extension_count,
+        fragmented,
+        complete: declared_end <= raw.len(),
         transport: if cursor <= packet_end {
             &raw[cursor..packet_end]
         } else {
             &[]
         },
     })
+}
+
+pub(super) fn ipv6_probe(raw: &[u8]) -> Option<Ipv6Probe> {
+    let packet = parse_ipv6_inspection(raw)?;
+    if packet.fragmented || !packet.complete || packet.extension_count > 32
+        || [packet.source, packet.destination].into_iter().any(|address| {
+            let address = std::net::Ipv6Addr::from(address);
+            address.is_multicast() || address.is_unspecified()
+        })
+    {
+        return None;
+    }
+    let transport = packet.transport;
+    let read_port = |offset| Some(u16::from_be_bytes(transport.get(offset..offset + 2)?.try_into().ok()?));
+    match packet.next_header {
+        6 if transport.len() >= 20 => {
+            let header_length = usize::from(transport[12] >> 4) * 4;
+            if !(20..=transport.len()).contains(&header_length) {
+                return None;
+            }
+            Some(Ipv6Probe::Tcp {
+                flags: transport[13],
+                sequence: u32::from_be_bytes(transport[4..8].try_into().ok()?),
+                source_port: read_port(0)?,
+                destination_port: read_port(2)?,
+            })
+        }
+        17 if transport.len() == 8 && transport[4..6] == [0, 8] => {
+            Some(Ipv6Probe::EmptyUdp(read_port(2)?))
+        }
+        58 if transport.len() >= 8 && transport[..2] == [128, 0] => Some(Ipv6Probe::EchoRequest),
+        _ => None,
+    }
 }
 
 pub(super) fn is_ipv6_link_local(address: &[u8; 16]) -> bool {

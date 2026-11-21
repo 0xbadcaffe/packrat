@@ -79,7 +79,6 @@ pub(super) struct ScanSourceKey {
 #[derive(Debug, Default)]
 pub(super) struct SourceScanState {
     pub(super) probes: Vec<ScanProbe>,
-    pub(super) icmp_targets: Vec<(f64, String)>,
     pub(super) vertical_alerted: HashSet<String>,
     pub(super) horizontal_alerted: HashSet<u16>,
     pub(super) icmp_alerted: bool,
@@ -120,9 +119,19 @@ pub(super) struct RouterAdvertisementState {
 pub(super) struct Ipv6Inspection<'a> {
     pub(super) hop_limit: u8,
     pub(super) source: [u8; 16],
+    pub(super) destination: [u8; 16],
     pub(super) next_header: u8,
     pub(super) extension_count: usize,
+    pub(super) fragmented: bool,
+    pub(super) complete: bool,
     pub(super) transport: &'a [u8],
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Ipv6Probe {
+    Tcp { flags: u8, sequence: u32, source_port: u16, destination_port: u16 },
+    EmptyUdp(u16),
+    EchoRequest,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]

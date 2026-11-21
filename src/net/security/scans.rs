@@ -11,13 +11,21 @@ impl SecurityEngine {
             pkt.timestamp < state.last_seen
                 || pkt.timestamp - state.last_seen <= SYN_FLOOD_WINDOW_SECS
         });
-        let tcp_flags = match parse_ipv4_tcp_frame(&pkt.bytes) {
-            Some(TcpFrame::Segment(segment)) => Some((segment.flags, segment.sequence)),
-            _ => None,
+        let ipv6 = ipv6_probe(&pkt.bytes);
+        let tcp = match ipv6 {
+            Some(Ipv6Probe::Tcp { flags, sequence, source_port, destination_port }) => {
+                Some((flags, sequence, Some(source_port), Some(destination_port)))
+            }
+            _ => match parse_ipv4_tcp_frame(&pkt.bytes) {
+                Some(TcpFrame::Segment(segment)) => Some((
+                    segment.flags, segment.sequence, pkt.src_port, pkt.dst_port,
+                )),
+                _ => None,
+            },
         };
         let mut alerts = Vec::new();
 
-        if let Some((flags, sequence)) = tcp_flags {
+        if let Some((flags, sequence, source_port, destination_port)) = tcp {
             const FIN: u8 = 0x01;
             const SYN: u8 = 0x02;
             const RST: u8 = 0x04;
@@ -44,55 +52,36 @@ impl SecurityEngine {
                         "{kind} probe from {} to {}:{}",
                         pkt.src,
                         pkt.dst,
-                        pkt.dst_port.unwrap_or(0)
+                        destination_port.unwrap_or(0)
                     ),
                 ));
             }
 
-            if flags & (SYN | ACK | FIN | RST) == SYN && let Some(port) = pkt.dst_port {
+            if flags & (SYN | ACK | FIN | RST) == SYN && let Some(port) = destination_port {
                 self.record_scan_probe(pkt, port, "TCP");
-                if let Some(source_port) = pkt.src_port {
+                if let Some(source_port) = source_port {
                     self.record_syn_arrival(pkt, port, source_port, sequence);
                 }
             }
+        } else if let Some(Ipv6Probe::EmptyUdp(port)) = ipv6 {
+            self.record_scan_probe(pkt, port, "UDP");
         } else if is_empty_ipv4_udp_probe(&pkt.bytes) {
             if let Some(port) = pkt.dst_port {
                 self.record_scan_probe(pkt, port, "UDP");
             }
         }
 
-        if pkt.protocol.eq_ignore_ascii_case("ICMP")
+        let echo_protocol = if matches!(ipv6, Some(Ipv6Probe::EchoRequest)) {
+            Some("ICMPv6")
+        } else if pkt.protocol.eq_ignore_ascii_case("ICMP")
             && pkt.info.to_ascii_lowercase().contains("echo request")
         {
-            let state = self.scan_state(scan_key(pkt, "ICMP"));
-            state.last_seen = pkt.timestamp;
-            state.icmp_targets.retain(|(timestamp, _)| {
-                pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= SCAN_WINDOW_SECS
-            });
-            if state.icmp_targets.is_empty() {
-                state.icmp_alerted = false;
-            }
-            if state.icmp_targets.len() == MAX_SCAN_PROBES_PER_SOURCE {
-                state.icmp_targets.remove(0);
-            }
-            state.icmp_targets.push((pkt.timestamp, pkt.dst.clone()));
-            let unique_targets = state
-                .icmp_targets
-                .iter()
-                .map(|(_, destination)| destination.as_str())
-                .collect::<HashSet<_>>()
-                .len();
-            if unique_targets >= SCAN_UNIQUE_THRESHOLD && !state.icmp_alerted {
-                state.icmp_alerted = true;
-                alerts.push((
-                    "ICMP address sweep",
-                    Severity::Medium,
-                    format!(
-                        "{} probed {unique_targets} hosts with ICMP echo requests",
-                        pkt.src
-                    ),
-                ));
-            }
+            Some("ICMP")
+        } else {
+            None
+        };
+        if let Some(protocol) = echo_protocol {
+            self.record_echo_request(pkt, protocol);
         }
 
         for (signature, severity, detail) in alerts {
@@ -112,47 +101,35 @@ impl SecurityEngine {
         self.scan_sources.entry(key).or_default()
     }
 
+    fn record_echo_request(&mut self, pkt: &Packet, protocol: &'static str) {
+        let key = scan_key(pkt, protocol);
+        let state = self.scan_state(key.clone());
+        if !state.push_probe(pkt, 0) {
+            return;
+        }
+        let count = state.probes.len();
+        if count < SCAN_UNIQUE_THRESHOLD || state.icmp_alerted {
+            return;
+        }
+        state.icmp_alerted = true;
+        let mut finding = scan_finding(
+            pkt,
+            &key,
+            "ICMP address sweep",
+            "echo",
+            format!("{} probed {count} hosts with {protocol} echo requests", pkt.src),
+            state.probes.iter(),
+        );
+        finding.alert.severity = Severity::Medium;
+        self.push_ids_finding(finding);
+    }
+
     fn record_scan_probe(&mut self, pkt: &Packet, port: u16, transport: &'static str) {
         let key = scan_key(pkt, transport);
         let state = self.scan_state(key.clone());
-        state.last_seen = if state.probes.is_empty() {
-            pkt.timestamp
-        } else {
-            state.last_seen.max(pkt.timestamp)
-        };
-        if state.last_seen - pkt.timestamp > SCAN_WINDOW_SECS {
+        if !state.push_probe(pkt, port) {
             return;
         }
-        let previous_len = state.probes.len();
-        state.probes.retain(|probe| {
-            state.last_seen - probe.timestamp <= SCAN_WINDOW_SECS
-        });
-        if let Some(index) = state
-            .probes
-            .iter()
-            .position(|prior| prior.destination == pkt.dst && prior.port == port)
-        {
-            prune_scan_latches(state, previous_len);
-            // Don't count retransmissions or replays as another unique destination.
-            if state.probes[index].timestamp <= pkt.timestamp {
-                state.probes[index].timestamp = pkt.timestamp;
-                state.probes[index].packet_no = pkt.no;
-            }
-            return;
-        }
-        if state.probes.len() == MAX_SCAN_PROBES_PER_SOURCE {
-            let oldest = state.probes.iter().enumerate()
-                .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp))
-                .map(|(index, _)| index).unwrap_or(0);
-            state.probes.remove(oldest);
-        }
-        prune_scan_latches(state, previous_len);
-        state.probes.push(ScanProbe {
-            timestamp: pkt.timestamp,
-            packet_no: pkt.no,
-            destination: pkt.dst.clone(),
-            port,
-        });
 
         let unique_ports = state
             .probes
@@ -249,6 +226,48 @@ impl SecurityEngine {
                 correlation_key: Some(format!("{:?}:[{}]:{port}", (pkt.outer_vlan_id, pkt.vlan_id), pkt.dst)),
             });
         }
+    }
+}
+
+impl SourceScanState {
+    fn push_probe(&mut self, pkt: &Packet, port: u16) -> bool {
+        self.last_seen = if self.probes.is_empty() {
+            pkt.timestamp
+        } else {
+            self.last_seen.max(pkt.timestamp)
+        };
+        if self.last_seen - pkt.timestamp > SCAN_WINDOW_SECS {
+            return false;
+        }
+        let previous_len = self.probes.len();
+        self.probes.retain(|probe| self.last_seen - probe.timestamp <= SCAN_WINDOW_SECS);
+        if self.probes.is_empty() {
+            self.icmp_alerted = false;
+        }
+        if let Some(index) = self.probes.iter().position(|prior| {
+            prior.destination == pkt.dst && prior.port == port
+        }) {
+            prune_scan_latches(self, previous_len);
+            if self.probes[index].timestamp <= pkt.timestamp {
+                self.probes[index].timestamp = pkt.timestamp;
+                self.probes[index].packet_no = pkt.no;
+            }
+            return false;
+        }
+        if self.probes.len() == MAX_SCAN_PROBES_PER_SOURCE {
+            let oldest = self.probes.iter().enumerate()
+                .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp))
+                .map(|(index, _)| index).unwrap_or(0);
+            self.probes.remove(oldest);
+        }
+        prune_scan_latches(self, previous_len);
+        self.probes.push(ScanProbe {
+            timestamp: pkt.timestamp,
+            packet_no: pkt.no,
+            destination: pkt.dst.clone(),
+            port,
+        });
+        true
     }
 }
 

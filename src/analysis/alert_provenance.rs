@@ -49,16 +49,20 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Identify the owning process and expected interval before escalating.",
         ),
         (
-            "IDS", "Horizontal host scan", "scan.horizontal", 2, Heuristic,
+            "IDS", "Horizontal host scan", "scan.horizontal", 3, Heuristic,
             "Compare destinations and completed handshakes; check expected discovery or monitoring.",
         ),
         (
-            "IDS", "Vertical port scan", "scan.vertical", 2, Heuristic,
+            "IDS", "Vertical port scan", "scan.vertical", 3, Heuristic,
             "Compare destination ports and completed handshakes; check scheduled scanning.",
         ),
         (
-            "IDS", "SYN arrival spike", "tcp.syn_arrival_spike", 1, Correlated,
+            "IDS", "SYN arrival spike", "tcp.syn_arrival_spike", 2, Correlated,
             "Check handshake completion, server reachability, and whether a burst was expected.",
+        ),
+        (
+            "IDS", "ICMP address sweep", "icmp.address_sweep", 1, Heuristic,
+            "Check whether the echo requests match expected diagnostics or discovery.",
         ),
         (
             "IDS", "Conflicting DNS responses", "dns.competing_responders", 1, Correlated,
