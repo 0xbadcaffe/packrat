@@ -286,6 +286,7 @@ async fn live_capture_scope_is_recorded_without_archiving_and_switches_queue() {
     assert_eq!(alert_scope.as_deref(), Some(scope.as_ref()));
     app.refresh_telemetry();
     assert_eq!(app.telemetry.snapshot().capture_id.as_deref(), Some(scope.as_ref()));
+    assert_eq!(app.telemetry.snapshot().alert_session_id.as_deref(), Some(app.alert_session_id.as_ref()));
 
     app.confirm_iface();
     assert_ne!(app.capture_id.as_deref(), Some(scope.as_ref()));

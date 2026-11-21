@@ -145,6 +145,10 @@ impl App {
             dispatch_waiting: self.capture_dispatch_waiting,
             analysis_packets_pending: self.packet_effects.len(),
         };
+        if !self.analysis_generation_ready() {
+            self.telemetry.publish_capture_queue(queue);
+            return;
+        }
         let core_handle = self.core.clone();
         let Ok(Some(core)) = core_handle.try_read() else {
             self.telemetry.publish_capture_queue(queue);
@@ -172,6 +176,7 @@ impl App {
             capturing: self.capturing,
             capture_run_id: self.capture_handle.as_ref().map(crate::capture::CaptureTask::run_id),
             capture_id: self.capture_id.clone(),
+            alert_session_id: Some(self.alert_session_id.clone()),
             capture_queue: queue,
             pcap_buffer_drops: self.pcap_buffer_drops(),
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),

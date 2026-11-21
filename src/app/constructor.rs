@@ -7,7 +7,7 @@ impl App {
 
     pub fn new_with_mode(packet_tx: Sender<Packet>, startup_mode: StartupMode) -> Self {
         let preferences = theme_store::load();
-        let alert_session_id = crate::storage::alert_jsonl::new_session_id();
+        let alert_session_id: std::sync::Arc<str> = crate::storage::alert_jsonl::new_session_id().into();
         let iface_list = list_interfaces(startup_mode == StartupMode::Simulation);
         let selected_iface = iface_list.first().cloned().unwrap_or_default();
         let mut core = AnalysisCore::default();

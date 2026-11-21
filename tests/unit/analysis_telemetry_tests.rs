@@ -33,11 +33,14 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert_eq!(health()["status"], "ok");
     assert_eq!(health()["telemetry_fresh"], false);
     assert!(health()["capture_run_id"].is_null());
+    assert!(health()["alert_session_id"].is_null());
     assert!(health()["pcap_buffer_drops"].is_null());
 
     hub.publish(TelemetrySnapshot {
         capturing: true,
         capture_run_id: Some(0xfedc_ba98_7654_3210),
+        capture_id: Some("0123456789abcdef0123456789abcdef".into()),
+        alert_session_id: Some("1000000-42".into()),
         pcap_buffer_drops: Some(9),
         alert_save_failed: true,
         ..Default::default()
@@ -45,6 +48,8 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert_eq!(health()["telemetry_fresh"], true);
     assert_eq!(health()["capture_active"], true);
     assert_eq!(health()["capture_run_id"], "fedcba9876543210");
+    assert_eq!(health()["capture_id"], "0123456789abcdef0123456789abcdef");
+    assert_eq!(health()["alert_session_id"], "1000000-42");
     assert_eq!(health()["pcap_buffer_drops"], 9);
     assert_eq!(health()["alert_saving"], false);
     assert_eq!(health()["alert_save_failed"], true);

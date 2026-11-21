@@ -235,7 +235,7 @@ pub struct App {
     pub ui_refresh_ms: u64,
     pub capture_timeout_ms: u64,
     pub save_alerts: bool,
-    alert_session_id: String,
+    alert_session_id: std::sync::Arc<str>,
     alert_save_error_reported: Option<String>,
     persist_preferences: bool,
     // ─── Project management ────────────────────────────────────────────────────

@@ -113,4 +113,16 @@ PACKRAT_FAKE_STEPS=8 PACKRAT_FAKE_SAMPLES="$samples" bash "$watch" | jq -se '
     and all(.[]; has("next_baseline") | not)
 ' >/dev/null
 
+scopes=$(jq -c '
+    . + {capture_run_id:"000000000000000a",pcap_buffer_drops:2,
+        alert_session_id:"1234-567",capture_id:"00000000000000000000000000000001"} as $first |
+    ($first | .capture_id = "00000000000000000000000000000002") as $second |
+    [$first, $first, $second, ($second | .pcap_buffer_drops = 3)]
+' <<< "$PACKRAT_FAKE_HEALTH")
+PACKRAT_FAKE_STEPS=4 PACKRAT_FAKE_SAMPLES="$scopes" bash "$watch" | jq -se '
+    length == 3 and all(.[]; .alert_session_id == "1234-567")
+    and map(.capture_id | .[-1:]) == ["1", "2", "2"]
+    and map(.pcap_buffer_drops_delta) == [null, 0, 1]
+' >/dev/null
+
 printf '%s\n' 'Packrat health watcher tests passed'

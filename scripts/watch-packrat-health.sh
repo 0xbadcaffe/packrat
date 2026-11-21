@@ -97,6 +97,9 @@ read_health() {
         (try fromjson catch null) as $health |
         (if ($health|type) == "object" then $health else {} end) as $h |
         ($h.capture_run_id | if type == "string" and test("^[0-9a-f]{16}$") then . else null end) as $run |
+        ($h.capture_id | if type == "string" and test("^[0-9a-f]{32}$") then . else null end) as $capture |
+        ($h.alert_session_id | if type == "string" and length <= 128 and test("^[0-9]+-[0-9]+$")
+                              then . else null end) as $session |
         ($h.pcap_buffer_drops | if type == "number" and . >= 0 and . <= 4294967295 and floor == .
                                  then . else null end) as $drops |
         ($h.capture_queue | if type == "object" and (.depth | type == "number")
@@ -106,6 +109,8 @@ read_health() {
         {
             capture_active: ($h.capture_active // false),
             capture_run_id: $run,
+            capture_id: $capture,
+            alert_session_id: $session,
             telemetry_fresh: ($h.telemetry_fresh // false),
             pcap_buffer_drops: $drops,
             capture_queue: $queue,
@@ -152,7 +157,7 @@ while :; do
     if ! state=$(read_health); then
         state=$(jq -cn --argjson baseline "$baseline" '{issues:["monitor_input_error"],next_baseline:$baseline}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .pcap_buffer_drops]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_id, .alert_session_id, .pcap_buffer_drops]' <<< "$state") || exit 2
     if [[ $change_key != "$previous" ]] || "$once"; then
         jq -c --arg time "$(date -u +%FT%TZ)" '
             del(.next_baseline) + {record_type:"capture_health", timestamp:$time}
