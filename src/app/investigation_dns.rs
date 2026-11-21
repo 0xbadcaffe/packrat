@@ -24,7 +24,7 @@ impl App {
             let frame = frames[(index + offset) % frames.len()];
             let mut packet = self.packet_by_no(frame).cloned();
             if packet.is_none()
-                && let Some(scope) = self.archive_capture_id.as_deref()
+                && let Some(scope) = self.capture_id.as_deref()
             {
                 if !attempted_archive {
                     attempted_archive = true;

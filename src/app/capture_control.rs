@@ -25,11 +25,15 @@ impl App {
 
         // Clear all analysis state so simulated data cannot bleed into real captures
         // and vice-versa. clear_packets() sets capturing=false; we restore it below.
-        if let Err(error) = self.try_clear_packets() {
+        if let Err(error) = self.clear_packets_for_scope(Some(Self::new_capture_id())) {
             self.picking_iface = true;
             self.set_status(format!("Interface switch postponed: {error}"));
             return;
         }
+
+        let (sender, receiver) = tokio::sync::mpsc::channel(self.packet_tx.max_capacity());
+        self.packet_tx = sender;
+        self.next_capture_receiver = Some(receiver);
 
         if self.selected_iface == "simulated" {
             self.seed_scenario();
@@ -64,6 +68,10 @@ impl App {
                 self.capturing = false;
             }
         }
+    }
+
+    pub fn take_capture_receiver(&mut self) -> Option<tokio::sync::mpsc::Receiver<Packet>> {
+        self.next_capture_receiver.take()
     }
 
     pub fn switch_interface(&mut self) {

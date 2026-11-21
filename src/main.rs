@@ -133,6 +133,10 @@ async fn run_loop(
     let mut redraw_interval = time::interval(redraw_period);
     let mut redraw_pending = true;
     loop {
+        if let Some(receiver) = app.take_capture_receiver() {
+            *packet_rx = receiver;
+            pending_packet = None;
+        }
         let configured_period = Duration::from_millis(app.ui_refresh_ms);
         if configured_period != redraw_period {
             redraw_period = configured_period;

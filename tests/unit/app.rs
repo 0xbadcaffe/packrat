@@ -192,7 +192,7 @@ fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::new_for_test();
     app.set_packet_archive(ArchiveWorker::open(directory.path()).unwrap()).unwrap();
-    let capture_a = app.archive_capture_id.clone().unwrap();
+    let capture_a = app.capture_id.clone().unwrap();
     let mut first = packet(90);
     first.info = "first capture".into();
     app.inject_packet(first);
@@ -215,7 +215,7 @@ fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     assert!(app.status_msg.as_deref().unwrap().contains("2 archived"));
 
     app.try_clear_packets().unwrap();
-    let capture_b = app.archive_capture_id.clone().unwrap();
+    let capture_b = app.capture_id.clone().unwrap();
     assert_ne!(capture_a, capture_b);
     assert_eq!(app.alert_evidence_status(&old_alerts[0]), "0/2 retained here; different capture");
     app.packet_archive = Some(ArchiveWorker::open(directory.path()).unwrap());
@@ -240,10 +240,10 @@ fn background_clear_updates_capture_scope_before_subsequent_findings() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::new_for_test();
     app.set_packet_archive(ArchiveWorker::open(directory.path()).unwrap()).unwrap();
-    let old = app.archive_capture_id.clone();
+    let old = app.capture_id.clone();
     app.start_background_analysis().unwrap();
     app.try_clear_packets().unwrap();
-    let current = app.archive_capture_id.clone().unwrap();
+    let current = app.capture_id.clone().unwrap();
     assert_ne!(old.as_deref(), Some(current.as_ref()));
     app.inject_packet(packet(7));
     app.configure_core(|core| {
@@ -258,6 +258,39 @@ fn background_clear_updates_capture_scope_before_subsequent_findings() {
     let observed = app.query_core(|core| core.alert_center.items[0].capture_id.clone());
     assert_eq!(observed.flatten().as_deref(), Some(current.as_ref()));
     assert_eq!(app.packets[0].no, 1);
+}
+
+#[tokio::test]
+async fn live_capture_scope_is_recorded_without_archiving_and_switches_queue() {
+    let (original_tx, mut original_rx) = tokio::sync::mpsc::channel(64);
+    let mut app = App::new(original_tx.clone());
+    app.iface_list = vec!["simulated".into()];
+    original_tx.try_send(packet(99)).unwrap();
+    app.confirm_iface();
+    assert!(app.capturing);
+    assert!(app.packet_archive.is_none());
+    let scope = app.capture_id.clone().unwrap();
+    let mut live_rx = app.take_capture_receiver().unwrap();
+    assert_eq!(original_rx.try_recv().unwrap().no, 99);
+    let first = tokio::time::timeout(std::time::Duration::from_secs(1), live_rx.recv()).await.unwrap().unwrap();
+    assert_ne!(first.no, 99);
+    let before = app.capture_frame_high_water;
+    app.ingest_packet(first);
+    let observed = app.capture_frame_high_water;
+    assert_eq!(observed, before + 1);
+    app.core.edit().alert_center.record(observed, "IDS", "LOW", "Scope test", "Observed frame");
+    let alert_scope = app.query_core(|core| {
+        core.alert_center.items.iter().find(|alert| alert.title == "Scope test")
+            .and_then(|alert| alert.capture_id.clone())
+    }).flatten();
+    assert_eq!(alert_scope.as_deref(), Some(scope.as_ref()));
+    app.refresh_telemetry();
+    assert_eq!(app.telemetry.snapshot().capture_id.as_deref(), Some(scope.as_ref()));
+
+    app.confirm_iface();
+    assert_ne!(app.capture_id.as_deref(), Some(scope.as_ref()));
+    assert!(app.take_capture_receiver().is_some());
+    app.abort_capture();
 }
 
 #[test]

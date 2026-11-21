@@ -171,6 +171,7 @@ impl App {
             packets_per_second: self.current_rate(),
             capturing: self.capturing,
             capture_run_id: self.capture_handle.as_ref().map(crate::capture::CaptureTask::run_id),
+            capture_id: self.capture_id.clone(),
             capture_queue: queue,
             pcap_buffer_drops: self.pcap_buffer_drops(),
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),

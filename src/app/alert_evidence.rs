@@ -12,7 +12,7 @@ impl App {
     pub(super) fn alert_evidence_scope(&self, alert: &AlertItem) -> AlertEvidenceScope {
         match alert.capture_id.as_deref() {
             None => AlertEvidenceScope::Unscoped,
-            scope if scope == self.archive_capture_id.as_deref() => AlertEvidenceScope::CurrentCapture,
+            scope if scope == self.capture_id.as_deref() => AlertEvidenceScope::CurrentCapture,
             _ => AlertEvidenceScope::DifferentCapture,
         }
     }

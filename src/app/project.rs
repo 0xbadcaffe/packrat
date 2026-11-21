@@ -158,9 +158,9 @@ impl App {
             return Err("Saved packet history exceeds analysis budget".into());
         }
         self.try_clear_packets()?;
-        if self.archive_capture_id.is_some() {
+        if self.capture_id.is_some() {
             // Never let a newly accepted frame reuse a historical evidence number.
-            self.archive_frame_high_water = state
+            self.capture_frame_high_water = state
                 .alert_items
                 .iter()
                 .flat_map(|alert| {

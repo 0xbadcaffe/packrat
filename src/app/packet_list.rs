@@ -12,7 +12,11 @@ impl App {
     }
 
     pub fn try_clear_packets(&mut self) -> Result<(), String> {
-        let capture_id = self.archive_capture_id.as_ref().map(|_| Self::new_archive_capture_id());
+        let capture_id = self.capture_id.as_ref().map(|_| Self::new_capture_id());
+        self.clear_packets_for_scope(capture_id)
+    }
+
+    pub(super) fn clear_packets_for_scope(&mut self, capture_id: Option<std::sync::Arc<str>>) -> Result<(), String> {
         let core_capture_id = capture_id.as_deref().map(str::to_owned);
         if let Some(worker) = &mut self.analysis_worker {
             worker.try_clear_for_capture(core_capture_id)?;
@@ -21,8 +25,8 @@ impl App {
             core.clear();
             core.alert_center.capture_id = core_capture_id;
         }
-        self.archive_capture_id = capture_id;
-        self.archive_frame_high_water = 0;
+        self.capture_id = capture_id;
+        self.capture_frame_high_water = 0;
         self.pending_analysis.clear();
         self.pending_analysis_bytes = 0;
         self.pending_analysis_events.clear();

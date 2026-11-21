@@ -44,7 +44,7 @@ impl App {
         self.pending_analysis_events.clear();
         self.packet_effects.clear();
         self.reset_inspection();
-        core.alert_center.capture_id = self.archive_capture_id.as_deref().map(str::to_owned);
+        core.alert_center.capture_id = self.capture_id.as_deref().map(str::to_owned);
         self.core = ReadCore::new(core);
     }
 }

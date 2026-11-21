@@ -8,9 +8,9 @@ impl App {
         if self.analysis_worker.is_some() || self.packet_archive.is_some() {
             return Err("Set the packet archive before starting background analysis".into());
         }
-        let capture_id = Self::new_archive_capture_id();
-        self.archive_frame_high_water = self.packets.iter().map(|packet| packet.no).max().unwrap_or(0);
-        self.archive_capture_id = Some(capture_id.clone());
+        let capture_id = self.capture_id.clone().unwrap_or_else(Self::new_capture_id);
+        self.capture_frame_high_water = self.packets.iter().map(|packet| packet.no).max().unwrap_or(0);
+        self.capture_id = Some(capture_id.clone());
         self.configure_core(move |core| {
             core.alert_center.capture_id = Some(capture_id.to_string());
         });
@@ -18,7 +18,7 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn new_archive_capture_id() -> std::sync::Arc<str> {
+    pub(super) fn new_capture_id() -> std::sync::Arc<str> {
         format!("{:032x}", rand::random::<u128>()).into()
     }
 
@@ -70,8 +70,8 @@ impl App {
         live: bool,
         restoring: bool,
     ) -> Result<(), SubmitError<Packet>> {
-        if self.archive_capture_id.is_some() && !restoring {
-            let Some(number) = self.archive_frame_high_water.checked_add(1) else {
+        if self.capture_id.is_some() && !restoring {
+            let Some(number) = self.capture_frame_high_water.checked_add(1) else {
                 return Err(SubmitError::Oversized(pkt));
             };
             pkt.no = number;
@@ -86,7 +86,7 @@ impl App {
                 Err(SubmitError::Oversized(_)) => return Err(SubmitError::Oversized(pkt)),
             }
         }
-        self.archive_frame_high_water = self.archive_frame_high_water.max(pkt.no);
+        self.capture_frame_high_water = self.capture_frame_high_water.max(pkt.no);
         if !live {
             // Offline traffic shares detector state with the live view. Once
             // mixed, require a clean session before allowing host enforcement.
@@ -98,7 +98,7 @@ impl App {
             .packet_archive
             .as_ref()
             .filter(|_| !restoring)
-            .and_then(|archive| match &self.archive_capture_id {
+            .and_then(|archive| match &self.capture_id {
                 Some(capture_id) => archive.record_scoped(capture_id, &pkt).err(),
                 None => archive.record(&pkt).err(),
             })
