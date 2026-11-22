@@ -36,3 +36,32 @@ fn authentication_reply_bursts_require_tcp_data_with_ack(
     assert_eq!(alert.provenance.as_ref().unwrap().rule_id, rule);
     assert_eq!(alert.packet_refs, [6, 7, 8, 9, 10]);
 }
+
+#[test]
+fn ntlm_fanout_uses_only_tcp_data_with_ack_and_matching_ports() {
+    const TITLE: &str = "NTLM authentication fan-out";
+    let payload = cases_3::smb2_ntlm_request(3);
+    let make = |no: u64, target: u8, flags: u8, wire_port: u16| {
+        let mut packet = ipv4_tcp_packet(no, 100, flags, &payload);
+        packet.bytes[26..34].copy_from_slice(&[10, 0, 0, 9, 10, 0, 2, target]);
+        packet.bytes[36..38].copy_from_slice(&wire_port.to_be_bytes());
+        packet.src = "10.0.0.9".into();
+        packet.dst = format!("10.0.2.{target}");
+        packet.dst_port = Some(445);
+        packet
+    };
+    let mut engine = SecurityEngine::default();
+    for (no, flags, port) in [(1, 0x12, 445), (2, 0x14, 445), (3, 0x08, 445), (4, 0x18, 446)] {
+        engine.update(&make(no, no as u8, flags, port));
+    }
+    let mut invalid_clock = make(5, 5, 0x18, 445);
+    invalid_clock.timestamp = f64::NAN;
+    engine.update(&invalid_clock);
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+    engine.update(&make(6, 6, 0x18, 445));
+    engine.update(&make(7, 7, 0x18, 445));
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+    let batch = engine.inspect(&make(8, 8, 0x19, 445));
+    let finding = batch.ids.iter().find(|finding| finding.alert.signature == TITLE).unwrap();
+    assert_eq!(finding.related_packets, [6, 7]);
+}

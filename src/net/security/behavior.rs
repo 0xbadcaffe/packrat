@@ -274,10 +274,11 @@ impl SecurityEngine {
     }
 
     pub(super) fn check_ntlm_fanout(&mut self, pkt: &Packet) {
-        if pkt.dst_port != Some(445)
+        let (Some(source_port), Some(445)) = (pkt.src_port, pkt.dst_port) else { return };
+        if !pkt.timestamp.is_finite()
             || !is_internal_address(&pkt.src)
             || !is_internal_address(&pkt.dst)
-            || !crate::analysis::stream::tcp_segment_payload(pkt)
+            || !crate::analysis::stream::tcp_payload_with_ack(pkt, (source_port, 445))
                 .is_some_and(|(_, payload)| smb_wire::has_ntlm_authenticate(payload))
         {
             return;

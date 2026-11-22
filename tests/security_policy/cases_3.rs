@@ -321,7 +321,7 @@ fn ordinary_protocol_headers_and_text_do_not_open_cve_incidents() {
     assert!(core.alert_center.items.iter().all(|a| a.severity != "CRITICAL"));
 }
 
-fn smb2_ntlm_request(message_type: u8) -> Vec<u8> {
+pub(super) fn smb2_ntlm_request(message_type: u8) -> Vec<u8> {
     let mut request = vec![0; 4 + 88 + 64];
     request[3] = 88 + 64;
     let message = &mut request[4..];
