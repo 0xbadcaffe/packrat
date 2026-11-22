@@ -258,8 +258,10 @@ while :; do
         event=heartbeat
     fi
     if [[ -n $event || -n $state_file ]]; then
-        record=$(jq -c --arg time "$(date -u +%FT%TZ)" --arg event "${event:-sample}" '
-            del(.next_baseline) + {record_type:"capture_health", timestamp:$time, event:$event}
+        record=$(jq -c --arg time "$(date -u +%FT%TZ)" --arg event "${event:-sample}" \
+            --argjson interval "$interval" '
+            del(.next_baseline) + {record_type:"capture_health", timestamp:$time, event:$event,
+                                  poll_interval_seconds:$interval}
         ' <<< "$state") || exit 2
         if [[ -n $state_file ]] && ! publish_state "$record"; then
             printf '%s\n' 'Could not publish the capture health record.' >&2

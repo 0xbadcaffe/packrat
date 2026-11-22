@@ -53,7 +53,7 @@ bash -n "$watch"
 bash "$watch" --once | jq -e '
     .record_type == "capture_health" and .event == "sample" and .issues == []
     and .pcap_buffer_drops == 0 and .alert_watcher_alive == true and .alert_watcher_pipeline_alive == null
-    and .archive_enabled == null and .alert_watcher_log == null
+    and .archive_enabled == null and .alert_watcher_log == null and .poll_interval_seconds == 15
 ' >/dev/null
 
 pipeline=$'91 2 Ss bash\n92 91 S sudo\n93 92 S sudo\n94 93 S tail'
@@ -168,6 +168,7 @@ PACKRAT_HEALTH_INTERVAL=10 PACKRAT_HEALTH_HEARTBEAT=20 PACKRAT_FAKE_STEPS=7 \
     PACKRAT_FAKE_SAMPLES="$stable_samples" bash "$watch" | jq -se '
     map(.event) == ["initial","heartbeat","changed","heartbeat","changed"]
     and map(.issues) == [[],[],["health_unreachable"],["health_unreachable"],[]]
+    and all(.[]; .poll_interval_seconds == 10)
 ' >/dev/null
 PACKRAT_HEALTH_HEARTBEAT=0 PACKRAT_FAKE_STEPS=7 PACKRAT_FAKE_SAMPLES="$stable_samples" \
     bash "$watch" | jq -se 'map(.event) == ["initial","changed","changed"]' >/dev/null

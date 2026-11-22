@@ -6,7 +6,8 @@ usage() {
         'Supply up to eight previous logs, oldest first.' \
         'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
-        'PACKRAT_TRIAGE_MAX_AGE sets the maximum health record age in seconds (default: 360).'
+        'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
+        'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
 }
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
@@ -21,18 +22,25 @@ for log in "${@:3}"; do
     previous_logs+=(--previous-log "$log")
 done
 
-max_age=${PACKRAT_TRIAGE_MAX_AGE:-360}
-if [[ ! $max_age =~ ^[1-9][0-9]{0,5}$ || ! -f $1 ]]; then
+max_age_override=${PACKRAT_TRIAGE_MAX_AGE:-}
+if [[ ! -f $1 || ( -n $max_age_override && ! $max_age_override =~ ^[1-9][0-9]{0,5}$ ) ]]; then
     printf '%s\n' 'Expected a regular health file and a positive PACKRAT_TRIAGE_MAX_AGE.' >&2
     exit 2
 fi
 
 load_state() {
-    head -c 65537 -- "$1" | jq -Rces --argjson now "$(date -u +%s)" '
+    head -c 65537 -- "$1" | jq -Rces --argjson now "$(date -u +%s)" \
+        --arg override "$max_age_override" '
         select(utf8bytelength <= 65536) | fromjson | objects
         | select(.record_type == "capture_health" and (.issues | type) == "array")
+        | select((has("poll_interval_seconds") | not) or (
+              .poll_interval_seconds | type == "number" and floor == . and . >= 1 and . <= 999999
+          ))
         | (.timestamp | strings | fromdateiso8601) as $recorded_at
-        | {age_seconds: ($now - $recorded_at), health: .}
+        | {age_seconds: ($now - $recorded_at), health: .,
+           max_age_seconds: (if $override != "" then ($override | tonumber)
+                             elif has("poll_interval_seconds") then .poll_interval_seconds * 3 + 5
+                             else 360 end)}
     '
 }
 
@@ -42,15 +50,15 @@ if ! state=$(load_state "$1"); then
 fi
 
 report() {
-    jq -c --arg status "$1" --argjson max_age "$max_age" --argjson alerts "${2-null}" \
+    jq -c --arg status "$1" --argjson alerts "${2-null}" \
         --argjson previous "$((${#previous_logs[@]} / 2))" '
-        . + {record_type:"capture_triage", status:$status, max_age_seconds:$max_age,
+        . + {record_type:"capture_triage", status:$status,
              alert_limit:50, previous_logs:$previous, alerts:$alerts}
     ' <<< "$state"
 }
 
 fresh() {
-    jq -e --argjson max "$max_age" '.age_seconds >= 0 and .age_seconds <= $max' <<< "$state" >/dev/null
+    jq -e '.age_seconds >= 0 and .age_seconds <= .max_age_seconds' <<< "$state" >/dev/null
 }
 
 match_log() {

@@ -40,7 +40,8 @@ sample='{"record_type":"capture_health","timestamp":"2023-11-14T22:12:50Z",
 sample=$(jq -c --arg log "$PACKRAT_TEST_LOG" '.alert_watcher_log = $log' <<< "$sample")
 printf '%s\n' "$sample" >"$health"
 result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
-jq -e '.status == "current" and .age_seconds == 30 and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
+jq -e '.status == "current" and .age_seconds == 30 and .max_age_seconds == 360
+    and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
 [[ -f $PACKRAT_TEST_CALL ]]
 
 previous="$scratch/older log.jsonl"
@@ -58,6 +59,15 @@ check_failure() {
 rm -- "$PACKRAT_TEST_CALL"
 PACKRAT_TRIAGE_MAX_AGE=29 check_failure 1 stale_health
 [[ ! -e $PACKRAT_TEST_CALL ]]
+jq -c '.poll_interval_seconds = 5' <<< "$sample" >"$health"
+check_failure 1 stale_health
+[[ ! -e $PACKRAT_TEST_CALL ]]
+result=$(PACKRAT_TRIAGE_MAX_AGE=30 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+jq -e '.status == "current" and .max_age_seconds == 30' <<< "$result" >/dev/null
+jq -c '.poll_interval_seconds = 15' <<< "$sample" >"$health"
+result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+jq -e '.status == "current" and .max_age_seconds == 50' <<< "$result" >/dev/null
+rm -- "$PACKRAT_TEST_CALL"
 jq -c '.timestamp = "2023-11-14T22:13:21Z"' <<< "$sample" >"$health"
 check_failure 1 stale_health
 [[ ! -e $PACKRAT_TEST_CALL ]]
@@ -90,7 +100,9 @@ result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
 jq -e '.status == "degraded" and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
 
 rm -- "$PACKRAT_TEST_CALL"
-for invalid in 'not JSON' "$sample"$'\n'"$sample" "$(jq -nc --argjson sample "$sample" '$sample + {padding: ("x" * 65536)}')"; do
+for invalid in 'not JSON' "$sample"$'\n'"$sample" \
+    "$(jq -c '.poll_interval_seconds = "15"' <<< "$sample")" \
+    "$(jq -nc --argjson sample "$sample" '$sample + {padding: ("x" * 65536)}')"; do
     printf '%s\n' "$invalid" >"$health"
     status=0
     bash "$triage" "$health" "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
