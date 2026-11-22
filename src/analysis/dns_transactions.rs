@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use crate::net::packet::Packet;
-use sha2::{Digest, Sha256};
 
 mod answers;
 mod correlation;
@@ -11,9 +10,11 @@ mod external_resolver;
 mod investigation;
 mod negative_answers;
 mod record_wire;
+mod replies;
 
 use correlation::{ExchangeBucket, ReplyMatch};
 pub use investigation::{DnsExchangeEvidence, DnsReplyEvidence};
+use replies::{RecentResponse, ReplyOutcome, question_mismatch};
 
 const TRANSACTION_TTL_SECS: f64 = 30.0;
 const RESPONSE_TTL_SECS: f64 = 5.0;
@@ -89,50 +90,6 @@ struct PendingQuery {
     server: String,
     question: Question,
     timestamp: f64,
-}
-
-#[derive(Debug, Clone)]
-struct RecentResponse {
-    first: DnsReplyEvidence,
-    question: Question,
-    fingerprint: [u8; 32],
-    answer_fingerprint: Option<[u8; 32]>,
-    timestamp: f64,
-    alternates: Vec<AlternateResponse>,
-    alternates_omitted: bool,
-}
-
-#[derive(Debug, Clone)]
-struct AlternateResponse {
-    evidence: DnsReplyEvidence,
-    fingerprint: [u8; 32],
-}
-
-impl RecentResponse {
-    fn record_alternate(
-        &mut self,
-        packet: &Packet,
-        message: &DnsMessage<'_>,
-        fingerprint: [u8; 32],
-    ) -> bool {
-        if self.alternates.iter().any(|reply| {
-            reply.fingerprint == fingerprint && reply.evidence.resolver == packet.src
-        }) {
-            return false;
-        }
-        if self.first.packet == packet.no || self.alternates.iter().any(|reply| reply.evidence.packet == packet.no) {
-            return true;
-        }
-        if self.alternates.len() == 8 {
-            self.alternates_omitted = true;
-            return true;
-        }
-        self.alternates.push(AlternateResponse {
-            evidence: DnsReplyEvidence::from_reply(packet, message),
-            fingerprint,
-        });
-        true
-    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -235,66 +192,21 @@ impl DnsTransactionTracker {
             }];
         };
         let query = &exchange.query;
-        let fingerprint = Sha256::digest(message.bytes).into();
         if let Some(previous) = &mut exchange.reply {
-            if previous.first.resolver != packet.src {
-                if !previous.record_alternate(packet, &message, fingerprint) {
-                    return Vec::new();
-                }
-                return vec![DnsFinding {
-                    kind: DnsFindingKind::ConflictingResponse,
-                    related_packets: vec![query.packet_no, previous.first.packet],
-                    detail: format!(
-                        "transaction 0x{:04x} for {} received competing replies from {} and {}",
-                        message.id, previous.question.name, previous.first.resolver, packet.src
-                    ),
-                }];
+            match previous.observe_follow_up(packet, query, &message) {
+                ReplyOutcome::FirstMatch => {}
+                ReplyOutcome::Repeat => return Vec::new(),
+                ReplyOutcome::Finding(finding) => return vec![finding],
             }
-            if previous.fingerprint != fingerprint {
-                let (kind, difference) = if previous.question != message.question {
-                    (DnsFindingKind::QuestionMismatch, "a different question in the reply")
-                } else {
-                    match (
-                        previous.answer_fingerprint,
-                        answers::answer_fingerprint(message.bytes, message.answer_offset),
-                    ) {
-                        (Some(before), Some(after)) if before == after => return Vec::new(),
-                        (Some(_), Some(_)) => (
-                            DnsFindingKind::ChangedAnswerSet,
-                            "a different answer set or base response code",
-                        ),
-                        _ => (
-                            DnsFindingKind::ChangedReply,
-                            "different reply bytes; answer comparison unavailable",
-                        ),
-                    }
-                };
-                if !previous.record_alternate(packet, &message, fingerprint) {
-                    return Vec::new();
-                }
-                return vec![DnsFinding {
-                    kind,
-                    related_packets: vec![query.packet_no, previous.first.packet],
-                    detail: format!(
-                        "transaction 0x{:04x} for {} received {difference} from resolver {}",
-                        message.id, previous.question.name, previous.first.resolver,
-                    ),
-                }];
+        } else {
+            let matches = query.question == message.question;
+            exchange.reply = Some(RecentResponse::new(packet, &message, matches));
+            if !matches {
+                return vec![question_mismatch(query, &message)];
             }
-            return Vec::new();
         }
 
         let mut findings = Vec::new();
-        if query.question != message.question {
-            findings.push(DnsFinding {
-                kind: DnsFindingKind::QuestionMismatch,
-                related_packets: vec![query.packet_no],
-                detail: format!(
-                    "transaction 0x{:04x} question changed from {} to {}",
-                    message.id, query.question.name, message.question.name
-                ),
-            });
-        }
         if query.server != packet.src {
             findings.push(DnsFinding {
                 kind: DnsFindingKind::UnexpectedResponder,
@@ -307,7 +219,7 @@ impl DnsTransactionTracker {
         }
         findings.extend(self.negative_answers.observe(scope, packet, query, &message));
         findings.extend(self.external_resolvers.observe(scope, packet, query, &message));
-        if query.server == packet.src && query.question == message.question
+        if query.server == packet.src
             && message.question.qtype == 16 && message.question.qclass == 1
             && let Some(summary) = record_wire::summarize_response(&message, true)
             && summary.rcode == 0 && summary.answer_txt_bytes > 512
@@ -321,15 +233,6 @@ impl DnsTransactionTracker {
                 related_packets: vec![query.packet_no],
             });
         }
-        exchange.reply = Some(RecentResponse {
-            first: DnsReplyEvidence::from_reply(packet, &message),
-            question: message.question,
-            fingerprint,
-            answer_fingerprint: answers::answer_fingerprint(message.bytes, message.answer_offset),
-            timestamp: packet.timestamp,
-            alternates: Vec::new(),
-            alternates_omitted: false,
-        });
         findings
     }
 

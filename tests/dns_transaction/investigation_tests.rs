@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn dns_mismatched_questions_do_not_become_competing_reply_evidence() {
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let other = "10.0.0.54";
+    for mismatch_first in [false, true] {
+        let mut core = AnalysisCore::default();
+        let query = dns_packet(1, false, client, resolver, 61, "example.test");
+        let mismatch_no = if mismatch_first { 2 } else { 3 };
+        let matching_no = if mismatch_first { 3 } else { 2 };
+        let mut mismatched = dns_packet(mismatch_no, true, resolver, client, 61, "example.test");
+        let qtype = mismatched.bytes.len() - 4;
+        mismatched.bytes[qtype..qtype + 2].copy_from_slice(&28_u16.to_be_bytes());
+        let matching = dns_packet(matching_no, true, other, client, 61, "example.test");
+        core.analyze(&query);
+        for reply in if mismatch_first {
+            [&mismatched, &matching]
+        } else {
+            [&matching, &mismatched]
+        } {
+            core.analyze(reply);
+        }
+        let by_rule = |rule_id| {
+            core.alert_center.items.iter().find(|alert| {
+                alert.provenance.as_ref().is_some_and(|p| p.rule_id == rule_id)
+            })
+        };
+        assert!(by_rule("dns.competing_responders").is_none());
+        let mismatch = by_rule("dns.question_mismatch").unwrap();
+        assert_eq!(mismatch.packet_refs, [1, mismatch_no]);
+        assert!(mismatch.detail.contains("type 28"));
+        assert_eq!(by_rule("dns.unexpected_responder").unwrap().packet_refs, [1, matching_no]);
+
+        let competing = dns_packet(4, true, resolver, client, 61, "example.test");
+        core.analyze(&competing);
+        let conflict = core.alert_center.items.iter().find(|alert| {
+            alert.provenance.as_ref().is_some_and(|p| p.rule_id == "dns.competing_responders")
+        }).unwrap();
+        assert_eq!(conflict.packet_refs, [1, matching_no, 4]);
+        let exchange = core.security.dns_exchange_for_packet(&mismatched).unwrap();
+        assert_eq!(exchange.replies.iter().map(|reply| reply.packet).collect::<Vec<_>>(), [2, 3, 4]);
+    }
+}
+
+#[test]
 fn dns_investigation_links_query_normal_reply_and_competing_reply() {
     let mut tracker = DnsTransactionTracker::default();
     let query = dns_packet(1, false, "10.0.0.5", "10.0.0.53", 35, "example.test");

@@ -125,19 +125,19 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the retained SYN and SYN-ACK pairs; confirm completed sessions and expected management activity.",
         ),
         (
-            "IDS", "Conflicting DNS responses", "dns.competing_responders", 5, Correlated,
+            "IDS", "Conflicting DNS responses", "dns.competing_responders", 6, Correlated,
             "Compare the query and both replies; verify which resolvers were authorized.",
         ),
         (
-            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 5, Correlated,
+            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 6, Correlated,
             "Compare answer records and response codes; check expected resolver behavior.",
         ),
         (
-            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 5, Heuristic,
+            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 6, Heuristic,
             "Decode both replies before concluding that their answers differ.",
         ),
         (
-            "IDS", "DNS transaction question mismatch", "dns.question_mismatch", 5, Correlated,
+            "IDS", "DNS transaction question mismatch", "dns.question_mismatch", 6, Correlated,
             "Compare the question name, type, and class in the query and reply.",
         ),
         (
