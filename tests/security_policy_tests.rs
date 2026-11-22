@@ -296,3 +296,5 @@ mod telnet_prompt_cases;
 mod ndp_binding_cases;
 #[path = "security_policy/lldp_identity_cases.rs"]
 mod lldp_identity_cases;
+#[path = "security_policy/stp_indication_cases.rs"]
+mod stp_indication_cases;

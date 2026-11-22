@@ -6,6 +6,7 @@ fn detects_stp_topology_change_and_lldp_identity_change() {
     let mut bpdu = vec![0_u8; 22];
     bpdu[..6].copy_from_slice(&[0x01, 0x80, 0xc2, 0x00, 0x00, 0x00]);
     bpdu[6..12].copy_from_slice(&[0, 1, 2, 3, 4, 5]);
+    bpdu[12..14].copy_from_slice(&7_u16.to_be_bytes());
     bpdu[14..17].copy_from_slice(&[0x42, 0x42, 0x03]);
     bpdu[20] = 0x80;
     security.update(&packet("STP", 0, "", bpdu));

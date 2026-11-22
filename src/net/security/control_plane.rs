@@ -180,17 +180,21 @@ impl SecurityEngine {
 
     pub(super) fn check_layer2_control_plane(&mut self, pkt: &Packet) {
         let raw = &pkt.bytes;
-        if is_stp_topology_change(raw) {
-            self.push_ids(IdsAlert {
-                pkt_no: pkt.no,
-                signature: "STP topology change",
-                severity: Severity::Medium,
-                detail: format!(
-                    "Spanning Tree topology-change BPDU from {}",
-                    ethernet_source_mac(raw)
-                        .map(format_mac)
-                        .unwrap_or_else(|| "unknown".into())
-                ),
+        if let Some(indication) = stp_topology_indication(raw)
+            && let Some(mac) = ethernet_source_mac(raw)
+                .filter(|address| *address != [0; 6] && address[0] & 1 == 0)
+        {
+            let scope = service_scope(pkt);
+            let source = format_mac(mac);
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "STP topology change",
+                    severity: Severity::Medium,
+                    detail: format!("{indication} from {source}; forwarding changes were not verified"),
+                },
+                related_packets: Vec::new(),
+                correlation_key: Some(format!("{scope:?}:{source}:{indication}")),
             });
         }
 

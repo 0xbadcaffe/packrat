@@ -144,12 +144,28 @@ pub(super) fn format_mac(mac: [u8; 6]) -> String {
         .join(":")
 }
 
-pub(super) fn is_stp_topology_change(raw: &[u8]) -> bool {
-    raw.len() >= 22
-        && raw[..6] == [0x01, 0x80, 0xc2, 0x00, 0x00, 0x00]
-        && raw[14..17] == [0x42, 0x42, 0x03]
-        && raw[17..19] == [0x00, 0x00]
-        && (raw[20] == 0x80 || raw[21] & 0x81 != 0)
+pub(super) fn stp_topology_indication(raw: &[u8]) -> Option<&'static str> {
+    if raw.get(..6)? != [0x01, 0x80, 0xc2, 0, 0, 0] { return None; }
+    let (offset, length) = ethernet_network_header(raw)?;
+    if !(7..=1500).contains(&length) { return None; }
+    let bpdu = raw.get(offset..offset + usize::from(length))?.strip_prefix(&[0x42, 0x42, 0x03, 0, 0])?;
+    let &[version, kind] = bpdu.first_chunk::<2>()?;
+    let body = &bpdu[2..];
+    if (version, kind) == (0, 0x80) && body.is_empty() {
+        return Some("STP topology-change notification");
+    }
+    // Bit 7 is an acknowledgement in classic STP, not a new notification.
+    if *body.first()? & 1 == 0 { return None; }
+    match (version, kind) {
+        (0, 0) if bpdu.len() == 33 => Some("STP configuration topology-change flag"),
+        (2, 2) if bpdu.len() == 34 && bpdu[33] == 0 => Some("RSTP topology-change flag"),
+        (3, 2) if bpdu.get(33) == Some(&0) => {
+            let extra = usize::from(u16::from_be_bytes(bpdu.get(34..36)?.try_into().ok()?));
+            ((64..=64 + 64 * 16).contains(&extra) && (extra - 64) % 16 == 0
+                && bpdu.len() == 36 + extra).then_some("MSTP common-tree topology-change flag")
+        }
+        _ => None,
+    }
 }
 
 pub(super) struct LldpAdvertisement<'a> {
