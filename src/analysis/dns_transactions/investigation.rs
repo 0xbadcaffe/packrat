@@ -55,7 +55,7 @@ impl DnsTransactionTracker {
             if message.response {
                 entry.reply.as_ref().is_some_and(|reply| {
                     reply.first.packet == packet.no
-                        || reply.alternates.iter().any(|other| other.packet == packet.no)
+                        || reply.alternates.iter().any(|other| other.evidence.packet == packet.no)
                 })
             } else {
                 entry.query.packet_no == packet.no
@@ -65,7 +65,7 @@ impl DnsTransactionTracker {
         let mut additional_replies_omitted = false;
         if let Some(reply) = &exchange.reply {
             replies.push(reply.first.clone());
-            replies.extend(reply.alternates.iter().cloned());
+            replies.extend(reply.alternates.iter().map(|alternate| alternate.evidence.clone()));
             additional_replies_omitted = reply.alternates_omitted;
         }
         Some(DnsExchangeEvidence {

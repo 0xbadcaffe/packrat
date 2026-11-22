@@ -48,3 +48,36 @@ fn dns_investigation_bounds_alternate_replies() {
     assert_eq!(evidence.replies.len(), 9);
     assert!(evidence.additional_replies_omitted);
 }
+
+#[test]
+fn exact_copies_of_retained_alternate_dns_replies_do_not_increment_alert_hits() {
+    let resolver = "10.0.0.53";
+    let client = "10.0.0.5";
+    for (source, rule) in [
+        (resolver, "dns.changed_answers"),
+        ("10.0.0.54", "dns.competing_responders"),
+    ] {
+        let mut core = AnalysisCore::default();
+        let query = dns_packet(1, false, client, resolver, 47, "example.test");
+        let reply = dns_packet(2, true, resolver, client, 47, "example.test");
+        let mut alternate = dns_packet(3, true, source, client, 47, "example.test");
+        alternate.bytes[45] = 0x83;
+        let mut copy = alternate.clone();
+        copy.no = 4;
+        copy.timestamp = 3.1;
+        let mut distinct = copy.clone();
+        distinct.no = 5;
+        distinct.timestamp = 3.2;
+        distinct.bytes[45] = 0x82;
+        for packet in [&query, &reply, &alternate, &copy, &distinct] {
+            core.analyze(packet);
+        }
+        let finding = core.alert_center.items.iter().find(|alert| {
+            alert.provenance.as_ref().is_some_and(|provenance| provenance.rule_id == rule)
+        }).unwrap();
+        assert_eq!(finding.hit_count, 2, "{rule}");
+        assert_eq!(finding.packet_refs, [1, 2, 3, 5], "{rule}");
+        let exchange = core.security.dns_exchange_for_packet(&query).unwrap();
+        assert_eq!(exchange.replies.iter().map(|reply| reply.packet).collect::<Vec<_>>(), [2, 3, 5]);
+    }
+}

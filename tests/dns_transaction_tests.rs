@@ -224,7 +224,7 @@ fn dns_integrity_keeps_transactions_and_alert_evidence_within_capture_scope() {
             let alert = alerts.iter().find(|a| a.last_packet == last_packet).unwrap();
             let rule = alert.provenance.as_ref().unwrap();
             assert_eq!(rule.rule_id, "dns.competing_responders");
-            assert_eq!(rule.revision, 3);
+            assert_eq!(rule.revision, 4);
             assert_eq!(alert.hit_count, 1);
             assert_eq!(alert.packet_refs, expected, "{other:?}");
         }

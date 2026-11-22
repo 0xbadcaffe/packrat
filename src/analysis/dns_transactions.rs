@@ -86,20 +86,40 @@ struct RecentResponse {
     fingerprint: [u8; 32],
     answer_fingerprint: Option<[u8; 32]>,
     timestamp: f64,
-    alternates: Vec<DnsReplyEvidence>,
+    alternates: Vec<AlternateResponse>,
     alternates_omitted: bool,
 }
 
+#[derive(Debug, Clone)]
+struct AlternateResponse {
+    evidence: DnsReplyEvidence,
+    fingerprint: [u8; 32],
+}
+
 impl RecentResponse {
-    fn remember_alternate(&mut self, packet: &Packet, message: &DnsMessage<'_>) {
-        if self.first.packet == packet.no || self.alternates.iter().any(|reply| reply.packet == packet.no) {
-            return;
+    fn record_alternate(
+        &mut self,
+        packet: &Packet,
+        message: &DnsMessage<'_>,
+        fingerprint: [u8; 32],
+    ) -> bool {
+        if self.alternates.iter().any(|reply| {
+            reply.fingerprint == fingerprint && reply.evidence.resolver == packet.src
+        }) {
+            return false;
+        }
+        if self.first.packet == packet.no || self.alternates.iter().any(|reply| reply.evidence.packet == packet.no) {
+            return true;
         }
         if self.alternates.len() == 8 {
             self.alternates_omitted = true;
-            return;
+            return true;
         }
-        self.alternates.push(DnsReplyEvidence::from_reply(packet, message));
+        self.alternates.push(AlternateResponse {
+            evidence: DnsReplyEvidence::from_reply(packet, message),
+            fingerprint,
+        });
+        true
     }
 }
 
@@ -194,7 +214,9 @@ impl DnsTransactionTracker {
         let fingerprint = Sha256::digest(message.bytes).into();
         if let Some(previous) = &mut exchange.reply {
             if previous.first.resolver != packet.src {
-                previous.remember_alternate(packet, &message);
+                if !previous.record_alternate(packet, &message, fingerprint) {
+                    return Vec::new();
+                }
                 return vec![DnsFinding {
                     kind: DnsFindingKind::ConflictingResponse,
                     related_packets: vec![query.packet_no, previous.first.packet],
@@ -223,7 +245,9 @@ impl DnsTransactionTracker {
                         ),
                     }
                 };
-                previous.remember_alternate(packet, &message);
+                if !previous.record_alternate(packet, &message, fingerprint) {
+                    return Vec::new();
+                }
                 return vec![DnsFinding {
                     kind,
                     related_packets: vec![query.packet_no, previous.first.packet],
