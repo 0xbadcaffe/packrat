@@ -15,6 +15,13 @@ cleanup() {
 trap cleanup EXIT
 state="$scratch/latest.json"
 report="$scratch/report.json"
+check_status() {
+    local file=$1 expected_status=$2 expected_code=$3 response rc=0
+    response=$(bash "$watch" --check "$file") || rc=$?
+    [[ $rc == "$expected_code" ]]
+    jq -e --arg status "$expected_status" '.status==$status' <<< "$response" >/dev/null
+}
+check_status "$state" snapshot_missing 2
 live() {
     jq -cn --arg status "$1" --argjson packets "$2" --argjson queue "$3" --argjson alerts "${4-[]}" '{
         record_type:"capture_triage", status:$status,
@@ -32,13 +39,21 @@ medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","disposition"
 live current 12 "$queue" "$medium" >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
+check_status "$state" current 0
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .review_queue[0].packet_evidence_status=="partial"
     and .recent_alerts==[{alert_id:9,severity:"MEDIUM",rule_id:"test.medium",disposition:"New",hit_count:1}]
     and .recent_alerts_at_limit==false and .has_older_alerts==false
+    and .max_age_seconds==62
     and (.updated_at | fromdateiso8601) > 0
     and (tostring | contains("private") | not)' "$state" >/dev/null
+jq '.updated_at=(now - 120 | todateiso8601)' "$state" >"$scratch/stale.json"
+check_status "$scratch/stale.json" snapshot_stale 1
+jq '.updated_at=(now + 120 | todateiso8601)' "$state" >"$scratch/future.json"
+check_status "$scratch/future.json" snapshot_future 1
+jq '.updated_at="invalid"' "$state" >"$scratch/invalid.json"
+check_status "$scratch/invalid.json" snapshot_invalid 2
 
 many=$(jq -cn '[range(1; 52) | {alert_id:.,severity:"LOW",rule_id:"bad token",disposition:"unknown"}]')
 live current 12 '[]' "$many" >"$report"
@@ -51,6 +66,7 @@ bash "$watch" --once "$state" -- printf '%s\n' 'private, not JSON' >/dev/null
 jq -e '.status=="triage_unavailable" and (tostring | contains("private") | not)' "$state" >/dev/null
 PACKRAT_TRIAGE_WATCH_TIMEOUT=1 bash "$watch" --once "$state" -- sleep 5 >/dev/null
 jq -e '.status=="triage_timeout"' "$state" >/dev/null
+check_status "$state" triage_unhealthy 1
 
 mkdir -m 0755 "$scratch/public"
 if bash "$watch" --once "$scratch/public/state" -- true >/dev/null 2>&1; then exit 1; fi
@@ -69,6 +85,7 @@ live current 30 '[]' >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/events" &
 watch_pid=$!
 await_packets 30
+check_status "$state" current 0
 if bash "$watch" --once "$state" -- true >/dev/null 2>&1; then exit 1; fi
 live current 31 '[]' >"$report.next"
 mv -- "$report.next" "$report"
@@ -92,6 +109,7 @@ live degraded 37 "$queue" "$medium" |
     jq '.health.pcap_buffer_drops=1 | .alert_log_integrity.invalid_records=2' >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 37
+check_status "$state" triage_unhealthy 1
 for _ in {1..80}; do
     if jq -se 'length == 6' "$scratch/events" >/dev/null 2>&1; then break; fi
     sleep 0.1

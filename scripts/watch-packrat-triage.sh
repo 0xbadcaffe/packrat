@@ -5,23 +5,68 @@ export LC_ALL=C
 
 usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh [--once] STATE.json -- TRIAGE_COMMAND [ARG ...]' \
+        '       watch-packrat-triage.sh --check STATE.json' \
         'The state file must be in a private directory owned by the current user.' \
+        'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Refreshes the sanitized state every poll; prints changes to health, the review queue, or recent alerts.' \
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
 }
 
 once=false
+check=false
 case ${1-} in
     --help|-h) usage; exit 0 ;;
     --once) once=true; shift ;;
+    --check) check=true; shift ;;
 esac
-if (( $# < 3 )) || [[ $1 != /* || $1 == */ || $1 == *[[:cntrl:]]* || $2 != -- ]]; then
+if [[ ${1-} != /* || $1 == */ || $1 == *[[:cntrl:]]* ]] ||
+   { "$check" && (( $# != 1 )); } ||
+   { ! "$check" && { (( $# < 3 )) || [[ $2 != -- ]]; }; }; then
     usage >&2
     exit 2
 fi
 state=$1
 directory=${state%/*}
+if [[ -z $directory || ! -d $directory || -L $directory || ! -O $directory ||
+      -L $state || -L $state.lock ||
+      ( -e $state && ! -f $state ) || ( -e $state.lock && ! -f $state.lock ) ]] ||
+   ! mode=$(stat --format='%a' -- "$directory") || [[ ! $mode =~ ^[0-7]{3,4}$ ]] ||
+   (( (8#$mode & 077) != 0 )); then
+    printf '%s\n' 'Triage state requires a private, owned directory and regular files.' >&2
+    exit 2
+fi
+check_snapshot() {
+    local raw result
+    if [[ ! -e $state ]]; then
+        printf '%s\n' '{"status":"snapshot_missing"}'
+        return 2
+    fi
+    if [[ ! -r $state || ! -O $state ]] ||
+       ! raw=$(head -c 131073 -- "$state" 2>/dev/null) ||
+       (( ${#raw} > 131072 )) ||
+       ! result=$(jq -cse '
+        select(length == 1) | .[0] | objects
+        | select(.record_type == "capture_triage_watch" and
+            (.status | type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z")) and
+            (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .))
+        | (now - (.updated_at | fromdateiso8601) | floor) as $age
+        | {status:(if $age < -5 then "snapshot_future"
+                   elif $age > .max_age_seconds then "snapshot_stale"
+                   elif .status == "current" then "current"
+                   else "triage_unhealthy" end),
+           triage_status:.status, age_seconds:$age, max_age_seconds}' <<< "$raw" 2>/dev/null); then
+        printf '%s\n' '{"status":"snapshot_invalid"}'
+        return 2
+    fi
+    printf '%s\n' "$result"
+    jq -e '.status == "current"' <<< "$result" >/dev/null
+}
+
+if "$check"; then
+    command -v jq >/dev/null || { printf '%s\n' 'Missing dependency: jq' >&2; exit 2; }
+    if check_snapshot; then exit 0; else exit "$?"; fi
+fi
 shift 2
 interval=${PACKRAT_TRIAGE_WATCH_INTERVAL:-30}
 deadline=${PACKRAT_TRIAGE_WATCH_TIMEOUT:-25}
@@ -32,14 +77,6 @@ fi
 for command in jq timeout flock; do
     command -v "$command" >/dev/null || { printf 'Missing dependency: %s\n' "$command" >&2; exit 2; }
 done
-if [[ -z $directory || ! -d $directory || -L $directory || ! -O $directory ||
-      -L $state || -L $state.lock ||
-      ( -e $state && ! -f $state ) || ( -e $state.lock && ! -f $state.lock ) ]] ||
-   ! mode=$(stat --format='%a' -- "$directory") || [[ ! $mode =~ ^[0-7]{3,4}$ ]] ||
-   (( (8#$mode & 077) != 0 )); then
-    printf '%s\n' 'Triage state requires a private, owned directory and regular files.' >&2
-    exit 2
-fi
 exec {lock_fd}>>"$state.lock"
 flock -n "$lock_fd" || { printf '%s\n' 'Triage state is already being refreshed.' >&2; exit 2; }
 
@@ -99,7 +136,9 @@ trap 'exit 0' INT TERM
 previous=''
 while :; do
     snapshot=$(read_status "$@")
-    snapshot=$(jq -c '. + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601)}' <<< "$snapshot")
+    # Allow the poll interval, the next triage deadline, and timeout cleanup/scheduling.
+    snapshot=$(jq -c --argjson max_age "$((interval + deadline + 7))" \
+        '. + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age}' <<< "$snapshot")
     temp=$(mktemp -- "$directory/.packrat-triage.XXXXXXXX")
     printf '%s\n' "$snapshot" >"$temp"
     mv -fT -- "$temp" "$state"
