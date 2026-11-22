@@ -80,9 +80,10 @@ mock_archive() {
     elif [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then
         jq -cn '
             {session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
-             alert_id:1,first_seen:10,last_seen:20,severity:"HIGH",detail:"not in index"} as $base
-            | [$base, ($base + {alert_id:2,first_seen:12,last_seen:22,severity:"LOW"}),
-               ($base + {session_id:"1700000000-123",last_seen:30,severity:"CRITICAL"}),
+             alert_id:1,first_seen:10,last_seen:20,severity:"HIGH",disposition:"New",detail:"not in index"} as $base
+            | [$base, ($base + {alert_id:2,first_seen:12,last_seen:22,severity:"HIGH",disposition:"Benign"}),
+               ($base + {alert_id:3,first_seen:13,last_seen:19,severity:"CRITICAL",disposition:"Reviewing"}),
+               ($base + {session_id:"1700000000-123",last_seen:30,severity:"CRITICAL",disposition:"Confirmed"}),
                ($base + {capture_id:null}), ($base + {capture_id:"legacy"})]
         '
     else
@@ -488,11 +489,13 @@ list_saved() {
 }
 result=$(list_saved "$PACKRAT_TEST_LOG")
 jq -e '.record_type == "saved_capture_index" and .status == "saved"
-    and .sampled_alerts == 5 and .sampled_unscoped_alerts == 2
+    and .sampled_alerts == 6 and .sampled_unscoped_alerts == 2
     and .alert_sample_limit == 512 and .alert_log_integrity.stopped_at_limit == false
     and (.captures | map(.session_id)) == ["1700000000-123","1700000000-432"]
-    and (.captures | map(.sampled_alerts)) == [1,2]
-    and (.captures | map(.sampled_high_or_critical)) == [1,1]
+    and (.captures | map(.sampled_alerts)) == [1,3]
+    and (.captures | map(.sampled_high_or_critical)) == [1,3]
+    and (.captures | map(.sampled_open_high_or_critical)) == [0,2]
+    and (.captures | map(.next_review_alert_id)) == [null,3]
     and .captures[1].first_seen == 10 and .captures[1].last_seen == 22
     and (tostring | contains("not in index") | not)' <<< "$result" >/dev/null
 result=$(PACKRAT_TEST_ALERT_COUNT=512 list_saved "$PACKRAT_TEST_LOG")

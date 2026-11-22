@@ -32,8 +32,7 @@ usage() {
 }
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
-mode=live
-target_alert=''
+mode=live target_alert=''
 if [[ ${1-} == --saved-alert ]]; then
     if (( $# < 5 || $# > 13 )) ||
        [[ ! $4 =~ ^[1-9][0-9]{0,14}$ ]]; then
@@ -67,17 +66,14 @@ if [[ -n $target_alert ]]; then
     alert_limit=1 query_limit=1
     limit_args=(--alert-id "$target_alert")
 fi
-previous_logs=("$@")
-previous_args=()
+previous_logs=("$@") previous_args=()
 for log in "${previous_logs[@]}"; do
     [[ -f $log ]] || { printf 'Previous alert log is not a regular file: %s\n' "$log" >&2; exit 2; }
     previous_args+=(--previous-log "$log")
 done
 
-max_age_override=${PACKRAT_TRIAGE_MAX_AGE:-}
-read_timeout=${PACKRAT_TRIAGE_READ_TIMEOUT:-10}
-archive=${PACKRAT_TRIAGE_ARCHIVE:-}
-project=${PACKRAT_TRIAGE_PROJECT:-}
+max_age_override=${PACKRAT_TRIAGE_MAX_AGE:-} read_timeout=${PACKRAT_TRIAGE_READ_TIMEOUT:-10}
+archive=${PACKRAT_TRIAGE_ARCHIVE:-} project=${PACKRAT_TRIAGE_PROJECT:-}
 evidence_id=${PACKRAT_TRIAGE_EVIDENCE_ALERT_ID:-}
 auto_evidence=${PACKRAT_TRIAGE_AUTO_EVIDENCE:-0}
 socket_file=${PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE:-}
@@ -211,9 +207,13 @@ report_saved_index() {
             sampled_alerts:(.alerts | length),
             sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
             alert_log_integrity:$integrity,
-            captures:($scoped | group_by([.session_id, .capture_id]) | map({
+            captures:($scoped | group_by([.session_id, .capture_id]) | map(
+              map(select(.severity == "HIGH" or .severity == "CRITICAL")) as $priority
+              | ($priority | map(select(.disposition == "New" or .disposition == "Reviewing"))) as $open | {
                 session_id:.[0].session_id, capture_id:.[0].capture_id, sampled_alerts:length,
-                sampled_high_or_critical:map(select(.severity == "HIGH" or .severity == "CRITICAL")) | length,
+                sampled_high_or_critical:($priority | length), sampled_open_high_or_critical:($open | length),
+                next_review_alert_id:($open | map(select(.alert_id | type == "number" and . >= 1 and . <= 999999999999999 and floor == .))
+                    | max_by([(.severity == "CRITICAL"), ((.last_seen | seen) // 0), .alert_id]) | .alert_id),
                 first_seen:([.[].first_seen | seen] | min),
                 last_seen:([.[].last_seen | seen] | max)
             }) | sort_by([-(.last_seen // 0), .session_id, .capture_id]))
