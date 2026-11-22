@@ -2,6 +2,10 @@
 # Supervised rollout for one Linux tmux capture host. No remote execution.
 set -uo pipefail
 
+rollout_script=$(realpath -- "${BASH_SOURCE[0]}") || exit 1
+# shellcheck source=scripts/packrat-rollout-profile.sh
+source "${rollout_script%/*}/packrat-rollout-profile.sh" || exit 1
+
 installed=/usr/local/bin/packrat
 data_dir=/root/.local/share/packrat
 main_session=packrat
@@ -15,6 +19,7 @@ stage_binary=
 archive_path=
 archive_flag=--archive
 archive_limits=() vlan_policy_args=()
+enable_alert_evidence=false
 
 error() { printf '%s\n' "$*" >&2; }
 
@@ -57,7 +62,8 @@ capture_pid() {
 capture_health_sample() {
     local address=${1:-$health_addr} require_fresh_capture=${2:-false}
     curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$address/health" |
-        jq -er --arg archive "$archive_path" --arg interface "$interface" --argjson fresh "$require_fresh_capture" '
+        jq -er --arg archive "$archive_path" --arg interface "$interface" --argjson fresh "$require_fresh_capture" \
+            --argjson evidence_only "$([[ $archive_flag == --archive-alert-evidence ]] && printf true || printf false)" '
             def scoped:
                 .capture_interface == $interface
                 and (.capture_run_id | type == "string" and test("\\A[0-9a-f]{16}\\z"))
@@ -69,7 +75,9 @@ capture_health_sample() {
             and (.pcap_buffer_drops | type == "number" and . >= 0 and . <= 4294967295 and floor == .)
             and (if $fresh then .pcap_buffer_drops == 0 and scoped
                  else .capture_interface == null or .capture_interface == $interface end)
-            and ($archive == "" or (.archive_enabled == true and .archive_paused == false)))
+            and ($archive == "" or (.archive_enabled == true and .archive_paused == false
+                and (if $evidence_only then .archive_alert_evidence_only == true
+                     else .archive_alert_evidence_only != true end))))
             | if has("packets_total") then
                 select(scoped and (.packets_total | type == "number" and . >= 0
                     and . <= 9007199254740991 and floor == .))
@@ -161,58 +169,6 @@ await_primary_watcher() {
     return 1
 }
 
-read_launch_profile() {
-    local flag value path='' mode=--archive max_mib='' max_frames=''
-    local -a limits=() policy=()
-    local LC_ALL=C
-    [[ ${1-} == "$installed" && ${2-} == --telemetry-listen && ${3-} == "$health_addr" ]] || return 1
-    shift 3
-    while (( $# > 0 )); do
-        (( $# >= 2 )) || return 1
-        flag=$1 value=$2
-        case $flag in
-            --single-tag-interface) [[ -n $value && $value != -* && ${#value} -le 128 && $value != *[^[:print:]]* && ${#policy[@]} -lt 64 ]] || return 1; policy+=("$flag" "$value") ;;
-            --archive|--archive-alert-evidence)
-                [[ -z $path && $value == /* && $value != / ]] || return 1
-                path=$value mode=$flag
-                ;;
-            --archive-max-mib)
-                [[ -z $max_mib && $value =~ ^[1-9][0-9]*$ ]] || return 1
-                max_mib=$value
-                limits+=("$flag" "$value")
-                ;;
-            --archive-max-frames)
-                [[ -z $max_frames && $value =~ ^[1-9][0-9]*$ ]] || return 1
-                max_frames=$value
-                limits+=("$flag" "$value")
-                ;;
-            *) return 1 ;;
-        esac
-        shift 2
-    done
-    [[ -n $path || ${#limits[@]} == 0 ]] || return 1
-    archive_path=$path
-    archive_flag=$mode
-    archive_limits=("${limits[@]}") vlan_policy_args=("${policy[@]}")
-}
-
-archive_for_session() {
-    if [[ -z $archive_path ]]; then
-        return 0
-    elif [[ $1 == "$bridge_session" ]]; then
-        printf '%s\n' "$backup_dir/stage-data/packet-archive"
-    else
-        printf '%s\n' "$archive_path"
-    fi
-}
-
-capture_storage_ready() {
-    local pid=$1 session=$2 archive
-    archive=$(archive_for_session "$session")
-    capture_file_open "$pid" "$(alert_log_for_session "$session")" &&
-        { [[ -z $archive ]] || capture_file_open "$pid" "${archive%/}/packets.bin"; }
-}
-
 preflight() {
     local pid
     local -a current_args
@@ -231,7 +187,10 @@ preflight() {
         error "Current capture uses a different launch profile; refusing to drop its options"
         return 1
     fi
-    candidate_supports_profile || { error "Candidate does not support the current capture options"; return 1; }
+    if ! (apply_requested_profile && candidate_supports_profile); then
+        error "Candidate cannot use the requested capture profile"
+        return 1
+    fi
     capture_progress_sample "$main_session" "$health_addr" false >/dev/null ||
         { error "Cannot verify current capture progress on $interface"; return 1; }
     capture_storage_ready "$pid" "$main_session" || return 1
@@ -243,22 +202,14 @@ preflight() {
     fi
 }
 
-candidate_supports_profile() {
-    local help
-    help=$("$candidate" --help) || return 1
-    [[ $help == *--telemetry-listen* ]] || return 1
-    [[ ${#vlan_policy_args[@]} == 0 || $help == *'--single-tag-interface NAME'* ]] || return 1
-    [[ -z $archive_path ]] ||
-        [[ $help == *"$archive_flag PATH"* && $help == *--archive-max-mib* && $help == *--archive-max-frames* ]]
-}
-
 backup_space_ready() {
-    local destination="$data_dir/backups" free_kib sizes
+    local destination="$data_dir/backups" free_kib sizes reserve=$backup_reserve_mib
     sudo -n test -d "$destination" || destination=$data_dir
     free_kib=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 { print $4 }') || return 1
     sizes=$(sudo -n stat --format='%s' -- "$installed" "$data_dir/alerts.jsonl") || return 1
     [[ $free_kib =~ ^[0-9]{1,15}$ && $backup_reserve_mib =~ ^[1-9][0-9]{0,5}$ ]] || return 1
-    awk -v free="$free_kib" -v reserve="$backup_reserve_mib" '
+    if "$enable_alert_evidence"; then reserve=$((reserve + 2 * evidence_max_mib)); fi
+    awk -v free="$free_kib" -v reserve="$reserve" '
         /^[0-9]+$/ && length($0) <= 15 { size_kib += int(($0 + 1023) / 1024); sizes++ }
         END { exit !(NR == 2 && sizes == 2 && free >= reserve * 1024 + size_kib) }
     ' <<< "$sizes"
@@ -395,6 +346,8 @@ retire_bridge() {
 
 rollout() {
     local alert_log_before alert_log_now primary_before primary_now primary_pid stage_size
+    local original_archive_path=$archive_path original_archive_flag=$archive_flag
+    local -a original_archive_limits=("${archive_limits[@]}")
     alert_log_before=$(primary_alert_log_stamp) && [[ -n $alert_log_before ]] ||
         { error "Cannot check the primary alert log; current capture not stopped"; return 1; }
     if ! primary_before=$(primary_capture_stamp) ||
@@ -402,6 +355,7 @@ rollout() {
         error "Cannot verify the primary capture identity; current capture not stopped"
         return 1
     fi
+    apply_requested_profile || { error "Archive profile changed; current capture not stopped"; return 1; }
     prepare_backup_and_stage || { error "Backup or staging failed; current capture not stopped"; return 1; }
     printf 'Rollback binary: %s/packrat\n' "$backup_dir"
     printf 'Staging alert log: %s\n' "$(alert_log_for_session "$bridge_session")"
@@ -438,6 +392,11 @@ rollout() {
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi
+    if "$enable_alert_evidence" && ! sudo -n mkdir -m 0700 -- "$archive_path"; then
+        error "Could not reserve the private packet archive; current capture not stopped"
+        retire_bridge || error "Inspect $bridge_session before retrying"
+        return 1
+    fi
     if ! stop_capture "$main_session" "$installed" "$primary_pid"; then
         error "Could not stop the current capture; verified staging capture left running"
         return 1
@@ -452,6 +411,8 @@ rollout() {
         return 0
     fi
     error "Replacement failed health checks; attempting rollback"
+    archive_path=$original_archive_path archive_flag=$original_archive_flag
+    archive_limits=("${original_archive_limits[@]}")
     if stop_capture "$main_session" "$installed" &&
        replace_installed "$backup_dir/packrat" &&
        start_capture "$main_session" "$installed" false; then
@@ -468,13 +429,16 @@ rollout() {
 }
 
 main() {
-    if (( $# != 3 )) || [[ $1 != --check && $1 != --deploy ]]; then
-        error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE'
+    if (( $# < 3 || $# > 4 )) || [[ $1 != --check && $1 != --deploy ]] ||
+       [[ $# == 4 && $4 != --enable-alert-evidence ]]; then
+        error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE [--enable-alert-evidence]'
+        error 'The opt-in enables a new private archive for HIGH/CRITICAL evidence only (64 MiB packet bytes, 8192 frames).'
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
         error 'PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB sets free space to leave after backing up (default: 512).'
         return 2
     fi
     mode=$1 candidate=$2 interface=$3
+    if [[ ${4-} == --enable-alert-evidence ]]; then enable_alert_evidence=true; fi
     [[ $interface =~ ^[A-Za-z0-9_.-]+$ ]] || { error "Invalid interface name"; return 2; }
     candidate=$(realpath -- "$candidate") || return 2
     if [[ $mode == --deploy ]]; then
@@ -489,7 +453,7 @@ main() {
     fi
     if [[ $mode == --check ]]; then
         printf 'Preflight passed for %s; no changes made\n' "$interface"
-    elif cmp -s "$candidate" "$installed"; then
+    elif ! "$enable_alert_evidence" && cmp -s "$candidate" "$installed"; then
         printf '%s\n' 'Candidate is already installed; capture unchanged'
     else
         rollout

@@ -113,6 +113,10 @@ source "$root/scripts/packrat-rollout.sh"
     read_launch_profile "${profile[@]}" --archive-alert-evidence "$archive" --archive-max-frames 4096
     [[ $(launch_capture "$main_session" /candidate) == *$'<--archive-alert-evidence>\n<'"$archive"$'>\n<--archive-max-frames>\n<4096>' ]]
     [[ $(launch_capture "$bridge_session" /candidate) == *$'<--archive-alert-evidence>\n</backup/stage-data/packet-archive>'* ]]
+    sample=$good
+    if capture_health_sample; then exit 1; fi
+    sample=$(jq -c '.archive_alert_evidence_only = true' <<< "$good")
+    [[ $(capture_health_sample) == legacy ]]
     if read_launch_profile "${profile[@]}" --single-tag-interface --archive; then exit 1; fi
     read_launch_profile "${profile[@]}" --single-tag-interface 'Access Link' --archive "$archive"
     [[ $(launch_capture "$main_session" /candidate) == *$'<--single-tag-interface>\n<Access Link>\n<--archive>'* ]]
@@ -124,6 +128,30 @@ source "$root/scripts/packrat-rollout.sh"
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 data_dir=$scratch
+
+test_evidence_profile_opt_in() {
+    local enable_alert_evidence=true archive_path='' archive_flag=--archive
+    local -a archive_limits=()
+    sudo() {
+        shift
+        if [[ $1 == stat ]]; then
+            printf '%s:0\n' "${mock_mode:-41c0}"
+        else
+            command "$@"
+        fi
+    }
+    (apply_requested_profile
+     [[ $archive_path == "$data_dir/alert-evidence-archive" && $archive_flag == --archive-alert-evidence ]]
+     [[ "${archive_limits[*]}" == '--archive-max-mib 64 --archive-max-frames 8192' ]])
+    [[ -z $archive_path && ! -e $data_dir/alert-evidence-archive ]]
+    if mock_mode=41ff apply_requested_profile; then exit 1; fi
+    ln -s -- "$data_dir/missing" "$data_dir/alert-evidence-archive"
+    if apply_requested_profile; then exit 1; fi
+    unlink -- "$data_dir/alert-evidence-archive"
+    archive_path=/already/archiving
+    if apply_requested_profile; then exit 1; fi
+}
+test_evidence_profile_opt_in 2>"$scratch/profile-errors"
 
 (
     health_state="$scratch/health.json"
@@ -205,7 +233,14 @@ data_dir=$scratch
 )
 
 sudo() {
-    [[ $1 == -n && $2 == stat ]] || return 1
+    [[ $1 == -n ]] || return 1
+    case $2 in
+        test|realpath) shift; command "$@"; return ;;
+        mkdir) trace+=("reserve:${*: -1}"); [[ $scenario != evidence_reservation_lost ]]; return ;;
+        stat) ;;
+        *) return 1 ;;
+    esac
+    if [[ $3 == --format=%f:%u ]]; then printf '%s\n' '41c0:0'; return; fi
     if [[ ${3-} == --format=%f:%h:%u\ * ]]; then
         local format=${3#--format=}
         command stat --format="${format//%u/${PACKRAT_TEST_LOG_UID:-0}}" "${@:4}"
@@ -328,6 +363,15 @@ primary_capture_stamp() {
 start_capture() {
     local session=$1 binary=$2 require_zero=${3:-true}
     trace+=("start:$session:$binary")
+    if "$enable_alert_evidence"; then
+        if [[ $require_zero == false ]]; then
+            [[ -z $archive_path && $archive_flag == --archive && ${#archive_limits[@]} == 0 ]] || return 2
+            trace+=("original-profile")
+        else
+            [[ $archive_path == "$data_dir/alert-evidence-archive" && $archive_flag == --archive-alert-evidence ]] || return 2
+            trace+=("evidence-profile")
+        fi
+    fi
     if [[ $require_zero == false ]]; then trace+=("allow-existing-drops"); fi
     if [[ $session == "$bridge_session" ]]; then
         case $scenario in
@@ -341,7 +385,7 @@ start_capture() {
     else
         main_starts=$((main_starts + 1))
         if [[ $scenario == rollback_fail ]]; then return 1; fi
-        [[ $scenario != health_fail || $main_starts == 2 ]]
+        [[ ( $scenario != health_fail && $scenario != evidence_health_fail ) || $main_starts == 2 ]]
     fi
 }
 
@@ -378,6 +422,9 @@ run_scenario() {
     local main_starts=0
     local primary_cutover=true
     local primary_stamp=original
+    local archive_path='' archive_flag=--archive enable_alert_evidence=false
+    local -a archive_limits=()
+    if [[ $scenario == evidence_* ]]; then enable_alert_evidence=true; fi
     if [[ $scenario == primary_missing ]]; then primary_stamp=unavailable; fi
     rollout >/dev/null 2>&1 || actual=$?
     [[ $actual == "$expected" ]]
@@ -415,6 +462,15 @@ run_scenario health_fail 1 backup start:packrat-stage:/candidate stop:packrat:/u
 run_scenario rollback_fail 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat stop:packrat:/usr/local/bin/packrat \
     install:/backup/packrat start:packrat:/usr/local/bin/packrat allow-existing-drops
+run_scenario evidence_success 0 backup start:packrat-stage:/candidate evidence-profile \
+    "reserve:$data_dir/alert-evidence-archive" stop:packrat:/usr/local/bin/packrat \
+    install:/candidate start:packrat:/usr/local/bin/packrat evidence-profile retire-stage
+run_scenario evidence_reservation_lost 1 backup start:packrat-stage:/candidate evidence-profile \
+    "reserve:$data_dir/alert-evidence-archive" retire-stage
+run_scenario evidence_health_fail 1 backup start:packrat-stage:/candidate evidence-profile \
+    "reserve:$data_dir/alert-evidence-archive" stop:packrat:/usr/local/bin/packrat install:/candidate \
+    start:packrat:/usr/local/bin/packrat evidence-profile stop:packrat:/usr/local/bin/packrat \
+    install:/backup/packrat start:packrat:/usr/local/bin/packrat original-profile allow-existing-drops retire-stage
 
 rc=0
 bash "$root/scripts/packrat-rollout.sh" --deploy /missing 'invalid/interface' >/dev/null 2>&1 || rc=$?
