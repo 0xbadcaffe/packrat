@@ -7,6 +7,7 @@ use crate::analysis::industrial_policy;
 use crate::analysis::ipv6_fragments::{Ipv6FragmentOutcome, Ipv6FragmentReassembler};
 use crate::net::inspector::shannon_entropy;
 use crate::net::packet::Packet;
+use crate::net::parser::ethernet_network_header;
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 

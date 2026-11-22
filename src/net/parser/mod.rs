@@ -2,6 +2,27 @@
 #![allow(dead_code)]
 use crate::net::packet::Packet;
 
+const MAX_PARSED_VLAN_TAGS: u8 = 2;
+
+pub(crate) fn is_vlan_ether_type(ether_type: u16) -> bool {
+    matches!(ether_type, 0x8100 | 0x88a8)
+}
+
+pub(crate) fn ethernet_network_header(raw: &[u8]) -> Option<(usize, u16)> {
+    let mut offset = 12usize;
+    for depth in 0..=MAX_PARSED_VLAN_TAGS {
+        let ether_type = u16::from_be_bytes(raw.get(offset..offset + 2)?.try_into().ok()?);
+        if !is_vlan_ether_type(ether_type) {
+            return Some((offset + 2, ether_type));
+        }
+        if depth == MAX_PARSED_VLAN_TAGS {
+            break;
+        }
+        offset += 4;
+    }
+    None
+}
+
 pub(crate) fn supports_capture_link_type(link_type: u32) -> bool {
     link_type == 1
 }
@@ -73,8 +94,8 @@ pub fn parse_ethernet(data: &[u8], no: u64, ts: f64) -> Packet {
             return unknown(data, no, ts);
         }
         let etype = u16::from_be_bytes([data[offset], data[offset + 1]]);
-        if etype == 0x8100 || etype == 0x88a8 {
-            if tag_count == 2 {
+        if is_vlan_ether_type(etype) {
+            if tag_count == MAX_PARSED_VLAN_TAGS {
                 let mut packet = unknown_ethernet(data, no, ts, vlan);
                 packet.info = "VLAN stack exceeds supported depth; raw frame retained".into();
                 return packet;

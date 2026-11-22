@@ -308,3 +308,5 @@ mod http_observation_cases;
 mod ipv4_fragment_volume_cases;
 #[path = "security_policy/ipv4_discovery_cases.rs"]
 mod ipv4_discovery_cases;
+#[path = "security_policy/link_scope_cases.rs"]
+mod link_scope_cases;

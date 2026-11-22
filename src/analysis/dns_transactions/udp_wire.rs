@@ -1,4 +1,5 @@
 use crate::net::packet::Packet;
+use crate::net::parser::ethernet_network_header;
 
 pub(crate) fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
     if packet
@@ -9,15 +10,7 @@ pub(crate) fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
         return None;
     }
     let raw = packet.bytes.as_slice();
-    let mut network = 14usize;
-    let mut ether_type = u16::from_be_bytes([*raw.get(12)?, *raw.get(13)?]);
-    for _ in 0..2 {
-        if !matches!(ether_type, 0x8100 | 0x88a8) {
-            break;
-        }
-        ether_type = u16::from_be_bytes([*raw.get(network + 2)?, *raw.get(network + 3)?]);
-        network += 4;
-    }
+    let (network, ether_type) = ethernet_network_header(raw)?;
     let (transport, network_end) = match ether_type {
         0x0800 if raw.get(network)? >> 4 == 4 && raw.get(network + 9) == Some(&17) => {
             let ihl = usize::from(raw.get(network)? & 0x0f) * 4;

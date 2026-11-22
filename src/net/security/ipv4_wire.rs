@@ -36,23 +36,6 @@ pub(super) fn parse_ipv4_fragment(raw: &[u8]) -> Option<Ipv4Fragment<'_>> {
     })
 }
 
-pub(super) fn ethernet_network_header(raw: &[u8]) -> Option<(usize, u16)> {
-    if raw.len() < 14 {
-        return None;
-    }
-    let mut ether_type_offset = 12usize;
-    loop {
-        let ether_type = u16::from_be_bytes([
-            *raw.get(ether_type_offset)?,
-            *raw.get(ether_type_offset + 1)?,
-        ]);
-        if ether_type != 0x8100 && ether_type != 0x88a8 {
-            return Some((ether_type_offset + 2, ether_type));
-        }
-        ether_type_offset = ether_type_offset.checked_add(4)?;
-    }
-}
-
 pub(super) fn conflicting_fragment_frame(
     slices: &[FragmentSlice],
     fragment: &Ipv4Fragment<'_>,

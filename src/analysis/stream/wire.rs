@@ -1,4 +1,5 @@
 use crate::net::packet::Packet;
+use crate::net::parser::ethernet_network_header;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TcpView {
@@ -34,15 +35,7 @@ pub(super) fn tcp_view(packet: &Packet) -> Option<TcpView> {
         return None;
     }
     let raw = &packet.bytes;
-    let mut ether_type = read_u16(raw, 12)?;
-    let mut ip = 14usize;
-    for _ in 0..2 {
-        if !matches!(ether_type, 0x8100 | 0x88a8) {
-            break;
-        }
-        ether_type = read_u16(raw, ip + 2)?;
-        ip += 4;
-    }
+    let (ip, ether_type) = ethernet_network_header(raw)?;
     let (header, declared_end) = match ether_type {
         0x0800 => {
             if raw.get(ip)? >> 4 != 4 {

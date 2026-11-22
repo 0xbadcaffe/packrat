@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::net::packet::Packet;
+use crate::net::parser::ethernet_network_header;
 
 const MAX_DATAGRAMS: usize = 512;
 const MAX_FRAGMENTS: usize = 128;
@@ -267,21 +268,4 @@ fn assemble_if_complete(fragments: &[Fragment], final_len: usize) -> Option<Vec<
         payload[fragment.offset..end].copy_from_slice(&fragment.data);
     }
     Some(payload)
-}
-
-fn ethernet_network_header(raw: &[u8]) -> Option<(usize, u16)> {
-    if raw.len() < 14 {
-        return None;
-    }
-    let mut ether_type_offset = 12usize;
-    loop {
-        let ether_type = u16::from_be_bytes([
-            *raw.get(ether_type_offset)?,
-            *raw.get(ether_type_offset + 1)?,
-        ]);
-        if ether_type != 0x8100 && ether_type != 0x88a8 {
-            return Some((ether_type_offset + 2, ether_type));
-        }
-        ether_type_offset = ether_type_offset.checked_add(4)?;
-    }
 }

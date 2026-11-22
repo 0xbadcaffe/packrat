@@ -57,6 +57,25 @@ fn reassembles_ipv6_fragments_arriving_out_of_order() {
 }
 
 #[test]
+fn ipv6_reassembly_does_not_cross_the_supported_vlan_stack_depth() {
+    let mut reassembler = Ipv6FragmentReassembler::default();
+    let mut first = fragment_packet(1, 7, 0, true, b"abcdefgh").bytes;
+    first.splice(12..12, [0x88, 0xa8, 0, 100, 0x81, 0, 0, 10]);
+    let first = packrat_tui::net::parser::parse_ethernet(&first, 1, 1.0);
+    assert!(matches!(reassembler.ingest(&first), Ipv6FragmentOutcome::Pending { fragment_count: 1 }));
+    let mut last = fragment_packet(2, 7, 8, false, b"ijklmnop").bytes;
+    last.splice(12..12, [0x88, 0xa8, 0, 100, 0x81, 0, 0, 10, 0x81, 0, 0, 11]);
+    let deeper = packrat_tui::net::parser::parse_ethernet(&last, 2, 2.0);
+    assert!(matches!(reassembler.ingest(&deeper), Ipv6FragmentOutcome::Ignored));
+    last.drain(20..24);
+    let last = packrat_tui::net::parser::parse_ethernet(&last, 3, 3.0);
+    let Ipv6FragmentOutcome::Complete { datagram } = reassembler.ingest(&last) else {
+        panic!("expected reassembly from supported VLAN scope")
+    };
+    assert_eq!(datagram.frame_numbers, [1, 3]);
+}
+
+#[test]
 fn distinguishes_identical_retransmission_from_conflicting_overlap() {
     let mut reassembler = Ipv6FragmentReassembler::default();
     let first = fragment_packet(1, 8, 0, true, b"abcdefghijklmnop");

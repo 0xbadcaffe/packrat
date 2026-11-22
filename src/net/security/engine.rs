@@ -118,6 +118,12 @@ impl SecurityEngine {
     fn update_with_context(&mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation,
         tls: Option<(u16, u16)>, dns: crate::analysis::stream::DnsTcpObservation) {
         self.findings = DetectionBatch::default();
+        if pkt.capture.as_ref().is_some_and(|capture| !crate::net::parser::supports_capture_link_type(capture.link_type))
+            || (crate::net::parser::is_vlan_ether_type(u16_be_at(&pkt.bytes, 12))
+                && ethernet_network_header(&pkt.bytes).is_none())
+        {
+            return;
+        }
         self.check_ipv4_fragments(pkt);
         let no_new_tcp_payload = self.check_tcp_integrity(pkt);
         self.check_scan_activity(pkt);
