@@ -12,6 +12,7 @@ usage() {
         'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
         'Set PACKRAT_TRIAGE_ARCHIVE and PACKRAT_TRIAGE_EVIDENCE_ALERT_ID to check frame availability for one alert.' \
         'Evidence for an alert in the recent report is withheld if its frame references changed during triage.' \
+        'PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE optionally adds saved live socket snapshots for matching alerts.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
 }
 
@@ -33,6 +34,15 @@ max_age_override=${PACKRAT_TRIAGE_MAX_AGE:-}
 read_timeout=${PACKRAT_TRIAGE_READ_TIMEOUT:-10}
 archive=${PACKRAT_TRIAGE_ARCHIVE:-}
 evidence_id=${PACKRAT_TRIAGE_EVIDENCE_ALERT_ID:-}
+socket_file=${PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE:-}
+socket_status=not_configured
+if [[ -n $socket_file ]]; then
+    if [[ $socket_file != /* || $socket_file == */ || $socket_file == *[[:cntrl:]]* ]]; then
+        printf '%s\n' 'PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE requires an absolute file path.' >&2
+        exit 2
+    fi
+    socket_status=not_checked
+fi
 if [[ ! -f $1 || ( -n $max_age_override && ! $max_age_override =~ ^[1-9][0-9]{0,5}$ ) ]]; then
     printf '%s\n' 'Expected a regular health file and a positive PACKRAT_TRIAGE_MAX_AGE.' >&2
     exit 2
@@ -71,16 +81,46 @@ fi
 
 report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
-        --argjson previous "${#previous_logs[@]}" '
+        --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" '
         .[1] as $alerts
         | .[2] as $evidence
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
              has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
              alerts:(if $alerts == null then null else $alerts[:$limit] end),
-             evidence_status:$evidence, alert_log_integrity:.[3]}
+             evidence_status:$evidence, alert_log_integrity:.[3], socket_context_status:$socket}
     '
 }
 
+with_socket_context() {
+    local snapshots
+    [[ -f $socket_file && ! -L $socket_file ]] || return 1
+    snapshots=$(head -c 65537 -- "$socket_file" | jq -Rces '
+        select(utf8bytelength <= 65536)
+        | split("\n") | map(select(length > 0) | fromjson)
+        | select(length <= 64 and all(.[]; type == "object"))
+    ') || return 1
+    jq -ce --argjson snapshots "$snapshots" '
+        def snapshot($alert):
+            .alert_last_seen as $seen
+            | select(.session_id == $alert.session_id and .capture_id == $alert.capture_id
+                and .alert_id == $alert.alert_id and .flow == $alert.flow and .flow.transport == "tcp"
+                and (.alert_last_seen | type == "number" and isfinite and . > 0)
+                and ($alert.last_seen | type == "number" and . >= $seen));
+        map(. as $alert
+            | ([$snapshots[] | snapshot($alert)
+                | .alert_last_seen as $when
+                | .socket_context | objects
+                | select(.status == "exact_tuple_snapshot"
+                    and ((.local == $alert.flow.source and .peer == $alert.flow.destination)
+                        or (.local == $alert.flow.destination and .peer == $alert.flow.source))
+                    and (.process | type == "string" and test("\\A[A-Za-z0-9_. -]{1,64}\\z"))
+                    and (.pid | type == "number" and floor == . and . >= 1 and . <= 4294967295)
+                    and ((try (.observed_at | fromdateiso8601) catch null)
+                        | . != null and . >= ($when | floor) and . <= ($when | floor) + 8))
+                | {status,observed_at,local,peer,process,pid,alert_last_seen:$when}] | last) as $context
+            | if $context == null then . else . + {socket_context:$context} end)
+    ' <<< "$alerts"
+}
 fresh() {
     jq -e '.age_seconds >= 0 and .age_seconds <= .max_age_seconds' <<< "$state" >/dev/null
 }
@@ -195,6 +235,16 @@ if ! jq -e --arg session "$session" --arg capture "$capture" '
 ' <<< "$alerts" >/dev/null; then
     report alert_log_scope_mismatch
     exit 2
+fi
+if [[ -n $socket_file ]]; then
+    if [[ ! -e $socket_file && ! -L $socket_file ]]; then
+        socket_status=not_recorded
+    elif enriched=$(with_socket_context 2>/dev/null); then
+        alerts=$enriched
+        socket_status=available
+    else
+        socket_status=unavailable
+    fi
 fi
 evidence=null
 evidence_failed=false

@@ -10,6 +10,7 @@ export PACKRAT_TEST_LOG="$scratch/alerts.jsonl" PACKRAT_TEST_CALL="$scratch/arch
 export PACKRAT_TEST_STATE="$health"
 touch -- "$PACKRAT_TEST_LOG" "$scratch/other.jsonl"
 unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT PACKRAT_TRIAGE_ARCHIVE PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
+unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE
 
 date() {
     [[ $* == '-u +%s' ]] || return 2
@@ -62,7 +63,9 @@ mock_archive() {
     else
         jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" '
             {alert_id:42,title:"Scoped alert",session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
-             evidence_frame_count:2,evidence_frame_set_sha256:("0"*64)} as $valid
+             evidence_frame_count:2,evidence_frame_set_sha256:("0"*64),
+             last_seen:1700000000,
+             flow:{transport:"tcp",source:"192.0.2.1:4321",destination:"192.0.2.2:443"}} as $valid
             | [$valid] + (if $mismatch == "" then [] else
                 [($valid | .alert_id = 43 | .[$mismatch] = "other")]
               end)'
@@ -98,6 +101,32 @@ result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.status == "current" and .age_seconds == 30 and .max_age_seconds == 360
     and .alerts[0].alert_id == 42 and .has_more_alerts == false and .evidence_status == null' <<< "$result" >/dev/null
 [[ -f $PACKRAT_TEST_CALL ]]
+(
+    export PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE="$scratch/socket context.jsonl"
+    result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+    jq -e '.socket_context_status == "not_recorded" and (.alerts[0] | has("socket_context") | not)' \
+        <<< "$result" >/dev/null
+    jq -cn '
+        {alert_id:42, session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
+         flow:{transport:"tcp",source:"192.0.2.1:4321",destination:"192.0.2.2:443"},
+         alert_last_seen:1699999999.5,
+         socket_context:{status:"exact_tuple_snapshot",observed_at:"2023-11-14T22:13:20Z",
+            local:"192.0.2.1:4321",peer:"192.0.2.2:443",process:"client",pid:123,private:"do not export"}} as $valid |
+        $valid,
+        ($valid | .capture_id = "00000000000000000000000000000002" | .socket_context.process = "wrong capture"),
+        ($valid | .session_id = "1700000000-567" | .socket_context.process = "wrong session"),
+        ($valid | .flow.source = "192.0.2.1:4322" | .socket_context.process = "wrong port"),
+        ($valid | .socket_context.observed_at = "2023-11-14T22:20:00Z")
+    ' >"$PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE"
+    result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+    jq -e '.socket_context_status == "available" and .alerts[0].socket_context.process == "client"
+        and .alerts[0].socket_context.alert_last_seen == 1699999999.5
+        and (.alerts[0].socket_context | has("private") | not)' <<< "$result" >/dev/null
+    printf '%s\n' '{malformed' >>"$PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE"
+    result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+    jq -e '.socket_context_status == "unavailable" and (.alerts[0] | has("socket_context") | not)' \
+        <<< "$result" >/dev/null
+)
 status=0
 result=$(PACKRAT_TEST_ALERT_COUNT=0 PACKRAT_TEST_INVALID_RECORDS=2 PACKRAT_TEST_OVERSIZED_RECORDS=1 \
     bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?

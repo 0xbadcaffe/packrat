@@ -32,7 +32,7 @@ export -f ss timeout
 
 fixture() {
     jq -cn '{record_type:"capture_alert",event:"first_seen",last_seen:now,
-       capture_id:"00000000000000000000000000000001",
+       capture_id:"00000000000000000000000000000001",session_id:"123-456",alert_id:42,detail:"not retained",
        flow:{transport:"tcp",source:"[2001:db8::4]:40001",destination:"[2001:db8::8]:443"}}'
 }
 
@@ -58,5 +58,21 @@ fixture | jq -c '
     (.flow.source = "bad input:443"), (.flow.source = "[2001:db8::4]:99999"), (del(.capture_id))
 ' | bash "$watch" | jq -se 'length == 7 and all(.[]; has("socket_context") | not)' >/dev/null
 [[ ! -s $PACKRAT_SOCKET_CALLS ]]
+
+export PACKRAT_SOCKET_CONTEXT_FILE="$scratch/socket context.jsonl"
+result=$(fixture | bash "$watch")
+[[ $(stat --format=%a -- "$PACKRAT_SOCKET_CONTEXT_FILE") == 600 ]]
+jq -e 'keys == ["alert_id","alert_last_seen","capture_id","flow","session_id","socket_context"]
+    and .socket_context.process == "test client" and .alert_id == 42' "$PACKRAT_SOCKET_CONTEXT_FILE" >/dev/null
+[[ $(stat --format=%s -- "$PACKRAT_SOCKET_CONTEXT_FILE") -lt 1024 ]]
+for _ in {1..64}; do printf '%s\n' "$result"; done >"$PACKRAT_SOCKET_CONTEXT_FILE"
+fixture | bash "$watch" >/dev/null
+[[ $(wc -l <"$PACKRAT_SOCKET_CONTEXT_FILE") == 64 ]]
+other="$scratch/untouched"
+touch -- "$other"
+ln -s "$other" "$scratch/symlink"
+result=$(fixture | PACKRAT_SOCKET_CONTEXT_FILE="$scratch/symlink" bash "$watch" 2>"$scratch/error")
+jq -e '.socket_context.status == "exact_tuple_snapshot"' <<< "$result" >/dev/null
+[[ ! -s $other && -s $scratch/error ]]
 
 printf '%s\n' 'Packrat socket context watcher tests passed'
