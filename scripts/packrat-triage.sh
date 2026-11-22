@@ -8,6 +8,7 @@ usage() {
         'Supply up to eight immutable previous logs, oldest first.' \
         'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
         '--saved reviews an explicit saved capture without consulting live health.' \
+        '--saved reports saved_scope_not_observed when the supplied logs contain no matching alert records.' \
         '--list-saved groups the latest 512 distinct saved alerts by session and capture; counts cover only that sample.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
@@ -370,6 +371,10 @@ if [[ $mode == saved ]]; then
 fi
 if { [[ $mode == saved ]] || jq -e '.health.issues == []' <<< "$state" >/dev/null; } &&
    jq -e '.invalid_records == 0 and .oversized_records == 0' <<< "$integrity" >/dev/null; then
+    if [[ $mode == saved ]] && jq -e 'length == 0' <<< "$alerts" >/dev/null; then
+        report saved_scope_not_observed "$alerts" "$evidence" "$integrity"
+        exit 1
+    fi
     report "$clean_status" "$alerts" "$evidence" "$integrity"
     if "$evidence_failed"; then exit 2; fi
 else

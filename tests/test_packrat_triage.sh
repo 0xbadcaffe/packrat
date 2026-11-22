@@ -158,8 +158,9 @@ result=$(PACKRAT_TEST_INVALID_RECORDS=1 bash "$triage" "$health" "$PACKRAT_TEST_
 [[ $status == 1 ]]
 jq -e '.status == "degraded" and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
 
+export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
 (
-    export PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
+    export PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space"
     result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e '.status == "current" and .evidence_status == {status:"checked",alert_id:42,in_recent_alerts:true,
         frames:[{frame_number:1,status:"truncated"},{frame_number:2,status:"missing"}]}' <<< "$result" >/dev/null
@@ -191,7 +192,7 @@ jq -e '.status == "degraded" and .alerts[0].alert_id == 42' <<< "$result" >/dev/
 )
 printf '%s\n' "$sample" >"$health"
 (
-    export PACKRAT_TRIAGE_PROJECT="$scratch/case with spaces.json" PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
+    export PACKRAT_TRIAGE_PROJECT="$scratch/case with spaces.json"
     result=$(bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
     jq -e '.status == "saved" and .evidence_status.status == "checked"
         and [.evidence_status.frames[].status] == ["truncated","missing"]
@@ -200,6 +201,7 @@ printf '%s\n' "$sample" >"$health"
     PACKRAT_TRIAGE_ARCHIVE="$scratch/archive" bash "$triage" "$health" "$PACKRAT_TEST_LOG" 2>/dev/null || status=$?
     [[ $status == 2 ]]
 )
+unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
 for count in 0 50 51; do
     result=$(PACKRAT_TEST_ALERT_COUNT=$count bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e --argjson count "$count" '
@@ -313,6 +315,15 @@ jq -e '.status == "saved" and .health == null and .alerts[0].alert_id == 42
     and (has("age_seconds") | not)' <<< "$result" >/dev/null
 result=$(PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" saved "$PACKRAT_TEST_LOG" "$previous")
 jq -e '.status == "saved" and .previous_logs == 1 and .health == null' <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_ALERT_COUNT=0 saved "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 ]]
+jq -e '.status == "saved_scope_not_observed" and .health == null and .alerts == []
+    and .scope == {session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"}' <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_ALERT_COUNT=0 PACKRAT_TEST_INVALID_RECORDS=1 saved "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 ]]
+jq -e '.status == "saved_log_degraded" and .alerts == [] and .alert_log_integrity.invalid_records == 1' <<< "$result" >/dev/null
 status=0
 result=$(PACKRAT_TEST_INVALID_RECORDS=1 saved "$PACKRAT_TEST_LOG") || status=$?
 [[ $status == 1 ]]
