@@ -153,6 +153,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check the configured resolver policy, including approved public resolvers, VPNs and lab address ranges.",
         ),
         (
+            "IDS", "JNDI label in DNS query", "dns.jndi_question_label", 2, Heuristic,
+            "Check the queried name against approved domains or threat intelligence. Identify the originating process before escalating.",
+        ),
+        (
             "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 4, DirectObservation,
             "Compare the distinct 401 responses with application logs; check expected challenges.",
         ),

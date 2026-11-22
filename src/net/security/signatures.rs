@@ -191,22 +191,5 @@ impl SecurityEngine {
             }
         }
 
-        // ── CVE-2021-44228 via DNS ───────────────────────────────────────────
-        if dst_port == 53
-            || src_port == 53
-            || Self::contains_str_ci(pkt.protocol.as_bytes(), b"dns")
-        {
-            if Self::contains_str_ci(pkt.info.as_bytes(), b"jndi") {
-                emit(
-                    IdsAlert {
-                        pkt_no: pkt.no,
-                        signature: "Log4Shell via DNS (CVE-2021-44228)",
-                        severity: Severity::Critical,
-                        detail: format!("DNS query contains 'jndi' from {}", pkt.src),
-                    },
-                    None,
-                );
-            }
-        }
     }
 }

@@ -42,9 +42,6 @@ fn fixture(name: &str) -> Packet {
             "",
             vec![0x18, 0x03, 0x02, 0xff, 0xff, 0x01, 0x00],
         ),
-        "Log4Shell via DNS (CVE-2021-44228)" => {
-            packet("DNS", 53, "query jndi callback", vec![0; 20])
-        }
         _ => panic!("unknown fixture {name}"),
     }
 }

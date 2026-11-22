@@ -164,6 +164,10 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "wpad_finding_requires_a_complete_nbns_address_reply",
     },
     CoverageGroup {
+        signatures: &["JNDI label in DNS query"],
+        positive_test: "jndi_dns_lead_requires_a_standalone_wire_question_label",
+    },
+    CoverageGroup {
         signatures: &[
             "Log4Shell (CVE-2021-44228)",
             "Shellcode NOP sled",
@@ -171,7 +175,6 @@ const COVERAGE: &[CoverageGroup] = &[
             "SQL Injection Probe",
             "XSS Probe",
             "Heartbleed (CVE-2014-0160)",
-            "Log4Shell via DNS (CVE-2021-44228)",
         ],
         positive_test: "shipped_signature_replays",
     },
@@ -188,6 +191,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("dns_transaction_tests.rs"),
     include_str!("dns_transaction/txt_reply_tests.rs"),
     include_str!("dns_transaction/external_resolver_tests.rs"),
+    include_str!("dns_transaction/jndi_label_tests.rs"),
     include_str!("industrial_policy_tests.rs"),
 );
 

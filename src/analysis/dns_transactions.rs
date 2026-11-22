@@ -33,6 +33,7 @@ pub enum DnsFindingKind {
     NxDomainBurst,
     LargeTxtResponse,
     ExternalResolver,
+    JndiLabelQuery,
     QuestionMismatch,
     UnexpectedResponder,
     ConflictingResponse,
@@ -170,6 +171,10 @@ impl DnsTransactionTracker {
         let scope = DnsScope::from_packet(packet);
 
         if !message.response && destination_port == 53 {
+            let jndi_label = message.bytes[2] & 0x78 == 0
+                && message.bytes[4..6] == [0, 1]
+                && message.question.qclass == 1
+                && dns_name_has_label(&message.question.name, "jndi");
             self.insert_query(
                 TransactionKey {
                     scope,
@@ -184,7 +189,15 @@ impl DnsTransactionTracker {
                     timestamp: packet.timestamp,
                 },
             );
-            return Vec::new();
+            return if jndi_label {
+                vec![DnsFinding {
+                    kind: DnsFindingKind::JndiLabelQuery,
+                    related_packets: Vec::new(),
+                    detail: format!("{} sent a DNS question with a standalone JNDI label to {}; lookup origin and exploitation are unverified", packet.src, packet.dst),
+                }]
+            } else {
+                Vec::new()
+            };
         }
         if !message.response || source_port != 53 {
             return Vec::new();
@@ -338,6 +351,16 @@ impl DnsTransactionTracker {
         }
         self.exchanges.entry(key).or_default().record(query);
     }
+}
+
+fn dns_name_has_label(name: &str, label: &str) -> bool {
+    // parse_name escapes literal dots and backslashes inside a wire label.
+    let mut escaped = false;
+    name.split(|ch| {
+        let separator = ch == '.' && !escaped;
+        escaped = ch == '\\' && !escaped;
+        separator
+    }).any(|part| part == label)
 }
 
 fn parse_message(bytes: &[u8]) -> Option<DnsMessage<'_>> {

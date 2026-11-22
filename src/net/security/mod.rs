@@ -101,7 +101,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "SQL Injection Probe",
     "XSS Probe",
     "Heartbleed (CVE-2014-0160)",
-    "Log4Shell via DNS (CVE-2021-44228)",
+    "JNDI label in DNS query",
 ];
 
 mod admin_fanout;

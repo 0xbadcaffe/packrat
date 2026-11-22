@@ -12,7 +12,8 @@ mod external_resolver_tests;
 
 #[path = "dns_transaction/investigation_tests.rs"]
 mod investigation_tests;
-
+#[path = "dns_transaction/jndi_label_tests.rs"]
+mod jndi_label_tests;
 fn dns_packet(
     no: u64,
     response: bool,

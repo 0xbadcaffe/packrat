@@ -219,6 +219,7 @@ impl SecurityEngine {
                 DnsFindingKind::NxDomainBurst => ("DNS NXDOMAIN burst", Severity::Medium),
                 DnsFindingKind::LargeTxtResponse => ("Oversized DNS TXT traffic", Severity::Low),
                 DnsFindingKind::ExternalResolver => ("Direct external DNS resolver use", Severity::Low),
+                DnsFindingKind::JndiLabelQuery => ("JNDI label in DNS query", Severity::Low),
                 DnsFindingKind::QuestionMismatch => {
                     ("DNS transaction question mismatch", Severity::Critical)
                 }

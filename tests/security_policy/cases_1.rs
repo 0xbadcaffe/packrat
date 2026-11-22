@@ -7,7 +7,6 @@ use super::*;
 #[case("SQL Injection Probe")]
 #[case("XSS Probe")]
 #[case("Heartbleed (CVE-2014-0160)")]
-#[case("Log4Shell via DNS (CVE-2021-44228)")]
 fn shipped_signature_replays(#[case] signature: &str) {
     let mut security = SecurityEngine::default();
     security.update(&fixture(signature));
