@@ -9,9 +9,11 @@ manifest="$scratch/suite.json"
 export PACKRAT_TEST_DIRECTORY="$scratch"
 touch -- "$scratch/benign fixture.pcap" "$scratch/changed.pcap" "$scratch/partial.pcap"
 touch -- "$scratch/unlisted.pcap" "$scratch/unregistered.pcap"
+touch -- "$scratch/counts.pcap"
 
 packrat-analyze() {
     local verdict opened=0 rules='{}'
+    local checks='[]' frames='[]'
     case ${*: -1} in
         "$PACKRAT_TEST_DIRECTORY/benign fixture.pcap")
             [[ $# == 4 && $1 == --expect-alert && $2 == scan.horizontal=0 && $3 == -- ]] || return 2
@@ -20,6 +22,12 @@ packrat-analyze() {
         "$PACKRAT_TEST_DIRECTORY/changed.pcap")
             [[ $# == 4 && $1 == --expect-alert-frame && $2 == scan.horizontal=12 && $3 == -- ]] || return 2
             verdict=failed
+            frames='[{"rule_id":"scan.horizontal","missing_frames":[12],"unexpected_openings":1}]'
+            ;;
+        "$PACKRAT_TEST_DIRECTORY/counts.pcap")
+            verdict=failed
+            checks='[{"rule_id":"scan.horizontal","expected":0,"observed":2},
+                {"rule_id":"scan.vertical","expected":2,"observed":1}]'
             ;;
         "$PACKRAT_TEST_DIRECTORY/partial.pcap") verdict=inconclusive ;;
         "$PACKRAT_TEST_DIRECTORY/unlisted.pcap") verdict=passed; opened=1; rules='{"scan.vertical":1}' ;;
@@ -27,8 +35,10 @@ packrat-analyze() {
         *) return 2 ;;
     esac
     printf '%s\n' '{"type":"alert","payload":"not in the suite report"}'
-    jq -cn --arg verdict "$verdict" --argjson opened "$opened" --argjson rules "$rules" '
-        {type:"summary",packets:20,alerts_opened:$opened,rule_counts:$rules,alert_expectations:{verdict:$verdict}}
+    jq -cn --arg verdict "$verdict" --argjson opened "$opened" --argjson rules "$rules" \
+        --argjson checks "$checks" --argjson frames "$frames" '
+        {type:"summary",packets:20,alerts_opened:$opened,rule_counts:$rules,
+            alert_expectations:{verdict:$verdict,checks:$checks,frame_checks:$frames}}
     '
     [[ $verdict == passed ]]
 }
@@ -46,11 +56,21 @@ result=$(bash "$suite" "$manifest") || status=$?
 jq -e '
     .total == 4 and .passed == 1 and .failed == 1 and .inconclusive == 2
     and ([.cases[].verdict] == ["passed","failed","inconclusive","inconclusive"])
+    and .score == {scored_cases:2,missed_opening_frames:1,unexpected_openings:1,count_deficit:0,count_surplus:0}
+    and .cases[2].score == null and .cases[3].score == null
     and .cases[3].summary == null and (tostring | contains("not in the suite report") | not)
 ' <<< "$result" >/dev/null
 
 jq -c '.cases = [.cases[0]]' <<< "$sample" >"$manifest"
 bash "$suite" "$manifest" | jq -e '.total == 1 and .passed == 1' >/dev/null
+
+jq -c '.cases = [{name:"counts",capture:"counts.pcap",
+                   expect_counts:{"scan.horizontal":0,"scan.vertical":2}}]' <<< "$sample" >"$manifest"
+status=0
+result=$(bash "$suite" "$manifest") || status=$?
+[[ $status == 1 ]]
+jq -e '.score == {scored_cases:1,missed_opening_frames:0,unexpected_openings:0,
+                  count_deficit:1,count_surplus:2}' <<< "$result" >/dev/null
 
 strict_sample=$(jq -c '.cases = [
     .cases[0],

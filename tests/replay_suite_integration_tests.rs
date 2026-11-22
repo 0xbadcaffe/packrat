@@ -86,6 +86,7 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
     assert_eq!(passing.stdout, run().stdout);
     assert!(!String::from_utf8_lossy(&passing.stdout).contains("401 Unauthorized"));
 
+    labels["cases"][1]["expect_counts"]["http.unauthorized_burst"] = json!(2);
     labels["cases"][1]["opening_frames"]["http.unauthorized_burst"] = json!([4]);
     std::fs::write(&manifest, serde_json::to_vec(&labels).unwrap()).unwrap();
     let mismatched = run();
@@ -96,6 +97,10 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
     let checks = &report["cases"][1]["summary"]["alert_expectations"]["frame_checks"][0];
     assert_eq!(checks["missing_frames"], json!([4]));
     assert_eq!(checks["unexpected_openings"], 1);
+    assert_eq!(report["score"], json!({
+        "scored_cases": 2, "missed_opening_frames": 1, "unexpected_openings": 1,
+        "count_deficit": 0, "count_surplus": 0
+    }));
 
     labels["cases"][1]["expect_counts"] = json!({"scan.horizontal": 0});
     labels["cases"][1]["opening_frames"] = json!({});

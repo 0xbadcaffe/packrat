@@ -6,7 +6,8 @@ usage() {
         'Replay up to 32 labeled captures. Relative capture paths are relative to the manifest.' \
         'Example: {"version":1,"cases":[{"name":"baseline","capture":"baseline.pcapng","expect_counts":{"scan.horizontal":0}}]}' \
         'Use opening_frames to label exact frames, for example {"scan.horizontal":[12]}.' \
-        'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.'
+        'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
+        'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.'
 }
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
@@ -58,7 +59,7 @@ while IFS= read -r label; do
         summary=$(packrat-analyze "${options[@]}" -- "$capture" |
             jq -cn 'reduce inputs as $row (null;
                 if $row.type == "summary" then
-                    $row | {packets,analyzed,skipped,alerts_opened,rule_counts,alert_expectations}
+                    $row | {packets,analyzed,skipped,alerts_opened,alert_snapshots,rule_counts,alert_expectations}
                 else . end)') || status=$?
     fi
     results+=("$(jq -cn --arg name "$name" --argjson result "${summary:-null}" --argjson status "$status" \
@@ -69,21 +70,39 @@ while IFS= read -r label; do
         ([$rules[]] | add // 0) as $registered |
         (if ($result.rule_counts | type) == "object" and ($result.alerts_opened | type) == "number"
             and $result.alerts_opened >= $registered then $result.alerts_opened - $registered else null end) as $unregistered |
-        ($result.alert_expectations.verdict) as $verdict |
-        {name:$name,
-         verdict:(if $verdict == "failed" then "failed"
-                  elif $verdict != "passed" or $status != 0 or ($strict and $unregistered == null) then "inconclusive"
-                  elif $strict and (($unlisted | length) > 0 or $unregistered > 0) then "failed"
-                  else "passed" end),
-         unlisted_rule_counts:$unlisted, unregistered_alerts:$unregistered, summary:$result}
+        ($result.alert_expectations.verdict) as $evaluation |
+        (if $evaluation == "failed" then "failed"
+         elif $evaluation != "passed" or $status != 0 or ($strict and $unregistered == null) then "inconclusive"
+         elif $strict and (($unlisted | length) > 0 or $unregistered > 0) then "failed"
+         else "passed" end) as $verdict |
+        ($result.alert_expectations.frame_checks // []) as $frames |
+        ($result.alert_expectations.checks // [] |
+            map(select(.rule_id as $id | all($frames[]; .rule_id != $id)))) as $counts |
+        {name:$name, verdict:$verdict,
+         unlisted_rule_counts:$unlisted, unregistered_alerts:$unregistered, summary:$result,
+         score:(if $verdict == "inconclusive" then null else {
+             missed_opening_frames: ([$frames[].missing_frames | length] | add // 0),
+             unexpected_openings: ([$frames[].unexpected_openings] | add // 0),
+             count_deficit: ([$counts[] | [.expected - .observed, 0] | max] | add // 0),
+             count_surplus: ([$counts[] | [.observed - .expected, 0] | max] | add // 0)
+         } end)}
     ')")
 done < <(jq -c '.cases[]' <<< "$validated")
 
-report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" '{
+report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" '
+    [.[].score | objects] as $scores |
+    {
     record_type:"capture_replay_suite", strict:$strict, total:length,
     passed:([.[] | select(.verdict == "passed")] | length),
     failed:([.[] | select(.verdict == "failed")] | length),
-    inconclusive:([.[] | select(.verdict == "inconclusive")] | length), cases:.
+    inconclusive:([.[] | select(.verdict == "inconclusive")] | length),
+    score:{
+        scored_cases: ($scores | length),
+        missed_opening_frames: ([$scores[].missed_opening_frames] | add // 0),
+        unexpected_openings: ([$scores[].unexpected_openings] | add // 0),
+        count_deficit: ([$scores[].count_deficit] | add // 0),
+        count_surplus: ([$scores[].count_surplus] | add // 0)
+    }, cases:.
 }')
 printf '%s\n' "$report"
 jq -e '.failed == 0 and .inconclusive == 0' <<< "$report" >/dev/null
