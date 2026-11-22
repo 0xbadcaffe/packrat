@@ -11,6 +11,7 @@ usage() {
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
         'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
         'Set PACKRAT_TRIAGE_ARCHIVE and PACKRAT_TRIAGE_EVIDENCE_ALERT_ID to check frame availability for one alert.' \
+        'Evidence for an alert in the recent report is withheld if its frame references changed during triage.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
 }
 
@@ -106,17 +107,33 @@ previous_log_stamps() {
 }
 
 check_evidence() {
-    local response
+    local response expected
     response=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive "$archive" \
         --alert-status "$1" "$session" "$evidence_id" --capture-id "$capture" "${previous_args[@]}") || return 1
-    jq -cse --arg session "$session" --arg capture "$capture" --argjson id "$evidence_id" '
+    expected=$(jq -c --argjson id "$evidence_id" --argjson limit "$alert_limit" '
+        {match:(first(.alerts[] | select(.alert_id == $id) |
+            {digest:.evidence_frame_set_sha256, count:.evidence_frame_count}) // null),
+         outside_report: ([.alerts[:$limit][] | select(.alert_id == $id)] | length) == 0,
+         stopped_at_limit:.integrity.stopped_at_limit}
+    ' <<< "$history") || return 1
+    jq -cse --arg session "$session" --arg capture "$capture" --argjson id "$evidence_id" \
+        --argjson expected "$expected" '
         select(length == 1) | .[0] | objects
         | select(.session_id == $session and .capture_id == $capture and .alert_id == $id
-            and (.frames | type == "array" and length <= 131
-                and all(.[]; type == "object" and (.frame_number | type == "number" and . > 0 and floor == .)
+            and (.evidence_frame_set_sha256 | type == "string" and test("\\A[0-9a-f]{64}\\z"))
+            and (.frames | type == "array" and length >= 1 and length <= 131
+                and all(.[]; type == "object"
+                    and (.frame_number | type == "number" and isfinite and . > 0 and floor == .)
                     and (.status == "complete" or .status == "truncated" or .status == "missing"
-                        or .status == "length_unknown" or .status == "unreadable"))))
-        | {status:"checked", alert_id, frames:(.frames | map({frame_number,status}))}
+                        or .status == "length_unknown" or .status == "unreadable"))
+                and (map(.frame_number) | . == unique)))
+        | if ($expected.match != null and ($expected.match.digest != .evidence_frame_set_sha256
+                  or $expected.match.count != (.frames | length)))
+              or ($expected.match == null and ($expected.stopped_at_limit | not))
+          then {status:"alert_evidence_changed", alert_id, frames:null}
+          else {status:"checked", alert_id, frames:(.frames | map({frame_number,status})),
+                in_recent_alerts:($expected.outside_report | not)}
+          end
     ' <<< "$response"
 }
 
@@ -181,9 +198,11 @@ if ! jq -e --arg session "$session" --arg capture "$capture" '
 fi
 evidence=null
 evidence_failed=false
-if [[ -n $evidence_id ]] && ! evidence=$(check_evidence "$2"); then
-    evidence=$(jq -cn --argjson id "$evidence_id" '{status:"unavailable",alert_id:$id,frames:null}')
-    evidence_failed=true
+if [[ -n $evidence_id ]]; then
+    if ! evidence=$(check_evidence "$2"); then
+        evidence=$(jq -cn --argjson id "$evidence_id" '{status:"unavailable",alert_id:$id,frames:null}')
+    fi
+    if ! jq -e '.status == "checked"' <<< "$evidence" >/dev/null; then evidence_failed=true; fi
 fi
 if ! latest=$(load_state "$1"); then
     report health_recheck_failed

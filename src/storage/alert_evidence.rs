@@ -30,6 +30,7 @@ pub struct EvidenceAvailability {
     pub session_id: String,
     pub capture_id: String,
     pub alert_id: u64,
+    pub evidence_frame_set_sha256: String,
     pub frames: Vec<FrameAvailability>,
 }
 
@@ -139,6 +140,7 @@ pub fn alert_evidence_across_logs(
 ) -> Result<EvidenceAvailability> {
     let alert = latest_alert_in_logs(logs, session_id, alert_id, capture_filter)?;
     let (capture_id, frames) = scoped_frames(&alert)?;
+    let evidence_frame_set_sha256 = evidence_frame_set_sha256(&frames);
     let frames = frames.into_iter().map(|frame_number| {
         let status = match archive.packet_for_capture(capture_id, frame_number) {
             Ok(Some(packet)) => match packet.capture {
@@ -157,8 +159,17 @@ pub fn alert_evidence_across_logs(
         session_id: session_id.to_owned(),
         capture_id: capture_id.to_owned(),
         alert_id,
+        evidence_frame_set_sha256,
         frames,
     })
+}
+
+pub(super) fn evidence_frame_set_sha256(sorted_unique_frames: &[u64]) -> String {
+    let mut digest = Sha256::new();
+    for frame in sorted_unique_frames {
+        digest.update(frame.to_be_bytes());
+    }
+    format!("{:x}", digest.finalize())
 }
 
 fn scoped_frames(alert: &AlertItem) -> Result<(&str, Vec<u64>)> {

@@ -24,8 +24,10 @@ mock_archive() {
             jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
             mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
         fi
-        jq -cn --arg capture "${PACKRAT_TEST_EVIDENCE_SCOPE:-00000000000000000000000000000001}" '
+        jq -cn --arg capture "${PACKRAT_TEST_EVIDENCE_SCOPE:-00000000000000000000000000000001}" \
+            --arg drift "${PACKRAT_TEST_EVIDENCE_DRIFT:-0}" '
             {session_id:"1700000000-432",capture_id:$capture,alert_id:42,
+             evidence_frame_set_sha256:($drift * 64),
              frames:[{frame_number:1,status:"truncated",bytes:[0,1]}, {frame_number:2,status:"missing"}]}'
         return
     fi
@@ -52,13 +54,15 @@ mock_archive() {
             ;;
     esac
     if [[ -n ${PACKRAT_TEST_ALERT_COUNT:-} ]]; then
-        jq -cn --argjson count "$PACKRAT_TEST_ALERT_COUNT" --arg large "${PACKRAT_TEST_LARGE_ALERTS:-0}" '
-            [range($count; 0; -1) | {alert_id:.,session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"}
+        jq -cn --argjson count "$PACKRAT_TEST_ALERT_COUNT" --arg large "${PACKRAT_TEST_LARGE_ALERTS:-0}" \
+            --argjson offset "${PACKRAT_TEST_ALERT_OFFSET:-0}" '
+            [range($count; 0; -1) | {alert_id:(. + $offset),session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"}
                 + (if $large == "1" then {detail: ("\ud83d\udd0d" * 512), title: ("\ud83d\udd0d" * 160)}
                    else {} end)]'
     else
         jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" '
-            {alert_id:42,title:"Scoped alert",session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"} as $valid
+            {alert_id:42,title:"Scoped alert",session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
+             evidence_frame_count:2,evidence_frame_set_sha256:("0"*64)} as $valid
             | [$valid] + (if $mismatch == "" then [] else
                 [($valid | .alert_id = 43 | .[$mismatch] = "other")]
               end)'
@@ -108,8 +112,20 @@ jq -e '.status == "degraded" and .alerts[0].alert_id == 42' <<< "$result" >/dev/
 (
     export PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
     result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
-    jq -e '.status == "current" and .evidence_status == {status:"checked",alert_id:42,
+    jq -e '.status == "current" and .evidence_status == {status:"checked",alert_id:42,in_recent_alerts:true,
         frames:[{frame_number:1,status:"truncated"},{frame_number:2,status:"missing"}]}' <<< "$result" >/dev/null
+    status=0
+    result=$(PACKRAT_TEST_EVIDENCE_DRIFT=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+    [[ $status == 2 ]]
+    jq -e '.status == "current" and .alerts[0].alert_id == 42
+        and .evidence_status == {status:"alert_evidence_changed",alert_id:42,frames:null}' <<< "$result" >/dev/null
+    status=0
+    result=$(PACKRAT_TEST_ALERT_COUNT=0 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+    [[ $status == 2 ]]
+    jq -e '.alerts == [] and .evidence_status.status == "alert_evidence_changed"' <<< "$result" >/dev/null
+    result=$(PACKRAT_TEST_ALERT_COUNT=51 PACKRAT_TEST_ALERT_OFFSET=50 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+    jq -e '.has_more_alerts and .evidence_status.status == "checked"
+        and .evidence_status.in_recent_alerts == false' <<< "$result" >/dev/null
     status=0
     result=$(PACKRAT_TEST_EVIDENCE_SCOPE=other bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
     [[ $status == 2 ]]

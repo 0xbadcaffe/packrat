@@ -59,8 +59,16 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
     let result = status(&["--capture-id", "capture-a"]);
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    let history = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--alerts").arg(&log).args(["--session", "s", "--capture-id", "capture-a"])
+        .output().unwrap();
+    assert!(history.status.success());
+    let history: Value = serde_json::from_slice(&history.stdout).unwrap();
+    let fingerprint = history[0]["evidence_frame_set_sha256"].as_str().unwrap();
+    assert_eq!(fingerprint.len(), 64);
     assert_eq!(report, json!({
         "capture_id":"capture-a", "session_id":"s", "alert_id":1,
+        "evidence_frame_set_sha256":fingerprint,
         "frames":[
             {"frame_number":1,"status":"complete"},
             {"frame_number":2,"status":"truncated"},
@@ -69,6 +77,16 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
             {"frame_number":5,"status":"unreadable"}
         ]
     }));
+    let mut updated = serde_json::from_slice::<Value>(&std::fs::read(&log).unwrap()).unwrap();
+    updated["alert"]["packet_refs"] = json!([6, 4, 3, 2, 1, 2]);
+    let mut writer = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+    writeln!(writer, "\n{updated}").unwrap();
+    drop(writer);
+    let result = status(&["--capture-id", "capture-a"]);
+    assert!(result.status.success());
+    let changed: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_ne!(changed["evidence_frame_set_sha256"], fingerprint);
+    assert_eq!(changed["frames"].as_array().unwrap().len(), 5);
 
     let export = directory.path().join("export");
     let missing = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))

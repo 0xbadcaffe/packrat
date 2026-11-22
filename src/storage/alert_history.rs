@@ -7,6 +7,7 @@ use std::{collections::HashSet, fs::File, io::{Read, Seek, SeekFrom}, path::{Pat
 use crate::analysis::alert_center::{AlertDisposition, MAX_ALERT_PACKET_REFS};
 use crate::analysis::alert_provenance::EvidenceConfidence;
 use super::alert_jsonl::{ExistingAlertRecord, MAX_ALERT_LINE};
+use super::alert_evidence::evidence_frame_set_sha256;
 
 pub const MAX_HISTORY_LIMIT: usize = 512;
 pub const MAX_PREVIOUS_LOGS: usize = 8;
@@ -44,6 +45,7 @@ pub struct AlertHistoryEntry {
     pub last_seen: f64,
     pub hit_count: u64,
     pub evidence_frame_count: usize,
+    pub evidence_frame_set_sha256: String,
     pub rule_id: Option<String>,
     pub revision: Option<u16>,
     pub confidence: Option<EvidenceConfidence>,
@@ -124,7 +126,8 @@ pub fn recent_alerts_report(
             {
                 continue;
             }
-            let evidence_frame_count = alert.evidence_frame_numbers().len();
+            let evidence_frames = alert.evidence_frame_numbers();
+            let evidence_frame_count = evidence_frames.len();
             let mut review_limitations = Vec::new();
             if alert.capture_id.is_none() {
                 review_limitations.push("capture_scope_not_recorded");
@@ -147,6 +150,7 @@ pub fn recent_alerts_report(
                 last_seen: alert.last_seen,
                 hit_count: alert.hit_count,
                 evidence_frame_count,
+                evidence_frame_set_sha256: evidence_frame_set_sha256(&evidence_frames),
                 rule_id: alert.provenance.as_ref().map(|rule| limited(&rule.rule_id, 128)),
                 revision: alert.provenance.as_ref().map(|rule| rule.revision),
                 confidence: alert.provenance.as_ref().map(|rule| rule.confidence),
