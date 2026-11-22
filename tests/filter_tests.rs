@@ -165,6 +165,52 @@ fn display_filter_bounds_input_tree_and_set_size() {
 
 #[test]
 #[cfg(feature = "terminal-ui")]
+fn display_filter_editor_routes_set_separators_before_settings_shortcut() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+    let mut app = App::new_for_test();
+    for no in 1..=3 {
+        let mut packet = pkt("TCP", "192.0.2.1", "192.0.2.2", None, None, "", 60);
+        packet.no = no;
+        app.inject_packet(packet);
+    }
+
+    assert!(!packrat_tui::event::handle(&mut app, key(KeyCode::Char('/'))));
+    assert!(app.filter.active);
+    let expression = "frame.number in [1,3]";
+    for ch in expression.chars() {
+        assert!(!packrat_tui::event::handle(&mut app, key(KeyCode::Char(ch))));
+        assert!(!app.settings_open);
+    }
+    assert!(!packrat_tui::event::handle(&mut app, key(KeyCode::Enter)));
+    assert!(!app.filter.active);
+    assert_eq!(app.filter.input, expression);
+    assert_eq!(app.filtered.len(), 2);
+
+    assert!(!packrat_tui::event::handle(&mut app, key(KeyCode::Char(','))));
+    assert!(app.settings_open);
+}
+
+#[test]
+#[cfg(feature = "terminal-ui")]
+fn display_filter_editor_treats_printable_hotkeys_as_text() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let mut app = App::new_for_test();
+    app.filter.active = true;
+
+    for ch in ['?', 'P', '!', 'q'] {
+        let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::SHIFT);
+        assert!(!packrat_tui::event::handle(&mut app, Event::Key(key)));
+    }
+    let ctrl_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+    assert!(!packrat_tui::event::handle(&mut app, Event::Key(ctrl_p)));
+    assert_eq!(app.filter.input, "?P!q");
+    assert!(!app.search_open);
+    assert!(!app.project_manager_open);
+}
+
+#[test]
+#[cfg(feature = "terminal-ui")]
 fn display_filter_editor_keeps_oversized_input_out_of_capture_path() {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));

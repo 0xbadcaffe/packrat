@@ -93,31 +93,30 @@ pub(super) fn handle_investigate(app: &mut App, key: KeyEvent) {
     }
 }
 
-pub(super) fn handle_main(app: &mut App, key: KeyEvent) {
-    if app.filter.active {
-        match key.code {
-            KeyCode::Esc | KeyCode::Enter => {
-                app.filter.active = false;
-                app.rebuild_filtered();
-            }
-            KeyCode::Backspace => {
-                app.filter.input.pop();
-                app.rebuild_filtered();
-            }
-            KeyCode::Char(c) => {
-                let limit = crate::analysis::display_filter::MAX_DISPLAY_FILTER_BYTES;
-                if app.filter.input.len() + c.len_utf8() <= limit {
-                    app.filter.input.push(c);
-                    app.rebuild_filtered();
-                } else {
-                    app.set_status(format!("Display filter limit: {limit} bytes"));
-                }
-            }
-            _ => {}
+pub(super) fn handle_display_filter(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => {
+            app.filter.active = false;
+            app.rebuild_filtered();
         }
-        return;
+        KeyCode::Backspace => {
+            app.filter.input.pop();
+            app.rebuild_filtered();
+        }
+        KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+            let limit = crate::analysis::display_filter::MAX_DISPLAY_FILTER_BYTES;
+            if app.filter.input.len() + c.len_utf8() <= limit {
+                app.filter.input.push(c);
+                app.rebuild_filtered();
+            } else {
+                app.set_status(format!("Display filter limit: {limit} bytes"));
+            }
+        }
+        _ => {}
     }
+}
 
+pub(super) fn handle_main(app: &mut App, key: KeyEvent) {
     if global_tab_switch(app, &key) {
         return;
     }

@@ -117,6 +117,11 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
+    if app.filter.active {
+        handle_display_filter(app, key);
+        return false;
+    }
+
     if !in_text_mode && matches!(key.code, KeyCode::Tab | KeyCode::F(2)) {
         app.open_view_menu();
         return false;
