@@ -103,15 +103,15 @@ alert_log_for_session() {
     fi
 }
 
-primary_alert_log_stamp() {
-    sudo -n stat --format='%d:%i:%s:%y:%z' -- "$data_dir/alerts.jsonl"
+private_alert_log_stat() {
+    local row
+    row=$(sudo -n stat --format="%f:%h:%u $2" -- "$1") || return 1
+    [[ $row =~ ^([0-9a-fA-F]{1,8}):1:0\ (.+)$ ]] || return 1
+    (( (16#${BASH_REMATCH[1]} & 0170077) == 0100000 )) || return 1
+    printf '%s\n' "${BASH_REMATCH[2]}"
 }
-
-stage_alert_log_size() {
-    local log
-    log=$(alert_log_for_session "$bridge_session")
-    sudo -n test -f "$log" && sudo -n stat --format='%s' -- "$log"
-}
+primary_alert_log_stamp() { private_alert_log_stat "$data_dir/alerts.jsonl" '%d:%i:%s:%y:%z'; }
+stage_alert_log_size() { private_alert_log_stat "$(alert_log_for_session "$bridge_session")" '%s'; }
 
 primary_capture_stamp() {
     local pid
@@ -148,7 +148,7 @@ alert_watcher_ready() {
               and $sample.alert_watcher_alive == true
               and $sample.alert_watcher_pipeline_alive == true
               and $sample.alert_watcher_source_matches == true
-              and $sample.alert_watcher_log == $log
+              and $sample.alert_watcher_log == $log and $sample.alert_log_storage == "private"
         ' >/dev/null 2>&1
 }
 
@@ -234,11 +234,11 @@ preflight() {
     candidate_supports_profile || { error "Candidate does not support the current capture options"; return 1; }
     capture_progress_sample "$main_session" "$health_addr" false >/dev/null ||
         { error "Cannot verify current capture progress on $interface"; return 1; }
-    capture_storage_ready "$pid" "$main_session" &&
-        sudo -n test -f "$data_dir/alerts.jsonl" || return 1
+    capture_storage_ready "$pid" "$main_session" || return 1
+    primary_alert_log_stamp >/dev/null || { error "Primary alert log is not a private, root-owned regular file with one link"; return 1; }
     local stamp
     if ! stamp=$(primary_capture_stamp) || ! alert_watcher_ready "$stamp"; then
-        error "Cannot verify the primary alert watcher; check $health_state"
+        error "Cannot verify the primary alert watcher or private alert log; check $health_state"
         return 1
     fi
 }

@@ -134,14 +134,15 @@ data_dir=$scratch
         del(.pid) + {record_type:"capture_health",timestamp:"2023-11-14T22:13:10Z",
             poll_interval_seconds:15,capture_active:true,telemetry_fresh:true,
             alert_watcher_alive:true,alert_watcher_pipeline_alive:true,
-            alert_watcher_source_matches:true,alert_watcher_log:$log}
+            alert_watcher_source_matches:true,alert_watcher_log:$log,alert_log_storage:"private"}
     ' <<< "$scope")
     printf '%s\n' "$sample" >"$health_state"
     alert_watcher_ready "$scope"
     for update in '.alert_watcher_pipeline_alive = false' '.alert_watcher_source_matches = false' \
         '.alert_watcher_log += ".old"' '.capture_id = "00000000000000000000000000000003"' \
         '.alert_session_id = "1700000000-43"' '.timestamp = "2023-11-14T22:12:29Z"' \
-        'del(.poll_interval_seconds)'; do
+        'del(.poll_interval_seconds)' 'del(.alert_log_storage)' \
+        '.alert_log_storage = "unsafe"' '.alert_log_storage = "unavailable"'; do
         jq -c "$update" <<< "$sample" >"$health_state"
         if alert_watcher_ready "$scope"; then exit 1; fi
     done
@@ -205,6 +206,11 @@ data_dir=$scratch
 
 sudo() {
     [[ $1 == -n && $2 == stat ]] || return 1
+    if [[ ${3-} == --format=%f:%h:%u\ * ]]; then
+        local format=${3#--format=}
+        command stat --format="${format//%u/${PACKRAT_TEST_LOG_UID:-0}}" "${@:4}"
+        return
+    fi
     shift
     command "$@"
 }
@@ -213,19 +219,18 @@ sudo() {
     backup_dir="$scratch/staging"
     log=$(alert_log_for_session "$bridge_session")
     mkdir -p -- "${log%/*}"
-    sudo() {
-        [[ $1 == -n && ( $2 == stat || $2 == test ) ]] || return 1
-        shift
-        "$@"
-    }
-    if stage_alert_log_size; then exit 1; fi
+    if stage_alert_log_size 2>/dev/null; then exit 1; fi
     touch -- "$log"
+    chmod 0600 -- "$log"
     [[ $(stage_alert_log_size) == 0 ]]
     printf '%s\n' "synthetic finding" >"$log"
     [[ $(stage_alert_log_size) == 18 ]]
+    chmod 0644 -- "$log"
+    if stage_alert_log_size; then exit 1; fi
 )
 
 printf '%s\n' 'initial alert' >"$data_dir/alerts.jsonl"
+chmod 0600 -- "$data_dir/alerts.jsonl"
 stamp=$(primary_alert_log_stamp)
 [[ $(primary_alert_log_stamp) == "$stamp" ]]
 printf '%s\n' 'new alert' >>"$data_dir/alerts.jsonl"
@@ -234,6 +239,19 @@ stamp=$(primary_alert_log_stamp)
 cp -p -- "$data_dir/alerts.jsonl" "$data_dir/replacement"
 mv -T -- "$data_dir/replacement" "$data_dir/alerts.jsonl"
 [[ $(primary_alert_log_stamp) != "$stamp" ]]
+
+(
+    log="$data_dir/alerts.jsonl"
+    if PACKRAT_TEST_LOG_UID=1000 primary_alert_log_stamp; then exit 1; fi
+    ln -- "$log" "$data_dir/alias"
+    if primary_alert_log_stamp; then exit 1; fi
+    rm -- "$data_dir/alias"
+    mv -- "$log" "$data_dir/original"
+    ln -s -- "$data_dir/original" "$log"
+    if primary_alert_log_stamp; then exit 1; fi
+    rm -- "$log"
+    mv -- "$data_dir/original" "$log"
+)
 
 (
     backup_reserve_mib=1
@@ -314,6 +332,7 @@ start_capture() {
     if [[ $session == "$bridge_session" ]]; then
         case $scenario in
             new_alert) printf '%s\n' 'new finding in primary' >>"$data_dir/alerts.jsonl" ;;
+            log_permission_changed) chmod 0644 -- "$data_dir/alerts.jsonl" ;;
             log_disappears) mv -- "$data_dir/alerts.jsonl" "$data_dir/alerts.saved" ;;
             primary_changed) primary_stamp=other ;;
             primary_disappears) primary_stamp=unavailable ;;
@@ -371,6 +390,8 @@ run_scenario() {
 run_scenario backup_fail 1 backup
 run_scenario stage_fail 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario new_alert 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario log_permission_changed 1 backup start:packrat-stage:/candidate retire-stage
+chmod 0600 -- "$data_dir/alerts.jsonl"
 run_scenario log_disappears 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario log_missing 1
 mv -- "$data_dir/alerts.saved" "$data_dir/alerts.jsonl"
