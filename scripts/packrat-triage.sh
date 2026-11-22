@@ -18,6 +18,8 @@ usage() {
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
         'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
         'Set PACKRAT_TRIAGE_ARCHIVE or PACKRAT_TRIAGE_PROJECT, plus PACKRAT_TRIAGE_EVIDENCE_ALERT_ID, to check one alert.' \
+        '--saved-alert uses its explicit ID when an evidence source is supplied without PACKRAT_TRIAGE_EVIDENCE_ALERT_ID.' \
+        'Packet evidence status describes checked packet bytes, not just frame references or an enabled archive.' \
         'Evidence for an alert in the recent report is withheld if its frame references changed during triage.' \
         'PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE optionally adds saved live socket snapshots for matching alerts.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
@@ -78,6 +80,9 @@ project=${PACKRAT_TRIAGE_PROJECT:-}
 evidence_id=${PACKRAT_TRIAGE_EVIDENCE_ALERT_ID:-}
 socket_file=${PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE:-}
 if [[ $mode == list_saved ]]; then archive='' project='' evidence_id='' socket_file=''; fi
+if [[ -n $target_alert && -z $evidence_id && ( -n $archive || -n $project ) ]]; then
+    evidence_id=$target_alert
+fi
 if [[ -n $target_alert && -n $evidence_id && $target_alert != "$evidence_id" ]]; then
     printf '%s\n' 'The evidence alert ID must match the requested saved alert.' >&2
     exit 2
@@ -127,11 +132,29 @@ load_state() {
 report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
         --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" '
+        def packet_evidence($evidence):
+            if .alert_id == $evidence.alert_id and $evidence.in_recent_alerts == true and $evidence.status == "checked" then
+                if all($evidence.frames[]; .status == "complete") then "complete"
+                elif any($evidence.frames[]; .status == "complete" or .status == "truncated" or .status == "length_unknown")
+                then "partial"
+                else "unavailable" end
+            elif .evidence_frame_count == 0 then "no_references"
+            elif .alert_id == $evidence.alert_id and $evidence.status == "alert_evidence_changed" then "changed_during_review"
+            elif .alert_id == $evidence.alert_id and $evidence.status == "unavailable" then "check_failed"
+            else "not_checked" end;
+        def live_archive:
+            if $status != "current" and $status != "degraded" then "unknown"
+            elif .health.archive_enabled == false then "disabled"
+            elif .health.archive_paused == true then "paused"
+            elif .health.archive_enabled == true and .health.archive_paused == false then "enabled"
+            else "unknown" end;
         .[1] as $alerts
         | .[2] as $evidence
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
+             live_packet_archive:(.[0] | live_archive),
              has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
-             alerts:(if $alerts == null then null else $alerts[:$limit] end),
+             alerts:(if $alerts == null then null else $alerts[:$limit]
+                | map(. + {packet_evidence_status:packet_evidence($evidence)}) end),
              evidence_status:$evidence, alert_log_integrity:.[3], socket_context_status:$socket}
     '
 }

@@ -32,10 +32,11 @@ mock_archive() {
             mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
         fi
         jq -cn --arg capture "${PACKRAT_TEST_EVIDENCE_SCOPE:-00000000000000000000000000000001}" \
-            --arg drift "${PACKRAT_TEST_EVIDENCE_DRIFT:-0}" '
+            --arg drift "${PACKRAT_TEST_EVIDENCE_DRIFT:-0}" \
+            --argjson statuses "${PACKRAT_TEST_FRAME_STATUSES:-[\"truncated\",\"missing\"]}" '
             {session_id:"1700000000-432",capture_id:$capture,alert_id:42,
              evidence_frame_set_sha256:($drift * 64),
-             frames:[{frame_number:1,status:"truncated",bytes:[0,1]}, {frame_number:2,status:"missing"}]}'
+             frames:($statuses | to_entries | map({frame_number:(.key + 1),status:.value,bytes:[0,1]}))}'
         return
     fi
     local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' limit=51
@@ -79,9 +80,10 @@ mock_archive() {
                ($base + {capture_id:null}), ($base + {capture_id:"legacy"})]
         '
     else
-        jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" '
+        jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" \
+            --argjson refs "${PACKRAT_TEST_FRAME_COUNT:-2}" '
             {alert_id:42,title:"Scoped alert",session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
-             evidence_frame_count:2,evidence_frame_set_sha256:("0"*64),
+             evidence_frame_count:$refs,evidence_frame_set_sha256:("0"*64),
              last_seen:1700000000,
              flow:{transport:"tcp",source:"192.0.2.1:4321",destination:"192.0.2.2:443"}} as $valid
             | [$valid] + (if $mismatch == "" then [] else
@@ -118,8 +120,18 @@ sample=$(jq -c --arg log "$PACKRAT_TEST_LOG" '.alert_watcher_log = $log' <<< "$s
 printf '%s\n' "$sample" >"$health"
 result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.status == "current" and .age_seconds == 30 and .max_age_seconds == 360
-    and .alerts[0].alert_id == 42 and .has_more_alerts == false and .evidence_status == null' <<< "$result" >/dev/null
+    and .alerts[0].alert_id == 42 and .alerts[0].packet_evidence_status == "not_checked"
+    and .live_packet_archive == "unknown" and .has_more_alerts == false and .evidence_status == null' <<< "$result" >/dev/null
 [[ -f $PACKRAT_TEST_CALL ]]
+for archive_status in enabled paused disabled; do
+    jq -c --arg status "$archive_status" '. + {
+        archive_enabled:($status != "disabled"),archive_paused:($status == "paused")
+    }' <<< "$sample" >"$health"
+    result=$(PACKRAT_TEST_FRAME_COUNT=0 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+    jq -e --arg status "$archive_status" '.status == "current" and .live_packet_archive == $status
+        and .alerts[0].packet_evidence_status == "no_references"' <<< "$result" >/dev/null
+done
+printf '%s\n' "$sample" >"$health"
 (
     export PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE="$scratch/socket context.jsonl"
     result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
@@ -166,7 +178,17 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
     export PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space"
     result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e '.status == "current" and .evidence_status == {status:"checked",alert_id:42,in_recent_alerts:true,
-        frames:[{frame_number:1,status:"truncated"},{frame_number:2,status:"missing"}]}' <<< "$result" >/dev/null
+        frames:[{frame_number:1,status:"truncated"},{frame_number:2,status:"missing"}]}
+        and .alerts[0].packet_evidence_status == "partial"' <<< "$result" >/dev/null
+    for frame_level in complete partial unavailable; do
+        case $frame_level in
+            complete) frames='["complete","complete"]' ;;
+            partial) frames='["length_unknown","unreadable"]' ;;
+            unavailable) frames='["missing","unreadable"]' ;;
+        esac
+        result=$(PACKRAT_TEST_FRAME_STATUSES="$frames" bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+        jq -e --arg level "$frame_level" '.alerts[0].packet_evidence_status == $level' <<< "$result" >/dev/null
+    done
     result=$(bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
     jq -e '.status == "saved" and .health == null and .evidence_status.status == "checked"
         and [.evidence_status.frames[].status] == ["truncated","missing"]' <<< "$result" >/dev/null
@@ -174,6 +196,7 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
     result=$(PACKRAT_TEST_EVIDENCE_DRIFT=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
     [[ $status == 2 ]]
     jq -e '.status == "current" and .alerts[0].alert_id == 42
+        and .alerts[0].packet_evidence_status == "changed_during_review"
         and .evidence_status == {status:"alert_evidence_changed",alert_id:42,frames:null}' <<< "$result" >/dev/null
     status=0
     result=$(PACKRAT_TEST_ALERT_COUNT=0 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
@@ -186,6 +209,7 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
     result=$(PACKRAT_TEST_EVIDENCE_SCOPE=other bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
     [[ $status == 2 ]]
     jq -e '.status == "current" and .alerts[0].alert_id == 42
+        and .alerts[0].packet_evidence_status == "check_failed"
         and .evidence_status == {status:"unavailable",alert_id:42,frames:null}' <<< "$result" >/dev/null
     status=0
     result=$(PACKRAT_TEST_EVIDENCE_RESTART=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
@@ -319,6 +343,10 @@ saved_alert() {
 result=$(PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" saved_alert 42 "$PACKRAT_TEST_LOG" "$previous")
 jq -e '.status == "saved" and .scope.alert_id == 42 and .alerts[0].alert_id == 42
     and .previous_logs == 1 and .has_more_alerts == false' <<< "$result" >/dev/null
+result=$(PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" saved_alert 42 "$PACKRAT_TEST_LOG")
+jq -e '.status == "saved" and .live_packet_archive == "unknown"
+    and .evidence_status.alert_id == .scope.alert_id
+    and .alerts[0].packet_evidence_status == "partial"' <<< "$result" >/dev/null
 status=0
 result=$(PACKRAT_TEST_ALERT_COUNT=0 saved_alert 99 "$PACKRAT_TEST_LOG") || status=$?
 [[ $status == 1 ]]
