@@ -105,8 +105,13 @@ pub(super) fn handle_main(app: &mut App, key: KeyEvent) {
                 app.rebuild_filtered();
             }
             KeyCode::Char(c) => {
-                app.filter.input.push(c);
-                app.rebuild_filtered();
+                let limit = crate::analysis::display_filter::MAX_DISPLAY_FILTER_BYTES;
+                if app.filter.input.len() + c.len_utf8() <= limit {
+                    app.filter.input.push(c);
+                    app.rebuild_filtered();
+                } else {
+                    app.set_status(format!("Display filter limit: {limit} bytes"));
+                }
             }
             _ => {}
         }

@@ -78,14 +78,41 @@ impl std::fmt::Display for ParseError {
 struct Tokens<'a> {
     src: &'a [u8],
     pos: usize,
+    depth: usize,
+    remaining_nodes: usize,
 }
+
+pub const MAX_DISPLAY_FILTER_BYTES: usize = 4096;
+const MAX_FILTER_NESTING: usize = 32;
+const MAX_FILTER_NODES: usize = 128;
+const MAX_SET_VALUES: usize = 128;
 
 impl<'a> Tokens<'a> {
     fn new(s: &'a str) -> Self {
         Self {
             src: s.as_bytes(),
             pos: 0,
+            depth: 0,
+            remaining_nodes: MAX_FILTER_NODES,
         }
+    }
+
+    fn node(&mut self) -> Result<(), ParseError> {
+        if self.remaining_nodes == 0 {
+            return Err(ParseError("display filter has too many terms".into()));
+        }
+        self.remaining_nodes -= 1;
+        Ok(())
+    }
+
+    fn nested(&mut self, parse: impl FnOnce(&mut Self) -> Result<Expr, ParseError>) -> Result<Expr, ParseError> {
+        if self.depth == MAX_FILTER_NESTING {
+            return Err(ParseError("display filter nesting is too deep".into()));
+        }
+        self.depth += 1;
+        let expression = parse(self);
+        self.depth -= 1;
+        expression
     }
 
     fn skip_ws(&mut self) {
@@ -161,6 +188,9 @@ impl<'a> Tokens<'a> {
 
 /// Parse a filter expression string into an AST.
 pub fn parse(input: &str) -> Result<Expr, ParseError> {
+    if input.len() > MAX_DISPLAY_FILTER_BYTES {
+        return Err(ParseError(format!("display filter exceeds {MAX_DISPLAY_FILTER_BYTES} bytes")));
+    }
     let mut t = Tokens::new(input);
     let expr = parse_or(&mut t)?;
     if !t.is_eof() {
@@ -178,6 +208,7 @@ fn parse_or(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
         t.skip_ws();
         t.try_eat("or") || t.try_eat("||")
     } {
+        t.node()?;
         let right = parse_and(t)?;
         left = Expr::Or(Box::new(left), Box::new(right));
     }
@@ -190,6 +221,7 @@ fn parse_and(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
         t.skip_ws();
         t.try_eat("and") || t.try_eat("&&")
     } {
+        t.node()?;
         let right = parse_not(t)?;
         left = Expr::And(Box::new(left), Box::new(right));
     }
@@ -199,7 +231,8 @@ fn parse_and(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
 fn parse_not(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
     t.skip_ws();
     if t.try_eat("not ") || t.try_eat("!") {
-        let inner = parse_not(t)?;
+        t.node()?;
+        let inner = t.nested(parse_not)?;
         return Ok(Expr::Not(Box::new(inner)));
     }
     parse_atom(t)
@@ -210,7 +243,7 @@ fn parse_atom(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
     // Parenthesised
     if t.peek() == Some(b'(') {
         t.pos += 1;
-        let inner = parse_or(t)?;
+        let inner = t.nested(parse_or)?;
         t.skip_ws();
         if t.peek() != Some(b')') {
             return Err(ParseError("expected ')'".into()));
@@ -223,6 +256,7 @@ fn parse_atom(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
     if word.is_empty() {
         return Err(ParseError("expected expression".into()));
     }
+    t.node()?;
 
     // Special bare keywords
     match word.as_str() {
@@ -282,6 +316,9 @@ fn parse_atom(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
         let mut vals = Vec::new();
         if !t.try_eat("]") {
             loop {
+                if vals.len() == MAX_SET_VALUES {
+                    return Err(ParseError("display filter set has too many values".into()));
+                }
                 let value = if t.peek() == Some(b'"') {
                     Value::Str(t.eat_str()?)
                 } else {
@@ -408,6 +445,9 @@ impl DisplayFilter {
 
     /// Simple legacy text-match fallback (protocol / src / dst / info).
     pub fn matches_simple(q: &str, pkt: &Packet) -> bool {
+        if q.len() > MAX_DISPLAY_FILTER_BYTES {
+            return false;
+        }
         if q.is_empty() {
             return true;
         }

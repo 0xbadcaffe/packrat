@@ -139,6 +139,48 @@ fn set_filter_parsing_terminates_on_partial_and_invalid_input() {
 }
 
 #[test]
+fn display_filter_bounds_input_tree_and_set_size() {
+    let limit = display_filter::MAX_DISPLAY_FILTER_BYTES;
+    assert!(display_filter::parse(&"t".repeat(limit)).is_ok());
+    assert!(display_filter::parse(&"t".repeat(limit + 1)).unwrap_err().0.contains("bytes"));
+
+    for nesting in [0, 16, 32] {
+        assert!(display_filter::parse(&format!("{}tcp{}", "(".repeat(nesting), ")".repeat(nesting))).is_ok());
+        assert!(display_filter::parse(&format!("{}tcp", "!".repeat(nesting))).is_ok());
+    }
+    for expression in [format!("{}tcp{}", "(".repeat(33), ")".repeat(33)), format!("{}tcp", "!".repeat(33))] {
+        assert!(display_filter::parse(&expression).unwrap_err().0.contains("nesting"));
+    }
+    for op in [" and ", " or "] {
+        let allowed = vec!["tcp"; 64].join(op);
+        let expr = display_filter::parse(&allowed).unwrap();
+        let packet = pkt("TCP", "192.0.2.1", "192.0.2.2", None, None, "", 60);
+        assert!(display_filter::eval(&expr, &ctx(&packet)));
+        assert!(display_filter::parse(&vec!["tcp"; 65].join(op)).unwrap_err().0.contains("terms"));
+    }
+    assert!(display_filter::parse(&format!("frame.number in [{}]", vec!["1"; 128].join(","))).is_ok());
+    assert!(display_filter::parse(&format!("frame.number in [{}]", vec!["1"; 129].join(",")))
+        .unwrap_err().0.contains("set has too many"));
+}
+
+#[test]
+#[cfg(feature = "terminal-ui")]
+fn display_filter_editor_keeps_oversized_input_out_of_capture_path() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+    let mut app = App::new_for_test();
+    app.filter.active = true;
+    let limit = display_filter::MAX_DISPLAY_FILTER_BYTES;
+    app.filter.input = "t".repeat(limit - 1);
+    assert!(!packrat_tui::event::handle(&mut app, key(KeyCode::Char('\u{e9}'))));
+    assert_eq!(app.filter.input.len(), limit - 1);
+    assert!(!packrat_tui::event::handle(&mut app, key(KeyCode::Char('x'))));
+    assert_eq!(app.filter.input.len(), limit);
+    assert!(!packrat_tui::event::handle(&mut app, key(KeyCode::Backspace)));
+    assert_eq!(app.filter.input.len(), limit - 1);
+}
+
+#[test]
 fn parse_marked() {
     assert!(display_filter::parse("marked == true").is_ok());
     assert!(display_filter::parse("marked == false").is_ok());
