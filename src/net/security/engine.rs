@@ -19,7 +19,7 @@ impl SecurityEngine {
             ip_to_mac: HashMap::new(),
             os_by_ip: HashMap::new(),
             bf_windows: HashMap::new(),
-            dns_accum: HashMap::new(),
+            dns_tunnel: Default::default(),
             fragment_states: HashMap::new(),
             tcp_integrity: HashMap::new(),
             scan_sources: HashMap::new(),
@@ -54,7 +54,7 @@ impl SecurityEngine {
         self.ip_to_mac.clear();
         self.os_by_ip.clear();
         self.bf_windows.clear();
-        self.dns_accum.clear();
+        self.dns_tunnel.clear();
         self.fragment_states.clear();
         self.tcp_integrity.clear();
         self.scan_sources.clear();

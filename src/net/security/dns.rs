@@ -1,108 +1,111 @@
 use super::*;
+use sha2::{Digest, Sha256};
+use std::collections::VecDeque;
+
+const TUNNEL_WINDOW_SECS: f64 = 60.0;
+const TUNNEL_THRESHOLD: usize = 8;
+const MAX_GROUPS: usize = 1024;
+const MAX_SAMPLES: usize = 32;
+
+#[derive(Hash, Eq, PartialEq)]
+struct TunnelKey {
+    scope: ServiceScope,
+    client: String,
+    resolver: String,
+    suffix: String,
+}
+
+struct QuerySample {
+    name_digest: [u8; 32],
+    timestamp: f64,
+    frame: u64,
+    entropy: f64,
+    label_length: usize,
+}
+
+#[derive(Default)]
+struct TunnelWindow {
+    last_seen: f64,
+    samples: VecDeque<QuerySample>,
+    alerted: bool,
+}
+
+#[derive(Default)]
+pub(super) struct DnsTunnelTracker {
+    groups: HashMap<TunnelKey, TunnelWindow>,
+}
+
+impl DnsTunnelTracker {
+    pub(super) fn clear(&mut self) {
+        self.groups.clear();
+    }
+
+    fn observe(&mut self, pkt: &Packet) -> Option<(DnsTunnelSuspect, IdsFinding)> {
+        let now = pkt.timestamp;
+        if pkt.dst_port != Some(53) || !now.is_finite() || now < 0.0
+            || pkt.capture.as_ref().is_some_and(|capture| capture.link_type != 1)
+        {
+            return None;
+        }
+        let name = crate::analysis::dns_transactions::wire_query_name(pkt)?;
+        if !name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_')) {
+            return None;
+        }
+        let (prefix, suffix) = name[..name.rfind('.')?].rfind('.')
+            .map(|index| (&name[..index], &name[index + 1..]))?;
+        let (label_length, entropy) = prefix.split('.').filter(|label| label.len() >= 24)
+            .map(|label| (label.len(), shannon_entropy(label.as_bytes())))
+            .max_by(|a, b| a.1.total_cmp(&b.1)).filter(|&(_, entropy)| entropy >= 3.5)?;
+        let scope = service_scope(pkt);
+        let key = TunnelKey { scope, client: pkt.src.clone(), resolver: pkt.dst.clone(), suffix: suffix.into() };
+        if self.groups.len() >= MAX_GROUPS && !self.groups.contains_key(&key) {
+            self.groups.retain(|_, group| now - group.last_seen <= TUNNEL_WINDOW_SECS);
+            if self.groups.len() >= MAX_GROUPS { return None; }
+        }
+        let window = self.groups.entry(key).or_default();
+        if now < window.last_seen { return None; }
+        window.last_seen = now;
+        window.samples.retain(|sample| now - sample.timestamp <= TUNNEL_WINDOW_SECS);
+        if window.samples.len() <= TUNNEL_THRESHOLD / 2 { window.alerted = false; }
+        let name_digest = Sha256::digest(prefix.as_bytes()).into();
+        if window.samples.iter().any(|sample| sample.name_digest == name_digest || sample.frame == pkt.no) {
+            return None;
+        }
+        if window.samples.len() == MAX_SAMPLES { window.samples.pop_front(); }
+        window.samples.push_back(QuerySample { name_digest, timestamp: now, frame: pkt.no, entropy, label_length });
+        if window.samples.len() < TUNNEL_THRESHOLD || window.alerted { return None; }
+        window.alerted = true;
+        let count = window.samples.len();
+        let max_entropy = window.samples.iter().map(|sample| sample.entropy).fold(0.0, f64::max);
+        let max_subdomain_len = window.samples.iter().map(|sample| sample.label_length).max().unwrap_or(0);
+        Some((
+            DnsTunnelSuspect { apex: suffix.into(), query_count: count as u64, max_entropy,
+                max_subdomain_len, unique_subdomains: count, score: count as f64 },
+            IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "DNS tunnel behavior",
+                    severity: Severity::Medium,
+                    detail: format!(
+                        "{count} distinct queries with long, high-entropy labels under {suffix} from {} to {} in 60 seconds; tunneling and data transfer unverified",
+                        pkt.src, pkt.dst,
+                    ),
+                },
+                related_packets: window.samples.iter().map(|sample| sample.frame)
+                    .filter(|&frame| frame != pkt.no).collect(),
+                correlation_key: Some(format!("{scope:?}:{}>{}:{suffix}:{}", pkt.src, pkt.dst, pkt.no)),
+            },
+        ))
+    }
+}
 
 impl SecurityEngine {
-    // ─── DNS Exfiltration Scoring ─────────────────────────────────────────────
-
     pub(super) fn check_dns_tunnel(&mut self, pkt: &Packet) {
-        let dst_port = pkt.dst_port.unwrap_or(0);
-        let src_port = pkt.src_port.unwrap_or(0);
-        if dst_port != 53 && src_port != 53 && !pkt.protocol.eq_ignore_ascii_case("DNS") {
-            return;
+        if let Some((suspect, finding)) = self.dns_tunnel.observe(pkt) {
+            if self.dns_suspects.len() >= MAX_ENTRIES { self.dns_suspects.remove(0); }
+            self.dns_suspects.push(suspect);
+            self.push_ids_finding(finding);
         }
-
-        // Parse domain from info string formats:
-        // "Query 0xXXXX A sub.domain.com"
-        // "Response A 1.2.3.4"
-        // "Standard query 0xXXXX A hostname.example.com"
-        let domain = match Self::extract_dns_domain(&pkt.info) {
-            Some(d) => d,
-            None => return,
-        };
-
-        let (subdomain, apex) = Self::split_apex(&domain);
-
-        if apex.is_empty() {
-            return;
-        }
-
-        // Compute subdomain entropy
-        let sub_entropy = if subdomain.is_empty() {
-            0.0
-        } else {
-            shannon_entropy(subdomain.as_bytes())
-        };
-
-        let sub_len = subdomain.len();
-
-        let acc = self.dns_accum.entry(apex.clone()).or_insert(DnsAccum {
-            queries: 0,
-            max_entropy: 0.0,
-            max_len: 0,
-            unique_subs: std::collections::HashSet::new(),
-        });
-        acc.queries += 1;
-        if sub_entropy > acc.max_entropy {
-            acc.max_entropy = sub_entropy;
-        }
-        if sub_len > acc.max_len {
-            acc.max_len = sub_len;
-        }
-        if !subdomain.is_empty() {
-            acc.unique_subs.insert(subdomain.clone());
-        }
-
-        let score = (acc.queries as f64 / 10.0) + acc.max_entropy + (acc.max_len as f64 / 10.0);
-
-        // Update or insert in dns_suspects
-        if let Some(existing) = self.dns_suspects.iter_mut().find(|d| d.apex == apex) {
-            existing.query_count = acc.queries;
-            existing.max_entropy = acc.max_entropy;
-            existing.max_subdomain_len = acc.max_len;
-            existing.unique_subdomains = acc.unique_subs.len();
-            existing.score = score;
-        } else {
-            if self.dns_suspects.len() >= MAX_ENTRIES {
-                self.dns_suspects.remove(0);
-            }
-            self.dns_suspects.push(DnsTunnelSuspect {
-                apex: apex.clone(),
-                query_count: acc.queries,
-                max_entropy: acc.max_entropy,
-                max_subdomain_len: acc.max_len,
-                unique_subdomains: acc.unique_subs.len(),
-                score,
-            });
-        }
-    }
-
-    pub(super) fn extract_dns_domain(info: &str) -> Option<String> {
-        // Patterns: "Query 0xXXXX A domain", "Standard query 0xXXXX A domain", "Response A domain"
-        let lower = info.to_lowercase();
-        let words: Vec<&str> = info.split_whitespace().collect();
-        // Find a word that looks like a domain (contains a dot, doesn't start with digit for pure IP)
-        // Strategy: scan words backwards for a domain-like token
-        for word in words.iter().rev() {
-            let w = word.trim_end_matches('.');
-            if w.contains('.') && !w.starts_with(|c: char| c.is_ascii_digit()) {
-                // Skip version-like strings
-                if lower.contains("response") && w.parse::<std::net::IpAddr>().is_ok() {
-                    continue;
-                }
-                return Some(w.to_lowercase());
-            }
-        }
-        None
-    }
-
-    /// Split "sub.domain.example.com" → ("sub.domain", "example.com")
-    pub(super) fn split_apex(domain: &str) -> (String, String) {
-        let parts: Vec<&str> = domain.split('.').collect();
-        if parts.len() <= 2 {
-            return (String::new(), domain.to_string());
-        }
-        let apex = parts[parts.len() - 2..].join(".");
-        let subdomain = parts[..parts.len() - 2].join(".");
-        (subdomain, apex)
     }
 
     // ─── Byte pattern helpers ─────────────────────────────────────────────────

@@ -30,18 +30,6 @@ impl AnalysisCore {
 
         // Security analysis. Critical built-in signatures open an incident for
         // explicit operator review; lower severities remain in the Security tab.
-        let is_dns = pkt.protocol.eq_ignore_ascii_case("DNS")
-            || pkt.src_port == Some(53)
-            || pkt.dst_port == Some(53);
-        let dns_before: std::collections::HashMap<String, u64> = if is_dns {
-            self.security
-                .dns_suspects
-                .iter()
-                .map(|suspect| (suspect.apex.clone(), suspect.query_count))
-                .collect()
-        } else {
-            std::collections::HashMap::new()
-        };
         self.streams.ingest(pkt);
         let modbus = self.streams.observe_modbus(pkt);
         let findings = self.security.inspect_with_modbus(pkt, modbus);
@@ -60,6 +48,7 @@ impl AnalysisCore {
                 | "Industrial state-changing command" | "Critical industrial control command"
                 | "Cleartext HTTP Basic authorization"
                 | "Anonymous FTP login accepted"
+                | "DNS tunnel behavior"
             ) {
                 AlertFlow::from_packet(pkt)
             } else {
@@ -159,32 +148,6 @@ impl AnalysisCore {
                 &weakness.detail,
                 format!("{scope:?}:{}:{}>{}:{}", weakness.src_ip, pkt.src_port.unwrap_or(0),
                     weakness.dst_ip, pkt.dst_port.unwrap_or(0)),
-            );
-        }
-        for suspect in self.security.dns_suspects.iter().filter(|suspect| {
-            is_dns
-                && suspect.score >= 8.0
-                && dns_before.get(&suspect.apex).copied().unwrap_or(0) < suspect.query_count
-        }) {
-            self.alert_center.record_correlated(
-                pkt.no,
-                pkt.timestamp,
-                "DNS",
-                if suspect.score > 12.0 {
-                    "HIGH"
-                } else {
-                    "MEDIUM"
-                },
-                "DNS tunnel behavior",
-                format!(
-                    "{} queries to {}, entropy {:.2}, {} unique labels, score {:.1}",
-                    suspect.query_count,
-                    suspect.apex,
-                    suspect.max_entropy,
-                    suspect.unique_subdomains,
-                    suspect.score,
-                ),
-                &suspect.apex,
             );
         }
         let critical_ids: Vec<(String, String)> = findings

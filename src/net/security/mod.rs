@@ -80,6 +80,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "Large asymmetric outbound transfer",
     "High-entropy outbound transfer",
     "DNS NXDOMAIN burst",
+    "DNS tunnel behavior",
     "Oversized DNS TXT traffic",
     "Direct external DNS resolver use",
     "Administrative service response fan-out",
@@ -169,7 +170,7 @@ pub struct SecurityEngine {
     ip_to_mac: HashMap<(ServiceScope, std::net::Ipv4Addr), ArpClaimHistory>,
     os_by_ip: HashMap<String, &'static str>,
     bf_windows: HashMap<BfKey, BfWindow>,
-    dns_accum: HashMap<String, DnsAccum>,
+    dns_tunnel: dns::DnsTunnelTracker,
     fragment_states: HashMap<(ServiceScope, FragmentKey), FragmentState>,
     tcp_integrity: HashMap<(ServiceScope, TcpFlowKey), TcpIntegrityState>,
     scan_sources: HashMap<ScanSourceKey, SourceScanState>,
@@ -194,17 +195,5 @@ pub struct SecurityEngine {
 impl Default for SecurityEngine {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// Allow ? operator to return Option in check_dns_tunnel
-trait OptionReturn<T> {
-    fn check_dns_tunnel_inner(self) -> Option<T>;
-}
-
-// We use a separate function returning Option for the DNS helper
-impl SecurityEngine {
-    fn extract_dns_domain_opt(info: &str) -> Option<String> {
-        Self::extract_dns_domain(info)
     }
 }

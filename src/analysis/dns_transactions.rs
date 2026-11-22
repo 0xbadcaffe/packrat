@@ -311,6 +311,12 @@ fn parse_message(bytes: &[u8]) -> Option<DnsMessage<'_>> {
     parse_single_question(bytes, DnsQueryHeader::parse(bytes)?)
 }
 
+pub(crate) fn wire_query_name(packet: &Packet) -> Option<String> {
+    let (_, 53, payload) = udp_payload(packet)? else { return None };
+    let message = parse_message(payload)?;
+    (!message.response && message.question.qclass == 1).then_some(message.question.name)
+}
+
 fn parse_single_question(bytes: &[u8], header: DnsQueryHeader) -> Option<DnsMessage<'_>> {
     if header.questions != 1 {
         return None;

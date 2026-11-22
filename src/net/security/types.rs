@@ -442,14 +442,6 @@ pub struct DnsTunnelSuspect {
     pub score: f64,
 }
 
-/// Internal accumulator per apex domain
-pub(super) struct DnsAccum {
-    pub(super) queries: u64,
-    pub(super) max_entropy: f64,
-    pub(super) max_len: usize,
-    pub(super) unique_subs: std::collections::HashSet<String>,
-}
-
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]

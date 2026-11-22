@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn dns_tunnel_lead_requires_distinct_scoped_wire_queries() {
+    const TITLE: &str = "DNS tunnel behavior";
+    const LABEL: &str = "abcdefghijklmnpqrstuvwxyz234567";
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let make = |no: u64, index, response, vlan, client, resolver| {
+        let name = format!("{LABEL}{index}.example.test");
+        let (src, dst) = if response { (resolver, client) } else { (client, resolver) };
+        let mut packet = dns_packet(no, response, src, dst, no as u16, &name);
+        packet.vlan_id = Some(vlan);
+        packet
+    };
+    let mut core = AnalysisCore::default();
+    let mut display_only = make(1, 1, false, 10, client, resolver);
+    display_only.bytes.clear();
+    display_only.info = format!("Query {LABEL}.example.test");
+    core.analyze(&display_only);
+    for no in 2..=8 {
+        core.analyze(&make(no, no, false, 10, client, resolver));
+    }
+    core.analyze(&make(9, 2, false, 10, client, resolver)); // Repeated wire name.
+    core.analyze(&make(10, 10, false, 20, client, resolver));
+    core.analyze(&make(11, 11, false, 10, "10.0.0.8", resolver));
+    core.analyze(&make(12, 12, false, 10, client, "10.0.0.54"));
+    core.analyze(&make(13, 13, true, 10, client, resolver));
+    let mut late = make(14, 14, false, 10, client, resolver);
+    late.timestamp = 1.0;
+    core.analyze(&late);
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+
+    core.analyze(&make(15, 15, false, 10, client, resolver));
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(alert.packet_refs, (2..=8).chain([15]).collect::<Vec<_>>());
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "dns.high_entropy_query_burst");
+    assert!(alert.detail.contains("tunneling and data transfer unverified"));
+    assert!(!serde_json::to_string(alert).unwrap().contains(LABEL));
+
+    core.analyze(&make(120, 120, false, 10, client, resolver));
+    assert_eq!(core.alert_center.items.iter().filter(|alert| alert.title == TITLE).count(), 1);
+}
+
+#[test]
 fn truncated_replies_are_retained_but_complete_replies_anchor_dns_comparison() {
     let client = "10.0.0.5";
     let resolver = "10.0.0.53";

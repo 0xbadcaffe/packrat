@@ -9,6 +9,10 @@ struct CoverageGroup {
 
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
+        signatures: &["DNS tunnel behavior"],
+        positive_test: "dns_tunnel_lead_requires_distinct_scoped_wire_queries",
+    },
+    CoverageGroup {
         signatures: &["ARP announcement binding changed"],
         positive_test: "arp_announcements_track_owners_without_treating_probes_as_claims",
     },
