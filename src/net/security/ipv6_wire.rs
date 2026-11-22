@@ -127,6 +127,16 @@ pub(super) fn ndp_target_link_layer_address(mut options: &[u8]) -> Option<[u8; 6
     mac
 }
 
+pub(super) fn ndp_options_well_formed(mut options: &[u8]) -> bool {
+    while !options.is_empty() {
+        let Some(&units) = options.get(1) else { return false };
+        if units == 0 { return false; }
+        let Some(rest) = options.get(usize::from(units) * 8..) else { return false };
+        options = rest;
+    }
+    true
+}
+
 pub(super) fn format_mac(mac: [u8; 6]) -> String {
     mac.iter()
         .map(|byte| format!("{byte:02x}"))

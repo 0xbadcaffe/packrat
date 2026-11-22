@@ -61,6 +61,14 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare all three claims with switch learning, DHCP leases, and failover logs; check whether endpoint neighbor entries actually changed.",
         ),
         (
+            "IDS", "Invalid IPv6 router advertisement source", "ipv6.ra_source_not_link_local", 1, DirectObservation,
+            "Verify router interface configuration and check whether endpoints ignored the advertisement.",
+        ),
+        (
+            "IDS", "IPv6 router advertisement flood", "ipv6.ra_rate_burst", 1, Correlated,
+            "Compare the retained advertisements with the approved router inventory and verify endpoint router selection.",
+        ),
+        (
             "IDS", "IPv6 neighbor binding changed", "ipv6.ndp_binding_change", 1, Correlated,
             "Compare both advertisements with the authorized address assignments and endpoint neighbor tables; distinguish failover from spoofing.",
         ),

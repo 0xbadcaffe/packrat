@@ -48,47 +48,7 @@ impl SecurityEngine {
         }
 
         if icmp_type == 134 {
-            let invalid_source = !is_ipv6_link_local(&inspection.source);
-            if let Some(source_mac) = ethernet_source_mac(&pkt.bytes) {
-                self.router_advertisements.retain(|_, state| {
-                    pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 1.0
-                });
-                if self.router_advertisements.len() < MAX_CONTROL_PLANE_IDENTITIES
-                    || self.router_advertisements.contains_key(&source_mac)
-                {
-                    let state = self.router_advertisements.entry(source_mac).or_default();
-                    state.last_seen = pkt.timestamp;
-                    if invalid_source && !state.invalid_source_alerted {
-                        state.invalid_source_alerted = true;
-                        alerts.push((
-                            "Invalid IPv6 router advertisement source",
-                            Severity::Critical,
-                            format!(
-                                "Router Advertisement originated from non-link-local address {}",
-                                pkt.src
-                            ),
-                        ));
-                    }
-                    state.timestamps.retain(|timestamp| {
-                        pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= 1.0
-                    });
-                    if state.timestamps.is_empty() {
-                        state.alerted = false;
-                    }
-                    state.timestamps.push(pkt.timestamp);
-                    if state.timestamps.len() >= RA_FLOOD_THRESHOLD && !state.alerted {
-                        state.alerted = true;
-                        alerts.push((
-                            "IPv6 router advertisement flood",
-                            Severity::Critical,
-                            format!(
-                                "{} Router Advertisements from one MAC within one second",
-                                state.timestamps.len()
-                            ),
-                        ));
-                    }
-                }
-            }
+            self.track_router_advertisement(pkt, &inspection);
         }
 
         if icmp_type == 136 {
@@ -101,6 +61,73 @@ impl SecurityEngine {
                 signature,
                 severity,
                 detail,
+            });
+        }
+    }
+
+    fn track_router_advertisement(&mut self, pkt: &Packet, inspection: &Ipv6Inspection<'_>) {
+        let data = inspection.transport;
+        let now = pkt.timestamp;
+        if !inspection.complete || inspection.fragmented || inspection.extension_count > 32
+            || inspection.hop_limit != 255 || !now.is_finite() || now < 0.0
+            || data.len() < 16 || data[1] != 0 || !ndp_options_well_formed(&data[16..])
+        {
+            return;
+        }
+        let Some(mac) = ethernet_source_mac(&pkt.bytes)
+            .filter(|address| *address != [0; 6] && address[0] & 1 == 0) else { return };
+        let scope = service_scope(pkt);
+        let key = (scope, mac);
+        if self.router_advertisements.len() >= MAX_CONTROL_PLANE_IDENTITIES
+            && !self.router_advertisements.contains_key(&key)
+        {
+            self.router_advertisements.retain(|_, state| now - state.last_seen <= 1.0);
+            if self.router_advertisements.len() >= MAX_CONTROL_PLANE_IDENTITIES { return; }
+        }
+        let state = self.router_advertisements.entry(key).or_default();
+        if now < state.last_seen { return; }
+        if now - state.last_seen > 1.0 { *state = RouterAdvertisementState::default(); }
+        state.last_seen = now;
+
+        if !is_ipv6_link_local(&inspection.source) {
+            if !state.invalid_source_alerted {
+                state.invalid_source_alerted = true;
+                let source = Ipv6Addr::from(inspection.source);
+                self.push_ids_finding(IdsFinding {
+                    alert: IdsAlert {
+                        pkt_no: pkt.no,
+                        signature: "Invalid IPv6 router advertisement source",
+                        severity: Severity::Medium,
+                        detail: format!("Router Advertisement used non-link-local source {source}; endpoint acceptance unverified"),
+                    },
+                    related_packets: Vec::new(),
+                    correlation_key: Some(format!("{scope:?}:{mac:?}:{source}")),
+                });
+            }
+            return;
+        }
+
+        state.samples.retain(|&(seen, _)| now - seen <= 1.0);
+        if state.samples.len() <= RA_FLOOD_THRESHOLD / 2 { state.alerted = false; }
+        if state.samples.iter().any(|&(_, frame)| frame == pkt.no) { return; }
+        if state.samples.len() == RA_FLOOD_THRESHOLD { state.samples.pop_front(); }
+        state.samples.push_back((now, pkt.no));
+        if state.samples.len() == RA_FLOOD_THRESHOLD && !state.alerted {
+            state.alerted = true;
+            let related_packets = state.samples.iter().take(RA_FLOOD_THRESHOLD - 1)
+                .map(|&(_, frame)| frame).collect();
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "IPv6 router advertisement flood",
+                    severity: Severity::Medium,
+                    detail: format!(
+                        "Observed {RA_FLOOD_THRESHOLD} Router Advertisements from {} within one second in one capture scope; routing impact unverified",
+                        format_mac(mac),
+                    ),
+                },
+                related_packets,
+                correlation_key: Some(format!("{scope:?}:{mac:?}:{}", pkt.no)),
             });
         }
     }

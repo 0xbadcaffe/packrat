@@ -3,6 +3,39 @@ use packrat_tui::engine::AnalysisCore;
 use std::net::Ipv6Addr;
 
 #[test]
+fn router_advertisement_rate_keeps_only_scoped_valid_samples() {
+    const TITLE: &str = "IPv6 router advertisement flood";
+    let source = "fe80::1".parse::<Ipv6Addr>().unwrap().octets();
+    let make = |no, vlan, hop, options: &[u8]| {
+        let mut data = vec![0; 16];
+        data[0] = 134;
+        data.extend(options);
+        let mut packet = ipv6_control_packet(no, [2, 1, 2, 3, 4, 5], source, hop, &data);
+        packet.vlan_id = Some(vlan);
+        packet.timestamp = no as f64 / 1000.0;
+        packet
+    };
+    let mut core = AnalysisCore::default();
+    for no in 1..=38_u64 {
+        let vlan = if no % 2 == 0 { 20 } else { 10 };
+        core.analyze(&make(no, vlan, 255, &[]));
+    }
+    core.analyze(&make(39, 10, 64, &[]));
+    core.analyze(&make(40, 10, 255, &[1, 0]));
+    let mut duplicate = make(37, 10, 255, &[]);
+    duplicate.timestamp = 0.041;
+    core.analyze(&duplicate);
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+
+    core.analyze(&make(42, 10, 255, &[]));
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(alert.packet_refs, (1..=37).step_by(2).chain([42]).collect::<Vec<_>>());
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "ipv6.ra_rate_burst");
+    assert!(alert.detail.contains("routing impact unverified"));
+}
+
+#[test]
 fn ndp_binding_changes_keep_scoped_recent_valid_claims_and_both_frames() {
     const TITLE: &str = "IPv6 neighbor binding changed";
     let target = "2001:db8::5".parse::<Ipv6Addr>().unwrap().octets();

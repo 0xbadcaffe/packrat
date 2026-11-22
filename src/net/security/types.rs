@@ -165,7 +165,7 @@ pub(super) struct SynAttempt {
 
 #[derive(Debug, Default)]
 pub(super) struct RouterAdvertisementState {
-    pub(super) timestamps: Vec<f64>,
+    pub(super) samples: std::collections::VecDeque<(f64, u64)>,
     pub(super) alerted: bool,
     pub(super) invalid_source_alerted: bool,
     pub(super) last_seen: f64,

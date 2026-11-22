@@ -436,6 +436,14 @@ fn detects_invalid_and_flooded_router_advertisements() {
             .iter()
             .any(|alert| alert.signature == "Invalid IPv6 router advertisement source")
     );
+    assert!(!security.ids_alerts.iter().any(|alert| alert.signature == "IPv6 router advertisement flood"));
+    let link_local = "fe80::1".parse::<std::net::Ipv6Addr>().unwrap().octets();
+    for index in 20..40_u64 {
+        let mut packet =
+            ipv6_control_packet(index + 1, [0, 1, 2, 3, 4, 5], link_local, 255, &ra);
+        packet.timestamp = index as f64 / 1000.0;
+        security.update(&packet);
+    }
     assert!(
         security
             .ids_alerts
