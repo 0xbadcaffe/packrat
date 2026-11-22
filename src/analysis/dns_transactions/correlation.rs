@@ -16,13 +16,13 @@ pub(super) struct Exchange {
     pub(super) reply: Option<RecentResponse>,
     pub(super) repeat_frames: Vec<u64>,
     pub(super) repeats_omitted: bool,
-    latest_query_at: f64,
+    latest_query: (f64, u64),
 }
 
 impl Exchange {
     fn new(query: PendingQuery) -> Self {
         Self {
-            latest_query_at: query.timestamp,
+            latest_query: (query.timestamp, query.packet_no),
             query,
             reply: None,
             repeat_frames: Vec::new(),
@@ -31,10 +31,10 @@ impl Exchange {
     }
 
     fn record_query(&mut self, query: PendingQuery) {
-        let latest = self.reply.as_ref().map_or(self.latest_query_at, |reply| {
-            self.latest_query_at.max(reply.timestamp)
-        });
-        if query.timestamp < latest {
+        let order = (query.timestamp, query.packet_no);
+        if order < self.latest_query || self.reply.as_ref().is_some_and(|reply| {
+            order < (reply.timestamp, reply.first.packet)
+        }) {
             return;
         }
         if self.reply.is_some() || query.wire_fingerprint != self.query.wire_fingerprint {
@@ -44,7 +44,7 @@ impl Exchange {
         if query.packet_no == self.query.packet_no || self.repeat_frames.contains(&query.packet_no) {
             return;
         }
-        self.latest_query_at = query.timestamp;
+        self.latest_query = order;
         if self.repeat_frames.len() < MAX_QUERY_REPEATS {
             self.repeat_frames.push(query.packet_no);
         } else {
@@ -53,7 +53,7 @@ impl Exchange {
     }
 
     fn is_pending_at(&self, now: f64) -> bool {
-        now - self.latest_query_at <= TRANSACTION_TTL_SECS
+        now - self.latest_query.0 <= TRANSACTION_TTL_SECS
             && now - self.query.timestamp <= MAX_PENDING_AGE_SECS
     }
 }
@@ -95,12 +95,13 @@ impl ExchangeBucket {
         self.entries.is_empty() && self.saturated_at.is_none()
     }
 
-    pub(super) fn find_reply(&self, now: f64, resolver: &str, question: &Question) -> ReplyMatch {
+    pub(super) fn find_reply(&self, order: (f64, u64), resolver: &str, question: &Question) -> ReplyMatch {
         let mut partial = None;
         let mut ambiguous = self.saturated_at.is_some();
         for (index, entry) in self.entries.iter().enumerate() {
-            let newest = entry.reply.as_ref().map_or(entry.query.timestamp, |reply| reply.timestamp);
-            if newest > now {
+            let newest = entry.reply.as_ref().map_or((entry.query.timestamp, entry.query.packet_no),
+                |reply| (reply.timestamp, reply.first.packet));
+            if newest > order {
                 continue;
             }
             let same_resolver = entry.query.server == resolver;

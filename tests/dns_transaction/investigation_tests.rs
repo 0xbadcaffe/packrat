@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn dns_correlation_uses_frame_order_for_tied_timestamps() {
+    let mut tracker = DnsTransactionTracker::default();
+    let query = |no| {
+        let mut packet = dns_packet(no, false, "10.0.0.5", "10.0.0.53", 50, "safe.example");
+        packet.timestamp = 1.0;
+        packet
+    };
+    let reply = |no, resolver| {
+        let mut packet = dns_packet(no, true, resolver, "10.0.0.5", 50, "safe.example");
+        packet.timestamp = 1.0;
+        packet
+    };
+    assert!(tracker.observe(&query(10)).is_empty());
+    let earlier = tracker.observe(&reply(9, "10.0.0.54"));
+    assert_eq!(earlier[0].kind, DnsFindingKind::ReplyWithoutObservedQuery);
+    assert!(earlier[0].related_packets.is_empty());
+    assert!(tracker.observe(&reply(11, "10.0.0.53")).is_empty());
+    assert!(tracker.observe(&query(8)).is_empty());
+
+    let findings = tracker.observe(&reply(12, "10.0.0.54"));
+    assert_eq!(findings[0].kind, DnsFindingKind::ConflictingResponse);
+    assert_eq!(findings[0].related_packets, [10, 11]);
+}
+
+#[test]
 fn dns_tunnel_lead_requires_distinct_scoped_wire_queries() {
     const TITLE: &str = "DNS tunnel behavior";
     const LABEL: &str = "abcdefghijklmnpqrstuvwxyz234567";

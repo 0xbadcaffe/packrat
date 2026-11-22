@@ -203,7 +203,7 @@ impl DnsTransactionTracker {
         &mut self, packet: &Packet, transport: DnsTransport, (source_port, destination_port): (u16, u16),
         payload: &[u8], frames: &[u64],
     ) -> Vec<DnsFinding> {
-        if source_port != 53 && destination_port != 53 {
+        if !packet.timestamp.is_finite() || (source_port != 53 && destination_port != 53) {
             return Vec::new();
         }
         let Some(header) = DnsQueryHeader::parse(payload) else {
@@ -256,7 +256,7 @@ impl DnsTransactionTracker {
         let key = scope.transaction(&packet.dst, destination_port, message.id, &packet.src);
         let (exchange, ambiguous) = if let Some(bucket) = self.exchanges.get_mut(&key) {
             bucket.expire(packet.timestamp);
-            match bucket.find_reply(packet.timestamp, &packet.src, &message.question) {
+            match bucket.find_reply((packet.timestamp, packet.no), &packet.src, &message.question) {
                 ReplyMatch::Matched(index) => (Some(&mut bucket.entries[index]), false),
                 ReplyMatch::Missing => (None, false),
                 ReplyMatch::Ambiguous => (None, true),
