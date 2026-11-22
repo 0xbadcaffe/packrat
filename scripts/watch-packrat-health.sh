@@ -13,6 +13,7 @@ usage() {
         'PACKRAT_DISK_SUDO (1 retries an inaccessible disk path with noninteractive sudo),' \
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
         'PACKRAT_ALERT_LOG (optional absolute alert path; requires pipeline checking),' \
+        'PACKRAT_ALERT_LOG_OWNER_UID (optional expected numeric owner of the private alert log),' \
         'PACKRAT_ALERT_VERIFY_OPEN (1 verifies the open file and pipe; uses noninteractive sudo if needed),' \
         'PACKRAT_ALERT_CONTEXT_WATCHER (optional absolute Bash script path; requires open-pipe verification),' \
         'PACKRAT_REQUIRE_ARCHIVE (1 reports missing or inactive packet archiving),' \
@@ -37,6 +38,7 @@ expect_traffic=${PACKRAT_EXPECT_TRAFFIC_SECS:-0}
 alert_session=${PACKRAT_ALERT_SESSION:-}
 alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
 alert_log=${PACKRAT_ALERT_LOG:-}
+alert_log_owner=${PACKRAT_ALERT_LOG_OWNER_UID:-}
 alert_verify_open=${PACKRAT_ALERT_VERIFY_OPEN:-0}
 alert_context_watcher=${PACKRAT_ALERT_CONTEXT_WATCHER:-}
 require_archive=${PACKRAT_REQUIRE_ARCHIVE:-0}
@@ -88,6 +90,12 @@ if [[ -n $alert_log && ( $alert_log != /* || $alert_pipeline != 1 ) ]]; then
     printf '%s\n' 'PACKRAT_ALERT_LOG requires an absolute path and PACKRAT_ALERT_PIPELINE=1.' >&2
     exit 2
 fi
+if [[ -n $alert_log_owner ]] &&
+   { [[ -z $alert_log || ! $alert_log_owner =~ ^(0|[1-9][0-9]{0,9})$ ]] ||
+     (( alert_log_owner > 4294967295 )); }; then
+    printf '%s\n' 'PACKRAT_ALERT_LOG_OWNER_UID requires a numeric UID and PACKRAT_ALERT_LOG.' >&2
+    exit 2
+fi
 if [[ ( $alert_verify_open != 0 && $alert_verify_open != 1 ) ||
       ( $alert_verify_open == 1 && -z $alert_log ) ]]; then
     printf '%s\n' 'PACKRAT_ALERT_VERIFY_OPEN must be 0 or 1 and requires PACKRAT_ALERT_LOG when enabled.' >&2
@@ -114,6 +122,22 @@ disk_free_kib() {
         output=$(LC_ALL=C sudo -n -- df -Pk -- "$disk_path" 2>/dev/null) || return 1
     fi
     awk 'NR == 2 { print $4 }' <<< "$output"
+}
+
+alert_log_storage() {
+    local metadata mode links owner
+    local -a probe=(stat --format='%f:%h:%u' -- "$alert_log")
+    metadata=$(LC_ALL=C "${probe[@]}" 2>/dev/null) ||
+        metadata=$(LC_ALL=C sudo -n -- "${probe[@]}" 2>/dev/null) || return 1
+    [[ $metadata =~ ^([0-9a-fA-F]{1,8}):([0-9]{1,20}):([0-9]{1,10})$ ]] || return 1
+    mode=$((16#${BASH_REMATCH[1]}))
+    links=${BASH_REMATCH[2]} owner=${BASH_REMATCH[3]}
+    if (( (mode & 0170000) == 0100000 && (mode & 077) == 0 )) &&
+       [[ $links == 1 && ( -z $alert_log_owner || $owner == "$alert_log_owner" ) ]]; then
+        printf '%s\n' private
+    else
+        printf '%s\n' unsafe
+    fi
 }
 
 alert_pipeline_processes() {
@@ -209,7 +233,11 @@ alert_context_followed() {
 
 read_health() {
     local sample watcher=null pipeline=null source=null context=null processes parser pane_info dead pane disk=null free_kib
+    local storage=''
     if [[ -n $alert_context_watcher ]]; then context=false; fi
+    if [[ -n $alert_log ]]; then
+        storage=$(alert_log_storage) || storage=unavailable
+    fi
     sample=$(curl --disable --fail --silent --max-time 3 --noproxy '*' "http://127.0.0.1:$port/health") || sample=null
     if [[ -n $alert_session ]]; then
         watcher=false
@@ -243,6 +271,7 @@ read_health() {
     printf '%s\n' "$sample" | jq -Rcse \
         --argjson watcher "$watcher" --argjson pipeline "$pipeline" --argjson source "$source" --argjson context "$context" \
         --arg alert_log "$alert_log" --arg expected_interface "$expected_interface" --arg disk_path "$disk_path" \
+        --arg storage "$storage" \
         --argjson verify_open "$alert_verify_open" \
         --argjson disk "$disk" --argjson min_free "$min_free" --argjson require_archive "$require_archive" \
         --argjson baseline "$baseline" --argjson clock "$SECONDS" --argjson expect_traffic "$expect_traffic" '
@@ -312,6 +341,7 @@ read_health() {
             alert_socket_context_alive: $context,
             alert_watcher_open_log_required: ($verify_open == 1),
             alert_watcher_log: (if $alert_log == "" then null else $alert_log end),
+            alert_log_storage: (if $storage == "" then null else $storage end),
             archive_enabled: $archive_enabled,
             archive_paused: ($archive_paused // false),
             disk_path: $disk_path,
@@ -353,6 +383,8 @@ read_health() {
                  elif $pipeline == false then "alert_watcher_pipeline_inactive"
                  elif $source == false then "alert_watcher_source_unverified"
                  elif $context == false then "alert_socket_context_unverified" else empty end),
+                (if $storage == "unsafe" then "alert_log_storage_unsafe"
+                 elif $storage == "unavailable" then "alert_log_storage_unverified" else empty end),
                 (if $disk == null then "disk_space_unknown"
                  elif $disk < $min_free then "disk_space_low" else empty end)
             ],

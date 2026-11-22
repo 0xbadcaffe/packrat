@@ -9,6 +9,7 @@ unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE PACKRAT_HEALTH_INTERVAL PACKRAT_
 unset PACKRAT_EXPECT_INTERFACE PACKRAT_EXPECT_TRAFFIC_SECS
 unset PACKRAT_DISK_PATH PACKRAT_DISK_SUDO PACKRAT_ALERT_VERIFY_OPEN
 unset PACKRAT_ALERT_CONTEXT_WATCHER
+unset PACKRAT_ALERT_LOG_OWNER_UID
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
@@ -76,6 +77,10 @@ stat() {
         [[ $* == "-L --format=%d:%i -- $PACKRAT_FAKE_TAIL_SOURCE" ]] || return 1
         [[ ${PACKRAT_FAKE_FD_PROTECTED:-0} == 0 ]] || return 1
         printf '%s\n' 20:150
+    elif [[ $1 == --format=%f:%h:%u ]]; then
+        [[ $# == 3 && $2 == -- && $3 == "$PACKRAT_ALERT_LOG" ]] || return 1
+        [[ ${PACKRAT_FAKE_FD_PROTECTED:-0} == 0 && ${PACKRAT_FAKE_LOG_MISSING:-0} == 0 ]] || return 1
+        printf '%s\n' "${PACKRAT_FAKE_LOG_METADATA:-8180:1:0}"
     else
         command stat "$@"
     fi
@@ -104,6 +109,7 @@ bash "$watch" --once | jq -e '
     .record_type == "capture_health" and .event == "sample" and .issues == []
     and .pcap_buffer_drops == 0 and .alert_watcher_alive == true and .alert_watcher_pipeline_alive == null
     and .archive_enabled == null and .alert_watcher_log == null and .poll_interval_seconds == 15
+    and .alert_log_storage == null
     and .disk_path == "/"
     and .packets_total == null and .packets_since_last_poll == null
     and .expect_traffic_seconds == 0 and .packets_without_progress_seconds == null
@@ -163,6 +169,7 @@ PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
     PACKRAT_FAKE_TAIL_SOURCE="$log" bash "$watch" --once | jq -e --arg log "$log" '
     .issues == [] and .alert_watcher_alive and .alert_watcher_pipeline_alive and .alert_watcher_source_matches
     and .alert_watcher_log == $log and .disk_path == "/var/lib/packrat lab"
+    and .alert_log_storage == "private"
     and (.alert_watcher_open_log_required | not)
 ' >/dev/null
 
@@ -170,8 +177,38 @@ for protected in 0 1; do
     PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
         PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_ALERT_VERIFY_OPEN=1 PACKRAT_FAKE_FD_PROTECTED=$protected \
         PACKRAT_FAKE_OPEN_FDS=$'11:34\n20:150' bash "$watch" --once |
-        jq -e '.issues == [] and .alert_watcher_open_log_required and .alert_watcher_source_matches' >/dev/null
+        jq -e '.issues == [] and .alert_watcher_open_log_required
+            and .alert_watcher_source_matches and .alert_log_storage == "private"' >/dev/null
 done
+
+with_storage_log() {
+    PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
+        PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_ALERT_LOG_OWNER_UID="$1" bash "$watch" --once
+}
+(
+    for metadata in '81a4:1:0' '8180:2:0' 'a1ff:1:0' '1180:1:0' '8180:1:1000'; do
+        status=0
+        output=$(PACKRAT_FAKE_LOG_METADATA="$metadata" with_storage_log 0) || status=$?
+        [[ $status == 1 ]]
+        jq -e '.issues == ["alert_log_storage_unsafe"] and .alert_log_storage == "unsafe"
+            and .alert_watcher_alive' <<< "$output" >/dev/null
+    done
+    status=0
+    output=$(PACKRAT_FAKE_LOG_MISSING=1 with_storage_log 0) || status=$?
+    [[ $status == 1 ]]
+    jq -e '.issues == ["alert_log_storage_unverified"] and .alert_log_storage == "unavailable"' \
+        <<< "$output" >/dev/null
+    status=0
+    output=$(PACKRAT_FAKE_LOG_METADATA=malformed with_storage_log 0) || status=$?
+    [[ $status == 1 ]]
+    jq -e '.alert_log_storage == "unavailable"' <<< "$output" >/dev/null
+    for invalid in +0 00 4294967296; do
+        status=0
+        with_storage_log "$invalid" >/dev/null 2>&1 || status=$?
+        [[ $status == 2 ]]
+    done
+)
+
 status=0
 output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
     PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_ALERT_VERIFY_OPEN=1 PACKRAT_FAKE_OPEN_FDS=$'20:151\n21:150' \
