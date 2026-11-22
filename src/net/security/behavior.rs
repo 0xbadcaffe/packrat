@@ -74,6 +74,9 @@ impl SecurityEngine {
     // ─── C2 Beacon and Exfiltration Correlation ─────────────────────────────
 
     pub(super) fn check_beacon_and_exfiltration(&mut self, pkt: &Packet) {
+        if !pkt.timestamp.is_finite() {
+            return;
+        }
         if ![&pkt.src, &pkt.dst].into_iter().all(|address| {
             match address.parse::<std::net::IpAddr>() {
                 Ok(std::net::IpAddr::V4(ip)) => {
@@ -204,9 +207,9 @@ impl SecurityEngine {
             size: pkt.capture.as_ref().map_or(u32::from(pkt.length), |meta| meta.wire_length),
             packet_no: pkt.no,
         });
-        if !beacon_pattern(samples) {
+        let Some(stats) = beacon_pattern(samples) else {
             return;
-        }
+        };
         state.alerted = true;
         let related_packets = samples[..samples.len() - 1]
             .iter()
@@ -219,8 +222,9 @@ impl SecurityEngine {
                 signature: "Periodic fixed-size traffic",
                 severity: Severity::Medium,
                 detail: format!(
-                    "{count} regularly timed, similar-size packets from {}:{} to {}:{}; timing alone does not establish command-and-control",
-                    pkt.src, source_port, pkt.dst, destination_port,
+                    "{count} packets from [{}]:{source_port} to [{}]:{destination_port} over {:.1}s; gaps {:.1}-{:.1}s (mean {:.1}s), sizes {}-{} bytes. Timing alone does not establish command-and-control.",
+                    pkt.src, pkt.dst, stats.duration, stats.interval_min, stats.interval_max,
+                    stats.interval_mean, stats.size_min, stats.size_max,
                 ),
             },
             related_packets,

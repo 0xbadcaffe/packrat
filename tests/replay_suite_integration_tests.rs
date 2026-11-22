@@ -285,6 +285,9 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .find(|event| event["type"] == "alert").unwrap();
     assert_eq!(finding["alert"]["provenance"]["confidence"], "heuristic");
+    assert_eq!(finding["alert"]["provenance"]["revision"], 3);
+    let detail = finding["alert"]["detail"].as_str().unwrap();
+    assert!(detail.contains("gaps 10.0-10.0s (mean 10.0s), sizes 900-900 bytes"));
     assert_eq!(finding["alert"]["packet_refs"], json!([1, 2, 3, 4, 5, 6, 7]));
 }
 

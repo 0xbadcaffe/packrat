@@ -96,6 +96,23 @@ fn periodic_traffic_alerts_once_per_conversation_and_keeps_directional_evidence(
 }
 
 #[test]
+fn periodic_alert_reports_the_ranges_measured_from_its_evidence() {
+    let mut engine = SecurityEngine::default();
+    for (index, (timestamp, length)) in [
+        (0.0, 120), (9.0, 119), (20.0, 122), (f64::NAN, 500),
+        (30.0, 121), (39.0, 118), (50.0, 120),
+    ].into_iter().enumerate() {
+        engine.update(&behavior_packet(index as u64 + 1, timestamp, length, vec![0; length]));
+    }
+    let result = engine.inspect(&behavior_packet(8, 60.0, 120, vec![0; 120]));
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == "Periodic fixed-size traffic").unwrap();
+    assert_eq!(finding.related_packets, [1, 2, 3, 5, 6, 7]);
+    assert!(finding.alert.detail.contains("7 packets"));
+    assert!(finding.alert.detail.contains("over 60.0s; gaps 9.0-11.0s (mean 10.0s), sizes 118-122 bytes"));
+    assert!(finding.alert.detail.contains("does not establish command-and-control"));
+}
+
+#[test]
 fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
     use packrat_tui::{
         engine::AnalysisCore,
@@ -143,7 +160,7 @@ fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
         }
         let alert = scoped.alert_center.items.iter().find(|item| is_periodic(item)).unwrap();
         assert_eq!(alert.packet_refs, [1, 3, 5, 7, 8, 9, 10]);
-        assert_eq!(alert.provenance.as_ref().unwrap().revision, 2);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 3);
     }
 }
 
