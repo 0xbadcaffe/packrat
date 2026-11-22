@@ -344,6 +344,7 @@ read_health() {
             alert_log_storage: (if $storage == "" then null else $storage end),
             archive_enabled: $archive_enabled,
             archive_paused: ($archive_paused // false),
+            archive_alert_evidence_only: ($h.archive_alert_evidence_only | if type == "boolean" then . else null end),
             disk_path: $disk_path,
             disk_free_mib: $disk,
             issues: [

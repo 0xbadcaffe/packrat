@@ -210,6 +210,12 @@ impl PacketArchive {
         u64::try_from(count).map_err(|_| "Invalid archive count".into())
     }
 
+    fn contains_frame(&self, capture_id: &str, frame: u64) -> Result<bool, String> {
+        self.db.prepare_cached("SELECT 1 FROM capture_frames WHERE capture_id=?1 AND frame_number=?2")
+            .and_then(|mut query| query.exists(params![capture_id, frame.to_string()]))
+            .map_err(|error| error.to_string())
+    }
+
     pub fn find_host(&self, address: &str, after_id: i64, limit: usize) -> Result<Vec<i64>, String> {
         let mut statement = self.db.prepare(
             "SELECT id FROM packets WHERE (source=?1 OR destination=?1) AND id>?2 ORDER BY id LIMIT ?3"
@@ -297,6 +303,7 @@ pub struct ArchiveWorker {
     worker: Option<std::thread::JoinHandle<Result<(), String>>>,
     pause_reason: Arc<OnceLock<&'static str>>,
     pause_reported: bool,
+    alert_evidence_only: bool,
 }
 
 struct ArchiveRecord {
@@ -310,6 +317,14 @@ impl ArchiveWorker {
     }
 
     pub fn open_with_limits(directory: &Path, limits: ArchiveLimits) -> Result<Self, String> {
+        Self::open_with_policy(directory, limits, false)
+    }
+
+    pub fn open_alert_evidence(directory: &Path, limits: ArchiveLimits) -> Result<Self, String> {
+        Self::open_with_policy(directory, limits, true)
+    }
+
+    fn open_with_policy(directory: &Path, limits: ArchiveLimits, alert_evidence_only: bool) -> Result<Self, String> {
         let mut archive = PacketArchive::open(directory)?;
         let mut frames = archive.count()?;
         let mut bytes = archive.bytes.metadata().map_err(|error| error.to_string())?.len();
@@ -321,6 +336,20 @@ impl ArchiveWorker {
             while let Ok(first) = receiver.recv() {
                 let mut batch = vec![first];
                 batch.extend(receiver.try_iter().take(255));
+                if alert_evidence_only {
+                    let mut seen = std::collections::HashSet::new();
+                    let mut unique = Vec::with_capacity(batch.len());
+                    for record in batch {
+                        let scope = record.capture_id.as_ref().ok_or("Alert archive requires capture scope")?;
+                        if seen.insert((Arc::clone(scope), record.packet.no)) && !archive.contains_frame(scope, record.packet.no)? {
+                            unique.push(record);
+                        }
+                    }
+                    if unique.is_empty() {
+                        continue;
+                    }
+                    batch = unique;
+                }
                 let available =
                     fs2::available_space(&worker_directory).map_err(|error| error.to_string())?;
                 let writable = available.saturating_sub(limits.reserve_free_bytes);
@@ -374,7 +403,16 @@ impl ArchiveWorker {
             worker: Some(worker),
             pause_reason,
             pause_reported: false,
+            alert_evidence_only,
         })
+    }
+
+    pub(crate) fn alert_evidence_only(&self) -> bool {
+        self.alert_evidence_only
+    }
+
+    pub(crate) fn pause(&self, reason: &'static str) {
+        let _ = self.pause_reason.set(reason);
     }
 
     pub fn pause_reason(&self) -> Option<&'static str> {

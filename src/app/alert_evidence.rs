@@ -20,6 +20,32 @@ impl AlertEvidenceScope {
 }
 
 impl App {
+    pub(super) fn archive_alert_packets(&mut self, alert: &AlertItem, current: Option<&Packet>) {
+        let Some(archive) = self.packet_archive.as_ref()
+            .filter(|archive| archive.alert_evidence_only() && archive.pause_reason().is_none())
+        else { return };
+        let Some(capture_id) = self.capture_id.as_ref()
+            .filter(|scope| alert.capture_id.as_deref() == Some(scope.as_ref()))
+        else { return };
+        let frames = alert.evidence_frame_numbers();
+        let queue = |frame| {
+            if !self.frame_may_be_local(AlertEvidenceScope::CurrentCapture, frame) {
+                return Ok(());
+            }
+            let packet = current.filter(|packet| packet.no == frame).or_else(|| self.packet_by_no(frame));
+            packet.map_or(Ok(()), |packet| archive.record_scoped(capture_id, packet))
+        };
+        let (trigger, others) = (alert.packet_no, frames.iter().copied().filter(|&n| n != alert.packet_no));
+        let trigger = frames.binary_search(&trigger).ok().map(|_| trigger);
+        for frame in trigger.into_iter().chain(others) {
+            if let Err(error) = queue(frame) {
+                archive.pause("alert evidence queue unavailable");
+                self.set_status(format!("Alert packet archive paused: {error}; capture continues"));
+                break;
+            }
+        }
+    }
+
     pub(super) fn alert_evidence_scope(&self, alert: &AlertItem) -> AlertEvidenceScope {
         match alert.capture_id.as_deref() {
             None if self.capture_id.is_some() => AlertEvidenceScope::MissingCaptureId,

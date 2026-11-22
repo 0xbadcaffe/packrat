@@ -175,6 +175,7 @@ pub struct AlertCenter {
     pub severity_filter: AlertSeverityFilter,
     pub automation_mode: AutomationMode,
     pub(crate) capture_id: Option<String>,
+    pub(crate) archive_alert_packets: bool,
     next_id: u64,
     fingerprints: HashSet<String>,
     pending_pins: Vec<u64>,
@@ -189,6 +190,7 @@ impl Default for AlertCenter {
             severity_filter: AlertSeverityFilter::All,
             automation_mode: AutomationMode::Off,
             capture_id: None,
+            archive_alert_packets: false,
             next_id: 0,
             fingerprints: HashSet::new(),
             pending_pins: Vec::new(),
@@ -326,7 +328,7 @@ impl AlertCenter {
                     item.priority = priority;
                     item.severity = severity;
                 }
-                if self.automation_mode != AutomationMode::Off
+                if (self.automation_mode != AutomationMode::Off || self.archive_alert_packets)
                     && item.priority >= AUTOMATIC_EVIDENCE_PRIORITY
                     && (evidence_changed || became_high)
                     && !self.pending_pins.contains(&item.id)
@@ -366,7 +368,7 @@ impl AlertCenter {
         retain_packet_refs(&mut item, packet_no, related_packets);
         self.pending_exports.push(item.clone());
         self.items.push(item);
-        if self.automation_mode != AutomationMode::Off && priority >= AUTOMATIC_EVIDENCE_PRIORITY {
+        if (self.automation_mode != AutomationMode::Off || self.archive_alert_packets) && priority >= AUTOMATIC_EVIDENCE_PRIORITY {
             self.pending_pins.push(self.next_id);
         }
         if self.items.len() > MAX_ALERTS {

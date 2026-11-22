@@ -13,6 +13,7 @@ backup_reserve_mib=${PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB:-512}
 backup_dir=
 stage_binary=
 archive_path=
+archive_flag=--archive
 archive_limits=()
 
 error() { printf '%s\n' "$*" >&2; }
@@ -161,7 +162,7 @@ await_primary_watcher() {
 }
 
 read_launch_profile() {
-    local flag value path='' max_mib='' max_frames=''
+    local flag value path='' mode=--archive max_mib='' max_frames=''
     local -a limits=()
     [[ ${1-} == "$installed" && ${2-} == --telemetry-listen && ${3-} == "$health_addr" ]] || return 1
     shift 3
@@ -169,9 +170,9 @@ read_launch_profile() {
         (( $# >= 2 )) || return 1
         flag=$1 value=$2
         case $flag in
-            --archive)
+            --archive|--archive-alert-evidence)
                 [[ -z $path && $value == /* && $value != / ]] || return 1
-                path=$value
+                path=$value mode=$flag
                 ;;
             --archive-max-mib)
                 [[ -z $max_mib && $value =~ ^[1-9][0-9]*$ ]] || return 1
@@ -189,6 +190,7 @@ read_launch_profile() {
     done
     [[ -n $path || ${#limits[@]} == 0 ]] || return 1
     archive_path=$path
+    archive_flag=$mode
     archive_limits=("${limits[@]}")
 }
 
@@ -244,7 +246,7 @@ candidate_supports_profile() {
     help=$("$candidate" --help) || return 1
     [[ $help == *--telemetry-listen* ]] || return 1
     [[ -z $archive_path ]] ||
-        [[ $help == *'--archive PATH'* && $help == *--archive-max-mib* && $help == *--archive-max-frames* ]]
+        [[ $help == *"$archive_flag PATH"* && $help == *--archive-max-mib* && $help == *--archive-max-frames* ]]
 }
 
 backup_space_ready() {
@@ -294,7 +296,7 @@ launch_capture() {
     local session=$1 executable=$2 archive
     local -a archive_args=()
     archive=$(archive_for_session "$session")
-    if [[ -n $archive ]]; then archive_args=(--archive "$archive" "${archive_limits[@]}"); fi
+    if [[ -n $archive ]]; then archive_args=("$archive_flag" "$archive" "${archive_limits[@]}"); fi
     case $session in
         "$main_session")
             tmux new-session -d -s "$session" -c / -x 150 -y 40 \

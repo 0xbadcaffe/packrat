@@ -11,8 +11,10 @@ impl App {
         let capture_id = self.capture_id.clone().unwrap_or_else(Self::new_capture_id);
         self.capture_frame_high_water = self.packets.iter().map(|packet| packet.no).max().unwrap_or(0);
         self.capture_id = Some(capture_id.clone());
+        let alert_evidence_only = archive.alert_evidence_only();
         self.configure_core(move |core| {
             core.alert_center.capture_id = Some(capture_id.to_string());
+            core.alert_center.archive_alert_packets = alert_evidence_only;
         });
         self.packet_archive = Some(archive);
         Ok(())
@@ -97,7 +99,7 @@ impl App {
         if let Some(error) = self
             .packet_archive
             .as_ref()
-            .filter(|_| !restoring)
+            .filter(|archive| !restoring && !archive.alert_evidence_only())
             .and_then(|archive| match &self.capture_id {
                 Some(capture_id) => archive.record_scoped(capture_id, &pkt).err(),
                 None => archive.record(&pkt).err(),

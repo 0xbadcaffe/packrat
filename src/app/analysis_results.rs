@@ -10,6 +10,7 @@ pub(super) struct AnalysisContext {
     endpoints: Vec<EndpointEvidence>,
     independent: std::collections::HashSet<u64>,
     alerts: Vec<AlertItem>,
+    auto_pin: bool,
 }
 
 impl App {
@@ -50,6 +51,7 @@ impl App {
                 .map(|incident| incident.id)
                 .collect();
             AnalysisContext {
+                auto_pin: core.alert_center.automation_mode != AutomationMode::Off,
                 endpoints: if incidents.is_empty() { Vec::new() } else { core.endpoint_evidence.clone() },
                 incidents,
                 independent,
@@ -122,7 +124,10 @@ impl App {
         }
         let previous_active = self.worklist.active;
         for alert in &context.alerts {
-            self.retain_automatic_alert_evidence(alert, current);
+            self.archive_alert_packets(alert, current);
+            if context.auto_pin {
+                self.retain_automatic_alert_evidence(alert, current);
+            }
         }
         self.worklist.active = previous_active;
     }

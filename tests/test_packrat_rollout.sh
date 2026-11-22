@@ -109,8 +109,12 @@ source "$root/scripts/packrat-rollout.sh"
     if read_launch_profile "${profile[@]}" --archive-max-mib 32; then exit 1; fi
     if read_launch_profile "${profile[@]}" --archive "$archive" --simulation; then exit 1; fi
     if read_launch_profile "${profile[@]}" --archive "$archive" --archive-max-frames 0; then exit 1; fi
+    if read_launch_profile "${profile[@]}" --archive "$archive" --archive-alert-evidence /other; then exit 1; fi
+    read_launch_profile "${profile[@]}" --archive-alert-evidence "$archive" --archive-max-frames 4096
+    [[ $(launch_capture "$main_session" /candidate) == *$'<--archive-alert-evidence>\n<'"$archive"$'>\n<--archive-max-frames>\n<4096>' ]]
+    [[ $(launch_capture "$bridge_session" /candidate) == *$'<--archive-alert-evidence>\n</backup/stage-data/packet-archive>'* ]]
     read_launch_profile "${profile[@]}"
-    [[ -z $archive_path && ${#archive_limits[@]} == 0 ]]
+    [[ -z $archive_path && $archive_flag == --archive && ${#archive_limits[@]} == 0 ]]
 )
 
 scratch=$(mktemp -d)

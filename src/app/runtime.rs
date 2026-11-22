@@ -29,14 +29,17 @@ impl App {
                 self.save_preferences();
             }
         }
-        if let Some(error) = self
-            .packet_archive
-            .as_mut()
-            .and_then(|archive| archive.poll_error())
+        if let Some(archive) = self.packet_archive.as_mut()
+            && let Some(error) = archive.poll_error()
         {
-            self.abort_capture();
-            self.capturing = false;
-            self.set_status(format!("Capture stopped: archive write failed: {error}"));
+            if archive.alert_evidence_only() {
+                archive.pause("alert evidence archive write failed");
+                self.set_status(format!("Alert packet archive write failed: {error}; capture continues"));
+            } else {
+                self.abort_capture();
+                self.capturing = false;
+                self.set_status(format!("Capture stopped: archive write failed: {error}"));
+            }
         }
         if let Some(reason) = self
             .packet_archive
@@ -187,6 +190,7 @@ impl App {
             alert_save_failed: self.alert_save_error_reported.is_some() || core.alert_save_error.is_some(),
             archive_enabled: self.packet_archive.is_some(),
             archive_paused: self.packet_archive.as_ref().and_then(|archive| archive.pause_reason()).is_some(),
+            archive_alert_evidence_only: self.packet_archive.as_ref().is_some_and(|archive| archive.alert_evidence_only()),
             latency_p95_ms: self.wire_pulse.p95_ms().unwrap_or(0.0),
             enriched_addresses: self.net_registry.observed.len(),
         });

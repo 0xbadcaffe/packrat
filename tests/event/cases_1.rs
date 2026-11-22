@@ -23,6 +23,17 @@ fn archive_budget_flags_require_an_archive_and_positive_limits() {
 }
 
 #[test]
+fn alert_archive_is_an_explicit_alternative_to_full_capture_retention() {
+    let parsed = app::parse_startup_args(["--archive-alert-evidence", "evidence", "--archive-max-frames", "4"]).unwrap();
+    let CliAction::Run(options) = parsed else { panic!("Expected run options") };
+    assert!(options.archive_alert_evidence_only);
+    assert_eq!(options.archive_path.unwrap(), std::path::Path::new("evidence"));
+    assert_eq!(options.archive_limits.max_frames, 4);
+    assert!(app::parse_startup_args(["--archive-alert-evidence", "--simulation"]).is_err());
+    assert!(app::parse_startup_args(["--archive", "all", "--archive-alert-evidence", "evidence"]).is_err());
+}
+
+#[test]
 fn parse_startup_args_defaults_to_capture() {
     assert_eq!(
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
@@ -42,6 +53,7 @@ fn parse_startup_args_defaults_to_capture() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_alert_evidence_only: false,
             archive_limits: Default::default(),
         })
     );
@@ -67,6 +79,7 @@ fn parse_startup_args_enables_simulation() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_alert_evidence_only: false,
             archive_limits: Default::default(),
         })
     );
@@ -88,6 +101,7 @@ fn parse_startup_args_enables_simulation() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_alert_evidence_only: false,
             archive_limits: Default::default(),
         })
     );
@@ -131,6 +145,7 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_alert_evidence_only: false,
             archive_limits: Default::default(),
         })
     );
@@ -157,6 +172,7 @@ fn parse_startup_args_accepts_key_log_path() {
             capture_helper_path: None,
             endpoint_evidence_path: None,
             archive_path: None,
+            archive_alert_evidence_only: false,
             archive_limits: Default::default(),
         })
     );

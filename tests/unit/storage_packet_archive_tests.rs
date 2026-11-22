@@ -180,6 +180,33 @@ fn archive_pauses_before_using_the_free_space_reserve() {
     assert_eq!(PacketArchive::open_readonly(&archive).unwrap().count().unwrap(), 0);
 }
 
+#[test]
+fn alert_archive_deduplicates_queued_and_committed_frames_without_crossing_capture_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("evidence");
+    let scope_a: Arc<str> = "capture-a".into();
+    let scope_b: Arc<str> = "capture-b".into();
+    let frame_a = parse_ethernet(&[1, 2, 3], 1, 1.0);
+    let frame_b = parse_ethernet(&[4, 5, 6], 1, 1.0);
+    let limits = ArchiveLimits { max_frames: 2, reserve_free_bytes: 0, ..ArchiveLimits::default() };
+    let mut writer = ArchiveWorker::open_alert_evidence(&path, limits).unwrap();
+    for _ in 0..4 {
+        writer.record_scoped(&scope_a, &frame_a).unwrap();
+    }
+    writer.finish().unwrap();
+    assert_eq!(writer.pause_reason(), None);
+
+    let mut writer = ArchiveWorker::open_alert_evidence(&path, limits).unwrap();
+    writer.record_scoped(&scope_a, &frame_a).unwrap();
+    writer.record_scoped(&scope_b, &frame_b).unwrap();
+    writer.finish().unwrap();
+    assert_eq!(writer.pause_reason(), Some("frame limit reached"));
+    let mut reader = PacketArchive::open_readonly(&path).unwrap();
+    assert_eq!(reader.count().unwrap(), 2);
+    assert_eq!(reader.packet_for_capture(&scope_a, 1).unwrap().unwrap().bytes, frame_a.bytes);
+    assert_eq!(reader.packet_for_capture(&scope_b, 1).unwrap().unwrap().bytes, frame_b.bytes);
+}
+
 #[cfg(unix)]
 #[test]
 fn writable_archives_require_a_private_real_directory() {

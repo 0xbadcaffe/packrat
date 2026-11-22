@@ -29,6 +29,7 @@ pub struct StartupOptions {
     pub capture_helper_path: Option<std::path::PathBuf>,
     pub endpoint_evidence_path: Option<std::path::PathBuf>,
     pub archive_path: Option<std::path::PathBuf>,
+    pub archive_alert_evidence_only: bool,
     pub archive_limits: crate::storage::packet_archive::ArchiveLimits,
 }
 
@@ -36,7 +37,7 @@ pub fn usage() -> String {
     let endpoint_help =
         "      --endpoint-evidence PATH import endpoint impact evidence as NDJSON\n";
     let base = usage_base();
-    base.replace("      --socket-events", &format!("{endpoint_help}      --archive PATH           retain packets and SQLite index (pauses at limits)\n      --archive-max-mib N      archived packet bytes in MiB (default: 256)\n      --archive-max-frames N   total indexed frames (default: 100000)\n      --socket-events"))
+    base.replace("      --socket-events", &format!("{endpoint_help}      --archive PATH           retain packets and SQLite index (pauses at limits)\n      --archive-alert-evidence PATH  retain only referenced HIGH/CRITICAL alert frames, not restored cases\n      --archive-max-mib N      archived packet bytes in MiB (default: 256)\n      --archive-max-frames N   total indexed frames (default: 100000)\n      --socket-events"))
 }
 
 pub(super) fn usage_base() -> &'static str {
@@ -68,16 +69,23 @@ where
         capture_helper_path: None,
         endpoint_evidence_path: None,
         archive_path: None,
+        archive_alert_evidence_only: false,
         archive_limits: Default::default(),
     };
     let mut archive_limits_set = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--archive" => {
+            "--archive" | "--archive-alert-evidence" => {
+                let flag = &args[index];
+                if options.archive_path.is_some() {
+                    return Err("Specify only one archive mode and directory".into());
+                }
                 index += 1;
-                let value = args.get(index).ok_or("--archive requires a directory")?;
+                let value = args.get(index).filter(|value| !value.is_empty() && !value.starts_with('-'))
+                    .ok_or_else(|| format!("{flag} requires a directory"))?;
                 options.archive_path = Some(value.into());
+                options.archive_alert_evidence_only = flag == "--archive-alert-evidence";
             }
             "--archive-max-mib" | "--archive-max-frames" => {
                 archive_limits_set = true;
@@ -187,7 +195,7 @@ where
         index += 1;
     }
     if options.archive_path.is_none() && archive_limits_set {
-        return Err("Archive limits require --archive PATH".into());
+        return Err("Archive limits require --archive PATH or --archive-alert-evidence PATH".into());
     }
     Ok(CliAction::Run(options))
 }
