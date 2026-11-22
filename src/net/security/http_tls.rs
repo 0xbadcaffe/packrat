@@ -36,9 +36,7 @@ impl SecurityEngine {
     }
 
     pub(super) fn check_tls(&mut self, pkt: &Packet) {
-        if pkt.src_port != Some(443)
-            || !matches!(crate::analysis::stream::tcp_port_pair(pkt), Some((443, _)))
-        {
+        if pkt.src_port.is_none() || pkt.dst_port.is_none() {
             return;
         }
         let Some((version, cipher)) = crate::analysis::stream::tcp_segment_payload(pkt)

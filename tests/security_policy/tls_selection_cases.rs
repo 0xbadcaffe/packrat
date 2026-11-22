@@ -19,11 +19,14 @@ fn server_hello(version: u16, cipher: u16, extensions: &[u8]) -> Vec<u8> {
 }
 
 fn https_packet(no: u64, payload: &[u8], from_server: bool) -> Packet {
+    let (source, destination) = if from_server { (443, 50000) } else { (50000, 443) };
+    tls_packet(no, source, destination, payload)
+}
+
+fn tls_packet(no: u64, source: u16, destination: u16, payload: &[u8]) -> Packet {
     let mut raw = ipv4_tcp_packet(no, no as u32 * 1000, 0x18, payload).bytes;
-    if from_server {
-        raw[34..36].copy_from_slice(&443_u16.to_be_bytes());
-        raw[36..38].copy_from_slice(&50000_u16.to_be_bytes());
-    }
+    raw[34..36].copy_from_slice(&source.to_be_bytes());
+    raw[36..38].copy_from_slice(&destination.to_be_bytes());
     parse_ethernet(&raw, no, no as f64)
 }
 
@@ -41,14 +44,14 @@ fn tls_alerts_require_complete_server_selections() {
         server_hello(0x0301, 0x002f, &[0, 43, 0, 2, 3, 4]), // Inconsistent version extension.
         server_hello(0x0301, 0x002f, &[0, 1, 0, 6, 0]), // Truncated extension.
         vec![0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 1, 1, 5], // Standalone OID is not a certificate.
-        client_hello,
+        client_hello.clone(),
         prefixed,
         old[..old.len() - 1].to_vec(),
     ];
     for (index, candidate) in candidates.iter().enumerate() {
         core.analyze(&https_packet(index as u64 + 1, candidate, true));
     }
-    core.analyze(&https_packet(9, &old, false));
+    core.analyze(&https_packet(9, &client_hello, false));
     assert!(core.alert_center.items.iter().all(|alert| !matches!(alert.source.as_str(), "TLS" | "EXPOSURE")));
 
     for (no, version, cipher, rule_id) in [
@@ -89,4 +92,32 @@ fn rc4_selection_covers_rfc_cipher_suites_without_matching_adjacent_suites() {
     }
     assert!(!selected_rc4(0x1301, &[0, 43, 0, 2, 3, 4]));
     assert!(!selected_rc4(0xc011, &[0, 43, 0, 2, 3, 4]));
+}
+
+#[test]
+fn tls_selection_on_alternate_ports_requires_a_framed_tcp_server_hello() {
+    let mut core = AnalysisCore::default();
+    let hello = server_hello(0x0302, 0xc011, &[]);
+    let mut invalid_type = hello.clone();
+    invalid_type[5] = 1;
+    core.analyze(&tls_packet(1, 8443, 50000, &invalid_type));
+    core.analyze(&tls_packet(2, 993, 50000, &hello[..hello.len() - 1]));
+    let mut udp = tls_packet(3, 8443, 50000, &hello).bytes;
+    udp.drain(42..54);
+    udp[23] = 17;
+    udp[38..40].copy_from_slice(&((8 + hello.len()) as u16).to_be_bytes());
+    let ip_length = (udp.len() - 14) as u16;
+    udp[16..18].copy_from_slice(&ip_length.to_be_bytes());
+    core.analyze(&parse_ethernet(&udp, 3, 3.0));
+    assert!(core.alert_center.items.iter().all(|alert| alert.source != "TLS"));
+
+    core.analyze(&tls_packet(4, 8443, 50000, &hello));
+    core.analyze(&tls_packet(5, 993, 50000, &hello));
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "TLS").collect();
+    assert_eq!(alerts.len(), 4);
+    for (port, frame) in [(8443, 4), (993, 5)] {
+        let scoped: Vec<_> = alerts.iter().filter(|alert| alert.flow.unwrap().source.port() == port).collect();
+        assert_eq!(scoped.len(), 2);
+        assert!(scoped.iter().all(|alert| alert.packet_refs == [frame]));
+    }
 }

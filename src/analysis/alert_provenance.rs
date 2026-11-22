@@ -185,19 +185,19 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify whether Telnet is expected and migrate remote administration to SSH; the prompt alone does not establish credential transmission.",
         ),
         (
-            "TLS", "SSL 3.0 selected", "tls.ssl30_selected", 1, DirectObservation,
+            "TLS", "SSL 3.0 selected", "tls.ssl30_selected", 2, DirectObservation,
             "Verify the server's minimum protocol version and identify the client or intermediary requiring SSL 3.0.",
         ),
         (
-            "TLS", "TLS 1.0 selected", "tls.tls10_selected", 1, DirectObservation,
+            "TLS", "TLS 1.0 selected", "tls.tls10_selected", 2, DirectObservation,
             "Verify the server or proxy's minimum protocol version and check which clients still require TLS 1.0.",
         ),
         (
-            "TLS", "TLS 1.1 selected", "tls.tls11_selected", 1, DirectObservation,
+            "TLS", "TLS 1.1 selected", "tls.tls11_selected", 2, DirectObservation,
             "Verify the server or proxy's minimum protocol version and check which clients still require TLS 1.1.",
         ),
         (
-            "TLS", "RC4 selected", "tls.rc4_selected", 2, DirectObservation,
+            "TLS", "RC4 selected", "tls.rc4_selected", 3, DirectObservation,
             "Verify the selected cipher in ServerHello and remove RC4 from the server or proxy's allowed cipher suites.",
         ),
         (
