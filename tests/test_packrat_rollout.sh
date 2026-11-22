@@ -181,6 +181,22 @@ sudo() {
     command "$@"
 }
 
+(
+    backup_dir="$scratch/staging"
+    log=$(alert_log_for_session "$bridge_session")
+    mkdir -p -- "${log%/*}"
+    sudo() {
+        [[ $1 == -n && ( $2 == stat || $2 == test ) ]] || return 1
+        shift
+        "$@"
+    }
+    if stage_alert_log_size; then exit 1; fi
+    touch -- "$log"
+    [[ $(stage_alert_log_size) == 0 ]]
+    printf '%s\n' "synthetic finding" >"$log"
+    [[ $(stage_alert_log_size) == 18 ]]
+)
+
 printf '%s\n' 'initial alert' >"$data_dir/alerts.jsonl"
 stamp=$(primary_alert_log_stamp)
 [[ $(primary_alert_log_stamp) == "$stamp" ]]
@@ -239,6 +255,13 @@ replace_installed() {
 retire_bridge() { trace+=("retire-stage"); }
 alert_watcher_ready() { [[ $scenario != watcher_lost_before_cutover ]]; }
 await_primary_watcher() { [[ $scenario != watcher_lost_after_cutover ]]; }
+stage_alert_log_size() {
+    case $scenario in
+        staged_finding) printf '%s\n' 512 ;;
+        staged_log_missing) return 1 ;;
+        *) printf '%s\n' 0 ;;
+    esac
+}
 
 run_scenario() {
     scenario=$1
@@ -267,6 +290,8 @@ run_scenario primary_missing 1
 run_scenario primary_changed 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario primary_disappears 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario watcher_lost_before_cutover 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario staged_finding 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario staged_log_missing 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario cannot_stop 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat
 run_scenario success 0 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat retire-stage

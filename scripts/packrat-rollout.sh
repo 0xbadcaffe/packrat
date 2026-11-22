@@ -86,6 +86,12 @@ primary_alert_log_stamp() {
     sudo -n stat --format='%d:%i:%s:%y:%z' -- "$data_dir/alerts.jsonl"
 }
 
+stage_alert_log_size() {
+    local log
+    log=$(alert_log_for_session "$bridge_session")
+    sudo -n test -f "$log" && sudo -n stat --format='%s' -- "$log"
+}
+
 primary_capture_stamp() {
     local pid
     pid=$(capture_pid "$main_session" "$installed") || return 1
@@ -343,7 +349,7 @@ retire_bridge() {
 }
 
 rollout() {
-    local alert_log_before alert_log_now primary_before primary_now primary_pid
+    local alert_log_before alert_log_now primary_before primary_now primary_pid stage_size
     alert_log_before=$(primary_alert_log_stamp) && [[ -n $alert_log_before ]] ||
         { error "Cannot check the primary alert log; current capture not stopped"; return 1; }
     if ! primary_before=$(primary_capture_stamp) ||
@@ -374,6 +380,16 @@ rollout() {
     fi
     if ! alert_watcher_ready "$primary_now"; then
         error "Could not verify the primary alert watcher; current capture not stopped"
+        retire_bridge || error "Inspect $bridge_session before retrying"
+        return 1
+    fi
+    if ! stage_size=$(stage_alert_log_size) || [[ ! $stage_size =~ ^[0-9]+$ ]]; then
+        error "Cannot verify the staging alert log; current capture not stopped"
+        retire_bridge || error "Inspect $bridge_session before retrying"
+        return 1
+    fi
+    if [[ $stage_size != 0 ]]; then
+        error "Staging recorded alert data; review the staging alert log before retrying. Current capture not stopped."
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi
