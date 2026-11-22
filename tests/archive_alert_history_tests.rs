@@ -91,3 +91,40 @@ fn previous_alert_logs_keep_findings_and_use_the_newest_snapshot_across_segments
     assert_eq!(report[1]["alert_id"], 2);
     assert_eq!(report[1]["capture_id"], "capture-a");
 }
+
+#[test]
+fn recent_history_reads_across_chunks_and_keeps_only_distinct_scoped_alerts() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("alerts.jsonl");
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "MEDIUM", "Older matching finding", "first");
+    center.record(2, "IDS", "MEDIUM", "Updated finding", "original");
+    let row = |session, alert| json!({
+        "schema_version":1, "record_type":"alert", "session_id":session, "alert":alert
+    });
+    let mut older = center.items[0].clone();
+    older.capture_id = Some("capture-a".into());
+    let mut updated = center.items[1].clone();
+    updated.capture_id = older.capture_id.clone();
+    let mut file = std::fs::File::create(&log).unwrap();
+    writeln!(file, "{}", row("session-a", older)).unwrap();
+    writeln!(file, "{}", row("session-a", updated.clone())).unwrap();
+    writeln!(file, "{}", "x".repeat(1_048_577)).unwrap();
+    updated.detail = "\u{e9}".repeat(40_000);
+    updated.hit_count = 42;
+    writeln!(file, "{}", row("session-a", updated.clone())).unwrap();
+    write!(file, "\n{}", row("another-session", updated)).unwrap();
+    drop(file);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--alerts").arg(log)
+        .args(["--session", "session-a", "--capture-id", "capture-a", "--limit", "2"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report.len(), 2);
+    assert_eq!(report[0]["alert_id"], 2);
+    assert_eq!(report[0]["hit_count"], 42);
+    assert_eq!(report[0]["detail"], "\u{e9}".repeat(512));
+    assert_eq!(report[1]["alert_id"], 1);
+}

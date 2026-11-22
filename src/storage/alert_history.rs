@@ -2,11 +2,11 @@
 
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
-use std::{collections::VecDeque, fs::File, io::BufReader, path::{Path, PathBuf}};
+use std::{collections::HashSet, fs::File, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}};
 
 use crate::analysis::alert_center::{AlertDisposition, MAX_ALERT_PACKET_REFS};
 use crate::analysis::alert_provenance::EvidenceConfidence;
-use super::alert_jsonl::{ExistingAlertRecord, next_alert_line};
+use super::alert_jsonl::{ExistingAlertRecord, MAX_ALERT_LINE};
 
 pub const MAX_HISTORY_LIMIT: usize = 512;
 pub const MAX_PREVIOUS_LOGS: usize = 8;
@@ -64,63 +64,107 @@ pub fn recent_alerts_across_logs(
 ) -> Result<Vec<AlertHistoryEntry>> {
     ensure!((1..=MAX_HISTORY_LIMIT).contains(&limit), "Alert history limit must be 1..={MAX_HISTORY_LIMIT}");
     let logs = AlertLogs::new(active, previous)?;
-    let mut latest = VecDeque::<AlertHistoryEntry>::with_capacity(limit);
-    for log in logs.paths() {
-        append_history(log, session_filter, capture_filter, limit, &mut latest)
-            .with_context(|| format!("Read alert log {}", log.display()))?;
+    let files = logs.paths().map(|path| {
+        File::open(path).map(|file| (path, file))
+            .with_context(|| format!("Open alert log {}", path.display()))
+    }).collect::<Result<Vec<_>>>()?;
+    let mut latest = Vec::with_capacity(limit);
+    let mut seen = HashSet::with_capacity(limit);
+    let mut line = Vec::new();
+    for (path, file) in files.into_iter().rev() {
+        let mut reader = ReverseAlertLines::new(file)
+            .with_context(|| format!("Stat alert log {}", path.display()))?;
+        while reader.next(&mut line).with_context(|| format!("Read alert log {}", path.display()))? {
+            let Some(record) = ExistingAlertRecord::decode(&line) else { continue };
+            let alert = record.alert;
+            if record.session_id.is_empty() || record.session_id.len() > 128
+                || alert.capture_id.as_ref().is_some_and(|id| id.is_empty() || id.len() > 128)
+                || alert.packet_refs.len() > MAX_ALERT_PACKET_REFS
+                || session_filter.is_some_and(|id| record.session_id != id)
+                || capture_filter.is_some_and(|id| alert.capture_id.as_deref() != Some(id))
+                || !seen.insert((record.session_id.clone(), alert.capture_id.clone(), alert.id))
+            {
+                continue;
+            }
+            let evidence_frame_count = alert.evidence_frame_numbers().len();
+            latest.push(AlertHistoryEntry {
+                session_id: record.session_id,
+                capture_id: alert.capture_id,
+                alert_id: alert.id,
+                title: limited(&alert.title, 160),
+                severity: limited(&alert.severity, 16),
+                detail: limited(&alert.detail, 512),
+                disposition: alert.disposition,
+                first_seen: alert.first_seen,
+                last_seen: alert.last_seen,
+                hit_count: alert.hit_count,
+                evidence_frame_count,
+                rule_id: alert.provenance.as_ref().map(|rule| limited(&rule.rule_id, 128)),
+                revision: alert.provenance.as_ref().map(|rule| rule.revision),
+                confidence: alert.provenance.as_ref().map(|rule| rule.confidence),
+                verify: alert.provenance.as_ref().map(|rule| limited(&rule.verification_hint, 240)),
+            });
+            if latest.len() == limit {
+                return Ok(latest);
+            }
+        }
     }
-    // Deliver most recently appended snapshots first, including review updates.
-    Ok(latest.into_iter().rev().collect())
+    Ok(latest)
 }
 
-fn append_history(
-    log: &Path,
-    session_filter: Option<&str>,
-    capture_filter: Option<&str>,
-    limit: usize,
-    latest: &mut VecDeque<AlertHistoryEntry>,
-) -> Result<()> {
-    let mut reader = BufReader::new(File::open(log)?);
-    let mut line = Vec::new();
-    while next_alert_line(&mut reader, &mut line).context("Read saved alert log")? {
-        let Some(record) = ExistingAlertRecord::decode(&line) else { continue };
-        let alert = record.alert;
-        if record.session_id.is_empty() || record.session_id.len() > 128
-            || alert.capture_id.as_ref().is_some_and(|id| id.is_empty() || id.len() > 128)
-            || alert.packet_refs.len() > MAX_ALERT_PACKET_REFS
-            || session_filter.is_some_and(|id| record.session_id != id)
-            || capture_filter.is_some_and(|id| alert.capture_id.as_deref() != Some(id))
-        {
-            continue;
+const READ_CHUNK: usize = 64 * 1024;
+
+struct ReverseAlertLines {
+    file: File,
+    chunk: Vec<u8>,
+    offset: u64,
+    end: usize,
+    terminated: bool,
+}
+
+impl ReverseAlertLines {
+    fn new(file: File) -> std::io::Result<Self> {
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Not a regular alert log"));
         }
-        if let Some(old) = latest.iter().position(|entry| {
-            entry.session_id == record.session_id && entry.capture_id == alert.capture_id
-                && entry.alert_id == alert.id
-        }) {
-            latest.remove(old);
-        } else if latest.len() == limit {
-            latest.pop_front();
-        }
-        let evidence_frame_count = alert.evidence_frame_numbers().len();
-        latest.push_back(AlertHistoryEntry {
-            session_id: record.session_id,
-            capture_id: alert.capture_id,
-            alert_id: alert.id,
-            title: limited(&alert.title, 160),
-            severity: limited(&alert.severity, 16),
-            detail: limited(&alert.detail, 512),
-            disposition: alert.disposition,
-            first_seen: alert.first_seen,
-            last_seen: alert.last_seen,
-            hit_count: alert.hit_count,
-            evidence_frame_count,
-            rule_id: alert.provenance.as_ref().map(|rule| limited(&rule.rule_id, 128)),
-            revision: alert.provenance.as_ref().map(|rule| rule.revision),
-            confidence: alert.provenance.as_ref().map(|rule| rule.confidence),
-            verify: alert.provenance.as_ref().map(|rule| limited(&rule.verification_hint, 240)),
-        });
+        Ok(Self { file, chunk: vec![0; READ_CHUNK], offset: metadata.len(), end: 0, terminated: false })
     }
-    Ok(())
+
+    fn next(&mut self, line: &mut Vec<u8>) -> std::io::Result<bool> {
+        line.clear();
+        let mut oversized = false;
+        loop {
+            if self.end == 0 {
+                if self.offset == 0 {
+                    line.reverse();
+                    return Ok(!oversized && !line.is_empty());
+                }
+                self.end = self.offset.min(READ_CHUNK as u64) as usize;
+                self.offset -= self.end as u64;
+                self.file.seek(SeekFrom::Start(self.offset))?;
+                self.file.read_exact(&mut self.chunk[..self.end])?;
+            }
+            let newline = self.chunk[..self.end].iter().rposition(|&byte| byte == b'\n');
+            let start = newline.map_or(0, |pos| pos + 1);
+            let bytes = &self.chunk[start..self.end];
+            if !oversized && line.len() + bytes.len() + usize::from(self.terminated) <= MAX_ALERT_LINE {
+                line.extend(bytes.iter().rev().copied());
+            } else {
+                oversized = true;
+            }
+            self.end = newline.unwrap_or(0);
+            if newline.is_some() {
+                self.terminated = true;
+                if !oversized && !line.is_empty() {
+                    line.reverse();
+                    return Ok(true);
+                }
+                oversized = false;
+                line.clear();
+            }
+        }
+    }
 }
 
 fn limited(value: &str, chars: usize) -> String {
