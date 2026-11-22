@@ -1,6 +1,53 @@
 use super::*;
 
 #[test]
+fn invalid_dns_question_counts_are_reported_but_do_not_enter_correlation() {
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let other = "10.0.0.54";
+    let mut core = AnalysisCore::default();
+    let query = dns_packet(1, false, client, resolver, 60, "example.test");
+    let mut malformed_query = query.clone();
+    malformed_query.bytes[46..48].copy_from_slice(&2_u16.to_be_bytes());
+    core.analyze(&malformed_query);
+    assert!(core.security.dns_exchange_for_packet(&malformed_query).is_none());
+
+    for (no, opcode, count) in [(2, 0, 0_u16), (3, 4, 1), (4, 5, 2)] {
+        for response in [false, true] {
+            let (src, dst) = if response { (resolver, client) } else { (client, resolver) };
+            let mut unsupported = dns_packet(no, response, src, dst, 60, "example.test");
+            unsupported.bytes[44] |= opcode << 3;
+            unsupported.bytes[46..48].copy_from_slice(&count.to_be_bytes());
+            core.analyze(&unsupported);
+            assert!(core.security.dns_exchange_for_packet(&unsupported).is_none());
+        }
+    }
+    assert_eq!(core.alert_center.items.len(), 1);
+    let reply = dns_packet(5, true, resolver, client, 60, "example.test");
+    core.analyze(&reply);
+    assert_eq!(core.alert_center.items[1].title, "DNS reply without observed query");
+
+    let query = dns_packet(6, false, client, resolver, 60, "example.test");
+    let reply = dns_packet(7, true, resolver, client, 60, "example.test");
+    let mut malformed_reply = dns_packet(8, true, other, client, 60, "example.test");
+    malformed_reply.bytes[46..48].copy_from_slice(&2_u16.to_be_bytes());
+    for packet in [&query, &reply, &malformed_reply] {
+        core.analyze(packet);
+    }
+    assert_eq!(core.alert_center.items.len(), 3);
+    for (index, frame) in [(0, 1), (2, 8)] {
+        let alert = &core.alert_center.items[index];
+        assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "dns.invalid_question_count");
+        assert_eq!(alert.severity, "LOW");
+        assert_eq!(alert.packet_refs, [frame]);
+        assert!(alert.detail.contains("declares 2 questions"));
+    }
+    assert!(core.security.dns_exchange_for_packet(&malformed_reply).is_none());
+    assert_eq!(core.security.dns_exchange_for_packet(&query).unwrap().replies.len(), 1);
+    assert!(core.incidents.incidents.is_empty());
+}
+
+#[test]
 fn dns_mismatched_questions_do_not_become_competing_reply_evidence() {
     let client = "10.0.0.5";
     let resolver = "10.0.0.53";

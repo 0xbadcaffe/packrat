@@ -149,6 +149,10 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "ambiguous_reply_does_not_consume_candidate_queries",
     },
     CoverageGroup {
+        signatures: &["DNS invalid question count"],
+        positive_test: "invalid_dns_question_counts_are_reported_but_do_not_enter_correlation",
+    },
+    CoverageGroup {
         signatures: &[
             "Unexpected DNS responder",
             "Conflicting DNS responses",
@@ -192,6 +196,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("dns_transaction/txt_reply_tests.rs"),
     include_str!("dns_transaction/external_resolver_tests.rs"),
     include_str!("dns_transaction/jndi_label_tests.rs"),
+    include_str!("dns_transaction/investigation_tests.rs"),
     include_str!("industrial_policy_tests.rs"),
 );
 

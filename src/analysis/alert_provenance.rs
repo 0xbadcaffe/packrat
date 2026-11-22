@@ -153,6 +153,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare concurrent DNS queries on the same client port and transaction ID before assigning the reply.",
         ),
         (
+            "IDS", "DNS invalid question count", "dns.invalid_question_count", 1, DirectObservation,
+            "Inspect the captured DNS opcode and question count. Check resolver logs for a format error; this does not establish compromise.",
+        ),
+        (
             "IDS", "DNS NXDOMAIN burst", "dns.nxdomain_distinct_names", 1, Correlated,
             "Review the queried names and client process; search suffixes and misconfiguration can also cause bursts.",
         ),

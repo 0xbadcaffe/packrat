@@ -90,6 +90,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "Industrial state-changing command",
     "DNS reply without observed query",
     "DNS reply correlation ambiguous",
+    "DNS invalid question count",
     "DNS transaction question mismatch",
     "Unexpected DNS responder",
     "Conflicting DNS responses",

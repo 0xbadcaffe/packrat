@@ -239,6 +239,7 @@ impl SecurityEngine {
     pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet) {
         for finding in self.dns_transactions.observe(pkt) {
             let (signature, severity) = match finding.kind {
+                DnsFindingKind::InvalidQuestionCount => ("DNS invalid question count", Severity::Low),
                 DnsFindingKind::ReplyWithoutObservedQuery => {
                     ("DNS reply without observed query", Severity::Low)
                 }

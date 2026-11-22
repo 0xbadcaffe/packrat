@@ -29,6 +29,7 @@ pub struct DnsFinding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DnsFindingKind {
+    InvalidQuestionCount,
     ReplyWithoutObservedQuery,
     AmbiguousReply,
     NxDomainBurst,
@@ -122,15 +123,30 @@ impl DnsTransactionTracker {
         if source_port != 53 && destination_port != 53 {
             return Vec::new();
         }
-        let Some(message) = parse_message(payload) else {
+        let Some(header) = DnsQueryHeader::parse(payload) else {
+            return Vec::new();
+        };
+        if (header.response && source_port != 53) || (!header.response && destination_port != 53) {
+            return Vec::new();
+        }
+        if header.questions > 1 {
+            return vec![DnsFinding {
+                kind: DnsFindingKind::InvalidQuestionCount,
+                related_packets: Vec::new(),
+                detail: format!(
+                    "DNS {} 0x{:04x} from {} to {} declares {} questions; standard queries and replies can carry at most one",
+                    if header.response { "reply" } else { "query" },
+                    header.id, packet.src, packet.dst, header.questions,
+                ),
+            }];
+        }
+        let Some(message) = parse_single_question(payload, header) else {
             return Vec::new();
         };
         let scope = DnsScope::from_packet(packet);
 
-        if !message.response && destination_port == 53 {
-            let jndi_label = message.bytes[2] & 0x78 == 0
-                && message.bytes[4..6] == [0, 1]
-                && message.question.qclass == 1
+        if !message.response {
+            let jndi_label = message.question.qclass == 1
                 && dns_name_has_label(&message.question.name, "jndi");
             self.insert_query(
                 TransactionKey {
@@ -156,10 +172,6 @@ impl DnsTransactionTracker {
                 Vec::new()
             };
         }
-        if !message.response || source_port != 53 {
-            return Vec::new();
-        }
-
         let key = TransactionKey {
             scope,
             client: packet.dst.clone(),
@@ -266,16 +278,40 @@ fn dns_name_has_label(name: &str, label: &str) -> bool {
     }).any(|part| part == label)
 }
 
+struct DnsQueryHeader {
+    id: u16,
+    response: bool,
+    questions: u16,
+}
+
+impl DnsQueryHeader {
+    fn parse(bytes: &[u8]) -> Option<Self> {
+        // The tracker decodes QUERY questions, not other opcode-specific sections.
+        if bytes.len() < 12 || bytes[2] & 0x78 != 0 {
+            return None;
+        }
+        Some(Self {
+            id: u16::from_be_bytes([bytes[0], bytes[1]]),
+            response: bytes[2] & 0x80 != 0,
+            questions: u16::from_be_bytes([bytes[4], bytes[5]]),
+        })
+    }
+}
+
 fn parse_message(bytes: &[u8]) -> Option<DnsMessage<'_>> {
-    if bytes.len() < 12 || u16::from_be_bytes([bytes[4], bytes[5]]) == 0 {
+    parse_single_question(bytes, DnsQueryHeader::parse(bytes)?)
+}
+
+fn parse_single_question(bytes: &[u8], header: DnsQueryHeader) -> Option<DnsMessage<'_>> {
+    if header.questions != 1 {
         return None;
     }
     let (name, end) = parse_name(bytes, 12)?;
     let qtype = u16::from_be_bytes([*bytes.get(end)?, *bytes.get(end + 1)?]);
     let qclass = u16::from_be_bytes([*bytes.get(end + 2)?, *bytes.get(end + 3)?]);
     Some(DnsMessage {
-        id: u16::from_be_bytes([bytes[0], bytes[1]]),
-        response: bytes[2] & 0x80 != 0,
+        id: header.id,
+        response: header.response,
         question: Question {
             name,
             qtype,
