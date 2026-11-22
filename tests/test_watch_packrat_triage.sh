@@ -22,6 +22,7 @@ live() {
             packets_total:$packets, pcap_buffer_drops:0, alert_saving:true},
         live_packet_archive:"enabled", open_priority_alerts_in_sample:($queue | length),
         priority_sample_at_limit:false, has_more_alerts:($alerts | length > 50),
+        alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_limit:false,detail:"private context"},
         review_queue:($queue | map(. + {title:"private detail", bytes:[1,2], verify:"private advice"})),
         alerts:($alerts | map(. + {detail:"private payload", flow:{src:"10.2.3.4"}, last_seen:$packets}))
     }'
@@ -84,13 +85,22 @@ await_packets 34
 live degraded 35 "$queue" "$medium" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 35
+live degraded 36 "$queue" "$medium" | jq '.health.pcap_buffer_drops=1' >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 36
+live degraded 37 "$queue" "$medium" |
+    jq '.health.pcap_buffer_drops=1 | .alert_log_integrity.invalid_records=2' >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 37
 for _ in {1..80}; do
-    if jq -se 'length == 4' "$scratch/events" >/dev/null 2>&1; then break; fi
+    if jq -se 'length == 6' "$scratch/events" >/dev/null 2>&1; then break; fi
     sleep 0.1
 done
 kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
-jq -se 'map(.packets)==[30,32,34,35] and .[1].recent_alerts[0].alert_id==9
-    and .[2].recent_alerts[0].hit_count==2 and .[3].review_queue[0].alert_id==7' "$scratch/events" >/dev/null
+jq -se 'map(.packets)==[30,32,34,35,36,37] and .[1].recent_alerts[0].alert_id==9
+    and .[2].recent_alerts[0].hit_count==2 and .[3].review_queue[0].alert_id==7
+    and .[4].buffer_drops==1 and .[5].alert_log_integrity=={
+        invalid_records:2,oversized_records:0,stopped_at_limit:false}' "$scratch/events" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'
