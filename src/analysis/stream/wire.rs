@@ -14,7 +14,23 @@ pub fn tcp_payload_offset(packet: &Packet) -> usize {
 }
 
 pub(crate) fn tcp_segment_payload(packet: &Packet) -> Option<(u32, &[u8])> {
+    segment_payload(packet, tcp_view(packet)?)
+}
+
+pub(crate) fn tcp_payload_with_ack(packet: &Packet, ports: (u16, u16)) -> Option<(u32, &[u8])> {
+    const ACK: u8 = 0x10;
+    const SYN_OR_RST: u8 = 0x06;
     let view = tcp_view(packet)?;
+    let flags = *packet.bytes.get(view.header + 13)?;
+    if flags & (ACK | SYN_OR_RST) != ACK
+        || (read_u16(&packet.bytes, view.header)?, read_u16(&packet.bytes, view.header + 2)?) != ports
+    {
+        return None;
+    }
+    segment_payload(packet, view)
+}
+
+fn segment_payload(packet: &Packet, view: TcpView) -> Option<(u32, &[u8])> {
     let sequence = u32::from_be_bytes(
         packet.bytes.get(view.header + 4..view.header + 8)?.try_into().ok()?,
     );

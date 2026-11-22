@@ -233,6 +233,8 @@ mod cases_2;
 mod outbound_entropy_cases;
 #[path = "security_policy/cases_3.rs"]
 mod cases_3;
+#[path = "security_policy/auth_transport_cases.rs"]
+mod auth_transport_cases;
 #[path = "security_policy/dhcp_cases.rs"]
 mod dhcp_cases;
 #[path = "security_policy/lookup_marker_cases.rs"]

@@ -43,7 +43,9 @@ impl SecurityEngine {
         else {
             return;
         };
-        let Some((sequence, payload)) = crate::analysis::stream::tcp_segment_payload(pkt) else {
+        let Some((sequence, payload)) =
+            crate::analysis::stream::tcp_payload_with_ack(pkt, (server_port, client_port))
+        else {
             return;
         };
         let service = match server_port {
@@ -52,9 +54,6 @@ impl SecurityEngine {
             80 | 443 | 8080 if is_http_unauthorized(payload) => "HTTP",
             _ => return,
         };
-        if crate::analysis::stream::tcp_port_pair(pkt) != Some((server_port, client_port)) {
-            return;
-        }
         self.record_service_observation(pkt, service, true, server_port, (client_port, sequence));
     }
 

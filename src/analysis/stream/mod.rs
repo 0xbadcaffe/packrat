@@ -67,7 +67,7 @@ pub(crate) use dns::{DnsTcpObservation, DnsTcpRecord};
 use sequence::*;
 pub use tools::{StreamMatch, StreamOverlayState, export_segments, search_segments};
 pub use wire::tcp_payload_offset;
-pub(crate) use wire::{tcp_port_pair, tcp_segment_payload};
+pub(crate) use wire::{tcp_payload_with_ack, tcp_port_pair, tcp_segment_payload};
 use wire::*;
 
 // ─── Stream key ───────────────────────────────────────────────────────────────

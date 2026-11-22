@@ -243,7 +243,7 @@ fn ssh_burst_counts_unique_connection_starts_and_keeps_scopes_separate(#[case] i
     assert!(core.incidents.incidents.is_empty());
 }
 
-fn smb2_session_setup_reply(status: u32, flags: u8) -> Vec<u8> {
+pub(super) fn smb2_session_setup_reply(status: u32, flags: u8) -> Vec<u8> {
     let mut payload = vec![0; 4 + 73];
     payload[3] = 73;
     let message = &mut payload[4..];
