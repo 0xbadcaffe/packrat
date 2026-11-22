@@ -10,6 +10,7 @@ use std::path::Path;
 use crate::analysis::alert_center::{AlertItem, MAX_ALERT_PACKET_REFS};
 use crate::export::pcapng::PcapNgWriter;
 use crate::storage::packet_archive::{PacketArchive, valid_capture_id};
+use super::alert_history::AlertLogs;
 use super::alert_jsonl::{ExistingAlertRecord, next_alert_line};
 
 mod verify;
@@ -85,7 +86,20 @@ pub fn export_scoped_alert_evidence(
     capture_filter: Option<&str>,
     output: &Path,
 ) -> Result<EvidenceExportSummary> {
-    let alert = latest_alert(log, session_id, alert_id, capture_filter)?;
+    export_alert_evidence_across_logs(
+        archive, AlertLogs::new(log, &[])?, session_id, alert_id, capture_filter, output,
+    )
+}
+
+pub fn export_alert_evidence_across_logs(
+    archive: &mut PacketArchive,
+    logs: AlertLogs<'_>,
+    session_id: &str,
+    alert_id: u64,
+    capture_filter: Option<&str>,
+    output: &Path,
+) -> Result<EvidenceExportSummary> {
+    let alert = latest_alert_in_logs(logs, session_id, alert_id, capture_filter)?;
     let (capture_id, frames) = scoped_frames(&alert)?;
 
     let mut builder = DirBuilder::new();
@@ -111,7 +125,19 @@ pub fn alert_evidence_availability(
     alert_id: u64,
     capture_filter: Option<&str>,
 ) -> Result<EvidenceAvailability> {
-    let alert = latest_alert(log, session_id, alert_id, capture_filter)?;
+    alert_evidence_across_logs(
+        archive, AlertLogs::new(log, &[])?, session_id, alert_id, capture_filter,
+    )
+}
+
+pub fn alert_evidence_across_logs(
+    archive: &mut PacketArchive,
+    logs: AlertLogs<'_>,
+    session_id: &str,
+    alert_id: u64,
+    capture_filter: Option<&str>,
+) -> Result<EvidenceAvailability> {
+    let alert = latest_alert_in_logs(logs, session_id, alert_id, capture_filter)?;
     let (capture_id, frames) = scoped_frames(&alert)?;
     let frames = frames.into_iter().map(|frame_number| {
         let status = match archive.packet_for_capture(capture_id, frame_number) {
@@ -206,20 +232,27 @@ fn export_into(
     Ok(summary)
 }
 
+#[cfg(test)]
 fn latest_alert(log: &Path, session_id: &str, alert_id: u64, capture_filter: Option<&str>) -> Result<AlertItem> {
-    let mut reader = BufReader::new(File::open(log).context("Open saved alert log")?);
+    latest_alert_in_logs(AlertLogs::new(log, &[])?, session_id, alert_id, capture_filter)
+}
+
+fn latest_alert_in_logs(logs: AlertLogs<'_>, session_id: &str, alert_id: u64, capture_filter: Option<&str>) -> Result<AlertItem> {
     let mut line = Vec::new();
     let mut selected: Option<AlertItem> = None;
-    while next_alert_line(&mut reader, &mut line)? {
-        let Some(row) = ExistingAlertRecord::decode(&line) else { continue };
-        if row.session_id == session_id && row.alert.id == alert_id
-            && capture_filter.is_none_or(|scope| row.alert.capture_id.as_deref() == Some(scope))
-        {
-            ensure!(
-                selected.as_ref().is_none_or(|item| item.capture_id == row.alert.capture_id),
-                "Alert ID is ambiguous across captures in the specified session; specify --capture-id"
-            );
-            selected = Some(row.alert);
+    for log in logs.paths() {
+        let mut reader = BufReader::new(File::open(log).with_context(|| format!("Open alert log {}", log.display()))?);
+        while next_alert_line(&mut reader, &mut line)? {
+            let Some(row) = ExistingAlertRecord::decode(&line) else { continue };
+            if row.session_id == session_id && row.alert.id == alert_id
+                && capture_filter.is_none_or(|scope| row.alert.capture_id.as_deref() == Some(scope))
+            {
+                ensure!(
+                    selected.as_ref().is_none_or(|item| item.capture_id == row.alert.capture_id),
+                    "Alert ID is ambiguous across captures in the specified session; specify --capture-id"
+                );
+                selected = Some(row.alert);
+            }
         }
     }
     selected.ok_or_else(|| anyhow!("No matching alert in the specified session"))

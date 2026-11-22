@@ -43,12 +43,15 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
     let mut other = first.clone();
     other.capture_id = Some("capture-b".into());
     let log = directory.path().join("alerts.jsonl");
-    let rows: Vec<_> = [first, latest, other].into_iter().map(|alert| {
+    let previous = directory.path().join("alerts.jsonl.1");
+    let row = |alert| {
         json!({ "schema_version": 1, "record_type": "alert", "session_id": "s", "alert": alert }).to_string()
-    }).collect();
-    std::fs::write(&log, rows.join("\n")).unwrap();
+    };
+    std::fs::write(&previous, [row(first), row(other)].join("\n")).unwrap();
+    std::fs::write(&log, row(latest)).unwrap();
     let status = |filter: &[&str]| Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
         .arg(&archive_path).arg("--alert-status").arg(&log).args(["s", "1"])
+        .arg("--previous-log").arg(&previous)
         .args(filter).output().unwrap();
     let ambiguous = status(&[]);
     assert!(!ambiguous.status.success());
@@ -68,9 +71,15 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
     }));
 
     let export = directory.path().join("export");
-    let result = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+    let missing = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
         .arg(&archive_path).arg("--alert-evidence").arg(&log).args(["s", "1"])
         .arg(&export).args(["--capture-id", "capture-b"]).output().unwrap();
+    assert!(!missing.status.success());
+    assert!(!export.exists());
+    let result = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&archive_path).arg("--alert-evidence").arg(&log).args(["s", "1"])
+        .arg(&export).args(["--capture-id", "capture-b"])
+        .arg("--previous-log").arg(&previous).output().unwrap();
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let packets = packrat_tui::pcap_replay::read_pcap(&export.join("evidence.pcapng")).unwrap();
     assert_eq!(packets.len(), 1);

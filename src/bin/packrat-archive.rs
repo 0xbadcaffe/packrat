@@ -1,4 +1,6 @@
 use packrat_tui::storage::packet_archive::PacketArchive;
+use packrat_tui::storage::alert_history::{AlertLogs, MAX_PREVIOUS_LOGS};
+use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -7,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID]\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID]\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first."
         );
         return Ok(());
     };
@@ -70,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     match action {
         Some(flag) if matches!(flag.as_str(), "--alert-evidence" | "--alert-status") => {
-            use packrat_tui::storage::alert_evidence::{alert_evidence_availability, export_scoped_alert_evidence};
+            use packrat_tui::storage::alert_evidence::{alert_evidence_across_logs, export_alert_evidence_across_logs};
             let log = args.next().ok_or("Alert command requires an alert log")?;
             let session = args.next().ok_or("Alert command requires a session ID")?;
             let id = args.next().ok_or("Alert command requires an alert ID")?.parse()?;
@@ -79,23 +81,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 None
             };
-            let capture_filter = match args.next().as_deref() {
-                Some("--capture-id") => Some(args.next().filter(|id| !id.is_empty()).ok_or("--capture-id requires a capture ID")?),
-                Some(_) => return Err("Expected --capture-id after positional arguments".into()),
-                None => None,
-            };
-            if args.next().is_some() {
-                return Err("Unexpected argument after capture ID".into());
+            let mut capture_filter = None;
+            let mut previous = Vec::new();
+            while let Some(option) = args.next() {
+                let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
+                    .ok_or_else(|| format!("{option} requires a value"))?;
+                match option.as_str() {
+                    "--capture-id" if capture_filter.is_none() => capture_filter = Some(value),
+                    "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(PathBuf::from(value)),
+                    "--previous-log" => return Err("Too many previous alert logs".into()),
+                    _ => return Err(format!("Unknown or repeated alert option: {option}").into()),
+                }
             }
-            let log = std::path::Path::new(&log);
+            let logs = AlertLogs::new(std::path::Path::new(&log), &previous)?;
             let scope = capture_filter.as_deref();
             if let Some(output) = output {
-                let summary = export_scoped_alert_evidence(
-                    &mut archive, log, &session, id, scope, std::path::Path::new(&output),
+                let summary = export_alert_evidence_across_logs(
+                    &mut archive, logs, &session, id, scope, std::path::Path::new(&output),
                 )?;
                 println!("{}", serde_json::to_string(&summary)?);
             } else {
-                let status = alert_evidence_availability(&mut archive, log, &session, id, scope)?;
+                let status = alert_evidence_across_logs(&mut archive, logs, &session, id, scope)?;
                 println!("{}", serde_json::to_string(&status)?);
             }
         }
@@ -119,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
-    use packrat_tui::storage::alert_history::{MAX_PREVIOUS_LOGS, recent_alerts_across_logs};
+    use packrat_tui::storage::alert_history::recent_alerts_across_logs;
 
     let log = args.next().ok_or("--alerts requires an alert log")?;
     let (mut session, mut capture, mut limit) = (None, None, None);
@@ -131,7 +137,7 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
             "--session" if session.is_none() => session = Some(value),
             "--capture-id" if capture.is_none() => capture = Some(value),
             "--limit" if limit.is_none() => limit = Some(value.parse()?),
-            "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(value),
+            "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(PathBuf::from(value)),
             "--previous-log" => return Err("Too many previous alert logs".into()),
             _ => return Err(format!("Unknown or repeated alert option: {flag}").into()),
         }

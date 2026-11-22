@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
-use std::{collections::VecDeque, fs::File, io::BufReader, path::Path};
+use std::{collections::VecDeque, fs::File, io::BufReader, path::{Path, PathBuf}};
 
 use crate::analysis::alert_center::{AlertDisposition, MAX_ALERT_PACKET_REFS};
 use crate::analysis::alert_provenance::EvidenceConfidence;
@@ -10,6 +10,22 @@ use super::alert_jsonl::{ExistingAlertRecord, next_alert_line};
 
 pub const MAX_HISTORY_LIMIT: usize = 512;
 pub const MAX_PREVIOUS_LOGS: usize = 8;
+
+pub struct AlertLogs<'a> {
+    active: &'a Path,
+    previous: &'a [PathBuf],
+}
+
+impl<'a> AlertLogs<'a> {
+    pub fn new(active: &'a Path, previous: &'a [PathBuf]) -> Result<Self> {
+        ensure!(previous.len() <= MAX_PREVIOUS_LOGS, "Too many previous alert logs");
+        Ok(Self { active, previous })
+    }
+
+    pub(crate) fn paths(&self) -> impl Iterator<Item = &'a Path> {
+        self.previous.iter().map(PathBuf::as_path).chain(std::iter::once(self.active))
+    }
+}
 
 #[derive(Serialize)]
 pub struct AlertHistoryEntry {
@@ -36,20 +52,20 @@ pub fn recent_alerts(
     capture_filter: Option<&str>,
     limit: usize,
 ) -> Result<Vec<AlertHistoryEntry>> {
-    recent_alerts_across_logs(&[] as &[&Path], log, session_filter, capture_filter, limit)
+    recent_alerts_across_logs(&[], log, session_filter, capture_filter, limit)
 }
 
 pub fn recent_alerts_across_logs(
-    previous: &[impl AsRef<Path>],
+    previous: &[PathBuf],
     active: &Path,
     session_filter: Option<&str>,
     capture_filter: Option<&str>,
     limit: usize,
 ) -> Result<Vec<AlertHistoryEntry>> {
     ensure!((1..=MAX_HISTORY_LIMIT).contains(&limit), "Alert history limit must be 1..={MAX_HISTORY_LIMIT}");
-    ensure!(previous.len() <= MAX_PREVIOUS_LOGS, "Too many previous alert logs");
+    let logs = AlertLogs::new(active, previous)?;
     let mut latest = VecDeque::<AlertHistoryEntry>::with_capacity(limit);
-    for log in previous.iter().map(AsRef::as_ref).chain(std::iter::once(active)) {
+    for log in logs.paths() {
         append_history(log, session_filter, capture_filter, limit, &mut latest)
             .with_context(|| format!("Read alert log {}", log.display()))?;
     }
