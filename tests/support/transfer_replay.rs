@@ -8,6 +8,15 @@ use packrat_tui::{
 use std::path::Path;
 
 pub fn write_fixture(path: &Path, frames: u64, varied_bytes: bool, split_interface: bool) {
+    write_timed_fixture(path, 1..=frames, varied_bytes, split_interface);
+}
+
+pub fn write_timed_fixture(
+    path: &Path,
+    ticks: impl IntoIterator<Item = u64>,
+    varied_bytes: bool,
+    split_interface: bool,
+) {
     let mut capture = PcapNgWriter::create(path).unwrap();
     let payload: Vec<u8> = (0..60_000)
         .map(|index| {
@@ -32,11 +41,12 @@ pub fn write_fixture(path: &Path, frames: u64, varied_bytes: bool, split_interfa
     bytes.extend_from_slice(&payload);
     let len = bytes.len() as u32;
 
-    for frame in 1..=frames {
-        let mut packet = parse_ethernet(&bytes, frame, frame as f64 / 10.0);
+    for (index, ticks) in ticks.into_iter().enumerate() {
+        let frame = index as u64 + 1;
+        let mut packet = parse_ethernet(&bytes, frame, ticks as f64 / 10.0);
         packet.capture = Some(CaptureMetadata {
             timestamp: Some(CaptureTimestamp {
-                ticks: frame,
+                ticks,
                 resolution: TimestampResolution::Decimal(1),
                 offset_seconds: 0,
             }),
