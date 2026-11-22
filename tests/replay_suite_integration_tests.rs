@@ -17,6 +17,8 @@ mod vlan_tags;
 mod control_plane;
 #[path = "replay_suite/scans.rs"]
 mod scans;
+#[path = "replay_suite/dhcp.rs"]
+mod dhcp;
 use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use serde_json::{Value, json};
@@ -324,7 +326,6 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["inconclusive"], 1);
     assert_eq!(report["cases"][0]["score"], Value::Null);
-
     let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
         .arg("--alerts-only").arg(root.join("fixed.pcapng")).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));

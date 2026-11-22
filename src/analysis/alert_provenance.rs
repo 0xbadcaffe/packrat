@@ -213,7 +213,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the sampled client identities with expected reconnects and check DHCP server logs for lease pool exhaustion.",
         ),
         (
-            "IDS", "DHCP server identity changed", "dhcp.new_server_identifier", 2, Correlated,
+            "IDS", "DHCP server identity changed", "dhcp.new_server_identifier", 3, Correlated,
             "Compare the retained replies with the approved DHCP server inventory and check for planned failover or migration.",
         ),
         (

@@ -49,6 +49,17 @@ fn dhcp_server_comparison_ignores_old_and_other_vlan_observations() {
     assert!(finding.alert.detail.contains("DHCP ACK"));
 }
 
+#[test]
+fn dhcp_server_comparison_prefers_the_latest_frame_at_the_same_timestamp() {
+    let mut engine = SecurityEngine::default();
+    engine.update(&server_reply(1, 2, 1, Some(250), 1.0));
+    engine.update(&server_reply(2, 2, 2, Some(1), 1.0));
+    let result = engine.inspect(&server_reply(3, 5, 3, Some(2), 1.0));
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == SERVER_CHANGE).unwrap();
+    assert_eq!(finding.related_packets, [2]);
+    assert!(finding.alert.detail.contains("previously observed 10.0.0.1"));
+}
+
 fn discovery(frame: u64, identity: u8, timestamp: f64) -> Packet {
     let mac = [2, 0, 0, 0, 0, identity];
     let mut packet = dhcp_packet(frame, 1, mac, mac, None);

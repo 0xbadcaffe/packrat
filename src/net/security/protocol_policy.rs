@@ -306,14 +306,18 @@ fn observe_dhcp_server(
     let cutoff = pkt.timestamp - DHCP_SERVER_WINDOW_SECS;
     state.servers.retain(|_, (timestamp, _)| *timestamp >= cutoff);
     if let Some(observation) = state.servers.get_mut(&server) {
-        *observation = (pkt.timestamp, pkt.no);
+        if pkt.timestamp > observation.0 || pkt.no > observation.1 {
+            *observation = (pkt.timestamp, pkt.no);
+        }
         return None;
     }
     if state.servers.len() >= MAX_DHCP_SERVERS {
         return None;
     }
     let previous = state.servers.iter()
-        .max_by(|(_, (a, _)), (_, (b, _))| a.total_cmp(b))
+        .max_by(|(_, (time_a, frame_a)), (_, (time_b, frame_b))| {
+            time_a.total_cmp(time_b).then_with(|| frame_a.cmp(frame_b))
+        })
         .map(|(&id, &(_, frame))| (id, frame));
     state.servers.insert(server, (pkt.timestamp, pkt.no));
     previous
