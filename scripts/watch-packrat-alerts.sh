@@ -6,6 +6,7 @@ usage() {
         'Reads Packrat JSONL from stdin and emits first sightings, existing findings, and changed snapshots.' \
         'Notifications include update reasons and time since the latest observed packet.' \
         'Rejected alert input is counted and reported to stderr without its contents.' \
+        'Older hit counts for a known capture-scoped alert are rejected as stale snapshots.' \
         'PACKRAT_WATCH_MAX_ALERTS sets the in-memory alert history (default: 1024).'
 }
 case ${1-} in
@@ -129,8 +130,10 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
         else $input.alert as $alert
         | ([$alert.session_id, $alert.alert_id, $alert.capture_id] | tojson) as $key
         | .seen[$key] as $previous
-        # A clock-only change is context for the next finding, not a notification.
-        | if ($previous | del(.first_seen, .last_seen)) ==
+        # Within a capture the producer only increments this counter. Review edits can keep it unchanged.
+        | if $alert.capture_id != null and $previous.hits != null and $alert.hits != null
+                and $alert.hits < $previous.hits then reject("stale_snapshot")
+          elif ($previous | del(.first_seen, .last_seen)) ==
              ($alert | del(.first_seen, .last_seen)) then
             .emit = null
           else

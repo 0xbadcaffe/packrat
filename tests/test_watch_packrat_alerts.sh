@@ -135,6 +135,24 @@ jq -cn '
     and map(.changes) == [[],[],[],[],["hit_count"]]
 ' >/dev/null
 
+jq -cn '
+    {schema_version:1,record_type:"alert",session_id:"test",
+     alert:{id:1,capture_id:"capture-a",hit_count:1,packet_refs:[1],disposition:"New"}} as $first |
+    ($first | .alert.hit_count = 3 | .alert.packet_refs += [2,3]) as $later |
+    $first, $later, $first,
+    ($first | .alert.capture_id = "capture-b"),
+    ($later | .alert.disposition = "Reviewing"),
+    ($first | .alert.disposition = "Benign"),
+    ($later | .alert.disposition = "Reviewing")
+' | bash "$watch" 2>"$scratch/errors" | jq -se '
+    map(.event) == ["first_seen","updated","first_seen","updated"]
+    and map(.hits) == [1,3,1,3]
+    and map(.evidence_frame_count) == [1,3,1,3]
+    and .[3].disposition == "Reviewing" and .[3].changes == ["disposition"]
+' >/dev/null
+jq -se 'map(.reason) == ["stale_snapshot","stale_snapshot"] and map(.rejected) == [1,2]' \
+    "$scratch/errors" >/dev/null
+
 status=0
 PACKRAT_WATCH_MAX_ALERTS=0 bash "$watch" </dev/null >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
