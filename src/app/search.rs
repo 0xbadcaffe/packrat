@@ -17,6 +17,12 @@ impl App {
     /// Execute search across all data sources and populate `search_results`.
     /// Called on every keystroke while the palette is open.
     pub fn run_search(&mut self) {
+        if !self.analysis_generation_ready() {
+            self.search_results.clear();
+            self.search_selected = 0;
+            self.set_status("Analysis busy; retry search");
+            return;
+        }
         let core_handle = self.core.clone();
         let Ok(Some(core)) = core_handle.try_read() else {
             self.set_status("Analysis busy; search will refresh when ready");
@@ -38,6 +44,7 @@ impl App {
             if q.is_empty() || format!("{label} {aliases}").to_lowercase().contains(&q) {
                 results.push(SearchResult {
                     packet_no: None,
+                    alert: None,
                     source: "View",
                     label,
                     detail: view.workspace().label().into(),
@@ -45,6 +52,38 @@ impl App {
                     scroll: 0,
                 });
             }
+        }
+
+        if !q.is_empty() {
+            let findings = core.alert_center.items.iter().rev().filter_map(|alert| {
+                let label = format!("Alert #{}: {}", alert.id, alert.title);
+                let rule = alert
+                    .provenance
+                    .as_ref()
+                    .map_or("", |rule| rule.rule_id.as_str());
+                let scope = alert.capture_id.as_deref().unwrap_or("");
+                let description = format!(
+                    "{label} {} {} {} {} {rule} {scope}",
+                    alert.severity, alert.disposition, alert.source, alert.detail,
+                );
+                description.to_lowercase().contains(&q).then(|| SearchResult {
+                    packet_no: None,
+                    alert: Some(AlertSearchRef {
+                        id: alert.id,
+                        capture_id: alert.capture_id.clone(),
+                    }),
+                    source: "Alert",
+                    label,
+                    detail: if rule.is_empty() {
+                        alert.severity.clone()
+                    } else {
+                        format!("{} {rule}", alert.severity)
+                    },
+                    jump_tab: Tab::Investigate,
+                    scroll: 0,
+                })
+            });
+            results.extend(findings.take(10));
         }
         let mut packet_results = 0;
 
@@ -63,6 +102,7 @@ impl App {
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
                     packet_no: Some(pkt.no),
+                    alert: None,
                     source: "Packet",
                     label,
                     detail,
@@ -89,6 +129,7 @@ impl App {
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
                     packet_no: None,
+                    alert: None,
                     source: "Host",
                     label,
                     detail,
@@ -109,6 +150,7 @@ impl App {
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
                     packet_no: None,
+                    alert: None,
                     source: "IOC Hit",
                     label,
                     detail,
@@ -129,6 +171,7 @@ impl App {
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
                     packet_no: None,
+                    alert: None,
                     source: "Rule Hit",
                     label,
                     detail,
@@ -149,6 +192,7 @@ impl App {
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
                     packet_no: None,
+                    alert: None,
                     source: "YARA",
                     label,
                     detail,
@@ -169,6 +213,7 @@ impl App {
             if q.is_empty() || haystack.contains(&q) {
                 results.push(SearchResult {
                     packet_no: None,
+                    alert: None,
                     source: "Object",
                     label,
                     detail,
@@ -190,6 +235,11 @@ impl App {
     /// Apply the currently selected search result (navigate to it).
     pub fn search_jump(&mut self) {
         if let Some(result) = self.search_results.get(self.search_selected).cloned() {
+            if let Some(target) = result.alert.as_ref() {
+                self.investigate_alert(Some(target));
+                self.close_search();
+                return;
+            }
             if result.source == "View" {
                 self.navigate_to(result.jump_tab);
                 self.close_search();

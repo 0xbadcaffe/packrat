@@ -26,6 +26,7 @@ pub enum SecuritySubTab {
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub packet_no: Option<u64>,
+    pub(super) alert: Option<AlertSearchRef>,
     /// Short category label (e.g., "Packet", "Host", "IOC Hit", "Rule").
     pub source: &'static str,
     /// Primary display label shown in the list.
@@ -36,6 +37,12 @@ pub struct SearchResult {
     pub jump_tab: Tab,
     /// Optional scroll position to apply after tab switch.
     pub scroll: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct AlertSearchRef {
+    pub(super) id: u64,
+    pub(super) capture_id: Option<String>,
 }
 
 /// Sub-panels within the Objects tab

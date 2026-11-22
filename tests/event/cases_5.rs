@@ -252,6 +252,45 @@ fn packet_search_reveals_filtered_evidence_by_packet_identity() {
     assert_eq!(app.selected_packet().unwrap().no, 2);
 }
 
+#[test]
+fn alert_search_opens_matching_evidence_instead_of_the_previously_selected_alert() {
+    let mut app = App::new_for_test();
+    app.packets.extend([packet(10), packet(20)]);
+    app.configure_core(|core| {
+        core.alert_center.record(10, "IDS", "HIGH", "Other finding", "other traffic");
+        core.alert_center.record(20, "IDS", "MEDIUM", "TCP payload after reset", "test evidence");
+    });
+    event::handle(&mut app, key(KeyCode::Char('?')));
+    for c in "tcp.payload_after_observed_reset".chars() {
+        event::handle(&mut app, key(KeyCode::Char(c)));
+    }
+    assert_eq!(app.search_results.len(), 1);
+    assert_eq!(app.search_results[0].source, "Alert");
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert!(!app.search_open);
+    assert_eq!(app.active_tab, Tab::Investigate);
+    assert_eq!(app.worklist.active_packet_no(), Some(20));
+    assert_eq!(app.worklist.packet_nos(), [20]);
+}
+
+#[test]
+fn disappearing_alert_search_result_does_not_open_an_unrelated_finding() {
+    let mut app = App::new_for_test();
+    app.configure_core(|core| {
+        core.alert_center.record(10, "IDS", "HIGH", "Other finding", "other traffic");
+        core.alert_center.record(20, "IDS", "MEDIUM", "Selected finding", "test evidence");
+    });
+    app.open_search();
+    app.search_query = "selected finding".into();
+    app.run_search();
+    app.configure_core(|core| {
+        core.alert_center.items.remove(1);
+    });
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert!(app.worklist.items.is_empty());
+    assert_eq!(app.active_tab, Tab::Packets);
+}
+
 // ─── Global search palette ────────────────────────────────────────────────────
 
 #[tokio::test]

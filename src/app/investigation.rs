@@ -182,6 +182,10 @@ impl App {
     }
 
     pub fn investigate_selected_alert(&mut self) -> bool {
+        self.investigate_alert(None)
+    }
+
+    pub(super) fn investigate_alert(&mut self, target: Option<&AlertSearchRef>) -> bool {
         if !self.analysis_generation_ready() {
             self.set_status("Analysis busy; retry alert investigation");
             return false;
@@ -191,8 +195,18 @@ impl App {
             self.set_status("Analysis busy; retry alert investigation");
             return false;
         };
-        let Some(alert) = core.alert_center.selected_item().cloned() else {
-            self.set_status("No alert selected to investigate");
+        let alert = match target {
+            Some(target) => core.alert_center.items.iter().find(|alert| {
+                alert.id == target.id && alert.capture_id == target.capture_id
+            }),
+            None => core.alert_center.selected_item(),
+        };
+        let Some(alert) = alert.cloned() else {
+            self.set_status(if target.is_some() {
+                "The searched alert is no longer available"
+            } else {
+                "No alert selected to investigate"
+            });
             return false;
         };
         drop(core);
