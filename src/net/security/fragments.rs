@@ -9,17 +9,20 @@ impl SecurityEngine {
             None => return,
         };
 
+        let key = (service_scope(pkt), fragment.key.clone());
         self.fragment_states.retain(|_, state| {
             pkt.timestamp < state.last_seen
                 || pkt.timestamp - state.last_seen <= FRAGMENT_STATE_TTL_SECS
         });
-        if !self.fragment_states.contains_key(&fragment.key)
+        if !self.fragment_states.contains_key(&key)
             && self.fragment_states.len() >= MAX_FRAGMENT_DATAGRAMS
         {
             if let Some(oldest) = self
                 .fragment_states
                 .iter()
-                .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+                .min_by(|left, right| {
+                    left.1.last_seen.total_cmp(&right.1.last_seen).then(left.0.cmp(right.0))
+                })
                 .map(|(key, _)| key.clone())
             {
                 self.fragment_states.remove(&oldest);
@@ -50,28 +53,19 @@ impl SecurityEngine {
 
         let state = self
             .fragment_states
-            .entry(fragment.key.clone())
+            .entry(key.clone())
             .or_default();
-        state.last_seen = pkt.timestamp;
-        state.count += 1;
+        state.last_seen = state.last_seen.max(pkt.timestamp);
+        state.count = state.count.saturating_add(1);
 
-        if !state.overlap_alerted && has_conflicting_fragment_overlap(&state.slices, &fragment) {
+        let conflict = if !state.overlap_alerted && !fragment.malformed_length
+            && let Some(frame) = conflicting_fragment_frame(&state.slices, &fragment)
+        {
             state.overlap_alerted = true;
-            alerts.push((
-                "Conflicting IPv4 fragments",
-                Severity::Critical,
-                format!(
-                    "Overlapping IPv4 fragments carry different bytes from {} to {}",
-                    pkt.src, pkt.dst
-                ),
-            ));
-        }
-
-        if !fragment.payload.is_empty() {
-            state.slices.push(FragmentSlice {
-                start: fragment.offset,
-                data: fragment.payload.to_vec(),
-            });
+            Some(frame)
+        } else { None };
+        if !fragment.malformed_length {
+            state.remember(pkt.no, fragment.offset, fragment.payload);
         }
 
         if state.count > MAX_FRAGMENTS_PER_DATAGRAM && !state.flood_alerted {
@@ -80,7 +74,7 @@ impl SecurityEngine {
                 "IPv4 fragment flood",
                 Severity::High,
                 format!(
-                    "More than {MAX_FRAGMENTS_PER_DATAGRAM} fragments for one datagram from {}",
+                    "More than {MAX_FRAGMENTS_PER_DATAGRAM} fragment observations for one datagram key from {}",
                     pkt.src
                 ),
             ));
@@ -92,6 +86,21 @@ impl SecurityEngine {
                 signature,
                 severity,
                 detail,
+            });
+        }
+        if let Some(frame) = conflict {
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "Conflicting IPv4 fragments",
+                    severity: Severity::High,
+                    detail: format!(
+                        "Overlapping IPv4 fragments #{} and #{} carry different bytes from {} to {}; receiver behavior unverified",
+                        frame, pkt.no, pkt.src, pkt.dst,
+                    ),
+                },
+                related_packets: vec![frame],
+                correlation_key: Some(format!("{key:?}")),
             });
         }
     }
@@ -196,6 +205,7 @@ impl SecurityEngine {
             }
             if slices.len() < MAX_TCP_SLICES_PER_DIRECTION {
                 slices.push(FragmentSlice {
+                    packet_no: pkt.no,
                     start: segment.sequence,
                     data: segment.payload.to_vec(),
                 });
@@ -238,3 +248,7 @@ impl SecurityEngine {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/security_fragment_state_tests.rs"]
+mod tests;

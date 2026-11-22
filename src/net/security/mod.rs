@@ -28,6 +28,7 @@ fn u16_be_at(b: &[u8], off: usize) -> u16 {
 const MAX_ENTRIES: usize = 1000;
 const MAX_FRAGMENT_DATAGRAMS: usize = 512;
 const MAX_FRAGMENTS_PER_DATAGRAM: usize = 64;
+const MAX_FRAGMENT_EVIDENCE_BYTES: usize = u16::MAX as usize;
 const FRAGMENT_STATE_TTL_SECS: f64 = 60.0;
 const MAX_TCP_FLOWS: usize = 512;
 const MAX_TCP_SLICES_PER_DIRECTION: usize = 128;
@@ -151,7 +152,7 @@ pub struct SecurityEngine {
     os_by_ip: HashMap<String, &'static str>,
     bf_windows: HashMap<BfKey, BfWindow>,
     dns_accum: HashMap<String, DnsAccum>,
-    fragment_states: HashMap<FragmentKey, FragmentState>,
+    fragment_states: HashMap<(ServiceScope, FragmentKey), FragmentState>,
     tcp_integrity: HashMap<(ServiceScope, TcpFlowKey), TcpIntegrityState>,
     scan_sources: HashMap<ScanSourceKey, SourceScanState>,
     syn_flood_targets: HashMap<SynTargetKey, SynFloodState>,

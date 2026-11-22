@@ -135,20 +135,32 @@ fn vlan_replay_detects_mac_crossing_vlans() {
 
 #[test]
 fn detects_conflicting_ipv4_fragment_overlap() {
-    let mut security = SecurityEngine::default();
-    security.update(&ipv4_fragment_packet(
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    core.analyze(&ipv4_fragment_packet(
         1,
         0x1234,
         0,
         true,
         b"abcdefghijklmnop",
     ));
-    security.update(&ipv4_fragment_packet(2, 0x1234, 8, false, b"XXXXXXXX"));
+    core.analyze(&ipv4_fragment_packet(2, 0x1234, 8, false, b"XXXXXXXX"));
+    let alert = core.alert_center.items.iter()
+        .find(|alert| alert.title == "Conflicting IPv4 fragments").unwrap();
+    assert_eq!(alert.packet_refs, [1, 2]);
+    assert_eq!(alert.severity, "HIGH");
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "ipv4.conflicting_fragments");
+}
 
-    assert!(security.ids_alerts.iter().any(|alert| {
-        alert.signature == "Conflicting IPv4 fragments"
-            && alert.severity == packrat_tui::net::security::Severity::Critical
-    }));
+#[test]
+fn ipv4_fragments_from_different_vlans_do_not_conflict() {
+    let mut security = SecurityEngine::default();
+    let mut first = ipv4_fragment_packet(1, 0x1234, 0, true, b"abcdefgh");
+    first.vlan_id = Some(12);
+    let mut second = ipv4_fragment_packet(2, 0x1234, 0, true, b"ijklmnoq");
+    second.vlan_id = Some(24);
+    security.update(&first);
+    let findings = security.inspect(&second);
+    assert!(findings.ids.iter().all(|finding| finding.alert.signature != "Conflicting IPv4 fragments"));
 }
 
 #[test]

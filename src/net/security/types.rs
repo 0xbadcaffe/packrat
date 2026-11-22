@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct FragmentKey {
     pub(super) src: [u8; 4],
     pub(super) dst: [u8; 4],
@@ -10,6 +10,7 @@ pub(super) struct FragmentKey {
 
 #[derive(Debug, Clone)]
 pub(super) struct FragmentSlice {
+    pub(super) packet_no: u64,
     pub(super) start: u32,
     pub(super) data: Vec<u8>,
 }
@@ -17,10 +18,25 @@ pub(super) struct FragmentSlice {
 #[derive(Debug, Default)]
 pub(super) struct FragmentState {
     pub(super) slices: Vec<FragmentSlice>,
+    pub(super) retained_bytes: usize,
     pub(super) count: usize,
     pub(super) last_seen: f64,
     pub(super) overlap_alerted: bool,
     pub(super) flood_alerted: bool,
+}
+
+impl FragmentState {
+    pub(super) fn remember(&mut self, packet_no: u64, offset: u32, payload: &[u8]) {
+        if payload.is_empty()
+            || self.slices.len() >= MAX_FRAGMENTS_PER_DATAGRAM
+            || payload.len() > MAX_FRAGMENT_EVIDENCE_BYTES.saturating_sub(self.retained_bytes)
+            || self.slices.iter().any(|slice| slice.start == offset && slice.data == payload)
+        {
+            return;
+        }
+        self.retained_bytes += payload.len();
+        self.slices.push(FragmentSlice { packet_no, start: offset, data: payload.to_vec() });
+    }
 }
 
 pub(super) struct Ipv4Fragment<'a> {

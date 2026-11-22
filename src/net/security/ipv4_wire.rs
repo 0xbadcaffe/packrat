@@ -53,25 +53,26 @@ pub(super) fn ethernet_network_header(raw: &[u8]) -> Option<(usize, u16)> {
     }
 }
 
-pub(super) fn has_conflicting_fragment_overlap(
+pub(super) fn conflicting_fragment_frame(
     slices: &[FragmentSlice],
     fragment: &Ipv4Fragment<'_>,
-) -> bool {
+) -> Option<u64> {
     let new_start = fragment.offset;
     let new_end = new_start.saturating_add(fragment.payload.len() as u32);
-    slices.iter().any(|existing| {
+    slices.iter().find_map(|existing| {
         let existing_end = existing.start.saturating_add(existing.data.len() as u32);
         let overlap_start = new_start.max(existing.start);
         let overlap_end = new_end.min(existing_end);
         if overlap_start >= overlap_end {
-            return false;
+            return None;
         }
 
         let new_offset = (overlap_start - new_start) as usize;
         let existing_offset = (overlap_start - existing.start) as usize;
         let overlap_len = (overlap_end - overlap_start) as usize;
-        fragment.payload[new_offset..new_offset + overlap_len]
-            != existing.data[existing_offset..existing_offset + overlap_len]
+        (fragment.payload[new_offset..new_offset + overlap_len]
+            != existing.data[existing_offset..existing_offset + overlap_len])
+            .then_some(existing.packet_no)
     })
 }
 

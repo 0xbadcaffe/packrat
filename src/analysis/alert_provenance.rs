@@ -65,6 +65,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the retained reset and payload frames with the flow, capture timing, and endpoint TCP logs.",
         ),
         (
+            "IDS", "Conflicting IPv4 fragments", "ipv4.conflicting_fragments", 2, DirectObservation,
+            "Compare both frames and their capture scope; check receiver logs for reassembly outcome.",
+        ),
+        (
             "IDS", "ICMP address sweep", "icmp.address_sweep", 1, Heuristic,
             "Check whether the echo requests match expected diagnostics or discovery.",
         ),
