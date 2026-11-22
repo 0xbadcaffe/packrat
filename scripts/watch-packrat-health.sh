@@ -12,6 +12,7 @@ usage() {
         'PACKRAT_DISK_SUDO (1 retries an inaccessible disk path with noninteractive sudo),' \
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
         'PACKRAT_ALERT_LOG (optional absolute alert path; requires pipeline checking),' \
+        'PACKRAT_ALERT_VERIFY_OPEN (1 also verifies the open file; uses noninteractive sudo if needed),' \
         'PACKRAT_REQUIRE_ARCHIVE (1 reports missing or inactive packet archiving),' \
         'PACKRAT_MIN_FREE_MIB (512). Health requests always use IPv4 loopback.'
 }
@@ -33,6 +34,7 @@ expected_interface=${PACKRAT_EXPECT_INTERFACE:-}
 alert_session=${PACKRAT_ALERT_SESSION:-}
 alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
 alert_log=${PACKRAT_ALERT_LOG:-}
+alert_verify_open=${PACKRAT_ALERT_VERIFY_OPEN:-0}
 require_archive=${PACKRAT_REQUIRE_ARCHIVE:-0}
 disk_path=${PACKRAT_DISK_PATH:-}
 disk_sudo=${PACKRAT_DISK_SUDO:-0}
@@ -78,6 +80,11 @@ if [[ -n $alert_log && ( $alert_log != /* || $alert_pipeline != 1 ) ]]; then
     printf '%s\n' 'PACKRAT_ALERT_LOG requires an absolute path and PACKRAT_ALERT_PIPELINE=1.' >&2
     exit 2
 fi
+if [[ ( $alert_verify_open != 0 && $alert_verify_open != 1 ) ||
+      ( $alert_verify_open == 1 && -z $alert_log ) ]]; then
+    printf '%s\n' 'PACKRAT_ALERT_VERIFY_OPEN must be 0 or 1 and requires PACKRAT_ALERT_LOG when enabled.' >&2
+    exit 2
+fi
 if [[ -z $disk_path ]]; then
     disk_path=${alert_log%/*}
     disk_path=${disk_path:-/}
@@ -121,6 +128,17 @@ alert_pipeline_tails() {
         }'
 }
 
+alert_log_open() {
+    local expected opened
+    expected=$(stat -L --format='%d:%i' -- "$alert_log" 2>/dev/null) ||
+        expected=$(sudo -n -- stat -L --format='%d:%i' -- "$alert_log" 2>/dev/null) || return 1
+    [[ $expected =~ ^[0-9]+:[0-9]+$ ]] || return 1
+    local -a lookup=(find -L "/proc/$1/fd" -maxdepth 1 -type f -printf '%D:%i\n')
+    opened=$("${lookup[@]}" 2>/dev/null) ||
+        opened=$(sudo -n -- "${lookup[@]}" 2>/dev/null) || return 1
+    grep -Fxq -- "$expected" <<< "$opened"
+}
+
 alert_log_followed() {
     local pid arg follow
     local -a args
@@ -133,7 +151,7 @@ alert_log_followed() {
             [[ $arg != -- ]] || break
             if [[ $arg == -F || $arg == --follow=name ]]; then follow=true; fi
         done
-        if "$follow"; then return 0; fi
+        if "$follow" && { [[ $alert_verify_open == 0 ]] || alert_log_open "$pid"; }; then return 0; fi
     done <<< "$1"
     return 1
 }
@@ -166,6 +184,7 @@ read_health() {
     printf '%s\n' "$sample" | jq -Rcse \
         --argjson watcher "$watcher" --argjson pipeline "$pipeline" --argjson source "$source" \
         --arg alert_log "$alert_log" --arg expected_interface "$expected_interface" --arg disk_path "$disk_path" \
+        --argjson verify_open "$alert_verify_open" \
         --argjson disk "$disk" --argjson min_free "$min_free" --argjson require_archive "$require_archive" \
         --argjson baseline "$baseline" '
         (try fromjson catch null) as $health |
@@ -212,6 +231,7 @@ read_health() {
             alert_watcher_alive: (if $pipeline == false or $source == false then false else $watcher end),
             alert_watcher_pipeline_alive: $pipeline,
             alert_watcher_source_matches: $source,
+            alert_watcher_open_log_required: ($verify_open == 1),
             alert_watcher_log: (if $alert_log == "" then null else $alert_log end),
             archive_enabled: $archive_enabled,
             archive_paused: ($archive_paused // false),

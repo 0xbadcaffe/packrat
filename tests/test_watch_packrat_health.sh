@@ -7,7 +7,7 @@ watch="$root/scripts/watch-packrat-health.sh"
 export PACKRAT_HEALTH_PORT=9477 PACKRAT_ALERT_SESSION=packrat-alerts PACKRAT_MIN_FREE_MIB=512 PACKRAT_ALERT_PIPELINE=0
 unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE PACKRAT_HEALTH_INTERVAL PACKRAT_HEALTH_HEARTBEAT PACKRAT_HEALTH_STATE_FILE
 unset PACKRAT_EXPECT_INTERFACE
-unset PACKRAT_DISK_PATH PACKRAT_DISK_SUDO
+unset PACKRAT_DISK_PATH PACKRAT_DISK_SUDO PACKRAT_ALERT_VERIFY_OPEN
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
@@ -44,9 +44,32 @@ df() {
 }
 
 sudo() {
-    [[ $* == "-n -- df -Pk -- $PACKRAT_FAKE_DISK_PATH" ]] || return 1
-    shift 3
-    PACKRAT_TEST_DISK_PROTECTED=0 df "$@"
+    [[ $1 == -n && $2 == -- ]] || return 1
+    shift 2
+    case $1 in
+        df) shift; PACKRAT_TEST_DISK_PROTECTED=0 df "$@" ;;
+        stat|find) PACKRAT_FAKE_FD_PROTECTED=0 "$@" ;;
+        *) return 1 ;;
+    esac
+}
+
+stat() {
+    if [[ $1 == -L ]]; then
+        [[ $* == "-L --format=%d:%i -- $PACKRAT_FAKE_TAIL_SOURCE" ]] || return 1
+        [[ ${PACKRAT_FAKE_FD_PROTECTED:-0} == 0 ]] || return 1
+        printf '%s\n' 20:150
+    else
+        command stat "$@"
+    fi
+}
+
+find() {
+    if [[ $1 == -L ]]; then
+        [[ $2 == /proc/94/fd && ${PACKRAT_FAKE_FD_PROTECTED:-0} == 0 ]] || return 1
+        printf '%s\n' "$PACKRAT_FAKE_OPEN_FDS"
+    else
+        command find "$@"
+    fi
 }
 
 sleep() {
@@ -56,7 +79,7 @@ sleep() {
     if (( PACKRAT_TEST_STEP == ${PACKRAT_FAKE_STEPS:-4} )); then exit 0; fi
 }
 
-export -f curl tmux ps cat df sudo sleep
+export -f curl tmux ps cat df sudo stat find sleep
 bash -n "$watch"
 
 bash "$watch" --once | jq -e '
@@ -121,7 +144,22 @@ PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
     PACKRAT_FAKE_TAIL_SOURCE="$log" bash "$watch" --once | jq -e --arg log "$log" '
     .issues == [] and .alert_watcher_alive and .alert_watcher_pipeline_alive and .alert_watcher_source_matches
     and .alert_watcher_log == $log and .disk_path == "/var/lib/packrat lab"
+    and (.alert_watcher_open_log_required | not)
 ' >/dev/null
+
+for protected in 0 1; do
+    PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
+        PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_ALERT_VERIFY_OPEN=1 PACKRAT_FAKE_FD_PROTECTED=$protected \
+        PACKRAT_FAKE_OPEN_FDS=$'11:34\n20:150' bash "$watch" --once |
+        jq -e '.issues == [] and .alert_watcher_open_log_required and .alert_watcher_source_matches' >/dev/null
+done
+status=0
+output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
+    PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_ALERT_VERIFY_OPEN=1 PACKRAT_FAKE_OPEN_FDS=$'20:151\n21:150' \
+    bash "$watch" --once) || status=$?
+[[ $status == 1 ]]
+jq -e '.issues == ["alert_watcher_source_unverified"] and .alert_watcher_open_log_required
+    and (.alert_watcher_source_matches | not)' <<< "$output" >/dev/null
 
 status=0
 output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
