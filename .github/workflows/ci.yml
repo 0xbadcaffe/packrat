@@ -41,10 +41,12 @@ jobs:
         run: |
           shellcheck scripts/watch-packrat-health.sh tests/test_watch_packrat_health.sh
           shellcheck scripts/watch-packrat-alerts.sh tests/test_watch_packrat_alerts.sh
+          shellcheck scripts/watch-packrat-socket-context.sh tests/test_watch_packrat_socket_context.sh
           shellcheck scripts/packrat-triage.sh tests/test_packrat_triage.sh
           shellcheck scripts/packrat-replay-suite.sh tests/test_packrat_replay_suite.sh
           bash tests/test_watch_packrat_health.sh
           bash tests/test_watch_packrat_alerts.sh
+          bash tests/test_watch_packrat_socket_context.sh
           bash tests/test_packrat_triage.sh
           bash tests/test_packrat_replay_suite.sh
 
