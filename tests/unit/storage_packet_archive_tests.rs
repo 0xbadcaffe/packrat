@@ -207,6 +207,47 @@ fn alert_archive_deduplicates_queued_and_committed_frames_without_crossing_captu
     assert_eq!(reader.packet_for_capture(&scope_b, 1).unwrap().unwrap().bytes, frame_b.bytes);
 }
 
+#[test]
+fn archive_policy_cannot_change_on_reopen_but_either_mode_can_be_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let full = dir.path().join("full");
+    let selective = dir.path().join("selective");
+    drop(PacketArchive::open(&full).unwrap());
+    let mut worker = ArchiveWorker::open_alert_evidence(&selective, ArchiveLimits::default()).unwrap();
+    let frame = parse_ethernet(&[1, 2, 3], 1, 1.0);
+    worker.record_scoped(&Arc::from("scope"), &frame).unwrap();
+    worker.finish().unwrap();
+
+    let error = ArchiveWorker::open_alert_evidence(&full, ArchiveLimits::default()).err().unwrap();
+    assert!(error.contains("all_packets, cannot open for alert_evidence"), "{error}");
+    let error = PacketArchive::open(&selective).err().unwrap();
+    assert!(error.contains("alert_evidence, cannot open for all_packets"), "{error}");
+    assert_eq!(PacketArchive::open_readonly(&full).unwrap().count().unwrap(), 0);
+    let mut reader = PacketArchive::open_readonly(&selective).unwrap();
+    assert_eq!(reader.packet_for_capture("scope", 1).unwrap().unwrap().bytes, frame.bytes);
+}
+
+#[test]
+fn legacy_archives_with_frames_or_unindexed_bytes_cannot_be_claimed_as_alert_only() {
+    let dir = tempfile::tempdir().unwrap();
+    for indexed in [false, true] {
+        let path = dir.path().join(if indexed { "indexed" } else { "interrupted" });
+        let mut writer = PacketArchive::open(&path).unwrap();
+        if indexed {
+            writer.append(&[parse_ethernet(&[1, 2, 3], 1, 1.0)]).unwrap();
+        }
+        writer.db.execute("DROP TABLE archive_retention", []).unwrap();
+        drop(writer);
+        if !indexed {
+            std::fs::write(path.join("packets.bin"), [1, 2, 3]).unwrap();
+        }
+        let error = ArchiveWorker::open_alert_evidence(&path, ArchiveLimits::default()).err().unwrap();
+        assert!(error.contains("legacy archive with existing packet data"), "{error}");
+        assert_eq!(std::fs::read(path.join("packets.bin")).unwrap(), [1, 2, 3]);
+        assert_eq!(PacketArchive::open(&path).unwrap().count().unwrap(), u64::from(indexed));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn writable_archives_require_a_private_real_directory() {

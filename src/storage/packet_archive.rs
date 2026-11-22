@@ -8,6 +8,9 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+#[path = "packet_archive_policy.rs"]
+mod policy;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArchiveLimits {
     pub max_payload_bytes: u64,
@@ -84,6 +87,10 @@ impl PacketArchive {
     }
 
     pub fn open(directory: &Path) -> Result<Self, String> {
+        Self::open_for_policy(directory, false)
+    }
+
+    fn open_for_policy(directory: &Path, alert_only: bool) -> Result<Self, String> {
         // Strip trailing separators before testing the directory itself, not its target.
         let directory = directory.components().collect::<PathBuf>();
         let mut builder = std::fs::DirBuilder::new();
@@ -106,7 +113,7 @@ impl PacketArchive {
         let index = directory.join("index.sqlite");
         drop(private_file(&index)?);
         let bytes = private_file(&directory.join("packets.bin"))?;
-        let db = Connection::open_with_flags(
+        let mut db = Connection::open_with_flags(
             index,
             rusqlite::OpenFlags::default() | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
         ).map_err(|error| error.to_string())?;
@@ -136,9 +143,11 @@ impl PacketArchive {
             )
             .map_err(|error| error.to_string())?;
         let end = u64::try_from(end).map_err(|_| "Invalid archive offset")?;
-        if bytes.metadata().map_err(|error| error.to_string())?.len() < end {
+        let length = bytes.metadata().map_err(|error| error.to_string())?.len();
+        if length < end {
             return Err("Packet archive is truncated: committed bytes are missing".into());
         }
+        policy::bind(&mut db, alert_only, length != 0)?;
         // A crash before the SQLite commit can leave an unindexed tail.
         bytes.set_len(end).map_err(|error| error.to_string())?;
         Ok(Self { db, bytes, _writer_guard: Some(guard) })
@@ -208,12 +217,6 @@ impl PacketArchive {
             .query_row("SELECT COUNT(*) FROM packets", [], |row| row.get(0))
             .map_err(|error| error.to_string())?;
         u64::try_from(count).map_err(|_| "Invalid archive count".into())
-    }
-
-    fn contains_frame(&self, capture_id: &str, frame: u64) -> Result<bool, String> {
-        self.db.prepare_cached("SELECT 1 FROM capture_frames WHERE capture_id=?1 AND frame_number=?2")
-            .and_then(|mut query| query.exists(params![capture_id, frame.to_string()]))
-            .map_err(|error| error.to_string())
     }
 
     pub fn find_host(&self, address: &str, after_id: i64, limit: usize) -> Result<Vec<i64>, String> {
@@ -325,7 +328,7 @@ impl ArchiveWorker {
     }
 
     fn open_with_policy(directory: &Path, limits: ArchiveLimits, alert_evidence_only: bool) -> Result<Self, String> {
-        let mut archive = PacketArchive::open(directory)?;
+        let mut archive = PacketArchive::open_for_policy(directory, alert_evidence_only)?;
         let mut frames = archive.count()?;
         let mut bytes = archive.bytes.metadata().map_err(|error| error.to_string())?.len();
         let pause_reason = Arc::new(OnceLock::new());
