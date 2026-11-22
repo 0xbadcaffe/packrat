@@ -200,9 +200,8 @@ impl AnalysisCore {
         self.quic_scope.ingest(pkt);
 
         // VLAN intelligence
-        let vlan_before = self.vlan_intel.alerts.len();
-        self.vlan_intel.ingest(pkt);
-        for alert in &self.vlan_intel.alerts[vlan_before..] {
+        let vlan_added = self.vlan_intel.ingest(pkt);
+        for alert in self.vlan_intel.alerts.iter().skip(self.vlan_intel.alerts.len() - vlan_added) {
             self.alert_center.record_correlated_with_evidence(
                 (alert.pkt_no, alert.related_packet.as_slice()),
                 pkt.timestamp,

@@ -46,7 +46,7 @@ pub(super) fn draw_vlan_intel(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(C_GREEN()),
                 )),
                 Cell::from(Span::styled(
-                    s.hosts.len().to_string(),
+                    format!("{}{}", s.hosts.len(), if s.host_samples_limited { "+" } else { "" }),
                     Style::default().fg(C_YELLOW()),
                 )),
                 Cell::from(Span::styled(

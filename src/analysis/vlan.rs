@@ -8,7 +8,8 @@
 //!   • PCP=7 (Network Control priority) from a non-router source
 //!   • Untagged traffic on a VLAN-aware segment
 
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use crate::net::packet::Packet;
 #[path = "vlan_dtp.rs"]
 mod dtp;
@@ -19,6 +20,10 @@ pub use policy::VlanPolicy;
 // ─── DTP detection ────────────────────────────────────────────────────────────
 // DTP frames are sent to the Cisco multicast MAC 01:00:0c:cc:cc:cc
 const DTP_DST_MAC: [u8; 6] = [0x01, 0x00, 0x0c, 0xcc, 0xcc, 0xcc];
+const MAX_RECENT_VLAN_ALERTS: usize = 512;
+const MAX_VLAN_DEDUP_KEYS: usize = 4096;
+const MAX_HOST_SAMPLES_PER_VLAN: usize = 128;
+const MAX_HOST_SAMPLES: usize = 16_384;
 
 fn vlan_stack_prefix(raw: &[u8]) -> Option<([(u16, u16); 2], bool)> {
     let field = |offset| Some(u16::from_be_bytes(raw.get(offset..offset + 2)?.try_into().ok()?));
@@ -45,8 +50,9 @@ pub struct VlanStats {
     pub vlan_id:   u16,
     pub packets:   u64,
     pub bytes:     u64,
-    /// Unique (IP, MAC) host pairs seen on this VLAN.
+    /// Bounded sample of distinct (IP, MAC) host pairs.
     pub hosts:     HashSet<String>,  // "ip/mac"
+    pub host_samples_limited: bool,
     pub first_seen: f64,
     pub last_seen:  f64,
 }
@@ -55,7 +61,7 @@ impl VlanStats {
     fn new(vid: u16, ts: f64) -> Self {
         Self {
             vlan_id: vid, packets: 0, bytes: 0,
-            hosts: HashSet::new(), first_seen: ts, last_seen: ts,
+            hosts: HashSet::new(), host_samples_limited: false, first_seen: ts, last_seen: ts,
         }
     }
 }
@@ -143,16 +149,17 @@ pub struct VlanIntel {
     pub policy: VlanPolicy,
     /// Per-VLAN statistics.
     pub stats:    BTreeMap<u16, VlanStats>,
-    /// Accumulated alerts.
-    pub alerts:   Vec<VlanAlert>,
+    /// Bounded history for display; the caller still receives each new finding.
+    pub alerts: VecDeque<VlanAlert>,
     mac_vlans:    MacVlanMap,
-    /// Alert dedup: (category_key) → last pkt_no that raised it, to avoid
-    /// flooding identical alerts for every packet in a high-rate flow.
-    dedup:        HashMap<String, u64>,
+    host_samples: usize,
+    dedup: HashMap<Arc<str>, u64>,
+    dedup_order: VecDeque<Arc<str>>,
 }
 
 impl VlanIntel {
-    pub fn ingest(&mut self, pkt: &Packet) {
+    pub fn ingest(&mut self, pkt: &Packet) -> usize {
+        let before = self.alerts.len();
         // ── Extract Ethernet src MAC from raw bytes ──────────────────────────
         let mac_dst = if pkt.bytes.len() >= 6 {
             [pkt.bytes[0], pkt.bytes[1], pkt.bytes[2],
@@ -197,7 +204,7 @@ impl VlanIntel {
                     (AlertSeverity::Info, "Stacked VLAN tags", "port policy and forwarding are unverified".into())
                 };
                 let more = if deeper { "; at least three tags present" } else { "" };
-                self.alerts.push(VlanAlert {
+                self.alerts.push_back(VlanAlert {
                     severity,
                     category: category.into(),
                     detail: format!("Observed outer VLAN {outer} (0x{outer_type:04x}) and inner VLAN {inner} (0x{inner_type:04x}) at {location}{more}; {context}"),
@@ -208,15 +215,23 @@ impl VlanIntel {
         }
 
         // ── Per-VLAN accounting ───────────────────────────────────────────────
-        if let Some(vid) = pkt.vlan_id {
+        if let Some(vid) = pkt.vlan_id.filter(|&vid| vid <= 0x0fff) {
             let ts = pkt.timestamp;
             let entry = self.stats.entry(vid).or_insert_with(|| VlanStats::new(vid, ts));
             entry.packets += 1;
             entry.bytes   += pkt.length as u64;
             entry.last_seen = entry.last_seen.max(ts);
-            if !mac_src.is_empty() {
-                let host_key = format!("{}/{}", pkt.src, mac_src);
-                entry.hosts.insert(host_key);
+            if !mac_src.is_empty() && !entry.host_samples_limited {
+                if pkt.src.len() > 128 {
+                    entry.host_samples_limited = true;
+                } else {
+                    let host_key = format!("{}/{}", pkt.src, mac_src);
+                    if entry.hosts.len() < MAX_HOST_SAMPLES_PER_VLAN && self.host_samples < MAX_HOST_SAMPLES {
+                        self.host_samples += usize::from(entry.hosts.insert(host_key));
+                    } else if !entry.hosts.contains(&host_key) {
+                        entry.host_samples_limited = true;
+                    }
+                }
             }
 
             // Native VLAN 1 alert (fire once)
@@ -240,7 +255,7 @@ impl VlanIntel {
                 let location = scope.0.map_or_else(|| "unknown capture interface".to_owned(),
                     |(section, interface)| format!("capture section {section}, interface {interface}"));
                 let outer = scope.1.map_or_else(String::new, |tag| format!(" under outer VLAN {tag}"));
-                self.alerts.push(VlanAlert {
+                self.alerts.push_back(VlanAlert {
                     severity: AlertSeverity::Warning,
                     category: "MAC-VLAN-Cross".into(),
                     detail: format!("MAC {mac_src} was seen on VLANs {} and {vid} at {location}{outer}; port policy and forwarding are unverified", previous.vlan),
@@ -263,6 +278,11 @@ impl VlanIntel {
                 }
             }
         }
+        let added = self.alerts.len() - before;
+        if self.alerts.len() > MAX_RECENT_VLAN_ALERTS {
+            self.alerts.drain(..self.alerts.len() - MAX_RECENT_VLAN_ALERTS);
+        }
+        added
     }
 
     /// Raise an alert, deduplicating by `dedup_key` so the same condition
@@ -274,7 +294,7 @@ impl VlanIntel {
         if !self.allow_alert(dedup_key, pkt_no) {
             return;
         }
-        self.alerts.push(VlanAlert {
+        self.alerts.push_back(VlanAlert {
             severity,
             category: category.to_string(),
             detail,
@@ -286,11 +306,21 @@ impl VlanIntel {
     }
 
     fn allow_alert(&mut self, key: String, pkt_no: u64) -> bool {
-        let last = self.dedup.entry(key).or_insert(0);
-        if *last != 0 && pkt_no.saturating_sub(*last) < 1000 {
-            return false;
+        if let Some(last) = self.dedup.get_mut(key.as_str()) {
+            if pkt_no.saturating_sub(*last) < 1000 {
+                return false;
+            }
+            *last = pkt_no;
+            return true;
         }
-        *last = pkt_no;
+        if self.dedup_order.len() == MAX_VLAN_DEDUP_KEYS
+            && let Some(expired) = self.dedup_order.pop_front()
+        {
+            self.dedup.remove(&expired);
+        }
+        let key = Arc::<str>::from(key);
+        self.dedup.insert(key.clone(), pkt_no);
+        self.dedup_order.push_back(key);
         true
     }
 
@@ -298,7 +328,9 @@ impl VlanIntel {
         self.stats.clear();
         self.alerts.clear();
         self.mac_vlans = MacVlanMap::default();
+        self.host_samples = 0;
         self.dedup.clear();
+        self.dedup_order.clear();
     }
 
     /// Sorted list of all known VLAN IDs.
@@ -325,3 +357,7 @@ impl VlanIntel {
         v
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/analysis_vlan_retention_tests.rs"]
+mod tests;
