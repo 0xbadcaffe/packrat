@@ -21,14 +21,7 @@ impl App {
 
     pub fn tick(&mut self) {
         self.poll_analysis();
-        if let Some(error) = self.query_core(|core| core.alert_save_error.clone()).flatten() {
-            if self.alert_save_error_reported.as_ref() != Some(&error) {
-                self.alert_save_error_reported = Some(error.clone());
-                self.save_alerts = false;
-                self.set_status(format!("Alert saving stopped: {error}"));
-                self.save_preferences();
-            }
-        }
+        self.poll_alert_saving(Instant::now());
         let mut archive_failed = false;
         if let Some(archive) = self.packet_archive.as_mut()
             && let Some(error) = archive.poll_error()
@@ -190,7 +183,7 @@ impl App {
             pcap_buffer_drops: self.pcap_buffer_drops(),
             capture_truncated_frames: self.capture_handle.as_ref().and_then(crate::capture::CaptureTask::truncated_frames),
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),
-            alert_save_failed: self.alert_save_error_reported.is_some() || core.alert_save_error.is_some(),
+            alert_save_failed: self.save_alerts && core.alert_save_error.is_some(),
             archive_enabled: self.packet_archive.is_some(),
             archive_paused: archive_pause_reason.is_some(),
             archive_pause_reason,

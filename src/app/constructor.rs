@@ -19,26 +19,26 @@ impl App {
             2 => AutomationMode::Triage,
             _ => AutomationMode::Off,
         };
-        let (save_alerts, alert_save_error) = if preferences.save_alerts {
+        let alert_save_error = if preferences.save_alerts {
             match crate::storage::alert_jsonl::AlertJsonlWriter::open_default_for_session(
                 &alert_session_id,
             ) {
                 Ok(writer) => {
                     core.alert_jsonl_writer = Some(writer);
-                    (true, None)
+                    None
                 }
                 Err(error) => {
                     core.alert_save_error = Some(error.clone());
-                    (false, Some(error))
+                    Some(error)
                 }
             }
         } else {
-            (false, None)
+            None
         };
         let alert_save_error_reported = alert_save_error.clone();
         let status_msg = alert_save_error
             .as_ref()
-            .map(|error| format!("Alert saving disabled: {error}"));
+            .map(|error| format!("Alert saving unavailable; will retry: {error}"));
         let status_msg_ticks = if status_msg.is_some() { 100 } else { 0 };
         let mut app = Self {
             core: ReadCore::new(core),
@@ -178,9 +178,10 @@ impl App {
             preferred_workspace: Workspace::from_index(preferences.startup_workspace),
             ui_refresh_ms: preferences.ui_refresh_ms,
             capture_timeout_ms: preferences.capture_timeout_ms,
-            save_alerts,
+            save_alerts: preferences.save_alerts,
             alert_session_id,
             alert_save_error_reported,
+            alert_save_next_retry: alert_save_error.map(|_| Instant::now() + ALERT_SAVE_RETRY_INTERVAL),
             persist_preferences: true,
             current_project_name: None,
             current_project_path: None,

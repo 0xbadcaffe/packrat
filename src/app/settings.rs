@@ -39,7 +39,11 @@ impl App {
             }
             7 => self.clear_guard_kill_switch(),
             8 | 9 => self.adjust_settings_selection(true),
-            10 => self.toggle_alert_saving(),
+            10 => {
+                self.toggle_alert_saving();
+                self.save_preferences();
+                return;
+            }
             _ => {}
         }
         self.save_preferences();
@@ -120,45 +124,6 @@ impl App {
         });
         if saved.is_ok() {
             self.preferences_dirty.set(false);
-        }
-    }
-
-    fn toggle_alert_saving(&mut self) {
-        if self.save_alerts {
-            self.save_alerts = false;
-            self.configure_core(|core| {
-                core.alert_jsonl_writer = None;
-                core.alert_save_error = None;
-                core.alert_center.drain_pending_exports();
-            });
-            self.alert_save_error_reported = None;
-            return;
-        }
-
-        match crate::storage::alert_jsonl::AlertJsonlWriter::open_default_for_session(
-            &self.alert_session_id,
-        ) {
-            Ok(writer) => {
-                let path = writer.path().display().to_string();
-                self.configure_core(move |core| {
-                    let mut writer = writer;
-                    let pending = core.alert_center.drain_pending_exports();
-                    match writer.backfill(&core.alert_center.items, &pending) {
-                        Ok(()) => {
-                            core.alert_jsonl_writer = Some(writer);
-                            core.alert_save_error = None;
-                        }
-                        Err(error) => {
-                            core.alert_jsonl_writer = None;
-                            core.alert_save_error = Some(error);
-                        }
-                    }
-                });
-                self.save_alerts = true;
-                self.alert_save_error_reported = None;
-                self.set_status(format!("Saving current and new alerts to {path}"));
-            }
-            Err(error) => self.set_status(format!("Could not enable alert saving: {error}")),
         }
     }
 }

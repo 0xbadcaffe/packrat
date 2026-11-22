@@ -2,6 +2,7 @@ use crate::engine::AnalysisCore;
 use crate::engine::shared::{CoreReadGuard, ReadCore};
 use crate::engine::worker::{AnalysisWorker, SubmitError, WorkerEvent, WorkerLimits};
 use std::collections::VecDeque;
+use std::time::Instant;
 use tokio::sync::mpsc::Sender;
 
 use crate::analysis::alert_center::AutomationMode;
@@ -74,6 +75,8 @@ pub use view::AppView;
 mod navigation;
 mod packet_list;
 mod project;
+mod alert_saving;
+use alert_saving::ALERT_SAVE_RETRY_INTERVAL;
 mod runtime;
 mod search;
 mod settings;
@@ -238,6 +241,7 @@ pub struct App {
     pub save_alerts: bool,
     alert_session_id: std::sync::Arc<str>,
     alert_save_error_reported: Option<String>,
+    alert_save_next_retry: Option<Instant>,
     persist_preferences: bool,
     // ─── Project management ────────────────────────────────────────────────────
     /// Name of the currently open project (None = ad-hoc workspace).

@@ -26,7 +26,8 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         ("Guard kill switch", if app.traffic_latch.emergency_stop { "ENGAGED".into() } else { "Ready".into() }),
         ("UI refresh interval", format!("{} ms ({} FPS)", app.ui_refresh_ms, 1_000 / app.ui_refresh_ms)),
         ("Capture read timeout", format!("{} ms", app.capture_timeout_ms)),
-        ("Save alerts as JSONL", on_off(app.save_alerts)),
+        ("Save alerts as JSONL", if !app.save_alerts { "Off" } else if app.core.alert_jsonl_writer.is_some()
+            { "On" } else { "On (retrying)" }.into()),
     ];
     let visible_rows = chunks[0].height.saturating_sub(3).max(1) as usize;
     let first_row = app.settings_cursor.saturating_add(1).saturating_sub(visible_rows);

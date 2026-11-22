@@ -111,7 +111,7 @@ impl AlertJsonlWriter {
         Self::open(path, session_id)
     }
 
-    fn open(path: PathBuf, session_id: &str) -> Result<Self, String> {
+    pub(crate) fn open(path: PathBuf, session_id: &str) -> Result<Self, String> {
         let parent = path
             .parent()
             .ok_or("Alert JSONL path has no parent directory")?;
