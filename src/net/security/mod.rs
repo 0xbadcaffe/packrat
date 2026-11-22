@@ -163,7 +163,7 @@ pub struct SecurityEngine {
     exfil_flows: HashMap<ExfilKey, ExfilState>,
     admin_fanout: admin_fanout::AdminFanout,
     ntlm_fanout: HashMap<(String, ServiceScope), NtlmFanoutState>,
-    dhcp_vlans: HashMap<Option<u16>, DhcpVlanState>,
+    dhcp_scopes: HashMap<ServiceScope, DhcpScopeState>,
     ipv6_fragments: Ipv6FragmentReassembler,
     pub ipv6_reassembled: u64,
     http_headers: HashMap<(TcpFlowKey, bool), HttpHeaderState>,

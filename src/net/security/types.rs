@@ -231,9 +231,11 @@ pub(super) struct NtlmFanoutState {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct DhcpVlanState {
+pub(super) struct DhcpScopeState {
     pub(super) servers: HashSet<Vec<u8>>,
-    pub(super) clients: Vec<(f64, Vec<u8>)>,
+    pub(super) clients: std::collections::BTreeMap<Vec<u8>, (f64, u64)>,
+    pub(super) last_seen: f64,
+    pub(super) client_high_water: f64,
     pub(super) starvation_alerted: bool,
 }
 

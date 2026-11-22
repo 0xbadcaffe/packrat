@@ -380,7 +380,7 @@ fn detects_dhcp_starvation_identity_burst() {
 
     assert!(security.ids_alerts.iter().any(|alert| {
         alert.signature == "DHCP client identity burst"
-            && alert.severity == packrat_tui::net::security::Severity::Critical
+            && alert.severity == packrat_tui::net::security::Severity::Medium
     }));
 }
 

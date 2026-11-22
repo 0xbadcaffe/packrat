@@ -1,13 +1,33 @@
 use super::*;
 
+const DHCP_CLIENT_WINDOW_SECS: f64 = 10.0;
+const MAX_DHCP_SCOPES: usize = 128;
+const MAX_DHCP_CLIENTS: usize = 128;
+
 impl SecurityEngine {
     // ─── DHCP Authority and Starvation ──────────────────────────────────────
 
     pub(super) fn check_dhcp_integrity(&mut self, pkt: &Packet) {
+        if !pkt.timestamp.is_finite() || pkt.timestamp < 0.0 {
+            return;
+        }
         let Some(message) = parse_dhcp_message(&pkt.bytes) else {
             return;
         };
-        let state = self.dhcp_vlans.entry(pkt.vlan_id).or_default();
+        if !matches!(message.message_type, 1 | 2 | 5) {
+            return;
+        }
+        let scope = service_scope(pkt);
+        if self.dhcp_scopes.len() >= MAX_DHCP_SCOPES
+            && !self.dhcp_scopes.contains_key(&scope)
+            && let Some(oldest) = self.dhcp_scopes.iter()
+                .min_by(|(key_a, a), (key_b, b)| a.last_seen.total_cmp(&b.last_seen).then(key_a.cmp(key_b)))
+                .map(|(key, _)| *key)
+        {
+            self.dhcp_scopes.remove(&oldest);
+        }
+        let state = self.dhcp_scopes.entry(scope).or_default();
+        state.last_seen = state.last_seen.max(pkt.timestamp);
         let mut alerts = Vec::new();
 
         if matches!(message.message_type, 2 | 5) && !message.server_identity.is_empty() {
@@ -29,31 +49,26 @@ impl SecurityEngine {
             }
         }
 
-        if message.message_type == 1 && !message.client_identity.is_empty() {
-            state.clients.retain(|(timestamp, _)| {
-                pkt.timestamp < *timestamp || pkt.timestamp - *timestamp <= 10.0
+        let burst = if message.message_type == 1 && !message.client_identity.is_empty() {
+            dhcp_client_burst(state, message.client_identity, pkt)
+        } else {
+            None
+        };
+
+        if let Some((count, related_packets)) = burst {
+            let (interface, outer_vlan, vlan) = scope;
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "DHCP client identity burst",
+                    severity: Severity::Medium,
+                    detail: format!(
+                        "{count} distinct DHCPDISCOVER identities in 10 seconds +                         (section/interface {interface:?}, outer VLAN {outer_vlan:?}, VLAN {vlan:?}); +                         lease exhaustion was not observed"
+                    ),
+                },
+                related_packets,
+                correlation_key: Some(format!("dhcp-discover:{scope:?}")),
             });
-            if state.clients.is_empty() {
-                state.starvation_alerted = false;
-            }
-            state.clients.push((pkt.timestamp, message.client_identity));
-            if state.clients.len() > 256 {
-                state.clients.remove(0);
-            }
-            let unique_clients = state
-                .clients
-                .iter()
-                .map(|(_, identity)| identity.as_slice())
-                .collect::<HashSet<_>>()
-                .len();
-            if unique_clients >= DHCP_STARVATION_THRESHOLD && !state.starvation_alerted {
-                state.starvation_alerted = true;
-                alerts.push((
-                    "DHCP client identity burst",
-                    Severity::Critical,
-                    format!("{unique_clients} distinct DHCP clients appeared on one VLAN within 10 seconds"),
-                ));
-            }
         }
 
         for (signature, severity, detail) in alerts {
@@ -264,4 +279,36 @@ impl SecurityEngine {
             });
         }
     }
+}
+
+fn dhcp_client_burst(state: &mut DhcpScopeState, identity: Vec<u8>, pkt: &Packet) -> Option<(usize, Vec<u64>)> {
+    state.client_high_water = state.client_high_water.max(pkt.timestamp);
+    let cutoff = state.client_high_water - DHCP_CLIENT_WINDOW_SECS;
+    if pkt.timestamp < cutoff {
+        return None;
+    }
+    state.clients.retain(|_, (timestamp, _)| *timestamp >= cutoff);
+    if state.clients.len() < DHCP_STARVATION_THRESHOLD {
+        state.starvation_alerted = false;
+    }
+    if state.clients.len() == MAX_DHCP_CLIENTS
+        && !state.clients.contains_key(&identity)
+        && let Some(oldest) = state.clients.iter()
+            .min_by(|(_, (a, _)), (_, (b, _))| a.total_cmp(b))
+            .map(|(identity, _)| identity.clone())
+    {
+        state.clients.remove(&oldest);
+    }
+    let current = state.clients.entry(identity).or_insert((pkt.timestamp, pkt.no));
+    if pkt.timestamp > current.0 {
+        *current = (pkt.timestamp, pkt.no);
+    }
+    let count = state.clients.len();
+    if count < DHCP_STARVATION_THRESHOLD || state.starvation_alerted {
+        return None;
+    }
+    state.starvation_alerted = true;
+    let mut frames: Vec<_> = state.clients.values().map(|&(_, frame)| frame).collect();
+    frames.sort_unstable();
+    Some((count, frames))
 }

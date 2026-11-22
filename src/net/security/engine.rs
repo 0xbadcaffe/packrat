@@ -31,7 +31,7 @@ impl SecurityEngine {
             exfil_flows: HashMap::new(),
             admin_fanout: Default::default(),
             ntlm_fanout: HashMap::new(),
-            dhcp_vlans: HashMap::new(),
+            dhcp_scopes: HashMap::new(),
             ipv6_fragments: Ipv6FragmentReassembler::default(),
             ipv6_reassembled: 0,
             http_headers: HashMap::new(),
@@ -65,7 +65,7 @@ impl SecurityEngine {
         self.exfil_flows.clear();
         self.admin_fanout.clear();
         self.ntlm_fanout.clear();
-        self.dhcp_vlans.clear();
+        self.dhcp_scopes.clear();
         self.ipv6_fragments.clear();
         self.ipv6_reassembled = 0;
         self.http_headers.clear();

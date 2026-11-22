@@ -89,6 +89,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the source normally contacts these hosts and corroborate with server logon events.",
         ),
         (
+            "IDS", "DHCP client identity burst", "dhcp.discover_identity_burst", 2, Heuristic,
+            "Compare the sampled client identities with expected reconnects and check DHCP server logs for lease pool exhaustion.",
+        ),
+        (
             "IDS", "SMBv1 server response", "smb1.successful_server_response", 1, DirectObservation,
             "Identify the server and legacy dependency; verify SMBv1 configuration and pilot removal before disabling it.",
         ),
