@@ -202,16 +202,17 @@ impl SecurityEngine {
         };
         let mut post_reset = None;
         let mut overlap = None;
-        let mut duplicate = false;
+        let mut already_seen = false;
         if !segment.payload.is_empty() {
             let payload_sequence = segment.sequence.wrapping_add(u32::from(segment.flags & SYN != 0));
-            duplicate = slices.contains(payload_sequence, segment.payload);
+            let duplicate = slices.contains(payload_sequence, segment.payload);
+            already_seen = duplicate
+                || tcp_payload_already_seen(&slices.slices, payload_sequence, segment.payload);
             if !state.post_reset_alerted
                 && segment.flags & RST == 0
                 && let Some(reset) = state.reset
                 && (0.0..=TCP_STATE_TTL_SECS).contains(&(pkt.timestamp - reset.timestamp))
-                && !duplicate
-                && !tcp_payload_already_seen(&slices.slices, payload_sequence, segment.payload)
+                && !already_seen
             {
                 state.post_reset_alerted = true;
                 post_reset = Some(reset);
@@ -223,7 +224,7 @@ impl SecurityEngine {
                 state.overlap_alerted = true;
                 overlap = Some(conflict);
             }
-            if !duplicate && (!state.overlap_alerted || !state.post_reset_alerted) {
+            if !already_seen && (!state.overlap_alerted || !state.post_reset_alerted) {
                 slices.remember_distinct(pkt.no, payload_sequence, segment.payload);
             }
         }
@@ -277,7 +278,7 @@ impl SecurityEngine {
                 )),
             });
         }
-        segment.payload.is_empty() || duplicate
+        segment.payload.is_empty() || already_seen
     }
 }
 

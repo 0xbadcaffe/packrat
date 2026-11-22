@@ -18,7 +18,7 @@ fn observed_transport_payload(packet: &Packet) -> Option<&[u8]> {
 }
 
 impl ExfilState {
-    fn observe(&mut self, packet: &Packet, outbound: bool) -> Option<bool> {
+    fn observe(&mut self, packet: &Packet, outbound: bool, count_payload: bool) -> Option<bool> {
         if !packet.timestamp.is_finite() {
             return None;
         }
@@ -68,7 +68,7 @@ impl ExfilState {
             bucket.outbound = bucket.outbound.saturating_add(length);
             self.outbound_bytes = self.outbound_bytes.saturating_add(length);
             sample_transfer_frame(&mut self.outbound_frames, minute, packet.no);
-            if let Some(payload) = observed_transport_payload(packet) {
+            if count_payload && let Some(payload) = observed_transport_payload(packet) {
                 let payload_bytes = payload.len() as u64;
                 bucket.outbound_payload = bucket.outbound_payload.saturating_add(payload_bytes);
                 self.outbound_payload_bytes = self.outbound_payload_bytes.saturating_add(payload_bytes);
@@ -136,7 +136,7 @@ impl SecurityEngine {
                 evict_oldest_exfil(&mut self.exfil_flows);
             }
             let state = self.exfil_flows.entry(key).or_default();
-            let Some(high_entropy_payload) = state.observe(pkt, outbound) else { return };
+            let Some(high_entropy_payload) = state.observe(pkt, outbound, !no_new_tcp_payload) else { return };
 
             let outbound_ratio = state.outbound_bytes as f64 / state.inbound_bytes.max(1) as f64;
             if outbound

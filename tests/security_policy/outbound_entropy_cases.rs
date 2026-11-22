@@ -36,6 +36,49 @@ fn outbound_tcp(frame: u64, payload: &[u8]) -> Packet {
     packrat_tui::net::parser::parse_ethernet(&packet.bytes, frame, frame as f64 / 10.0)
 }
 
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn repeated_tcp_bytes_do_not_accumulate_entropy_evidence(#[case] resegmented: bool) {
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    let data: Vec<_> = (0..60_000).map(|index| (index * 73 % 256) as u8).collect();
+    core.analyze(&outbound_tcp(1, &data));
+    for frame in 2..=35 {
+        let offset = if resegmented && frame % 2 == 0 {
+            30_000
+        } else {
+            0
+        };
+        let size = if resegmented { 30_000 } else { data.len() };
+        let mut retransmission = outbound_tcp(frame, &data[offset..offset + size]);
+        let sequence = 60_000 + offset as u32;
+        retransmission.bytes[38..42].copy_from_slice(&sequence.to_be_bytes());
+        core.analyze(&retransmission);
+    }
+    let alerts = &core.alert_center.items;
+    assert!(
+        alerts
+            .iter()
+            .any(|alert| alert.title == "Large asymmetric outbound transfer")
+    );
+    assert!(
+        alerts
+            .iter()
+            .all(|alert| alert.title != "High-entropy outbound transfer")
+    );
+
+    for frame in 36..=39 {
+        core.analyze(&outbound_tcp(frame, &data));
+    }
+    let alert = core
+        .alert_center
+        .items
+        .iter()
+        .find(|alert| alert.title == "High-entropy outbound transfer")
+        .unwrap();
+    assert_eq!(alert.packet_refs, [1, 36, 37, 38, 39]);
+}
+
 #[test]
 fn detects_large_high_entropy_outbound_transfer() {
     let mut security = SecurityEngine::default();
