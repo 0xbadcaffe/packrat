@@ -11,6 +11,7 @@ export PACKRAT_TEST_STATE="$health"
 touch -- "$PACKRAT_TEST_LOG" "$scratch/other.jsonl"
 unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT PACKRAT_TRIAGE_ARCHIVE PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
 unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE
+unset PACKRAT_TRIAGE_PROJECT
 
 date() {
     [[ $* == '-u +%s' ]] || return 2
@@ -19,8 +20,13 @@ date() {
 
 mock_archive() {
     printf '%s\n' called >"$PACKRAT_TEST_CALL"
-    if [[ ${2-} == --alert-status ]]; then
-        [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 42 --capture-id 00000000000000000000000000000001${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
+    if [[ ${2-} == --alert-status || ${1-} == --project-alert-status ]]; then
+        if [[ $1 == --project-alert-status ]]; then
+            [[ $2 == "$PACKRAT_TRIAGE_PROJECT" && $3 == "$PACKRAT_TEST_LOG" &&
+               $4 == 1700000000-432 && $5 == 00000000000000000000000000000001 && $6 == 42 ]] || return 2
+        else
+            [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 42 --capture-id 00000000000000000000000000000001${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
+        fi
         if [[ ${PACKRAT_TEST_EVIDENCE_RESTART:-0} == 1 ]]; then
             jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
             mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
@@ -184,6 +190,16 @@ jq -e '.status == "degraded" and .alerts[0].alert_id == 42' <<< "$result" >/dev/
         <<< "$result" >/dev/null
 )
 printf '%s\n' "$sample" >"$health"
+(
+    export PACKRAT_TRIAGE_PROJECT="$scratch/case with spaces.json" PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
+    result=$(bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
+    jq -e '.status == "saved" and .evidence_status.status == "checked"
+        and [.evidence_status.frames[].status] == ["truncated","missing"]
+        and (.evidence_status.frames[0] | has("bytes") | not)' <<< "$result" >/dev/null
+    status=0
+    PACKRAT_TRIAGE_ARCHIVE="$scratch/archive" bash "$triage" "$health" "$PACKRAT_TEST_LOG" 2>/dev/null || status=$?
+    [[ $status == 2 ]]
+)
 for count in 0 50 51; do
     result=$(PACKRAT_TEST_ALERT_COUNT=$count bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e --argjson count "$count" '

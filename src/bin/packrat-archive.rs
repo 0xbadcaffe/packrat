@@ -9,12 +9,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT] [--report-integrity]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first. Integrity counts describe only the records examined."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT] [--report-integrity]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first. Integrity counts describe only the records examined."
         );
         return Ok(());
     };
     if path == "--alerts" {
         return list_alerts(args);
+    }
+    if path == "--project-alert-status" {
+        return project_alert_status(args);
     }
     if path == "--verify-evidence" {
         let directory = args.next().ok_or("--verify-evidence requires an evidence directory")?;
@@ -121,6 +124,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         None => println!("{} packets", archive.count()?),
     }
+    Ok(())
+}
+
+fn project_alert_status(
+    mut args: impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use packrat_tui::storage::alert_evidence::project_alert_evidence;
+    use std::path::Path;
+
+    let project = args.next().ok_or("Project alert status requires a project path")?;
+    let log = args.next().ok_or("Project alert status requires an alert log")?;
+    let session = args.next().ok_or("Project alert status requires a session ID")?;
+    let capture = args.next().ok_or("Project alert status requires a capture ID")?;
+    let id = args.next().ok_or("Project alert status requires an alert ID")?.parse()?;
+    let mut previous = Vec::new();
+    while let Some(flag) = args.next() {
+        if flag != "--previous-log" || previous.len() == MAX_PREVIOUS_LOGS {
+            return Err(format!("Unexpected or excessive project alert option: {flag}").into());
+        }
+        let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
+            .ok_or("--previous-log requires a value")?;
+        previous.push(PathBuf::from(value));
+    }
+    let logs = AlertLogs::new(Path::new(&log), &previous)?;
+    let status = project_alert_evidence(Path::new(&project), logs, &session, id, &capture)?;
+    println!("{}", serde_json::to_string(&status)?);
     Ok(())
 }
 

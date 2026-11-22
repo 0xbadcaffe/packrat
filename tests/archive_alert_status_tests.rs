@@ -8,6 +8,65 @@ use packrat_tui::storage::packet_archive::PacketArchive;
 use serde_json::{Value, json};
 
 #[test]
+fn project_alert_status_checks_only_unique_scoped_pins_against_the_log() {
+    use packrat_tui::model::project::{ProjectSaveMode, ProjectState};
+    use packrat_tui::storage::project_store;
+
+    let root = tempfile::tempdir().unwrap();
+    let project_path = root.path().join("case.json");
+    let log = root.path().join("alerts.jsonl");
+    let previous = root.path().join("alerts.jsonl.1");
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "MEDIUM", "Recorded alert", "test");
+    let mut alert = center.items[0].clone();
+    alert.capture_id = Some("capture-a".into());
+    alert.packet_refs = vec![1, 2, 3, 4, 5, 6, 7];
+    std::fs::write(&log, "").unwrap();
+    std::fs::write(&previous, json!({
+        "schema_version":1, "record_type":"alert", "session_id":"s", "alert":alert
+    }).to_string()).unwrap();
+
+    let packet = |no, captured_length, wire_length| {
+        let mut packet = parse_ethernet(&[0; 14], no, 1.0);
+        packet.capture = Some(CaptureMetadata {
+            timestamp: None, captured_length, wire_length, link_type: 1,
+            interface_id: 0, section_id: 0, interface_name: None, comments: Vec::new(),
+        });
+        packet
+    };
+    let mut project = ProjectState::new("case", ProjectSaveMode::Lightweight);
+    project.pinned_packets = vec![
+        packet(1, 14, 14), packet(2, 14, 60), packet(3, 14, 14), packet(4, 14, 14),
+        packet(4, 14, 14), packet(5, 13, 14), parse_ethernet(&[0; 14], 6, 1.0),
+    ];
+    project.pinned_packet_scopes = [1, 2, 4, 5, 6].map(|no| (no, "capture-a".into())).into();
+    project.pinned_packet_scopes.insert(3, "capture-b".into());
+    project.embedded_packets.push(packet(7, 14, 14));
+    project_store::create(&project, &project_path).unwrap();
+    let before = std::fs::read(&project_path).unwrap();
+
+    let status = |capture| Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--project-alert-status").arg(&project_path).arg(&log)
+        .args(["s", capture, "1", "--previous-log"]).arg(&previous).output().unwrap();
+    assert!(!status("capture-b").status.success());
+    let result = status("capture-a");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["capture_id"], "capture-a");
+    assert_eq!(report["evidence_frame_set_sha256"].as_str().unwrap().len(), 64);
+    assert_eq!(report["frames"], json!([
+        {"frame_number":1,"status":"complete"},
+        {"frame_number":2,"status":"truncated"},
+        {"frame_number":3,"status":"missing"},
+        {"frame_number":4,"status":"unreadable"},
+        {"frame_number":5,"status":"unreadable"},
+        {"frame_number":6,"status":"length_unknown"},
+        {"frame_number":7,"status":"missing"},
+    ]));
+    assert_eq!(std::fs::read(&project_path).unwrap(), before);
+}
+
+#[test]
 fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
     let directory = tempfile::tempdir().unwrap();
     let archive_path = directory.path().join("archive");

@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::analysis::alert_center::{AlertItem, MAX_ALERT_PACKET_REFS};
 use crate::export::pcapng::PcapNgWriter;
+use crate::net::packet::Packet;
 use crate::storage::packet_archive::{PacketArchive, valid_capture_id};
 use super::alert_history::{AlertLogs, ReverseAlertLines};
 use super::alert_jsonl::ExistingAlertRecord;
@@ -143,13 +144,7 @@ pub fn alert_evidence_across_logs(
     let evidence_frame_set_sha256 = evidence_frame_set_sha256(&frames);
     let frames = frames.into_iter().map(|frame_number| {
         let status = match archive.packet_for_capture(capture_id, frame_number) {
-            Ok(Some(packet)) => match packet.capture {
-                Some(metadata) if metadata.captured_length as usize != packet.bytes.len()
-                    || metadata.wire_length < metadata.captured_length => FrameStatus::Unreadable,
-                Some(metadata) if metadata.truncated() => FrameStatus::Truncated,
-                Some(_) => FrameStatus::Complete,
-                None => FrameStatus::LengthUnknown,
-            },
+            Ok(Some(packet)) => frame_status(&packet),
             Ok(None) => FrameStatus::Missing,
             Err(_) => FrameStatus::Unreadable,
         };
@@ -162,6 +157,50 @@ pub fn alert_evidence_across_logs(
         evidence_frame_set_sha256,
         frames,
     })
+}
+
+/// Check pinned evidence in a saved case against a scoped alert from the log.
+pub fn project_alert_evidence(
+    project: &Path,
+    logs: AlertLogs<'_>,
+    session_id: &str,
+    alert_id: u64,
+    capture_filter: &str,
+) -> Result<EvidenceAvailability> {
+    let alert = latest_alert_in_logs(logs, session_id, alert_id, Some(capture_filter))?;
+    let (capture_id, frames) = scoped_frames(&alert)?;
+    let project = super::project_store::load(project)?;
+    let mut statuses: Vec<Option<FrameStatus>> = (0..frames.len()).map(|_| None).collect();
+    for packet in &project.pinned_packets {
+        if let Ok(index) = frames.binary_search(&packet.no)
+            && project.pinned_packet_scopes.get(&packet.no).is_some_and(|scope| scope == capture_id)
+        {
+            statuses[index] = Some(if statuses[index].is_some() {
+                FrameStatus::Unreadable
+            } else {
+                frame_status(packet)
+            });
+        }
+    }
+    Ok(EvidenceAvailability {
+        session_id: session_id.to_owned(),
+        capture_id: capture_id.to_owned(),
+        alert_id,
+        evidence_frame_set_sha256: evidence_frame_set_sha256(&frames),
+        frames: frames.into_iter().zip(statuses).map(|(frame_number, status)| {
+            FrameAvailability { frame_number, status: status.unwrap_or(FrameStatus::Missing) }
+        }).collect(),
+    })
+}
+
+fn frame_status(packet: &Packet) -> FrameStatus {
+    match packet.capture.as_ref() {
+        Some(metadata) if metadata.captured_length as usize != packet.bytes.len()
+            || metadata.wire_length < metadata.captured_length => FrameStatus::Unreadable,
+        Some(metadata) if metadata.truncated() => FrameStatus::Truncated,
+        Some(_) => FrameStatus::Complete,
+        None => FrameStatus::LengthUnknown,
+    }
 }
 
 pub(super) fn evidence_frame_set_sha256(sorted_unique_frames: &[u64]) -> String {

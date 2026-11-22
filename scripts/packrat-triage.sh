@@ -14,7 +14,7 @@ usage() {
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
         'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
-        'Set PACKRAT_TRIAGE_ARCHIVE and PACKRAT_TRIAGE_EVIDENCE_ALERT_ID to check frame availability for one alert.' \
+        'Set PACKRAT_TRIAGE_ARCHIVE or PACKRAT_TRIAGE_PROJECT, plus PACKRAT_TRIAGE_EVIDENCE_ALERT_ID, to check one alert.' \
         'Evidence for an alert in the recent report is withheld if its frame references changed during triage.' \
         'PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE optionally adds saved live socket snapshots for matching alerts.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
@@ -57,9 +57,10 @@ done
 max_age_override=${PACKRAT_TRIAGE_MAX_AGE:-}
 read_timeout=${PACKRAT_TRIAGE_READ_TIMEOUT:-10}
 archive=${PACKRAT_TRIAGE_ARCHIVE:-}
+project=${PACKRAT_TRIAGE_PROJECT:-}
 evidence_id=${PACKRAT_TRIAGE_EVIDENCE_ALERT_ID:-}
 socket_file=${PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE:-}
-if [[ $mode == list_saved ]]; then archive='' evidence_id='' socket_file=''; fi
+if [[ $mode == list_saved ]]; then archive='' project='' evidence_id='' socket_file=''; fi
 socket_status=not_configured
 if [[ -n $socket_file ]]; then
     if [[ $socket_file != /* || $socket_file == */ || $socket_file == *[[:cntrl:]]* ]]; then
@@ -73,9 +74,11 @@ if [[ $mode == live && ( ! -f $health_file ||
     printf '%s\n' 'Expected a regular health file and a positive PACKRAT_TRIAGE_MAX_AGE.' >&2
     exit 2
 fi
-if [[ -n $archive || -n $evidence_id ]]; then
-    if [[ $archive != /* || $archive == *[[:cntrl:]]* || ! $evidence_id =~ ^[1-9][0-9]{0,14}$ ]]; then
-        printf '%s\n' 'Evidence status requires an absolute PACKRAT_TRIAGE_ARCHIVE and a positive alert ID.' >&2
+if [[ -n $archive || -n $project || -n $evidence_id ]]; then
+    evidence_path=${archive:-$project}
+    if [[ ( -n $archive && -n $project ) || $evidence_path != /* ||
+          $evidence_path == *[[:cntrl:]]* || ! $evidence_id =~ ^[1-9][0-9]{0,14}$ ]]; then
+        printf '%s\n' 'Evidence status requires exactly one absolute archive or project path and a positive alert ID.' >&2
         exit 2
     fi
 fi
@@ -196,8 +199,14 @@ previous_log_stamps() {
 
 check_evidence() {
     local response expected
-    response=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive "$archive" \
-        --alert-status "$1" "$session" "$evidence_id" --capture-id "$capture" "${previous_args[@]}") || return 1
+    local -a evidence_args
+    if [[ -n $project ]]; then
+        evidence_args=(--project-alert-status "$project" "$1" "$session" "$capture" "$evidence_id")
+    else
+        evidence_args=("$archive" --alert-status "$1" "$session" "$evidence_id" --capture-id "$capture")
+    fi
+    response=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
+        "${evidence_args[@]}" "${previous_args[@]}") || return 1
     expected=$(jq -c --argjson id "$evidence_id" --argjson limit "$alert_limit" '
         {match:(first(.alerts[] | select(.alert_id == $id) |
             {digest:.evidence_frame_set_sha256, count:.evidence_frame_count}) // null),
