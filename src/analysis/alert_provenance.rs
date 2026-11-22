@@ -45,6 +45,10 @@ pub(super) const RULES: &[RuleDefinition] = {
     use EvidenceConfidence::{Correlated, DirectObservation, Heuristic};
     &[
         (
+            "ARP", "ARP binding changed", "arp.reply_binding_change", 2, Correlated,
+            "Compare both ARP replies with DHCP leases, failover events, and the affected host's neighbor table.",
+        ),
+        (
             "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 1, Heuristic,
             "Identify the owning process and expected interval before escalating.",
         ),

@@ -65,18 +65,19 @@ impl AnalysisCore {
                     .unwrap_or_else(|| format!("{}>{}", pkt.src, pkt.dst)),
             );
         }
-        for anomaly in &findings.arp {
-            self.alert_center.record_correlated(
-                anomaly.pkt_no,
+        for finding in &findings.arp {
+            let anomaly = &finding.anomaly;
+            self.alert_center.record_correlated_with_evidence(
+                (anomaly.pkt_no, &[finding.previous_frame]),
                 pkt.timestamp,
                 "ARP",
-                "HIGH",
+                "MEDIUM",
                 "ARP binding changed",
                 format!(
-                    "{} moved from {} to {}",
+                    "ARP replies for {} claimed {} and then {}; whether any host accepted the change is unknown",
                     anomaly.ip, anomaly.old_mac, anomaly.new_mac
                 ),
-                &anomaly.ip,
+                &finding.correlation_key,
             );
         }
         for hit in &findings.vulnerabilities {

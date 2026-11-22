@@ -1,47 +1,66 @@
 use super::*;
+use std::net::Ipv4Addr;
+
+const ARP_COMPARISON_WINDOW_SECS: f64 = 300.0;
+
+fn arp_reply_sender(raw: &[u8]) -> Option<(Ipv4Addr, [u8; 6])> {
+    let (offset, 0x0806) = ethernet_network_header(raw)? else { return None };
+    let arp = raw.get(offset..offset + 28)?;
+    // Ethernet hardware, IPv4 protocol, 6-byte MAC, 4-byte IP, and reply opcode.
+    if arp[..8] != [0, 1, 8, 0, 6, 4, 0, 2] {
+        return None;
+    }
+    let mac: [u8; 6] = arp[8..14].try_into().ok()?;
+    let ip = Ipv4Addr::from(<[u8; 4]>::try_from(&arp[14..18]).ok()?);
+    if mac == [0; 6] || mac[0] & 1 != 0 || ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() {
+        return None;
+    }
+    Some((ip, mac))
+}
 
 impl SecurityEngine {
     // ─── ARP Anomaly ─────────────────────────────────────────────────────────
 
     pub(super) fn check_arp(&mut self, pkt: &Packet) {
-        // ARP packets: protocol == "ARP" or info contains ARP data
-        if !pkt.protocol.eq_ignore_ascii_case("ARP") {
+        if !pkt.protocol.eq_ignore_ascii_case("ARP") || !pkt.timestamp.is_finite() {
             return;
         }
-        // ARP reply format: "Who has x.x.x.x? Tell y.y.y.y" or "x.x.x.x is at aa:bb:cc..."
-        // Extract IP and MAC from info string
-        let info = &pkt.info;
-        if let Some((ip, mac)) = Self::parse_arp_info(info) {
-            if let Some(known_mac) = self.ip_to_mac.get(&ip).cloned() {
-                if known_mac != mac {
-                    if self.arp_anomalies.len() >= MAX_ENTRIES {
-                        self.arp_anomalies.remove(0);
-                    }
-                    let anomaly = ArpAnomaly {
-                        pkt_no: pkt.no,
-                        ip: ip.clone(),
-                        old_mac: known_mac,
-                        new_mac: mac.clone(),
-                    };
-                    self.findings.arp.push(anomaly.clone());
-                    self.arp_anomalies.push(anomaly);
-                }
-            }
-            self.ip_to_mac.insert(ip, mac);
+        let Some((ip, mac)) = arp_reply_sender(&pkt.bytes) else { return };
+        let scope = service_scope(pkt);
+        let key = (scope, ip);
+        let known = self.ip_to_mac.get(&key).copied();
+        if known.is_some_and(|entry| entry.timestamp > pkt.timestamp) {
+            return;
         }
-    }
+        if known.is_none() && self.ip_to_mac.len() >= MAX_CONTROL_PLANE_IDENTITIES
+            && let Some(oldest) = self.ip_to_mac.iter().min_by(|a, b| {
+                a.1.timestamp.total_cmp(&b.1.timestamp).then(a.0.cmp(b.0))
+            }).map(|(key, _)| *key)
+        {
+            self.ip_to_mac.remove(&oldest);
+        }
+        self.ip_to_mac.insert(key, ArpObservation { mac, timestamp: pkt.timestamp, frame: pkt.no });
 
-    pub(super) fn parse_arp_info(info: &str) -> Option<(String, String)> {
-        // "192.168.1.1 is at aa:bb:cc:dd:ee:ff"
-        let lower = info.to_lowercase();
-        if let Some(pos) = lower.find(" is at ") {
-            let ip = info[..pos].trim().to_string();
-            let mac = info[pos + 7..].trim().to_string();
-            if !ip.is_empty() && !mac.is_empty() {
-                return Some((ip, mac));
+        if let Some(known) = known
+            && known.mac != mac
+            && pkt.timestamp - known.timestamp <= ARP_COMPARISON_WINDOW_SECS
+        {
+            if self.arp_anomalies.len() >= MAX_ENTRIES {
+                self.arp_anomalies.remove(0);
             }
+            let anomaly = ArpAnomaly {
+                pkt_no: pkt.no,
+                ip: ip.to_string(),
+                old_mac: format_mac(known.mac),
+                new_mac: format_mac(mac),
+            };
+            self.arp_anomalies.push(anomaly.clone());
+            self.findings.arp.push(ArpFinding {
+                anomaly,
+                previous_frame: known.frame,
+                correlation_key: format!("{scope:?}:{ip}"),
+            });
         }
-        None
     }
 
     // ─── OS Fingerprinting ───────────────────────────────────────────────────

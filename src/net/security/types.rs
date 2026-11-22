@@ -276,6 +276,13 @@ pub struct ArpAnomaly {
     pub new_mac: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ArpObservation {
+    pub(super) mac: [u8; 6],
+    pub(super) timestamp: f64,
+    pub(super) frame: u64,
+}
+
 // ─── OS Fingerprint ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]

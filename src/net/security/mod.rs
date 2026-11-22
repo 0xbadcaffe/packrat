@@ -110,7 +110,7 @@ mod control_plane;
 mod dns;
 mod engine;
 mod findings;
-pub use findings::{DetectionBatch, IdsFinding};
+pub use findings::{ArpFinding, DetectionBatch, IdsFinding};
 mod fragments;
 mod http_policy;
 mod http_tls;
@@ -148,7 +148,7 @@ pub struct SecurityEngine {
     pub dns_suspects: Vec<DnsTunnelSuspect>,
 
     // Internal state
-    ip_to_mac: HashMap<String, String>,
+    ip_to_mac: HashMap<(ServiceScope, std::net::Ipv4Addr), ArpObservation>,
     os_by_ip: HashMap<String, &'static str>,
     bf_windows: HashMap<BfKey, BfWindow>,
     dns_accum: HashMap<String, DnsAccum>,
