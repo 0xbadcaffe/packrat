@@ -27,7 +27,11 @@ live() {
         record_type:"capture_triage", status:$status,
         health:{capture_id:"a", alert_session_id:"1-2", capture_interface:"wlan1", issues:[],
             packets_total:$packets, pcap_buffer_drops:0, alert_saving:true, capture_truncated_frames:0,
-            capture_link_type:1, capture_link_decodable:true, disk_free_mib:2048},
+            capture_link_type:1, capture_link_decodable:true, disk_free_mib:2048,
+            archive_enabled:true,archive_alert_evidence_only:true,
+            archive_evidence_rules:["traffic.periodic_fixed_size"],
+            archive_usage:{frames:1,max_frames:100,payload_bytes:1024,max_payload_bytes:65536},
+            archive_path:"private archive path"},
         live_packet_archive:"enabled", open_priority_alerts_in_sample:($queue | length),
         priority_sample_at_limit:false, has_more_alerts:($alerts | length > 50),
         alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_limit:false,detail:"private context"},
@@ -46,6 +50,9 @@ check_status "$state" current 0
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .link_type==1 and .link_decodable and .truncated_frames==0 and .disk_free_mib==2048
     and .review_queue[0].packet_evidence_status=="partial"
+    and .archive_mode=="alert_evidence" and .archive_rule_ids==["traffic.periodic_fixed_size"]
+    and .archive_usage=={frames:1,max_frames:100,payload_bytes:1024,max_payload_bytes:65536}
+    and .archive_near_limit==false
     and .evidence_check=={alert_id:9,status:"checked"}
     and .recent_alerts==[{alert_id:9,severity:"MEDIUM",rule_id:"test.medium",disposition:"New",hit_count:1,packet_evidence_status:"partial"}]
     and .recent_alerts_at_limit==false and .has_older_alerts==false
@@ -70,6 +77,10 @@ live current 13 "$mixed_queue" "$medium" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 jq -e '(.review_queue | map(.alert_id))==[7,8] and .review_queue[1].archive_rule
     and .review_queue[1].severity=="MEDIUM" and (tostring | contains("private") | not)' "$state" >/dev/null
+live current 14 '[]' | jq '.health.archive_evidence_rules=["unsafe data"]
+    | .health.archive_usage.frames=90' >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '.archive_rule_ids==null and .archive_near_limit and .archive_usage.frames==90' "$state" >/dev/null
 
 (
     # shellcheck source=scripts/packrat-rollout.sh
@@ -128,7 +139,7 @@ watch_pid=$!
 await_packets 30
 check_status "$state" current 0
 if bash "$watch" --once "$state" -- true >/dev/null 2>&1; then exit 1; fi
-live current 31 '[]' | jq '.health.disk_free_mib=2047' >"$report.next"
+live current 31 '[]' | jq '.health.disk_free_mib=2047 | .health.archive_usage.frames=2' >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 31
 live current 32 '[]' "$medium" >"$report.next"

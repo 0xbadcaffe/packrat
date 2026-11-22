@@ -132,6 +132,21 @@ sanitize() {
         def severity: if . == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" then . else null end;
         def disposition: if . == "New" or . == "Reviewing" or . == "Confirmed" or
             . == "Benign" or . == "Contained" or . == "Closed" then . else null end;
+        def archive_mode:
+            if .archive_enabled == false then "disabled"
+            elif .archive_enabled != true then null
+            elif .archive_alert_evidence_only == true then "alert_evidence"
+            elif .archive_alert_evidence_only == false then "all_packets"
+            else null end;
+        def archive_rules:
+            if type == "array" and length <= 16 and all(.[]; type == "string" and
+                test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z")) then unique else null end;
+        def archive_usage:
+            if type != "object" then null else {
+                frames:(.frames | counter), payload_bytes:(.payload_bytes | counter),
+                max_frames:(.max_frames | counter), max_payload_bytes:(.max_payload_bytes | counter)
+            } | if .frames == null or .payload_bytes == null or
+                .max_frames <= 0 or .max_payload_bytes <= 0 then null else . end end;
         select(length == 1) | .[0] | objects
         | select(.record_type == "capture_triage" and (.status | token) != null)
         | select(.status != "current" or (.health.issues == [] and
@@ -145,6 +160,10 @@ sanitize() {
             packets:(.health.packets_total | counter), buffer_drops:(.health.pcap_buffer_drops | counter),
             truncated_frames:(.health.capture_truncated_frames | counter),
             alert_saving:(.health.alert_saving | flag), archive:(.live_packet_archive | token),
+            archive_mode:(.health | archive_mode),
+            archive_rule_ids:(.health | if archive_mode == "alert_evidence"
+                then .archive_evidence_rules | archive_rules else null end),
+            archive_usage:(.health.archive_usage | archive_usage),
             archive_pause_reason:(.health.archive_pause_reason | token),
             disk_free_mib:(.health.disk_free_mib | counter),
             alert_log_integrity:(.alert_log_integrity | if type == "object" then {
@@ -171,7 +190,9 @@ sanitize() {
                    next_evidence_step:(.next_evidence_step | token)}
                 | select(.alert_id > 0 and (.severity == "HIGH" or .severity == "CRITICAL" or
                     (.archive_rule == true and (.severity == "MEDIUM" or .severity == "LOW"))))) else null end)
-          } | select(valid_current)'
+          } | .archive_near_limit = (.archive_usage | if . == null then null else
+                (.frames / .max_frames >= 0.9 or .payload_bytes / .max_payload_bytes >= 0.9) end)
+            | select(valid_current)'
 }
 
 read_status() {
@@ -260,7 +281,7 @@ while :; do
     mv -fT -- "$temp" "$state"
     temp=''
     if "$once"; then printf '%s\n' "$snapshot"; break; fi
-    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .highest_observed_alert_id, .last_observed)' <<< "$snapshot")
+    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id, .last_observed)' <<< "$snapshot")
     if [[ $key != "$previous" ]]; then
         jq -c 'del(.last_observed)' <<< "$event"
         previous=$key
