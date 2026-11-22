@@ -12,7 +12,7 @@ usage() {
         'PACKRAT_DISK_SUDO (1 retries an inaccessible disk path with noninteractive sudo),' \
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
         'PACKRAT_ALERT_LOG (optional absolute alert path; requires pipeline checking),' \
-        'PACKRAT_ALERT_VERIFY_OPEN (1 also verifies the open file; uses noninteractive sudo if needed),' \
+        'PACKRAT_ALERT_VERIFY_OPEN (1 verifies the open file and pipe; uses noninteractive sudo if needed),' \
         'PACKRAT_REQUIRE_ARCHIVE (1 reports missing or inactive packet archiving),' \
         'PACKRAT_MIN_FREE_MIB (512). Health requests always use IPv4 loopback.'
 }
@@ -103,7 +103,7 @@ disk_free_kib() {
     awk 'NR == 2 { print $4 }' <<< "$output"
 }
 
-alert_pipeline_tails() {
+alert_pipeline_processes() {
     local pane=$1
     [[ $pane =~ ^[1-9][0-9]*$ ]] || return 1
     LC_ALL=C ps -e -o pid= -o ppid= -o stat= -o comm= | awk -v pane="$pane" '
@@ -117,14 +117,14 @@ alert_pipeline_tails() {
                 for (steps = 0; ancestor > 1 && steps < 32; steps++) {
                     if (ancestor == pane) {
                         observed[roles[pid]] = 1
-                        if (roles[pid] == "tail") tails[pid] = 1
+                        matched[pid] = roles[pid]
                         break
                     }
                     ancestor = parent[ancestor]
                 }
             }
             if (!(observed["tail"] && observed["jq"])) exit 1
-            for (pid in tails) print pid
+            for (pid in matched) print matched[pid], pid
         }'
 }
 
@@ -139,11 +139,27 @@ alert_log_open() {
     grep -Fxq -- "$expected" <<< "$opened"
 }
 
+read_pipe() {
+    local target
+    target=$(readlink -- "$1" 2>/dev/null) ||
+        target=$(sudo -n -- readlink -- "$1" 2>/dev/null) || return 1
+    [[ $target =~ ^pipe:\[[0-9]+\]$ ]] || return 1
+    printf '%s\n' "$target"
+}
+
 alert_log_followed() {
-    local pid arg follow
-    local -a args
-    while read -r pid; do
+    local pid role arg follow pipe
+    local -a args tails=()
+    local -A parser_pipes=()
+    while read -r role pid; do
         [[ $pid =~ ^[1-9][0-9]*$ ]] || continue
+        if [[ $role == tail ]]; then
+            tails+=("$pid")
+        elif [[ $role == jq && $alert_verify_open == 1 ]] && pipe=$(read_pipe "/proc/$pid/fd/0"); then
+            parser_pipes[$pipe]=1
+        fi
+    done <<< "$1"
+    for pid in "${tails[@]}"; do
         mapfile -d '' -t args < <(cat -- "/proc/$pid/cmdline" 2>/dev/null)
         [[ ${#args[@]} -gt 1 && ${args[-1]} == "$alert_log" ]] || continue
         follow=false
@@ -151,13 +167,16 @@ alert_log_followed() {
             [[ $arg != -- ]] || break
             if [[ $arg == -F || $arg == --follow=name ]]; then follow=true; fi
         done
-        if "$follow" && { [[ $alert_verify_open == 0 ]] || alert_log_open "$pid"; }; then return 0; fi
-    done <<< "$1"
+        "$follow" || continue
+        if [[ $alert_verify_open == 0 ]]; then return 0; fi
+        if pipe=$(read_pipe "/proc/$pid/fd/1") && [[ ${parser_pipes[$pipe]:-} == 1 ]] &&
+            alert_log_open "$pid"; then return 0; fi
+    done
     return 1
 }
 
 read_health() {
-    local sample watcher=null pipeline=null source=null tails pane_info dead pane disk=null free_kib
+    local sample watcher=null pipeline=null source=null processes pane_info dead pane disk=null free_kib
     sample=$(curl --disable --fail --silent --max-time 3 --noproxy '*' "http://127.0.0.1:$port/health") || sample=null
     if [[ -n $alert_session ]]; then
         watcher=false
@@ -166,10 +185,10 @@ read_health() {
         if [[ $dead == 0 ]]; then
             watcher=true
             if [[ $alert_pipeline == 1 ]]; then
-                if tails=$(alert_pipeline_tails "$pane"); then
+                if processes=$(alert_pipeline_processes "$pane"); then
                     pipeline=true
                     if [[ -n $alert_log ]]; then
-                        if alert_log_followed "$tails"; then source=true; else source=false; fi
+                        if alert_log_followed "$processes"; then source=true; else source=false; fi
                     fi
                 else
                     pipeline=false

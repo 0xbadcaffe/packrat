@@ -48,7 +48,16 @@ sudo() {
     shift 2
     case $1 in
         df) shift; PACKRAT_TEST_DISK_PROTECTED=0 df "$@" ;;
-        stat|find) PACKRAT_FAKE_FD_PROTECTED=0 "$@" ;;
+        stat|find|readlink) PACKRAT_FAKE_FD_PROTECTED=0 "$@" ;;
+        *) return 1 ;;
+    esac
+}
+
+readlink() {
+    [[ $1 == -- && ${PACKRAT_FAKE_FD_PROTECTED:-0} == 0 ]] || return 1
+    case $2 in
+        /proc/94/fd/1) printf '%s\n' 'pipe:[100]' ;;
+        /proc/95/fd/0) printf '%s\n' "${PACKRAT_FAKE_PARSER_PIPE:-pipe:[100]}" ;;
         *) return 1 ;;
     esac
 }
@@ -79,7 +88,7 @@ sleep() {
     if (( PACKRAT_TEST_STEP == ${PACKRAT_FAKE_STEPS:-4} )); then exit 0; fi
 }
 
-export -f curl tmux ps cat df sudo stat find sleep
+export -f curl tmux ps cat df sudo stat find readlink sleep
 bash -n "$watch"
 
 bash "$watch" --once | jq -e '
@@ -160,6 +169,15 @@ output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOL
 [[ $status == 1 ]]
 jq -e '.issues == ["alert_watcher_source_unverified"] and .alert_watcher_open_log_required
     and (.alert_watcher_source_matches | not)' <<< "$output" >/dev/null
+for parser_input in 'pipe:[101]' /dev/null; do
+    status=0
+    output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
+        PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_ALERT_VERIFY_OPEN=1 PACKRAT_FAKE_OPEN_FDS=20:150 \
+        PACKRAT_FAKE_PARSER_PIPE="$parser_input" bash "$watch" --once) || status=$?
+    [[ $status == 1 ]]
+    jq -e '.issues == ["alert_watcher_source_unverified"] and .alert_watcher_pipeline_alive
+        and (.alert_watcher_source_matches | not)' <<< "$output" >/dev/null
+done
 
 status=0
 output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
