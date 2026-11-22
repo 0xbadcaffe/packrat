@@ -32,6 +32,7 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
     let manifest = scratch.path().join("suite.json");
     let mut labels = json!({
         "version": 1,
+        "strict": true,
         "cases": [
             {
                 "name": "benign retransmissions",
@@ -91,4 +92,20 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
     let checks = &report["cases"][1]["summary"]["alert_expectations"]["frame_checks"][0];
     assert_eq!(checks["missing_frames"], json!([4]));
     assert_eq!(checks["unexpected_openings"], 1);
+
+    labels["cases"][1]["expect_counts"] = json!({"scan.horizontal": 0});
+    labels["cases"][1]["opening_frames"] = json!({});
+    std::fs::write(&manifest, serde_json::to_vec(&labels).unwrap()).unwrap();
+    let unlisted = run();
+    assert_eq!(unlisted.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&unlisted.stdout).unwrap();
+    assert_eq!(
+        report["cases"][1]["summary"]["alert_expectations"]["verdict"],
+        "passed"
+    );
+    assert_eq!(
+        report["cases"][1]["unlisted_rule_counts"],
+        json!({"http.unauthorized_burst": 1})
+    );
+    assert_eq!(report["cases"][1]["verdict"], "failed");
 }

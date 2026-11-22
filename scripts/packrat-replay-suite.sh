@@ -5,7 +5,8 @@ usage() {
     printf '%s\n' 'Usage: packrat-replay-suite MANIFEST.json' \
         'Replay up to 32 labeled captures. Relative capture paths are relative to the manifest.' \
         'Example: {"version":1,"cases":[{"name":"baseline","capture":"baseline.pcapng","expect_counts":{"scan.horizontal":0}}]}' \
-        'Use opening_frames to label exact frames, for example {"scan.horizontal":[12]}.'
+        'Use opening_frames to label exact frames, for example {"scan.horizontal":[12]}.' \
+        'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.'
 }
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
@@ -29,16 +30,17 @@ if ! validated=$(head -c 65537 -- "$1" | jq -Rces '
         and (((.expect_counts // {} | length) + ([.opening_frames // {} | .[] | length] | add // 0)) as $n
              | $n >= 1 and $n <= 64);
     select(utf8bytelength <= 65536) | fromjson | objects
-    | select(.version == 1 and (.cases | type == "array" and length >= 1 and length <= 32
+    | select(.version == 1 and ((has("strict") | not) or (.strict | type == "boolean"))
+        and (.cases | type == "array" and length >= 1 and length <= 32
         and all(.[]; valid_case)
         and ((map(.name) | unique | length) == length)))
-    | .cases
 '); then
     printf '%s\n' 'Invalid replay suite manifest.' >&2
     exit 2
 fi
 
 base=$(cd -- "$(dirname -- "$1")" && pwd)
+strict=$(jq -c '.strict // false' <<< "$validated")
 results=()
 while IFS= read -r label; do
     name=$(jq -er '.name' <<< "$label")
@@ -59,16 +61,26 @@ while IFS= read -r label; do
                     $row | {packets,analyzed,skipped,alerts_opened,rule_counts,alert_expectations}
                 else . end)') || status=$?
     fi
-    results+=("$(jq -cn --arg name "$name" --argjson result "${summary:-null}" --argjson status "$status" '
+    results+=("$(jq -cn --arg name "$name" --argjson result "${summary:-null}" --argjson status "$status" \
+        --argjson strict "$strict" --argjson label "$label" '
+        (($label.expect_counts // {}) + ($label.opening_frames // {}) | keys) as $labeled |
+        ($result.rule_counts | if type == "object" then . else {} end) as $rules |
+        ($rules | with_entries(select(.key as $key | .value > 0 and ($labeled | index($key) == null)))) as $unlisted |
+        ([$rules[]] | add // 0) as $registered |
+        (if ($result.rule_counts | type) == "object" and ($result.alerts_opened | type) == "number"
+            and $result.alerts_opened >= $registered then $result.alerts_opened - $registered else null end) as $unregistered |
         ($result.alert_expectations.verdict) as $verdict |
-        {name:$name, verdict:(if $verdict == "passed" and $status == 0 then "passed"
-                             elif $verdict == "failed" then "failed" else "inconclusive" end),
-         summary:$result}
+        {name:$name,
+         verdict:(if $verdict == "failed" then "failed"
+                  elif $verdict != "passed" or $status != 0 or ($strict and $unregistered == null) then "inconclusive"
+                  elif $strict and (($unlisted | length) > 0 or $unregistered > 0) then "failed"
+                  else "passed" end),
+         unlisted_rule_counts:$unlisted, unregistered_alerts:$unregistered, summary:$result}
     ')")
-done < <(jq -c '.[]' <<< "$validated")
+done < <(jq -c '.cases[]' <<< "$validated")
 
-report=$(printf '%s\n' "${results[@]}" | jq -cs '{
-    record_type:"capture_replay_suite", total:length,
+report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" '{
+    record_type:"capture_replay_suite", strict:$strict, total:length,
     passed:([.[] | select(.verdict == "passed")] | length),
     failed:([.[] | select(.verdict == "failed")] | length),
     inconclusive:([.[] | select(.verdict == "inconclusive")] | length), cases:.

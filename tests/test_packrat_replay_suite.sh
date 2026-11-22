@@ -8,9 +8,10 @@ trap 'rm -rf -- "$scratch"' EXIT
 manifest="$scratch/suite.json"
 export PACKRAT_TEST_DIRECTORY="$scratch"
 touch -- "$scratch/benign fixture.pcap" "$scratch/changed.pcap" "$scratch/partial.pcap"
+touch -- "$scratch/unlisted.pcap" "$scratch/unregistered.pcap"
 
 packrat-analyze() {
-    local verdict
+    local verdict opened=0 rules='{}'
     case ${*: -1} in
         "$PACKRAT_TEST_DIRECTORY/benign fixture.pcap")
             [[ $# == 4 && $1 == --expect-alert && $2 == scan.horizontal=0 && $3 == -- ]] || return 2
@@ -21,10 +22,14 @@ packrat-analyze() {
             verdict=failed
             ;;
         "$PACKRAT_TEST_DIRECTORY/partial.pcap") verdict=inconclusive ;;
+        "$PACKRAT_TEST_DIRECTORY/unlisted.pcap") verdict=passed; opened=1; rules='{"scan.vertical":1}' ;;
+        "$PACKRAT_TEST_DIRECTORY/unregistered.pcap") verdict=passed; opened=1 ;;
         *) return 2 ;;
     esac
     printf '%s\n' '{"type":"alert","payload":"not in the suite report"}'
-    jq -cn --arg verdict "$verdict" '{type:"summary",packets:20,alert_expectations:{verdict:$verdict}}'
+    jq -cn --arg verdict "$verdict" --argjson opened "$opened" --argjson rules "$rules" '
+        {type:"summary",packets:20,alerts_opened:$opened,rule_counts:$rules,alert_expectations:{verdict:$verdict}}
+    '
     [[ $verdict == passed ]]
 }
 export -f packrat-analyze
@@ -47,7 +52,23 @@ jq -e '
 jq -c '.cases = [.cases[0]]' <<< "$sample" >"$manifest"
 bash "$suite" "$manifest" | jq -e '.total == 1 and .passed == 1' >/dev/null
 
-for invalid in '.version = 2' 'del(.cases[0].expect_counts)' \
+strict_sample=$(jq -c '.cases = [
+    .cases[0],
+    (.cases[0] | .name = "unlisted" | .capture = "unlisted.pcap"),
+    (.cases[0] | .name = "unregistered" | .capture = "unregistered.pcap")]' <<< "$sample")
+printf '%s\n' "$strict_sample" >"$manifest"
+bash "$suite" "$manifest" | jq -e '
+    .strict == false and .passed == 3
+    and .cases[1].unlisted_rule_counts == {"scan.vertical":1}
+    and .cases[2].unregistered_alerts == 1
+' >/dev/null
+jq -c '.strict = true' <<< "$strict_sample" >"$manifest"
+status=0
+result=$(bash "$suite" "$manifest") || status=$?
+[[ $status == 1 ]]
+jq -e '.strict == true and .passed == 1 and .failed == 2 and .inconclusive == 0' <<< "$result" >/dev/null
+
+for invalid in '.version = 2' 'del(.cases[0].expect_counts)' '.strict = "true"' \
     '.cases[1].opening_frames["scan.horizontal"] = [12,12]' \
     '.cases[1].name = .cases[0].name'; do
     jq -c "$invalid" <<< "$sample" >"$manifest"
