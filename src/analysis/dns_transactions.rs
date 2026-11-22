@@ -192,7 +192,9 @@ impl DnsTransactionTracker {
         for DnsTcpRecord { bytes, frames } in records {
             let id = DnsQueryHeader::parse(bytes).map(|header| header.id);
             for mut finding in self.observe_message(packet, DnsTransport::Tcp, (*source, *destination), bytes, frames) {
-                append_evidence(&mut finding.related_packets, frames);
+                if finding.kind != DnsFindingKind::NxDomainBurst {
+                    append_evidence(&mut finding.related_packets, frames);
+                }
                 output.push((id, finding));
             }
         }
@@ -327,7 +329,9 @@ impl DnsTransactionTracker {
             });
         }
         for finding in &mut findings {
-            append_evidence(&mut finding.related_packets, &query.frames);
+            if finding.kind != DnsFindingKind::NxDomainBurst {
+                append_evidence(&mut finding.related_packets, &query.frames);
+            }
         }
         findings
     }

@@ -240,6 +240,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("dns_transaction/external_resolver_tests.rs"),
     include_str!("dns_transaction/jndi_label_tests.rs"),
     include_str!("dns_transaction/investigation_tests.rs"),
+    include_str!("dns_transaction/nxdomain_evidence_tests.rs"),
     include_str!("industrial_policy_tests.rs"),
 );
 
