@@ -139,6 +139,7 @@ read_health() {
     fi
     printf '%s\n' "$sample" | jq -Rcse \
         --argjson watcher "$watcher" --argjson pipeline "$pipeline" --argjson source "$source" \
+        --arg alert_log "$alert_log" \
         --argjson disk "$disk" --argjson min_free "$min_free" --argjson require_archive "$require_archive" \
         --argjson baseline "$baseline" '
         (try fromjson catch null) as $health |
@@ -172,6 +173,7 @@ read_health() {
             alert_watcher_alive: (if $pipeline == false or $source == false then false else $watcher end),
             alert_watcher_pipeline_alive: $pipeline,
             alert_watcher_source_matches: $source,
+            alert_watcher_log: (if $alert_log == "" then null else $alert_log end),
             archive_enabled: $archive_enabled,
             archive_paused: ($archive_paused // false),
             disk_free_mib: $disk,

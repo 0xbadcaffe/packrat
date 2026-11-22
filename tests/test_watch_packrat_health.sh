@@ -52,7 +52,7 @@ bash -n "$watch"
 bash "$watch" --once | jq -e '
     .record_type == "capture_health" and .event == "sample" and .issues == []
     and .pcap_buffer_drops == 0 and .alert_watcher_alive == true and .alert_watcher_pipeline_alive == null
-    and .archive_enabled == null
+    and .archive_enabled == null and .alert_watcher_log == null
 ' >/dev/null
 
 pipeline=$'91 2 Ss bash\n92 91 S sudo\n93 92 S sudo\n94 93 S tail'
@@ -92,8 +92,9 @@ PACKRAT_REQUIRE_ARCHIVE=true bash "$watch" --once >/dev/null 2>&1 || status=$?
 log='/var/lib/packrat lab/alerts.jsonl'
 export PACKRAT_FAKE_PROCESSES="$pipeline"$'\n95 91 S jq'
 PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
-    PACKRAT_FAKE_TAIL_SOURCE="$log" bash "$watch" --once | jq -e '
+    PACKRAT_FAKE_TAIL_SOURCE="$log" bash "$watch" --once | jq -e --arg log "$log" '
     .issues == [] and .alert_watcher_alive and .alert_watcher_pipeline_alive and .alert_watcher_source_matches
+    and .alert_watcher_log == $log
 ' >/dev/null
 
 for mode in wrong_log descriptor missing_args; do
