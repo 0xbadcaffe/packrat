@@ -19,29 +19,6 @@ impl SecurityEngine {
         let src_port = pkt.src_port.unwrap_or(0);
         let bytes = &pkt.bytes;
 
-        // HTTP cleartext sensitive paths on port 80
-        if dst_port == 80 {
-            let payload = Self::ascii_payload(bytes, 54);
-            let lower = payload.to_lowercase();
-            for sens in &[
-                "/admin",
-                "/login",
-                "/passwd",
-                "/password",
-                "/config",
-                "/wp-admin",
-            ] {
-                if lower.contains(sens) {
-                    self.push_vuln(VulnHit {
-                        pkt_no: pkt.no,
-                        kind: "Cleartext HTTP Sensitive Path",
-                        detail: format!("Path '{}' over plaintext HTTP from {}", sens, pkt.src),
-                    });
-                    break;
-                }
-            }
-        }
-
         // Cleartext Telnet credentials
         if dst_port == 23 || src_port == 23 {
             let payload = Self::ascii_payload(bytes, 54);

@@ -9,6 +9,10 @@ struct CoverageGroup {
 
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
+        signatures: &["Cleartext HTTP Basic authorization"],
+        positive_test: "basic_authorization_requires_a_wire_request_and_redacts_credentials",
+    },
+    CoverageGroup {
         signatures: &["SSL 3.0 selected", "TLS 1.0 selected", "TLS 1.1 selected", "RC4 selected"],
         positive_test: "tls_alerts_require_complete_server_selections",
     },
@@ -209,6 +213,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy/tcp_reset_cases.rs"),
     include_str!("security_policy/smb_anonymous_cases.rs"),
     include_str!("security_policy/tls_selection_cases.rs"),
+    include_str!("security_policy/http_exposure_cases.rs"),
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("arp_binding_tests.rs"),
     include_str!("dns_transaction_tests.rs"),

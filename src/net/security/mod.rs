@@ -88,6 +88,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "Conflicting IPv6 fragments",
     "IPv6 fragment reassembly rejected",
     "HTTP request smuggling ambiguity",
+    "Cleartext HTTP Basic authorization",
     "Critical industrial control command",
     "Industrial state-changing command",
     "DNS reply without observed query",

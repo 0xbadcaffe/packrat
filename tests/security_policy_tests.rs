@@ -284,3 +284,5 @@ mod tcp_reset_cases;
 mod smb_anonymous_cases;
 #[path = "security_policy/tls_selection_cases.rs"]
 mod tls_selection_cases;
+#[path = "security_policy/http_exposure_cases.rs"]
+mod http_exposure_cases;

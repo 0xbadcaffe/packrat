@@ -51,6 +51,26 @@ impl SecurityEngine {
         let src_port = pkt.src_port.unwrap_or(0);
         let bytes = &pkt.bytes;
 
+        if matches!(dst_port, 80 | 3128 | 3000 | 8000 | 8080 | 8888)
+            && let Some((client_port, port)) = crate::analysis::stream::tcp_port_pair(pkt)
+            && port == dst_port
+            && let Some(field) = crate::analysis::stream::tcp_segment_payload(pkt)
+                .and_then(|(_, payload)| http_policy::basic_authorization_header(payload))
+        {
+            emit(
+                IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "Cleartext HTTP Basic authorization",
+                    severity: Severity::High,
+                    detail: format!(
+                        "{field} carried Basic credentials over plaintext HTTP from {} to {}:{port}; acceptance unknown",
+                        pkt.src, pkt.dst,
+                    ),
+                },
+                Some(format!("{:?}:{}:{client_port}>{}:{port}:{field}", service_scope(pkt), pkt.src, pkt.dst)),
+            );
+        }
+
         if src_port == 445
             && crate::analysis::stream::tcp_segment_payload(pkt)
                 .is_some_and(|(_, payload)| smb_wire::is_successful_legacy_reply(payload))

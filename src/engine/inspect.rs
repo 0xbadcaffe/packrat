@@ -58,6 +58,7 @@ impl AnalysisCore {
             let flow = if matches!(alert.signature,
                 "Periodic fixed-size traffic" | "TCP payload after reset" | "Conflicting TCP retransmission"
                 | "Industrial state-changing command" | "Critical industrial control command"
+                | "Cleartext HTTP Basic authorization"
             ) {
                 AlertFlow::from_packet(pkt)
             } else {

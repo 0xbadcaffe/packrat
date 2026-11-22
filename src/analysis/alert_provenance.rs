@@ -137,6 +137,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the server's anonymous access policy and check subsequent TREE_CONNECT responses or server share audit logs.",
         ),
         (
+            "IDS", "Cleartext HTTP Basic authorization", "http.cleartext_basic_authorization", 1, DirectObservation,
+            "Verify where TLS terminates, review who could read the captured traffic, and rotate exposed credentials as appropriate.",
+        ),
+        (
             "TLS", "SSL 3.0 selected", "tls.ssl30_selected", 1, DirectObservation,
             "Verify the server's minimum protocol version and identify the client or intermediary requiring SSL 3.0.",
         ),
