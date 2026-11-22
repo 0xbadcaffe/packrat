@@ -160,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(arg) = args.next() {
         if !positional && (arg == "--help" || arg == "-h") {
             println!(
-                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--quic-decode-helper PROGRAM] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\n--expect-alert implies --alerts-only, counts newly grouped alerts, and exits nonzero on mismatches or skipped input. Repeat it for multiple rules.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
+                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--expect-alert-frame RULE_ID=FRAME] [--quic-decode-helper PROGRAM] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nExpectations imply --alerts-only and exit nonzero on mismatches or skipped input. --expect-alert counts newly grouped alerts; --expect-alert-frame labels their exact opening frames for a rule. Repeat the frame option for each expected frame.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
             );
             return Ok(());
         }
@@ -173,6 +173,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else if !positional && arg == "--expect-alert" {
             let expectation = args.next().ok_or("Missing RULE_ID=COUNT after --expect-alert")?;
             replay.expect(expectation.to_str().ok_or("Alert expectations must be UTF-8")?)?;
+            alerts_only = true;
+        } else if !positional && arg == "--expect-alert-frame" {
+            let expectation = args.next().ok_or("Missing RULE_ID=FRAME after --expect-alert-frame")?;
+            replay.expect_frame(expectation.to_str().ok_or("Alert frame expectations must be UTF-8")?)?;
             alerts_only = true;
         } else if !positional && arg == "--quic-decode-helper" {
             if helper.is_some() {

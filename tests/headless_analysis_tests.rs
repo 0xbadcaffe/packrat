@@ -162,7 +162,7 @@ fn unsupported_link_types_are_reported_not_silently_analyzed() {
     assert_eq!(events[0]["reason"]["UnsupportedLinkType"], 101);
     assert_eq!(events.last().unwrap()["skipped"], 1);
     assert_eq!(events.last().unwrap()["incidents"], 0);
-    let replay = run_with(&path, &["--expect-alert", "scan.horizontal=0"]);
+    let replay = run_with(&path, &["--expect-alert-frame", "scan.horizontal=1"]);
     assert!(!replay.status.success());
     assert_eq!(read_events(&replay).last().unwrap()["alert_expectations"]["verdict"], "inconclusive");
 }
@@ -205,17 +205,48 @@ fn labeled_http_replay_distinguishes_retransmissions_from_distinct_responses() {
     let first = run_with(&suspicious, &options);
     let second = run_with(&suspicious, &options);
     assert_eq!(first.stdout, second.stdout);
-    let events = events(&first);
-    let auth: Vec<_> = events.iter()
+    let replay_events = events(&first);
+    let auth: Vec<_> = replay_events.iter()
         .filter(|e| e["alert"]["provenance"]["rule_id"] == "http.unauthorized_burst")
         .collect();
     assert_eq!(auth.len(), 2);
     assert_eq!(auth[0]["alert"]["packet_refs"], serde_json::json!([1, 2, 3, 4, 5]));
     assert_eq!(auth[1]["alert"]["id"], auth[0]["alert"]["id"]);
     assert_eq!(auth[1]["alert"]["hit_count"], 2);
-    let summary = events.last().unwrap();
+    let summary = replay_events.last().unwrap();
     assert_eq!(summary["rule_counts"]["http.unauthorized_burst"], 1);
     assert_eq!(summary["alert_expectations"]["verdict"], "passed");
+
+    let frame = run_with(&suspicious, &["--expect-alert-frame", "http.unauthorized_burst=5"]);
+    let frame_events = events(&frame);
+    let report = &frame_events.last().unwrap()["alert_expectations"];
+    assert_eq!(report["verdict"], "passed");
+    assert_eq!(report["frame_checks"][0]["expected_frames"], serde_json::json!([5]));
+    assert_eq!(report["frame_checks"][0]["unexpected_openings"], 0);
+
+    // A correlated update at frame 10 is not an opening; the grouped count
+    // alone is still correct and would not catch this wrong label.
+    let wrong_frame = run_with(&suspicious, &[
+        "--expect-alert", "http.unauthorized_burst=1",
+        "--expect-alert-frame", "http.unauthorized_burst=10",
+    ]);
+    assert!(!wrong_frame.status.success());
+    let wrong_frame_events = read_events(&wrong_frame);
+    let report = &wrong_frame_events.last().unwrap()["alert_expectations"];
+    assert_eq!(report["verdict"], "failed");
+    assert_eq!(report["checks"][0]["observed"], 1);
+    assert_eq!(report["frame_checks"][0]["missing_frames"], serde_json::json!([10]));
+    assert_eq!(report["frame_checks"][0]["unexpected_openings"], 1);
+
+    for (labels, error) in [
+        (vec!["--expect-alert-frame", "http.unauthorized_burst=0"], "Invalid expected alert frame"),
+        (vec!["--expect-alert-frame", "http.unauthorized_burst=5",
+              "--expect-alert-frame", "http.unauthorized_burst=5"], "Duplicate alert frame expectation"),
+    ] {
+        let invalid = run_with(&suspicious, &labels);
+        assert!(!invalid.status.success());
+        assert!(String::from_utf8_lossy(&invalid.stderr).contains(error));
+    }
 
     let mismatch = run_with(&suspicious, &["--expect-alert", "http.unauthorized_burst=0"]);
     assert!(!mismatch.status.success());
