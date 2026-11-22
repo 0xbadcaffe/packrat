@@ -14,7 +14,7 @@ source "$root/scripts/packrat-rollout.sh"
 
     tmux() { printf '%s\n' "$*"; }
     [[ $(launch_capture "$bridge_session" /candidate) == \
-        "new-session -d -s $bridge_session -c / -x 150 -y 40 sudo -n -H env XDG_DATA_HOME=/backup/stage-data /candidate" ]]
+        "new-session -d -s $bridge_session -c / -x 150 -y 40 sudo -n -H env XDG_DATA_HOME=/backup/stage-data /candidate --telemetry-listen $stage_health_addr" ]]
     [[ $(launch_capture "$main_session" /candidate) == \
         "new-session -d -s $main_session -c / -x 150 -y 40 sudo -n -H /candidate --telemetry-listen $health_addr" ]]
 
@@ -45,7 +45,7 @@ source "$root/scripts/packrat-rollout.sh"
     [[ $(launch_capture "$main_session" /candidate) == *$'<--archive>\n<'"$archive"$'>\n<--archive-max-mib>\n<32>\n<--archive-max-frames>\n<4096>' ]]
     stage_command=$(launch_capture "$bridge_session" /candidate)
     [[ $stage_command != *"$archive"* ]]
-    [[ $stage_command == *$'<--archive>\n</backup/stage-data/packet-archive>\n<--archive-max-mib>\n<32>\n<--archive-max-frames>\n<4096>' ]]
+    [[ $stage_command == *$'<--telemetry-listen>\n<'"$stage_health_addr"$'>\n<--archive>\n</backup/stage-data/packet-archive>\n<--archive-max-mib>\n<32>\n<--archive-max-frames>\n<4096>' ]]
 
     capture_file_open() {
         [[ $1 == 42 && ( $2 == "$(alert_log_for_session "$bridge_session")" ||
@@ -56,13 +56,25 @@ source "$root/scripts/packrat-rollout.sh"
     mock_open_archive=/backup/stage-data/packet-archive/packets.bin
     capture_storage_ready 42 "$bridge_session"
 
-    curl() { printf '%s\n' "$sample"; }
+    curl() {
+        [[ ${*: -1} == "http://$expected_addr/health" ]] || return 1
+        printf '%s\n' "$sample"
+    }
+    expected_addr=$health_addr
     sample='{"status":"ok","telemetry_fresh":true,"capture_active":true,"alert_saving":true,"pcap_buffer_drops":0,"archive_paused":true}'
     if health_ready; then exit 1; fi
     sample=$(jq -c '.archive_paused = false' <<< "$sample")
     if health_ready; then exit 1; fi
     sample=$(jq -c '.archive_enabled = true' <<< "$sample")
     health_ready
+    expected_addr=$stage_health_addr
+    health_ready "$stage_health_addr" true
+    sample=$(jq -c '.pcap_buffer_drops = 1' <<< "$sample")
+    if health_ready "$stage_health_addr" true; then exit 1; fi
+    expected_addr=$health_addr
+    health_ready
+    sample=$(jq -c '.pcap_buffer_drops = "0"' <<< "$sample")
+    if health_ready; then exit 1; fi
 
     if read_launch_profile "${profile[@]}" --archive relative; then exit 1; fi
     if read_launch_profile "${profile[@]}" --archive "$archive" --archive /other; then exit 1; fi
@@ -101,8 +113,9 @@ prepare_backup_and_stage() {
 }
 
 start_capture() {
-    local session=$1 binary=$2
+    local session=$1 binary=$2 require_zero=${3:-true}
     trace+=("start:$session:$binary")
+    if [[ $require_zero == false ]]; then trace+=("allow-existing-drops"); fi
     if [[ $session == "$bridge_session" ]]; then
         case $scenario in
             new_alert) printf '%s\n' 'new finding in primary' >>"$data_dir/alerts.jsonl" ;;
@@ -153,13 +166,13 @@ run_scenario success 0 backup start:packrat-stage:/candidate stop:packrat:/usr/l
     install:/candidate start:packrat:/usr/local/bin/packrat retire-stage
 run_scenario install_fail 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate stop:packrat:/usr/local/bin/packrat install:/backup/packrat \
-    start:packrat:/usr/local/bin/packrat retire-stage
+    start:packrat:/usr/local/bin/packrat allow-existing-drops retire-stage
 run_scenario health_fail 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat stop:packrat:/usr/local/bin/packrat \
-    install:/backup/packrat start:packrat:/usr/local/bin/packrat retire-stage
+    install:/backup/packrat start:packrat:/usr/local/bin/packrat allow-existing-drops retire-stage
 run_scenario rollback_fail 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat stop:packrat:/usr/local/bin/packrat \
-    install:/backup/packrat start:packrat:/usr/local/bin/packrat
+    install:/backup/packrat start:packrat:/usr/local/bin/packrat allow-existing-drops
 
 rc=0
 bash "$root/scripts/packrat-rollout.sh" --deploy /missing 'invalid/interface' >/dev/null 2>&1 || rc=$?

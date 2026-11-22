@@ -7,6 +7,7 @@ data_dir=/root/.local/share/packrat
 main_session=packrat
 bridge_session=packrat-stage
 health_addr=127.0.0.1:9477
+stage_health_addr=127.0.0.1:9478
 backup_dir=
 stage_binary=
 archive_path=
@@ -51,10 +52,13 @@ capture_pid() {
 }
 
 health_ready() {
-    curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$health_addr/health" |
-        jq -e --arg archive "$archive_path" '
+    local address=${1:-$health_addr} require_zero_drops=${2:-false}
+    curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$address/health" |
+        jq -e --arg archive "$archive_path" --argjson require_zero "$require_zero_drops" '
             .status == "ok" and .telemetry_fresh and .capture_active and .alert_saving
-            and (.alert_save_failed | not) and (.pcap_buffer_drops != null)
+            and (.alert_save_failed | not)
+            and (.pcap_buffer_drops | type == "number" and . >= 0 and . <= 4294967295 and floor == .)
+            and (if $require_zero then .pcap_buffer_drops == 0 else true end)
             and ($archive == "" or (.archive_enabled == true and .archive_paused == false))' >/dev/null
 }
 
@@ -196,14 +200,17 @@ launch_capture() {
         "$bridge_session")
             [[ -n $backup_dir ]] || return 1
             tmux new-session -d -s "$session" -c / -x 150 -y 40 \
-                sudo -n -H env "XDG_DATA_HOME=$backup_dir/stage-data" "$executable" "${archive_args[@]}"
+                sudo -n -H env "XDG_DATA_HOME=$backup_dir/stage-data" "$executable" \
+                    --telemetry-listen "$stage_health_addr" "${archive_args[@]}"
             ;;
         *) return 1 ;;
     esac
 }
 
 start_capture() {
-    local session=$1 executable=$2 index attempt count pid baseline=
+    local session=$1 executable=$2 require_zero_drops=${3:-true}
+    local index attempt count pid address=$health_addr baseline=
+    if [[ $session == "$bridge_session" ]]; then address=$stage_health_addr; fi
     index=$(printf '%s\n' /sys/class/net/* | LC_ALL=C sort |
         awk -F / -v iface="$interface" '$NF == iface { print NR-1 }')
     [[ $index =~ ^[0-9]+$ ]] || return 1
@@ -222,7 +229,7 @@ start_capture() {
         if [[ $count =~ ^[0-9]+$ ]]; then
             if [[ -n $baseline ]] && (( count > baseline )); then
                 pid=$(capture_pid "$session" "$executable") || return 1
-                if capture_storage_ready "$pid" "$session" && { [[ $session != "$main_session" ]] || health_ready; }; then
+                if capture_storage_ready "$pid" "$session" && health_ready "$address" "$require_zero_drops"; then
                     printf '%s: %s packet count increased to %s\n' "$session" "$interface" "$count"
                     return 0
                 fi
@@ -290,7 +297,7 @@ rollout() {
     error "Replacement failed health checks; attempting rollback"
     if stop_capture "$main_session" "$installed" &&
        replace_installed "$backup_dir/packrat" &&
-       start_capture "$main_session" "$installed"; then
+       start_capture "$main_session" "$installed" false; then
         retire_bridge || error "Rollback is live; inspect the staging session"
         error "Previous capture restored; rollout failed"
     else
