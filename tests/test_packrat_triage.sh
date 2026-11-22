@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+triage="$root/scripts/packrat-triage.sh"
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+health="$scratch/latest.json"
+export PACKRAT_TEST_LOG="$scratch/alerts.jsonl" PACKRAT_TEST_CALL="$scratch/archive-called"
+unset PACKRAT_TRIAGE_MAX_AGE
+
+date() {
+    [[ $* == '-u +%s' ]] || return 2
+    printf '%s\n' 1700000000
+}
+
+packrat-archive() {
+    printf '%s\n' called >"$PACKRAT_TEST_CALL"
+    [[ $* == "--alerts $PACKRAT_TEST_LOG --session 1700000000-432 --capture-id 00000000000000000000000000000001 --limit 50" ]] || return 2
+    if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
+    printf '%s\n' '[{"alert_id":42,"title":"Scoped alert"}]'
+}
+
+export -f date packrat-archive
+
+sample='{"record_type":"capture_health","timestamp":"2023-11-14T22:12:50Z",
+         "capture_active":true,"telemetry_fresh":true,"issues":[],
+         "capture_id":"00000000000000000000000000000001","alert_session_id":"1700000000-432"}'
+printf '%s\n' "$sample" >"$health"
+result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+jq -e '.status == "current" and .age_seconds == 30 and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
+[[ -f $PACKRAT_TEST_CALL ]]
+
+check_failure() {
+    local expected_rc=$1 expected_status=$2 actual=0 output
+    output=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG") || actual=$?
+    [[ $actual == "$expected_rc" ]]
+    jq -e --arg status "$expected_status" '.status == $status and .alerts == null' <<< "$output" >/dev/null
+}
+
+rm -- "$PACKRAT_TEST_CALL"
+PACKRAT_TRIAGE_MAX_AGE=29 check_failure 1 stale_health
+[[ ! -e $PACKRAT_TEST_CALL ]]
+jq -c '.timestamp = "2023-11-14T22:13:21Z"' <<< "$sample" >"$health"
+check_failure 1 stale_health
+[[ ! -e $PACKRAT_TEST_CALL ]]
+jq -c '.capture_id = null' <<< "$sample" >"$health"
+check_failure 1 capture_scope_unavailable
+[[ ! -e $PACKRAT_TEST_CALL ]]
+
+printf '%s\n' "$sample" >"$health"
+PACKRAT_TEST_LOG_ERROR=1 check_failure 2 alert_log_unavailable
+[[ -e $PACKRAT_TEST_CALL ]]
+jq -c '.issues = ["pcap_buffer_drops"]' <<< "$sample" >"$health"
+status=0
+result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 ]]
+jq -e '.status == "degraded" and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
+
+rm -- "$PACKRAT_TEST_CALL"
+for invalid in 'not JSON' "$sample"$'\n'"$sample" "$(jq -nc --argjson sample "$sample" '$sample + {padding: ("x" * 65536)}')"; do
+    printf '%s\n' "$invalid" >"$health"
+    status=0
+    bash "$triage" "$health" "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
+    [[ $status == 2 && ! -e $PACKRAT_TEST_CALL ]]
+done
+printf '%s\n' 'Packrat triage tests passed'

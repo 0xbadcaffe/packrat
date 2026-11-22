@@ -41,8 +41,10 @@ jobs:
         run: |
           shellcheck scripts/watch-packrat-health.sh tests/test_watch_packrat_health.sh
           shellcheck scripts/watch-packrat-alerts.sh tests/test_watch_packrat_alerts.sh
+          shellcheck scripts/packrat-triage.sh tests/test_packrat_triage.sh
           bash tests/test_watch_packrat_health.sh
           bash tests/test_watch_packrat_alerts.sh
+          bash tests/test_packrat_triage.sh
 
       - name: Test supervised capture rollout
         if: runner.os == 'Linux'
