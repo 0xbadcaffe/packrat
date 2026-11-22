@@ -270,26 +270,31 @@ fn parse_atom(t: &mut Tokens<'_>) -> Result<Expr, ParseError> {
     }
 
     // `field in [v1,v2,...]`
-    if t.try_eat("in ") || t.try_eat("in[") {
-        t.skip_ws();
-        if t.peek() == Some(b'[') {
-            t.pos += 1;
+    let in_set = if t.try_eat("in ") {
+        if !t.try_eat("[") {
+            return Err(ParseError("expected '[' after 'in'".into()));
         }
+        true
+    } else {
+        t.try_eat("in[")
+    };
+    if in_set {
         let mut vals = Vec::new();
-        loop {
-            t.skip_ws();
-            if t.peek() == Some(b']') {
-                t.pos += 1;
-                break;
-            }
-            if t.peek() == Some(b'"') {
-                vals.push(Value::Str(t.eat_str()?));
-            } else if let Some(n) = t.eat_num() {
-                vals.push(Value::Num(n));
-            }
-            t.skip_ws();
-            if t.peek() == Some(b',') {
-                t.pos += 1;
+        if !t.try_eat("]") {
+            loop {
+                let value = if t.peek() == Some(b'"') {
+                    Value::Str(t.eat_str()?)
+                } else {
+                    Value::Num(t.eat_num().ok_or_else(|| ParseError("expected a set value".into()))?)
+                };
+                vals.push(value);
+                if t.try_eat("]") {
+                    break;
+                }
+                if !t.try_eat(",") {
+                    return Err(ParseError("expected ',' or ']' after set value".into()));
+                }
+                t.skip_ws();
             }
         }
         return Ok(Expr::In {

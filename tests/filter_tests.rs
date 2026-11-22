@@ -109,6 +109,33 @@ fn parse_contains() {
 #[test]
 fn parse_in_set() {
     assert!(display_filter::parse("tcp.dstport in [80,443,8080]").is_ok());
+    let frames = display_filter::parse("frame.number in[65,117]").unwrap();
+    let mut packet = pkt("TCP", "192.0.2.1", "192.0.2.2", None, None, "", 60);
+    for (number, expected) in [(65, true), (117, true), (118, false)] {
+        packet.no = number;
+        assert_eq!(display_filter::eval(&frames, &ctx(&packet)), expected);
+    }
+    assert!(display_filter::parse("ip.src in [ \"192.0.2.1\", \"192.0.2.2\" ]").is_ok());
+}
+
+#[test]
+fn set_filter_parsing_terminates_on_partial_and_invalid_input() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let expression = "frame.number in [65,117,177]";
+        for end in 0..expression.len() {
+            let _ = display_filter::parse(&expression[..end]);
+        }
+        assert!(display_filter::parse(expression).is_ok());
+        for value in ["[", "[65", "[65,", "[word]", "[65 117]", "65]", "[65,]"] {
+            let input = format!("frame.number in {value}");
+            assert!(display_filter::parse(&input).is_err(), "{input}");
+        }
+        sender.send(()).unwrap();
+    });
+    receiver.recv_timeout(std::time::Duration::from_secs(2))
+        .expect("set parser must return for every incomplete and malformed input");
+    worker.join().unwrap();
 }
 
 #[test]
