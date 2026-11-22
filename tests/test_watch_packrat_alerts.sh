@@ -35,6 +35,7 @@ fixture() {
 fixture | bash "$watch" | jq -se '
     length == 5
     and map(.event) == ["first_seen","updated","updated","first_seen","first_seen"]
+    and map(.changes) == [[],["evidence","hit_count"],["disposition"],[],[]]
     and map(.session_id) == ["session-a","session-a","session-a","session-b","session-a"]
     and .[1].hits == 2 and .[1].last_packet == 42
     and .[0].source == "IDS" and .[0].packet_no == 41 and .[1].packet_no == 42
@@ -47,6 +48,8 @@ fixture | bash "$watch" | jq -se '
     and .[0].verify == "Inspect the owner"
     and map(.evidence_frame_count) == [1,2,2,1,1]
     and all(.[]; .record_type == "capture_alert"
+        and (.emitted_at | fromdateiso8601) >= .last_seen
+        and .observation_to_notification_seconds >= 0
         and (has("bytes") or has("packet_refs") or has("evidence_frames_internal") | not))
 ' >/dev/null
 
@@ -80,7 +83,17 @@ jq -cn '
     map(.event) == ["first_seen","updated","updated","updated"]
     and map(.evidence_frame_count) == [3,3,4,2]
     and all(.[]; .first_seen == null and .last_seen == null
+        and .observation_to_notification_seconds == null
         and (has("evidence_frames_internal") or has("packet_refs") | not))
+' >/dev/null
+
+jq -cn '
+    {schema_version:1,record_type:"alert",session_id:"test",alert:{id:1,severity:"MEDIUM",last_seen:4102444800}} as $first
+    | $first,
+      ($first | .alert.severity = "HIGH" | .alert.provenance = {rule_id:"rule-a",revision:2} | .alert.detail = "revised")
+' | bash "$watch" | jq -se '
+    map(.changes) == [[],["severity","provenance","description"]]
+    and all(.[]; .observation_to_notification_seconds == null)
 ' >/dev/null
 
 jq -cn '

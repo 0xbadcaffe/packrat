@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
     printf '%s\n' 'Usage: bash watch-packrat-alerts.sh < alerts.jsonl' \
         'Reads Packrat JSONL from stdin and emits first sightings and changed snapshots.' \
+        'Notifications include update reasons and time since the latest observed packet.' \
         'PACKRAT_WATCH_MAX_ALERTS sets the in-memory alert history (default: 1024).'
 }
 case ${1-} in
@@ -40,6 +41,18 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
          + ($alert.packet_refs | if type == "array" then .[:128] else [] end))
         | map(positive_counter | select(. != null))
         | unique;
+    def changes($before; $after):
+        if $before == null then [] else [
+            if $before.severity != $after.severity then "severity" else empty end,
+            if $before.disposition != $after.disposition then "disposition" else empty end,
+            if ($before | [.packet_no, .last_packet, .evidence_frames_internal]) !=
+               ($after | [.packet_no, .last_packet, .evidence_frames_internal]) then "evidence" else empty end,
+            if $before.hits != $after.hits then "hit_count" else empty end,
+            if ($before | [.rule_id, .revision, .confidence, .verify]) !=
+               ($after | [.rule_id, .revision, .confidence, .verify]) then "provenance" else empty end,
+            if ($before | [.source, .title, .detail]) !=
+               ($after | [.source, .title, .detail]) then "description" else empty end
+        ] end;
     def record:
         select(utf8bytelength <= 1048576)
         | (try fromjson catch empty)
@@ -89,9 +102,16 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
                 | .next = ((.next + 1) % $limit)
             else . end
             | .seen[$key] = $alert
+            | now as $emitted
             | .emit = (($alert | del(.evidence_frames_internal)) + {
                 record_type: "capture_alert",
-                event: (if $previous == null then "first_seen" else "updated" end)
+                event: (if $previous == null then "first_seen" else "updated" end),
+                changes: changes($previous; $alert),
+                emitted_at: ($emitted | todateiso8601),
+                observation_to_notification_seconds: (
+                    if $alert.last_seen != null and $alert.last_seen <= $emitted
+                    then $emitted - $alert.last_seen else null end
+                )
             })
           end;
         .emit | select(. != null)
