@@ -209,48 +209,6 @@ fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
 }
 
 #[test]
-fn detects_large_high_entropy_outbound_transfer() {
-    let mut security = SecurityEngine::default();
-    let mut core = packrat_tui::engine::AnalysisCore::default();
-    let encrypted_like = (0..60_000)
-        .map(|index| ((index * 73) % 256) as u8)
-        .collect::<Vec<_>>();
-    for index in 0..17_u64 {
-        let packet = behavior_packet(
-            index + 1,
-            index as f64 / 10.0,
-            60_000,
-            encrypted_like.clone(),
-        );
-        security.update(&packet);
-        core.analyze(&packet);
-    }
-
-    assert!(
-        security
-            .ids_alerts
-            .iter()
-            .any(|alert| alert.signature == "Large asymmetric outbound transfer")
-    );
-    assert!(
-        security
-            .ids_alerts
-            .iter()
-            .any(|alert| alert.signature == "High-entropy outbound transfer")
-    );
-    for (rule, frames) in [
-        ("traffic.asymmetric_outbound", (10..=17).collect::<Vec<_>>()),
-        ("traffic.high_entropy_outbound", (1..=5).collect()),
-    ] {
-        let alert = core.alert_center.items.iter().find(|alert| {
-            alert.provenance.as_ref().is_some_and(|provenance| provenance.rule_id == rule)
-        }).unwrap();
-        assert_eq!(alert.packet_refs, frames);
-        assert_eq!(alert.provenance.as_ref().unwrap().confidence.to_string(), "Heuristic");
-    }
-}
-
-#[test]
 fn outbound_volume_does_not_combine_interfaces_and_keeps_reverse_evidence() {
     use packrat_tui::{
         engine::AnalysisCore,

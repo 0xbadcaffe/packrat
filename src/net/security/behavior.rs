@@ -7,10 +7,20 @@ fn sample_transfer_frame(frames: &mut std::collections::VecDeque<(i64, u64)>, mi
     frames.push_back((minute, frame));
 }
 
+fn observed_transport_payload(packet: &Packet) -> Option<&[u8]> {
+    if let Some((_, _, payload)) = crate::analysis::dns_transactions::udp_payload(packet) {
+        return Some(payload);
+    }
+    match parse_ipv4_tcp_frame(&packet.bytes).or_else(|| parse_ipv6_tcp_frame(&packet.bytes)) {
+        Some(TcpFrame::Segment(segment)) if segment.complete => Some(segment.payload),
+        _ => None,
+    }
+}
+
 impl ExfilState {
-    fn observe(&mut self, packet: &Packet, outbound: bool) -> bool {
+    fn observe(&mut self, packet: &Packet, outbound: bool) -> Option<bool> {
         if !packet.timestamp.is_finite() {
-            return false;
+            return None;
         }
         if self.buckets.is_empty() || packet.timestamp > self.last_seen {
             self.last_seen = packet.timestamp;
@@ -19,12 +29,13 @@ impl ExfilState {
         // The current minute and 59 preceding minutes bound memory independently of packet rate.
         let cutoff = ((self.last_seen / 60.0).floor() as i64).saturating_sub(59);
         if minute < cutoff {
-            return false;
+            return None;
         }
         let mut expired = false;
         while self.buckets.front().is_some_and(|bucket| bucket.minute < cutoff) {
             let Some(bucket) = self.buckets.pop_front() else { break };
             self.outbound_bytes = self.outbound_bytes.saturating_sub(bucket.outbound);
+            self.outbound_payload_bytes = self.outbound_payload_bytes.saturating_sub(bucket.outbound_payload);
             self.inbound_bytes = self.inbound_bytes.saturating_sub(bucket.inbound);
             self.high_entropy_bytes = self.high_entropy_bytes.saturating_sub(bucket.entropy);
             expired = true;
@@ -52,21 +63,28 @@ impl ExfilState {
         };
         let bucket = &mut self.buckets[index];
         let length = u64::from(packet.length);
+        let mut high_entropy_payload = false;
         if outbound {
             bucket.outbound = bucket.outbound.saturating_add(length);
             self.outbound_bytes = self.outbound_bytes.saturating_add(length);
             sample_transfer_frame(&mut self.outbound_frames, minute, packet.no);
-            if packet.bytes.len() >= 64 && shannon_entropy(&packet.bytes) >= 7.2 {
-                bucket.entropy = bucket.entropy.saturating_add(length);
-                self.high_entropy_bytes = self.high_entropy_bytes.saturating_add(length);
-                sample_transfer_frame(&mut self.entropy_frames, minute, packet.no);
+            if let Some(payload) = observed_transport_payload(packet) {
+                let payload_bytes = payload.len() as u64;
+                bucket.outbound_payload = bucket.outbound_payload.saturating_add(payload_bytes);
+                self.outbound_payload_bytes = self.outbound_payload_bytes.saturating_add(payload_bytes);
+                if payload.len() >= 64 && shannon_entropy(payload) >= 7.2 {
+                    high_entropy_payload = true;
+                    bucket.entropy = bucket.entropy.saturating_add(payload_bytes);
+                    self.high_entropy_bytes = self.high_entropy_bytes.saturating_add(payload_bytes);
+                    sample_transfer_frame(&mut self.entropy_frames, minute, packet.no);
+                }
             }
         } else {
             bucket.inbound = bucket.inbound.saturating_add(length);
             self.inbound_bytes = self.inbound_bytes.saturating_add(length);
             sample_transfer_frame(&mut self.inbound_frames, minute, packet.no);
         }
-        true
+        Some(high_entropy_payload)
     }
 }
 
@@ -118,7 +136,7 @@ impl SecurityEngine {
                 evict_oldest_exfil(&mut self.exfil_flows);
             }
             let state = self.exfil_flows.entry(key).or_default();
-            if !state.observe(pkt, outbound) { return; }
+            let Some(high_entropy_payload) = state.observe(pkt, outbound) else { return };
 
             let outbound_ratio = state.outbound_bytes as f64 / state.inbound_bytes.max(1) as f64;
             if outbound
@@ -137,17 +155,17 @@ impl SecurityEngine {
                     state.outbound_frames.iter().chain(&state.inbound_frames).map(|&(_, frame)| frame).collect::<Vec<_>>(),
                 ));
             }
-            if outbound
+            if high_entropy_payload
                 && !state.entropy_alerted
                 && state.high_entropy_bytes >= EXFIL_ENTROPY_THRESHOLD
-                && u128::from(state.high_entropy_bytes) * 5 >= u128::from(state.outbound_bytes) * 4
+                && u128::from(state.high_entropy_bytes) * 5 >= u128::from(state.outbound_payload_bytes) * 4
             {
                 state.entropy_alerted = true;
                 alerts.push((
                     "High-entropy outbound transfer",
                     Severity::High,
                     format!(
-                        "{} to {}: {} high-entropy captured outbound bytes in the rolling hour",
+                        "{} to {}: {} high-entropy outbound transport payload bytes in the rolling hour",
                         pkt.src, pkt.dst, state.high_entropy_bytes
                     ),
                     state.entropy_frames.iter().map(|&(_, frame)| frame).collect::<Vec<_>>(),

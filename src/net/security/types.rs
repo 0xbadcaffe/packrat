@@ -248,6 +248,7 @@ pub(super) struct ExfilKey {
 #[derive(Debug, Default)]
 pub(super) struct ExfilState {
     pub(super) outbound_bytes: u64,
+    pub(super) outbound_payload_bytes: u64,
     pub(super) inbound_bytes: u64,
     pub(super) high_entropy_bytes: u64,
     pub(super) last_seen: f64,
@@ -263,6 +264,7 @@ pub(super) struct ExfilState {
 pub(super) struct TransferBucket {
     pub(super) minute: i64,
     pub(super) outbound: u64,
+    pub(super) outbound_payload: u64,
     pub(super) inbound: u64,
     pub(super) entropy: u64,
 }

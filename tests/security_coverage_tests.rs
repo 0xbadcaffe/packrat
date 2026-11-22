@@ -224,6 +224,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy_tests.rs"),
     include_str!("security_policy/cases_1.rs"),
     include_str!("security_policy/cases_2.rs"),
+    include_str!("security_policy/outbound_entropy_cases.rs"),
     include_str!("security_policy/cases_3.rs"),
     include_str!("security_policy/dhcp_cases.rs"),
     include_str!("security_policy/tcp_reset_cases.rs"),

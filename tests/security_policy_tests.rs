@@ -229,6 +229,8 @@ fn http_packet(no: u64, sequence: u32, payload: &[u8]) -> Packet {
 mod cases_1;
 #[path = "security_policy/cases_2.rs"]
 mod cases_2;
+#[path = "security_policy/outbound_entropy_cases.rs"]
+mod outbound_entropy_cases;
 #[path = "security_policy/cases_3.rs"]
 mod cases_3;
 #[path = "security_policy/dhcp_cases.rs"]
