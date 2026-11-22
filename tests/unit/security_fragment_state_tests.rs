@@ -41,7 +41,7 @@ fn tcp_payload_history_rolls_by_bytes_and_frames() {
     assert!(history.contains(100_000, &large));
     assert_eq!(history.bytes, large.len());
 
-    history.clear();
+    let mut history = TcpPayloadHistory::default();
     for i in 0..=MAX_TCP_SLICES_PER_DIRECTION {
         history.remember_distinct(i as u64 + 1, i as u32 * 8, b"sample");
     }

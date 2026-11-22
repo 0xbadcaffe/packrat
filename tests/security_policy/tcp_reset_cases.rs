@@ -123,7 +123,7 @@ fn ipv6_tcp_integrity_links_reset_and_conflict_evidence() {
     assert!(resets.detail.contains("[2001:db8::1]:50000"));
     let conflict = core.alert_center.items.iter().find(|alert| alert.title == "Conflicting TCP retransmission").unwrap();
     assert_eq!(conflict.packet_refs, [1, 4]);
-    assert_eq!(conflict.provenance.as_ref().unwrap().revision, 4);
+    assert_eq!(conflict.provenance.as_ref().unwrap().revision, 5);
 }
 
 #[test]
@@ -170,4 +170,42 @@ fn post_reset_rule_does_not_treat_a_gap_as_known_bytes() {
     let result = engine.inspect(&ipv6_tcp_packet(4, 100, 0x18, b"abcdef"));
     let finding = result.ids.iter().find(|finding| finding.alert.signature == TITLE).unwrap();
     assert_eq!(finding.related_packets, [3]);
+}
+
+#[test]
+fn syn_ack_and_repeated_syn_preserve_opening_payload_evidence() {
+    let mut engine = SecurityEngine::default();
+    engine.update(&ipv4_tcp_packet(1, 100, 0x02, b"abcd"));
+    let mut response = ipv4_tcp_packet(2, 500, 0x02, b"");
+    for offset in 0..4 { response.bytes.swap(26 + offset, 30 + offset); }
+    for offset in 0..2 { response.bytes.swap(34 + offset, 36 + offset); }
+    engine.update(&response);
+    response.no = 3;
+    response.timestamp = 3.0;
+    response.bytes[47] = 0x12;
+    engine.update(&response);
+    engine.update(&ipv4_tcp_packet(4, 100, 0x02, b"abcd"));
+    let result = engine.inspect(&ipv4_tcp_packet(5, 102, 0x18, b"X"));
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == "Conflicting TCP retransmission").unwrap();
+    assert_eq!(finding.related_packets, [1]);
+}
+
+#[test]
+fn new_openings_keep_post_reset_alerts_distinct_on_a_reused_tuple() {
+    let mut core = AnalysisCore::default();
+    core.analyze(&ipv4_tcp_packet(1, 10, 0x02, b""));
+    core.analyze(&ipv4_tcp_packet(2, 11, 0x04, b""));
+    core.analyze(&ipv4_tcp_packet(3, 11, 0x18, b"first"));
+    core.analyze(&ipv4_tcp_packet(4, 20, 0x02, b""));
+    let mut delayed = ipv4_tcp_packet(5, 21, 0x18, b"stale");
+    delayed.timestamp = 3.5;
+    core.analyze(&delayed);
+    core.analyze(&ipv4_tcp_packet(6, 21, 0x18, b"fresh"));
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != "Conflicting TCP retransmission"));
+    core.analyze(&ipv4_tcp_packet(7, 30, 0x04, b""));
+    core.analyze(&ipv4_tcp_packet(8, 31, 0x18, b"second"));
+    let findings: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == TITLE).collect();
+    assert_eq!(findings.len(), 2);
+    assert_eq!(findings[0].packet_refs, [2, 3]);
+    assert_eq!(findings[1].packet_refs, [7, 8]);
 }

@@ -73,11 +73,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check handshake completion, server reachability, and whether a burst was expected.",
         ),
         (
-            "IDS", "TCP payload after reset", "tcp.payload_after_observed_reset", 5, Heuristic,
+            "IDS", "TCP payload after reset", "tcp.payload_after_observed_reset", 6, Heuristic,
             "Compare the retained reset and payload frames with the flow, capture timing, and endpoint TCP logs.",
         ),
         (
-            "IDS", "Conflicting TCP retransmission", "tcp.conflicting_retransmission", 4, DirectObservation,
+            "IDS", "Conflicting TCP retransmission", "tcp.conflicting_retransmission", 5, DirectObservation,
             "Compare both frames and their TCP sequence ranges. Check capture duplication or offload and verify what the receiver processed independently.",
         ),
         (

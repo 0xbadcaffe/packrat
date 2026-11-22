@@ -67,6 +67,9 @@ pub(super) struct TcpIntegrityState {
     pub(super) from_a: TcpPayloadHistory,
     pub(super) from_b: TcpPayloadHistory,
     pub(super) last_seen: f64,
+    pub(super) opening_sequences: [Option<u32>; 2],
+    pub(super) started_at: Option<f64>,
+    pub(super) past_opening: bool,
     pub(super) reset: Option<TcpResetObservation>,
     pub(super) overlap_alerted: bool,
     pub(super) post_reset_alerted: bool,
@@ -79,11 +82,6 @@ pub(super) struct TcpPayloadHistory {
 }
 
 impl TcpPayloadHistory {
-    pub(super) fn clear(&mut self) {
-        self.slices.clear();
-        self.bytes = 0;
-    }
-
     pub(super) fn contains(&self, start: u32, payload: &[u8]) -> bool {
         self.slices.iter().any(|slice| slice.start == start && slice.data == payload)
     }

@@ -128,6 +128,7 @@ impl SecurityEngine {
         const FIN: u8 = 0x01;
         const SYN: u8 = 0x02;
         const RST: u8 = 0x04;
+        const ACK: u8 = 0x10;
         if segment.flags & SYN != 0 && segment.flags & (FIN | RST) != 0 {
             self.push_ids(IdsAlert {
                 pkt_no: pkt.no,
@@ -164,15 +165,28 @@ impl SecurityEngine {
         }
 
         let state = self.tcp_integrity.entry(key).or_default();
+        if state.started_at.is_some_and(|start| pkt.timestamp < start) {
+            return;
+        }
         let in_time_order = pkt.timestamp >= state.last_seen;
         state.last_seen = state.last_seen.max(pkt.timestamp);
 
-        if in_time_order && segment.flags & (SYN | RST) == SYN {
-            state.from_a.clear();
-            state.from_b.clear();
-            state.reset = None;
-            state.overlap_alerted = false;
-            state.post_reset_alerted = false;
+        let direction = usize::from(!segment.from_a);
+        if in_time_order && segment.flags & (SYN | ACK | FIN | RST) == SYN {
+            let opening = state.opening_sequences[direction];
+            if opening != Some(segment.sequence) {
+                // The other peer can send an opening SYN before either side acknowledges.
+                if state.started_at.is_none() || state.past_opening || opening.is_some() {
+                    *state = TcpIntegrityState {
+                        last_seen: pkt.timestamp,
+                        started_at: Some(pkt.timestamp),
+                        ..Default::default()
+                    };
+                }
+                state.opening_sequences[direction] = Some(segment.sequence);
+            }
+        } else if in_time_order && segment.flags & SYN == 0 {
+            state.past_opening |= segment.flags & (ACK | FIN | RST) != 0 || !segment.payload.is_empty();
         }
 
         let slices = if segment.from_a {
@@ -235,7 +249,7 @@ impl SecurityEngine {
                     ),
                 },
                 related_packets: vec![reset.packet_no],
-                correlation_key: Some(format!("{scope:?}:{:?}", segment.key)),
+                correlation_key: Some(format!("{scope:?}:{:?}:reset:{}", segment.key, reset.packet_no)),
             });
         }
         if let Some(conflict) = overlap {
