@@ -6,7 +6,7 @@ export LC_ALL=C
 usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh [--once] STATE.json -- TRIAGE_COMMAND [ARG ...]' \
         'The state file must be in a private directory owned by the current user.' \
-        'Refreshes the sanitized state every poll; prints only changes to health or the review queue.' \
+        'Refreshes the sanitized state every poll; prints changes to health, the review queue, or recent alerts.' \
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
 }
@@ -48,6 +48,9 @@ sanitize() {
         def token: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
         def counter: if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end;
         def flag: if type == "boolean" then . else null end;
+        def severity: if . == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" then . else null end;
+        def disposition: if . == "New" or . == "Reviewing" or . == "Confirmed" or
+            . == "Benign" or . == "Contained" or . == "Closed" then . else null end;
         select(length == 1) | .[0] | objects
         | select(.record_type == "capture_triage" and (.status | token) != null)
         | {
@@ -58,6 +61,12 @@ sanitize() {
             alert_saving:(.health.alert_saving | flag), archive:(.live_packet_archive | token),
             open_priority_alerts:(.open_priority_alerts_in_sample | counter),
             priority_sample_at_limit:(.priority_sample_at_limit | flag),
+            recent_alerts_at_limit:(.alerts | if type == "array" then length > 50 else null end),
+            has_older_alerts:(.has_more_alerts | flag),
+            recent_alerts:(.alerts | if type == "array" then .[:50] | map(objects
+                | {alert_id:(.alert_id | counter), severity:(.severity | severity), rule_id:(.rule_id | token),
+                   disposition:(.disposition | disposition), hit_count:(.hit_count | counter)}
+                | select(.alert_id > 0 and .severity != null)) | sort_by(.alert_id) else null end),
             review_queue:(.review_queue | if type == "array" then .[:5] | map(objects
                 | {alert_id:(.alert_id | counter), severity:(.severity | token), rule_id:(.rule_id | token),
                    confidence:(.confidence | token), packet_evidence_status:(.packet_evidence_status | token),
