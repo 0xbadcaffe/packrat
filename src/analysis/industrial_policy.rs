@@ -94,7 +94,26 @@ fn modbus_operation(code: u8) -> Option<&'static str> {
 }
 
 fn inspect_dnp3(payload: &[u8]) -> Option<IndustrialFinding> {
-    if payload.len() < 13 || payload[..2] != [0x05, 0x64] {
+    let header = payload.get(..8)?;
+    let user_length = usize::from(header[2]).checked_sub(5)?;
+    if header[..2] != [0x05, 0x64] || user_length < 3
+        || !matches!(header[3] & 0x4f, 0x43 | 0x44)
+        || !dnp3_crc_matches(header, payload.get(8..10)?)
+    {
+        return None;
+    }
+    let mut remaining = user_length;
+    let mut blocks = payload.get(10..)?;
+    while remaining != 0 {
+        let size = remaining.min(16);
+        if !dnp3_crc_matches(blocks.get(..size)?, blocks.get(size..size + 2)?) {
+            return None;
+        }
+        remaining -= size;
+        blocks = &blocks[size + 2..];
+    }
+    // This detector does not assemble fragmented transport or application messages.
+    if payload[10] & 0xc0 != 0xc0 || payload[11] & 0xc0 != 0xc0 {
         return None;
     }
     let (operation, critical) = match payload[12] {
@@ -108,6 +127,17 @@ fn inspect_dnp3(payload: &[u8]) -> Option<IndustrialFinding> {
         _ => return None,
     };
     Some(IndustrialFinding { protocol: "DNP3", operation, critical })
+}
+
+fn dnp3_crc_matches(data: &[u8], encoded: &[u8]) -> bool {
+    let mut crc = 0_u16;
+    for &byte in data {
+        crc ^= u16::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 0 { crc >> 1 } else { (crc >> 1) ^ 0xa6bc };
+        }
+    }
+    encoded == (!crc).to_le_bytes()
 }
 
 fn inspect_s7(payload: &[u8]) -> Option<IndustrialFinding> {

@@ -38,15 +38,25 @@ fn industrial_packet(protocol: &str, port: u16, tcp: bool, payload: &[u8]) -> Pa
     }
 }
 
+fn dnp3_header_fixture(operation: u8) -> [u8; 15] {
+    // Header-only test records contain no control objects.
+    let [crc_lo, crc_hi] = match operation {
+        1 => [0x6d, 0xa0],
+        2 => [0x8f, 0xfa],
+        3 => [0xd1, 0xcc],
+        4 => [0x4b, 0x4f],
+        _ => unreachable!(),
+    };
+    [0x05, 0x64, 8, 0xc4, 1, 0, 2, 0, 0x39, 0x0d, 0xc0, 0xc0, operation, crc_lo, crc_hi]
+}
+
 #[test]
 fn identifies_state_changing_modbus_dnp3_s7_and_bacnet_operations() {
     let mut modbus = vec![0_u8; 8];
     modbus[5] = 2;
     modbus[7] = 16;
 
-    let mut dnp3 = vec![0_u8; 13];
-    dnp3[..2].copy_from_slice(&[0x05, 0x64]);
-    dnp3[12] = 0x04;
+    let dnp3 = dnp3_header_fixture(4);
 
     let mut s7 = vec![0_u8; 18];
     s7[..2].copy_from_slice(&[0x03, 0x00]);
@@ -77,9 +87,7 @@ fn ignores_read_only_modbus_and_emits_critical_control_alerts() {
     read[7] = 3;
     assert!(industrial_policy::inspect(&industrial_packet("Modbus", 502, true, &read)).is_none());
 
-    let mut dnp3 = vec![0_u8; 13];
-    dnp3[..2].copy_from_slice(&[0x05, 0x64]);
-    dnp3[12] = 0x0d;
+    let dnp3 = dnp3_header_fixture(4);
     let mut security = SecurityEngine::default();
     security.update(&industrial_packet("DNP3", 20_000, true, &dnp3));
     assert!(security.ids_alerts.iter().any(|alert| {
@@ -148,7 +156,7 @@ fn industrial_alert_exposes_a_policy_hint_not_a_claim_of_execution() {
         .find(|alert| alert.title == "Industrial state-changing command").unwrap();
     let provenance = alert.provenance.as_ref().unwrap();
     assert_eq!(provenance.rule_id, "industrial.state_change");
-    assert_eq!(provenance.revision, 5);
+    assert_eq!(provenance.revision, 6);
     assert_eq!(provenance.confidence, packrat_tui::analysis::alert_provenance::EvidenceConfidence::Heuristic);
     assert!(provenance.verification_hint.contains("does not prove a state change"));
     assert_eq!(alert.packet_refs, [1]);
@@ -265,9 +273,7 @@ fn industrial_alerts_group_only_the_same_operation_transport_and_scope() {
     use packrat_tui::engine::AnalysisCore;
     use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
     let packet = |no: u64, tcp, interface_id, vlan, operation| {
-        let mut payload = [0_u8; 13];
-        payload[..2].copy_from_slice(&[0x05, 0x64]);
-        payload[12] = operation;
+        let payload = dnp3_header_fixture(operation);
         let mut packet = industrial_packet("DNP3", 20_000, tcp, &payload);
         packet.no = no;
         packet.timestamp = no as f64;
@@ -303,4 +309,31 @@ fn industrial_alerts_group_only_the_same_operation_transport_and_scope() {
     assert_eq!(alerts[0].flow.unwrap().transport, packrat_tui::analysis::alert_center::AlertTransport::Tcp);
     assert_eq!(alerts[1].flow.unwrap().transport, packrat_tui::analysis::alert_center::AlertTransport::Udp);
     assert!(alerts[2..].iter().all(|alert| alert.packet_refs.len() == 1 && alert.hit_count == 1));
+}
+
+#[test]
+fn dnp3_policy_requires_valid_checksums_and_a_complete_application_header() {
+    let check = |payload: &[u8]| industrial_policy::inspect(&industrial_packet("DNP3", 20_000, false, payload));
+    let valid = dnp3_header_fixture(4);
+    assert_eq!(check(&valid).unwrap().operation, "operate");
+    assert!(check(&dnp3_header_fixture(1)).is_none());
+    for end in 0..valid.len() {
+        assert!(check(&valid[..end]).is_none());
+    }
+    for index in [8, 13] {
+        let mut damaged = valid;
+        damaged[index] ^= 1;
+        assert!(check(&damaged).is_none());
+    }
+    let mut continuation = valid;
+    continuation[10] = 0x80;
+    continuation[13..].copy_from_slice(&[0x24, 0xc3]);
+    assert!(check(&continuation).is_none());
+
+    let mut two_blocks = vec![0x05, 0x64, 22, 0xc4, 1, 0, 2, 0, 0xfd, 0x84, 0xc0, 0xc0, 4];
+    two_blocks.extend([0; 13]);
+    two_blocks.extend([0x71, 0x38, 0, 0xff, 0xff]);
+    assert!(check(&two_blocks).is_some());
+    *two_blocks.last_mut().unwrap() ^= 1;
+    assert!(check(&two_blocks).is_none());
 }
