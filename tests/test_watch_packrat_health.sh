@@ -5,7 +5,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 watch="$root/scripts/watch-packrat-health.sh"
 
 export PACKRAT_HEALTH_PORT=9477 PACKRAT_ALERT_SESSION=packrat-alerts PACKRAT_MIN_FREE_MIB=512 PACKRAT_ALERT_PIPELINE=0
-unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE
+unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE PACKRAT_HEALTH_INTERVAL PACKRAT_HEALTH_HEARTBEAT
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
@@ -40,6 +40,7 @@ df() {
 }
 
 sleep() {
+    SECONDS=$((SECONDS + $1))
     PACKRAT_TEST_STEP=$((PACKRAT_TEST_STEP + 1))
     export PACKRAT_TEST_STEP
     if (( PACKRAT_TEST_STEP == ${PACKRAT_FAKE_STEPS:-4} )); then exit 0; fi
@@ -49,7 +50,7 @@ export -f curl tmux ps cat df sleep
 bash -n "$watch"
 
 bash "$watch" --once | jq -e '
-    .record_type == "capture_health" and .issues == []
+    .record_type == "capture_health" and .event == "sample" and .issues == []
     and .pcap_buffer_drops == 0 and .alert_watcher_alive == true and .alert_watcher_pipeline_alive == null
     and .archive_enabled == null
 ' >/dev/null
@@ -146,6 +147,18 @@ PACKRAT_HEALTH_PORT='9477/path' bash "$watch" --once >/dev/null 2>&1 || status=$
 [[ $status == 2 ]]
 
 bash "$watch" | jq -se 'map(.issues) == [[], ["health_unreachable"], []]' >/dev/null
+
+stable_samples=$(jq -c '[.,.,.,null,null,null,.]' <<< "$PACKRAT_FAKE_HEALTH")
+PACKRAT_HEALTH_INTERVAL=10 PACKRAT_HEALTH_HEARTBEAT=20 PACKRAT_FAKE_STEPS=7 \
+    PACKRAT_FAKE_SAMPLES="$stable_samples" bash "$watch" | jq -se '
+    map(.event) == ["initial","heartbeat","changed","heartbeat","changed"]
+    and map(.issues) == [[],[],["health_unreachable"],["health_unreachable"],[]]
+' >/dev/null
+PACKRAT_HEALTH_HEARTBEAT=0 PACKRAT_FAKE_STEPS=7 PACKRAT_FAKE_SAMPLES="$stable_samples" \
+    bash "$watch" | jq -se 'map(.event) == ["initial","changed","changed"]' >/dev/null
+status=0
+PACKRAT_HEALTH_HEARTBEAT=-1 bash "$watch" --once >/dev/null 2>&1 || status=$?
+[[ $status == 2 ]]
 
 samples=$(jq -cn '
     def sample($id;$drops):

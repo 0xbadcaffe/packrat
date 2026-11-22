@@ -4,6 +4,7 @@ set -uo pipefail
 usage() {
     printf '%s\n' 'Usage: bash watch-packrat-health.sh [--once]' \
         'Environment: PACKRAT_HEALTH_PORT (9477), PACKRAT_HEALTH_INTERVAL (15 seconds),' \
+        'PACKRAT_HEALTH_HEARTBEAT (300 seconds between unchanged reports; 0 disables),' \
         'PACKRAT_ALERT_SESSION (optional tmux session), PACKRAT_DISK_PATH (/),' \
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
         'PACKRAT_ALERT_LOG (optional absolute alert path; requires pipeline checking),' \
@@ -22,6 +23,7 @@ if (( $# > 1 )); then usage >&2; exit 2; fi
 
 port=${PACKRAT_HEALTH_PORT:-9477}
 interval=${PACKRAT_HEALTH_INTERVAL:-15}
+heartbeat=${PACKRAT_HEALTH_HEARTBEAT:-300}
 alert_session=${PACKRAT_ALERT_SESSION:-}
 alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
 alert_log=${PACKRAT_ALERT_LOG:-}
@@ -30,8 +32,9 @@ disk_path=${PACKRAT_DISK_PATH:-/}
 min_free=${PACKRAT_MIN_FREE_MIB:-512}
 if [[ ! $port =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )) ||
    [[ ! $interval =~ ^[1-9][0-9]{0,5}$ ]] ||
+   [[ ! $heartbeat =~ ^(0|[1-9][0-9]{0,5})$ ]] ||
    [[ ! $min_free =~ ^(0|[1-9][0-9]{0,8})$ ]]; then
-    printf '%s\n' 'Invalid health port, polling interval, or free-space threshold.' >&2
+    printf '%s\n' 'Invalid health port, polling interval, heartbeat, or free-space threshold.' >&2
     exit 2
 fi
 for dependency in curl jq df; do
@@ -200,17 +203,29 @@ read_health() {
 }
 
 previous=
+last_emit=0
 baseline=null
 while :; do
     if ! state=$(read_health); then
         state=$(jq -cn --argjson baseline "$baseline" '{issues:["monitor_input_error"],next_baseline:$baseline}')
     fi
     change_key=$(jq -c '[.issues, .capture_run_id, .capture_id, .alert_session_id, .pcap_buffer_drops, .archive_enabled]' <<< "$state") || exit 2
-    if [[ $change_key != "$previous" ]] || "$once"; then
-        jq -c --arg time "$(date -u +%FT%TZ)" '
-            del(.next_baseline) + {record_type:"capture_health", timestamp:$time}
-        ' <<< "$state"
+    event=
+    if "$once"; then
+        event=sample
+    elif [[ -z $previous ]]; then
+        event=initial
+    elif [[ $change_key != "$previous" ]]; then
+        event=changed
+    elif (( heartbeat > 0 && SECONDS - last_emit >= heartbeat )); then
+        event=heartbeat
+    fi
+    if [[ -n $event ]]; then
+        jq -c --arg time "$(date -u +%FT%TZ)" --arg event "$event" '
+            del(.next_baseline) + {record_type:"capture_health", timestamp:$time, event:$event}
+        ' <<< "$state" || exit 2
         previous=$change_key
+        last_emit=$SECONDS
     fi
     if "$once"; then
         if jq -e '.issues == []' <<< "$state" >/dev/null; then exit 0; else exit 1; fi
