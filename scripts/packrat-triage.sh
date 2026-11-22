@@ -178,7 +178,7 @@ report() {
             | ($severity == "MEDIUM" or $severity == "LOW") as $opt_in
             | select(($opt_in | not) or (.rule_id as $rule | any($rules[]; . == $rule)))
             | .packet_evidence_status = packet_evidence($evidence)
-            | {alert_id,title,rule_id,severity,confidence,verify,packet_evidence_status,
+            | {alert_id,title,rule_id,severity,disposition,hit_count,confidence,verify,packet_evidence_status,
                archive_rule:$opt_in,in_recent_alerts:$recent,next_evidence_step:(.packet_evidence_status | evidence_step)}
           ] end) as $review
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,

@@ -274,6 +274,7 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
         and (.alerts | length) == 50 and all(.alerts[]; .alert_id != 42)
         and .open_priority_alerts_in_sample == 1 and .review_queue[0].alert_id == 42
         and .review_queue[0].in_recent_alerts == false and .review_queue[0].packet_evidence_status == "partial"
+        and .review_queue[0].disposition == "New"
         and .evidence_status.status == "checked" and .evidence_status.in_recent_alerts == false' <<< "$result" >/dev/null
     jq -c '.archive_enabled = true | .archive_paused = null' <<< "$sample" >"$health"
     result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)

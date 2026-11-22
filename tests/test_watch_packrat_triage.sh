@@ -291,4 +291,26 @@ jq -e '.status=="triage_unavailable" and .last_observed.alert_sample_gap
 live current 72 '[]' "$medium" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 jq -e '.status=="current" and .alert_sample_gap and .highest_observed_alert_id==65' "$state" >/dev/null
+
+state="$scratch/queue-updates.json"
+backlog=$(jq -c '[.[0] + {alert_id:2,in_recent_alerts:false,disposition:"New",hit_count:1},
+    .[0] + {alert_id:9,in_recent_alerts:true,disposition:"New",hit_count:1}]' <<<"$queue")
+live current 80 "$backlog" "$medium" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+bash "$watch" --once "$state" -- printf '%s\n' 'invalid triage output' >/dev/null
+backlog=$(jq -c '.[0].disposition="Reviewing" | .[0].hit_count=2 | .[1].hit_count=2' <<<"$backlog")
+live current 81 "$backlog" "$medium" >"$report"
+PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/queue-events" &
+watch_pid=$!
+await_packets 81
+for _ in {1..80}; do
+    if jq -se 'length==1' "$scratch/queue-events" >/dev/null 2>&1; then break; fi
+    sleep 0.1
+done
+kill "$watch_pid"
+wait "$watch_pid"
+watch_pid=''
+jq -se 'length==1 and .[0].alert_changes.updated==
+    [{alert_id:2,fields:["hit_count","disposition"]}] and .[0].alert_changes.newly_observed==[]
+    ' "$scratch/queue-events" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'

@@ -187,6 +187,7 @@ sanitize() {
                 | select(.alert_id > 0 and .severity != null)) | sort_by(.alert_id) else null end),
             review_queue:(.review_queue | if type == "array" then .[:5] | map(objects
                 | {alert_id:(.alert_id | counter), severity:(.severity | token), rule_id:(.rule_id | token),
+                   disposition:(.disposition | disposition), hit_count:(.hit_count | counter),
                    confidence:(.confidence | token), packet_evidence_status:(.packet_evidence_status | token),
                    archive_rule:(.archive_rule | flag), in_recent_alerts:(.in_recent_alerts | flag),
                    next_evidence_step:(.next_evidence_step | token)}
@@ -232,6 +233,9 @@ if [[ -f $state && -O $state ]]; then
                 (.recent_alerts | type == "array" and length <= 50 and all(.[]; type == "object"
                     and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
             | {status,capture_id,session_id,recent_alerts,alert_sample_gap:(.alert_sample_gap == true),
+                review_queue:(.review_queue | if type == "array" and length <= 5 then
+                    map(objects | select(.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))
+                    else [] end),
                 highest_observed_alert_id:(
                 .highest_observed_alert_id | if type == "number" and . >= 0 and . <= 9007199254740991
                     and floor == . then . else null end)}
@@ -245,6 +249,7 @@ while :; do
             def observed:
                 (.status == "current" or .status == "degraded") and
                 .capture_id != null and .session_id != null and (.recent_alerts | type == "array");
+            def alert_index: ((.review_queue // []) + .recent_alerts) | INDEX(.alert_id | tostring);
             . as $now
             | (($prior | observed) and observed and
                $prior.capture_id == .capture_id and $prior.session_id == .session_id) as $comparable
@@ -258,11 +263,11 @@ while :; do
                         (([.recent_alerts[].alert_id] | min // 0) - $high > 1))
                 else false end,
                 alert_changes: if $comparable then
-                    ($prior.recent_alerts | INDEX(.alert_id | tostring)) as $before
+                    ($prior | alert_index) as $before
                     | {
                         newly_observed: [.recent_alerts[] | select(.alert_id > $high) | .alert_id],
                         updated: [
-                            $now.recent_alerts[] as $item
+                            ($now | alert_index | [.[]] | sort_by(.alert_id))[] as $item
                             | $before[$item.alert_id | tostring] as $old | select($old != null)
                             | {alert_id:$item.alert_id, fields:[
                                 ("hit_count", "severity", "disposition", "packet_evidence_status") as $field
@@ -274,6 +279,7 @@ while :; do
             | if (observed | not) and ($prior | observed) then
                 .last_observed = ($prior | {
                     status,capture_id,session_id,highest_observed_alert_id,alert_sample_gap,
+                    review_queue: [(.review_queue // [])[] | {alert_id,hit_count,severity,disposition,packet_evidence_status}],
                     recent_alerts: [.recent_alerts[] | {alert_id,hit_count,severity,disposition,packet_evidence_status}]
                 })
               else . end' <<< "$snapshot")
