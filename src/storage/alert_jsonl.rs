@@ -3,7 +3,7 @@
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use crate::analysis::alert_center::AlertItem;
@@ -19,7 +19,7 @@ pub struct AlertJsonlWriter {
     session_id: String,
     latest_snapshots: BTreeMap<SnapshotKey, SnapshotDigest>,
     needs_separator: bool,
-    writer: BufWriter<File>,
+    writer: File,
 }
 
 #[derive(serde::Serialize)]
@@ -134,13 +134,13 @@ impl AlertJsonlWriter {
                 }
             }
         }
-        let (writer, needs_separator) = prepare_append(file)?;
+        let needs_separator = needs_line_separator(&mut file)?;
         Ok(Self {
             path,
             session_id: session_id.to_owned(),
             latest_snapshots,
             needs_separator,
-            writer,
+            writer: file,
         })
     }
 
@@ -193,22 +193,22 @@ impl AlertJsonlWriter {
             if self.needs_separator {
                 record.insert(0, b'\n');
             }
-            self.writer
-                .write_all(&record)
-                .map_err(|error| format!("Write alert JSONL record: {error}"))?;
+            // Cache only complete writes. A short write may leave a torn JSON line.
+            if let Err(error) = self.writer.write_all(&record) {
+                self.needs_separator = needs_line_separator(&mut self.writer).unwrap_or(true);
+                return Err(format!("Write alert JSONL record: {error}"));
+            }
             self.needs_separator = false;
             remember(&mut self.latest_snapshots, key, digest);
         }
-        self.writer
-            .flush()
-            .map_err(|error| format!("Flush alert JSONL file: {error}"))
+        Ok(())
     }
 
     #[cfg(unix)]
     fn follow_rotation(&mut self) -> Result<(), String> {
         use std::os::unix::fs::MetadataExt;
 
-        let current = self.writer.get_ref().metadata()
+        let current = self.writer.metadata()
             .map_err(|error| format!("Stat open alert JSONL file: {error}"))?;
         match std::fs::symlink_metadata(&self.path) {
             Ok(path) if (path.dev(), path.ino()) == (current.dev(), current.ino()) => {
@@ -218,9 +218,9 @@ impl AlertJsonlWriter {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("Stat alert JSONL file {}: {error}", self.path.display())),
         }
-        self.writer.flush()
-            .map_err(|error| format!("Flush rotated alert JSONL file: {error}"))?;
-        (self.writer, self.needs_separator) = prepare_append(open_alert_file(&self.path)?)?;
+        let mut replacement = open_alert_file(&self.path)?;
+        self.needs_separator = needs_line_separator(&mut replacement)?;
+        self.writer = replacement;
         Ok(())
     }
 }
@@ -264,16 +264,15 @@ fn verify_alert_file(metadata: &std::fs::Metadata, path: &std::path::Path) -> Re
     Ok(())
 }
 
-fn prepare_append(mut file: File) -> Result<(BufWriter<File>, bool), String> {
-    let needs_separator = if file.metadata().map_err(|error| error.to_string())?.len() > 0 {
+fn needs_line_separator(file: &mut File) -> Result<bool, String> {
+    if file.metadata().map_err(|error| error.to_string())?.len() > 0 {
         let mut last = [0];
         file.seek(SeekFrom::End(-1)).and_then(|_| file.read_exact(&mut last))
             .map_err(|error| format!("Read alert JSONL terminator: {error}"))?;
-        last[0] != b'\n'
+        Ok(last[0] != b'\n')
     } else {
-        false
-    };
-    Ok((BufWriter::new(file), needs_separator))
+        Ok(false)
+    }
 }
 
 #[cfg(test)]

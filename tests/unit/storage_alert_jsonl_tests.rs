@@ -171,6 +171,30 @@ fn reopening_after_a_torn_line_does_not_lose_the_next_snapshot() {
     assert_eq!(read_log(&path).len(), 1);
 }
 
+#[test]
+fn failed_record_write_does_not_suppress_the_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let original = alert(1, 1);
+    let updated = alert(2, 2);
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    writer.append_alerts(std::slice::from_ref(&original)).unwrap();
+
+    let writable = std::mem::replace(&mut writer.writer, File::open(&path).unwrap());
+    assert!(writer.append_alerts(std::slice::from_ref(&updated)).is_err());
+    assert_eq!(read_log(&path).len(), 1);
+    assert_eq!(
+        writer.latest_snapshots.get(&snapshot_key(&updated)),
+        Some(&snapshot_digest(&original).unwrap()),
+    );
+    writer.writer = writable;
+    writer.append_alerts(&[updated.clone(), updated]).unwrap();
+    let records = read_log(&path);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1].alert.hit_count, 2);
+    assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 2);
+}
+
 #[cfg(unix)]
 #[test]
 fn saved_alerts_follow_renamed_logs_without_replaying_old_snapshots() {
