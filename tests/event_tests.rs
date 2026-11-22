@@ -88,7 +88,7 @@ fn tcp_payload_packet(no: u64, payload: &[u8]) -> Packet {
 }
 
 fn critical_packet() -> packrat_tui::net::packet::Packet {
-    let mut packet = critical::invalid_neighbor_discovery_hop_limit(77);
+    let mut packet = critical::http_framing_ambiguity(77);
     packet.timestamp = 12.5;
     packet
 }

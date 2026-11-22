@@ -128,7 +128,7 @@ fn critical_detection_is_reported_without_enforcement() {
     let path = directory.path().join("incident.pcapng");
     let mut writer = PcapNgWriter::create(&path).unwrap();
     writer
-        .write_packet(&critical::invalid_neighbor_discovery_hop_limit(1))
+        .write_packet(&critical::http_framing_ambiguity(1))
         .unwrap();
     writer.flush().unwrap();
     let events = events(&run(&path));

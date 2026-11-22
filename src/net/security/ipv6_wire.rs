@@ -137,6 +137,18 @@ pub(super) fn ndp_options_well_formed(mut options: &[u8]) -> bool {
     true
 }
 
+pub(super) fn ndp_message_name(data: &[u8]) -> Option<&'static str> {
+    let (name, header_len) = match *data.first_chunk::<2>()? {
+        [133, 0] => ("Router Solicitation", 8),
+        [134, 0] => ("Router Advertisement", 16),
+        [135, 0] => ("Neighbor Solicitation", 24),
+        [136, 0] => ("Neighbor Advertisement", 24),
+        [137, 0] => ("Redirect", 40),
+        _ => return None,
+    };
+    ndp_options_well_formed(data.get(header_len..)?).then_some(name)
+}
+
 pub(super) fn format_mac(mac: [u8; 6]) -> String {
     mac.iter()
         .map(|byte| format!("{byte:02x}"))

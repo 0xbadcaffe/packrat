@@ -36,15 +36,26 @@ impl SecurityEngine {
         }
 
         let icmp_type = inspection.transport[0];
-        if matches!(icmp_type, 133..=137) && inspection.hop_limit != 255 {
-            alerts.push((
-                "Invalid IPv6 neighbor discovery hop limit",
-                Severity::Critical,
-                format!(
-                    "ICMPv6 type {icmp_type} used hop limit {} instead of 255 from {}",
-                    inspection.hop_limit, pkt.src
-                ),
-            ));
+        if inspection.hop_limit != 255
+            && inspection.complete && !inspection.fragmented && inspection.extension_count <= 32
+            && let Some(message) = ndp_message_name(inspection.transport)
+        {
+            let scope = service_scope(pkt);
+            let source = Ipv6Addr::from(inspection.source);
+            let destination = Ipv6Addr::from(inspection.destination);
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "Invalid IPv6 neighbor discovery hop limit",
+                    severity: Severity::Medium,
+                    detail: format!(
+                        "{message} from {source} to {destination} used hop limit {} instead of 255; endpoint behavior unverified",
+                        inspection.hop_limit,
+                    ),
+                },
+                related_packets: Vec::new(),
+                correlation_key: Some(format!("{scope:?}:{source}>{destination}:{icmp_type}")),
+            });
         }
 
         if icmp_type == 134 {

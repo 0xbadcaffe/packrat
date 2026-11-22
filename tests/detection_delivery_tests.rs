@@ -13,11 +13,11 @@ use packrat_tui::net::security::SecurityEngine;
 fn saturated_ids_history_does_not_suppress_new_critical_incidents() {
     let mut app = App::new_for_test();
     for no in 1..=1000 {
-        app.configure_core(move |core| core.security.update(&critical::invalid_neighbor_discovery_hop_limit(no)));
+        app.configure_core(move |core| core.security.update(&critical::http_framing_ambiguity(no)));
     }
     assert_eq!(app.core.read().unwrap().security.ids_alerts.len(), 1000);
     for no in 1001..=1002 {
-        app.inject_packet(critical::invalid_neighbor_discovery_hop_limit(no));
+        app.inject_packet(critical::http_framing_ambiguity(no));
     }
     assert_eq!(app.core.read().unwrap().security.ids_alerts.len(), 1000);
     assert!(app.alert_overlay_open);
@@ -26,7 +26,7 @@ fn saturated_ids_history_does_not_suppress_new_critical_incidents() {
         .alert_center
         .items
         .iter()
-        .find(|item| item.source == "IDS" && item.title == "Invalid IPv6 neighbor discovery hop limit")
+        .find(|item| item.source == "IDS" && item.title == "HTTP request smuggling ambiguity")
         .unwrap();
     assert_eq!(alert.hit_count, 2);
     assert_eq!(alert.last_packet, 1002);
@@ -60,13 +60,18 @@ fn batches_are_packet_local_and_reset_without_replaying_old_findings() {
 #[test]
 fn saturated_exposure_history_still_emits_the_current_packet() {
     let mut engine = SecurityEngine::new();
-    let payload = b"GET /admin HTTP/1.1\r\nHost: example\r\n\r\n";
+    let prompt = |no| {
+        let mut packet = packets::tcp(no, 1, 0x18, b"login: ");
+        packet.bytes[34..36].copy_from_slice(&23_u16.to_be_bytes());
+        packrat_tui::net::parser::parse_ethernet(&packet.bytes, no, no as f64)
+    };
     for no in 1..=1000 {
-        engine.update(&packets::tcp(no, 1, 0x18, payload));
+        engine.update(&prompt(no));
     }
     assert_eq!(engine.vuln_hits.len(), 1000);
-    let findings = engine.inspect(&packets::tcp(1001, 1, 0x18, payload));
+    let findings = engine.inspect(&prompt(1001));
     assert_eq!(findings.vulnerabilities.len(), 1);
+    assert_eq!(findings.vulnerabilities[0].kind, "Telnet authentication prompt");
     assert_eq!(findings.vulnerabilities[0].pkt_no, 1001);
     assert_eq!(engine.vuln_hits.len(), 1000);
 }

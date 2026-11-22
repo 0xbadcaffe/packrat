@@ -298,3 +298,5 @@ mod ndp_binding_cases;
 mod lldp_identity_cases;
 #[path = "security_policy/stp_indication_cases.rs"]
 mod stp_indication_cases;
+#[path = "security_policy/ndp_hop_limit_cases.rs"]
+mod ndp_hop_limit_cases;

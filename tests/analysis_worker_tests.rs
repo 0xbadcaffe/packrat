@@ -194,7 +194,7 @@ fn unusable_packets_are_reported_but_never_enter_incident_history() {
     invalid.timestamp = f64::NAN;
     worker.try_packet(invalid, false).unwrap();
     worker
-        .try_packet(critical::invalid_neighbor_discovery_hop_limit(2), false)
+        .try_packet(critical::http_framing_ambiguity(2), false)
         .unwrap();
     let monitor = worker.monitor();
     let core = worker.finish(|_| ()).unwrap();
