@@ -65,6 +65,27 @@ fn detects_periodic_fixed_size_traffic() {
 }
 
 #[test]
+fn periodic_traffic_ignores_empty_tcp_segments_but_keeps_payload_samples() {
+    let mut engine = SecurityEngine::default();
+    let signature = "Periodic fixed-size traffic";
+    for index in 0..7 {
+        let timestamp = index as f64 * 15.4;
+        let ack = ipv4_tcp_packet(2 * index + 1, 100, 0x10, &[]);
+        engine.update(&ack.with_number_and_timestamp(2 * index + 1, timestamp));
+        assert!(!engine.ids_alerts.iter().any(|alert| alert.signature == signature));
+
+        let data = ipv4_tcp_packet(2 * index + 2, 100 + index as u32 * 12, 0x18, &[1; 12]);
+        let result = engine.inspect(&data.with_number_and_timestamp(2 * index + 2, timestamp + 1.0));
+        let finding = result.ids.iter().find(|finding| finding.alert.signature == signature);
+        if index < 6 {
+            assert!(finding.is_none());
+        } else {
+            assert_eq!(finding.unwrap().related_packets, [2, 4, 6, 8, 10, 12]);
+        }
+    }
+}
+
+#[test]
 fn periodic_traffic_alerts_once_per_conversation_and_keeps_directional_evidence() {
     use packrat_tui::engine::AnalysisCore;
 
@@ -161,7 +182,7 @@ fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
         }
         let alert = scoped.alert_center.items.iter().find(|item| is_periodic(item)).unwrap();
         assert_eq!(alert.packet_refs, [1, 3, 5, 7, 8, 9, 10]);
-        assert_eq!(alert.provenance.as_ref().unwrap().revision, 3);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 4);
     }
 }
 

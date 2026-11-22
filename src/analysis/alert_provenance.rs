@@ -49,7 +49,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both ARP replies with DHCP leases, failover events, and the affected host's neighbor table.",
         ),
         (
-            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 3, Heuristic,
+            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 4, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
         (
