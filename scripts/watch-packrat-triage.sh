@@ -20,6 +20,7 @@ usage() {
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
+        'alert_sample_gap warns that a burst may have exceeded the recent-alert sample; review saved history.' \
         'Supervision retries unexpected exits with backoff; configuration errors stop the supervisor.' \
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
@@ -70,6 +71,7 @@ check_snapshot() {
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
            triage_status:.status, age_seconds:$age, max_age_seconds,
+           alert_sample_gap:(.alert_sample_gap | if type == "boolean" then . else null end),
            capture_id:(.capture_id | scope_id), session_id:(.session_id | scope_id)}' <<< "$raw" 2>/dev/null); then
         printf '%s\n' '{"status":"snapshot_invalid"}'
         return 2
@@ -204,7 +206,8 @@ if ! "$once" && [[ -f $state && -O $state ]]; then
                 (.capture_id | type == "string") and (.session_id | type == "string") and
                 (.recent_alerts | type == "array" and length <= 50 and all(.[]; type == "object"
                     and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
-            | {status,capture_id,session_id,recent_alerts,highest_observed_alert_id:(
+            | {status,capture_id,session_id,recent_alerts,alert_sample_gap:(.alert_sample_gap == true),
+                highest_observed_alert_id:(
                 .highest_observed_alert_id | if type == "number" and . >= 0 and . <= 9007199254740991
                     and floor == . then . else null end)}
         ' 2>/dev/null) || prior=null
@@ -224,6 +227,11 @@ while :; do
             | ([$prior.highest_observed_alert_id, ($prior.recent_alerts | map(.alert_id)? | max)] | max // 0) as $high
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
+                alert_sample_gap: if observed | not then null elif $comparable then
+                    $prior.alert_sample_gap == true or (
+                        (.recent_alerts_at_limit == true or .has_older_alerts == true) and
+                        (([.recent_alerts[].alert_id] | min // 0) - $high > 1))
+                else false end,
                 alert_changes: if $comparable then
                     ($prior.recent_alerts | INDEX(.alert_id | tostring)) as $before
                     | {
@@ -240,7 +248,7 @@ while :; do
                 else null end}
             | if (observed | not) and ($prior | observed) then
                 .last_observed = ($prior | {
-                    status,capture_id,session_id,highest_observed_alert_id,
+                    status,capture_id,session_id,highest_observed_alert_id,alert_sample_gap,
                     recent_alerts: [.recent_alerts[] | {alert_id,hit_count,severity,disposition,packet_evidence_status}]
                 })
               else . end' <<< "$snapshot")

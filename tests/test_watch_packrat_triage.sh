@@ -230,15 +230,29 @@ live current 62 '[]' "$(jq -c '.[0].hit_count=4 | . + [.[0] + {alert_id:13}]' <<
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/recovered" &
 watch_pid=$!
 await_packets 62
+bulk=$(jq -cn '[range(65; 13; -1) | {alert_id:.,severity:"LOW",disposition:"New"}]')
+live current 63 '[]' "$bulk" >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 63
+jq -e '.alert_sample_gap and .highest_observed_alert_id == 65 and .recent_alerts[0].alert_id == 16' "$state" >/dev/null
+live current 64 '[]' "$bulk" >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 64
+jq -e '.alert_sample_gap' "$state" >/dev/null
+live current 65 '[]' '[]' | jq '.health.capture_id="c"' >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 65
 for _ in {1..80}; do
-    if jq -se 'length==1' "$scratch/recovered" >/dev/null 2>&1; then break; fi
+    if jq -se 'length==3' "$scratch/recovered" >/dev/null 2>&1; then break; fi
     sleep 0.1
 done
 kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
-jq -se 'length==1 and .[0].highest_observed_alert_id==13
-    and .[0].alert_changes=={newly_observed:[13],updated:[{alert_id:9,fields:["hit_count"]}]}' \
+jq -se 'length==3 and .[0].highest_observed_alert_id==13 and (.[0].alert_sample_gap | not)
+    and .[0].alert_changes=={newly_observed:[13],updated:[{alert_id:9,fields:["hit_count"]}]}
+    and .[1].alert_sample_gap and .[1].alert_changes.newly_observed==[range(16;66)]
+    and (.[2].alert_sample_gap | not) and .[2].alert_changes==null' \
     "$scratch/recovered" >/dev/null
-jq -e '.status=="current" and (has("last_observed") | not)' "$state" >/dev/null
+jq -e '.status=="current" and .alert_sample_gap==false and (has("last_observed") | not)' "$state" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'
