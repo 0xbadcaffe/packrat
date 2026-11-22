@@ -6,6 +6,7 @@ const SYN_TIMEOUT: f64 = 15.0;
 const FANOUT_WINDOW: f64 = 60.0;
 const MAX_PENDING: usize = 2048;
 const MAX_TARGETS: usize = 64;
+const REARM_TARGETS: usize = LATERAL_TARGET_THRESHOLD / 2;
 const INITIAL_SYN: u8 = 0x02;
 const SYN_ACK: u8 = 0x12;
 
@@ -97,7 +98,8 @@ impl AdminFanout {
         }
         state.last_seen = Some(newest);
         state.targets.retain(|_, (seen, _)| newest - *seen <= FANOUT_WINDOW);
-        if state.targets.is_empty() {
+        // A small drop near the threshold should not split sustained activity into new alerts.
+        if state.targets.len() <= REARM_TARGETS {
             state.alerted = false;
         }
         if let Some(sample) = state.targets.get_mut(&reply.src) {
@@ -124,7 +126,7 @@ impl AdminFanout {
             },
             related_packets: state.targets.values().flat_map(|&(_, pair)| pair)
                 .filter(|&frame| frame != reply.no).collect(),
-            correlation_key: Some(format!("{scope:?}:{}:{port}", reply.dst)),
+            correlation_key: Some(format!("{scope:?}:{}:{port}:episode:{}", reply.dst, reply.no)),
         })
     }
 }

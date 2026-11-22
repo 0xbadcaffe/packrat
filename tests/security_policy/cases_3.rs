@@ -166,6 +166,34 @@ fn administrative_fanout_requires_scoped_syn_ack_pairs(#[case] ipv6: bool) {
     assert_eq!(alert.severity, "MEDIUM");
     assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "tcp.admin_service_response_fanout");
     assert!(alert.detail.contains("login outcomes unverified"));
+
+    let mut frame = 36;
+    let mut pair = |core: &mut AnalysisCore, host, timestamp| {
+        for response in [false, true] {
+            let mut packet = make(frame, host, response, 0, 10);
+            packet.timestamp = timestamp;
+            core.analyze(&packet);
+            frame += 1;
+        }
+    };
+    for host in 1..=6 {
+        pair(&mut core, host, 58.0);
+    }
+    for host in 9..=10 {
+        pair(&mut core, host, 61.0);
+    }
+    assert_eq!(core.alert_center.items.iter().filter(|alert| alert.title == TITLE).count(), 1);
+
+    pair(&mut core, 1, 116.0);
+    for host in 21..=27 {
+        pair(&mut core, host, 122.0);
+    }
+    let bursts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == TITLE).collect();
+    assert_eq!(bursts.len(), 2);
+    assert_ne!(bursts[0].id, bursts[1].id);
+    let mut episode_frames = bursts[1].packet_refs.clone();
+    episode_frames.sort_unstable();
+    assert_eq!(episode_frames, (52..68).collect::<Vec<_>>());
 }
 
 #[rstest]
