@@ -77,6 +77,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both advertisements with the authorized address assignments and endpoint neighbor tables; distinguish failover from spoofing.",
         ),
         (
+            "IDS", "LLDP chassis identity changed", "lldp.chassis_identity_change", 1, Correlated,
+            "Compare both advertisements with the switch-port inventory and maintenance records before attributing the change.",
+        ),
+        (
             "VLAN", "MAC-VLAN-Cross", "vlan.mac_crossing", 1, Correlated,
             "Compare the two frames with trunk, VLAN and switch-port policy. A shared MAC alone does not establish forwarding between VLANs.",
         ),

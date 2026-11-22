@@ -185,6 +185,8 @@ fn lldp_packet(no: u64, source_mac: [u8; 6], chassis: &[u8]) -> Packet {
     bytes.extend_from_slice(&(((1_u16) << 9) | value_len as u16).to_be_bytes());
     bytes.push(7);
     bytes.extend_from_slice(chassis);
+    bytes.extend_from_slice(&[0x04, 2, 7, 1]); // Port ID TLV, locally assigned.
+    bytes.extend_from_slice(&[0x06, 2, 0, 30]); // TTL TLV.
     bytes.extend_from_slice(&0_u16.to_be_bytes());
     packet("LLDP", 0, "", bytes).with_number_and_timestamp(no, no as f64)
 }
@@ -292,3 +294,5 @@ mod ftp_control_cases;
 mod telnet_prompt_cases;
 #[path = "security_policy/ndp_binding_cases.rs"]
 mod ndp_binding_cases;
+#[path = "security_policy/lldp_identity_cases.rs"]
+mod lldp_identity_cases;

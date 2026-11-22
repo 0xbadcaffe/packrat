@@ -177,7 +177,7 @@ pub struct SecurityEngine {
     syn_flood_targets: HashMap<SynTargetKey, SynFloodState>,
     ndp_bindings: HashMap<(ServiceScope, [u8; 16]), NdpObservation>,
     router_advertisements: HashMap<(ServiceScope, [u8; 6]), RouterAdvertisementState>,
-    lldp_chassis: HashMap<[u8; 6], Vec<u8>>,
+    lldp_chassis: HashMap<LldpKey, LldpObservation>,
     beacon_flows: HashMap<BehaviorFlowKey, BeaconState>,
     exfil_flows: HashMap<ExfilKey, ExfilState>,
     admin_fanout: admin_fanout::AdminFanout,

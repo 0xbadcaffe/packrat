@@ -194,26 +194,42 @@ impl SecurityEngine {
             });
         }
 
-        let Some((source_mac, chassis)) = lldp_chassis_identity(raw) else {
+        let Some(advertisement) = lldp_advertisement(raw) else { return };
+        let now = pkt.timestamp;
+        if !now.is_finite() { return; }
+        let scope = service_scope(pkt);
+        let key = LldpKey { scope, source: advertisement.source, destination: advertisement.destination,
+            port: advertisement.port.to_vec() };
+        let existing = self.lldp_chassis.get(&key);
+        if existing.is_some_and(|previous| now < previous.seen_at || pkt.no == previous.frame) { return; }
+        if advertisement.ttl == 0 {
+            if existing.is_some_and(|previous| previous.chassis == advertisement.chassis) {
+                self.lldp_chassis.remove(&key);
+            }
             return;
-        };
-        if let Some(previous) = self.lldp_chassis.get(&source_mac) {
-            if previous != &chassis {
-                self.push_ids(IdsAlert {
+        }
+        if existing.is_none() && self.lldp_chassis.len() >= MAX_CONTROL_PLANE_IDENTITIES {
+            self.lldp_chassis.retain(|_, previous| previous.expires_at > now);
+            if self.lldp_chassis.len() >= MAX_CONTROL_PLANE_IDENTITIES { return; }
+        }
+        let previous = self.lldp_chassis.insert(key, LldpObservation {
+            chassis: advertisement.chassis.to_vec(), frame: pkt.no,
+            seen_at: now, expires_at: now + f64::from(advertisement.ttl),
+        });
+        if let Some(previous) = previous
+            && now < previous.expires_at && previous.chassis != advertisement.chassis
+        {
+            let source = format_mac(advertisement.source);
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
                     pkt_no: pkt.no,
                     signature: "LLDP chassis identity changed",
-                    severity: Severity::High,
-                    detail: format!(
-                        "LLDP source {} changed its advertised chassis identity",
-                        format_mac(source_mac)
-                    ),
-                });
-            }
-        }
-        if self.lldp_chassis.len() < MAX_CONTROL_PLANE_IDENTITIES
-            || self.lldp_chassis.contains_key(&source_mac)
-        {
-            self.lldp_chassis.insert(source_mac, chassis);
+                    severity: Severity::Medium,
+                    detail: format!("LLDP source {source} advertised a different chassis on the same port within its prior TTL; physical identity unverified"),
+                },
+                related_packets: vec![previous.frame],
+                correlation_key: Some(format!("{scope:?}:{source}:{}", previous.frame)),
+            });
         }
     }
 }

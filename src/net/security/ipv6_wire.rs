@@ -152,28 +152,46 @@ pub(super) fn is_stp_topology_change(raw: &[u8]) -> bool {
         && (raw[20] == 0x80 || raw[21] & 0x81 != 0)
 }
 
-pub(super) fn lldp_chassis_identity(raw: &[u8]) -> Option<([u8; 6], Vec<u8>)> {
+pub(super) struct LldpAdvertisement<'a> {
+    pub(super) source: [u8; 6],
+    pub(super) destination: [u8; 6],
+    pub(super) chassis: &'a [u8],
+    pub(super) port: &'a [u8],
+    pub(super) ttl: u16,
+}
+
+fn lldp_tlv<'a>(remaining: &mut &'a [u8]) -> Option<(u16, &'a [u8])> {
+    let header = u16::from_be_bytes(*remaining.first_chunk::<2>()?);
+    let (value, rest) = remaining.get(2..)?.split_at_checked(usize::from(header & 0x01ff))?;
+    *remaining = rest;
+    Some((header >> 9, value))
+}
+
+pub(super) fn lldp_advertisement(raw: &[u8]) -> Option<LldpAdvertisement<'_>> {
     let (payload_offset, ether_type) = ethernet_network_header(raw)?;
     if ether_type != 0x88cc {
         return None;
     }
-    let source_mac = ethernet_source_mac(raw)?;
-    let mut cursor = payload_offset;
-    while cursor + 2 <= raw.len() {
-        let header = u16::from_be_bytes([raw[cursor], raw[cursor + 1]]);
-        let tlv_type = (header >> 9) as u8;
-        let length = usize::from(header & 0x01ff);
-        cursor += 2;
-        if cursor + length > raw.len() {
-            return None;
-        }
-        if tlv_type == 0 {
-            return None;
-        }
-        if tlv_type == 1 && length >= 2 {
-            return Some((source_mac, raw[cursor..cursor + length].to_vec()));
-        }
-        cursor += length;
+    let source = ethernet_source_mac(raw)?;
+    let destination = *raw.first_chunk::<6>()?;
+    if source == [0; 6] || source[0] & 1 != 0
+        || !matches!(destination, [1, 0x80, 0xc2, 0, 0, 0 | 3 | 0x0e])
+    {
+        return None;
     }
-    None
+    let mut remaining = raw.get(payload_offset..)?;
+    let (1, chassis) = lldp_tlv(&mut remaining)? else { return None };
+    let (2, port) = lldp_tlv(&mut remaining)? else { return None };
+    let (3, ttl) = lldp_tlv(&mut remaining)? else { return None };
+    if [chassis, port].iter().any(|id| !(2..=256).contains(&id.len()) || !matches!(id[0], 1..=7)) {
+        return None;
+    }
+    let ttl = u16::from_be_bytes(ttl.try_into().ok()?);
+    loop {
+        match lldp_tlv(&mut remaining)? {
+            (0, []) => return Some(LldpAdvertisement { source, destination, chassis, port, ttl }),
+            (0..=3, _) => return None,
+            _ => {}
+        }
+    }
 }

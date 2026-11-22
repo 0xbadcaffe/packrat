@@ -336,6 +336,21 @@ pub(super) struct NdpObservation {
     pub(super) frame: u64,
 }
 
+#[derive(Hash, PartialEq, Eq)]
+pub(super) struct LldpKey {
+    pub(super) scope: ServiceScope,
+    pub(super) source: [u8; 6],
+    pub(super) destination: [u8; 6],
+    pub(super) port: Vec<u8>,
+}
+
+pub(super) struct LldpObservation {
+    pub(super) chassis: Vec<u8>,
+    pub(super) frame: u64,
+    pub(super) seen_at: f64,
+    pub(super) expires_at: f64,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ArpClaimHistory {
     pub(super) latest: ArpObservation,
