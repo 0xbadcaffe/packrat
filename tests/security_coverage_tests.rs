@@ -9,6 +9,10 @@ struct CoverageGroup {
 
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
+        signatures: &["Telnet authentication prompt"],
+        positive_test: "telnet_prompt_is_directional_and_does_not_imply_credentials",
+    },
+    CoverageGroup {
         signatures: &["Anonymous FTP login accepted"],
         positive_test: "ftp_anonymous_login_requires_scoped_success",
     },
@@ -219,6 +223,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy/tls_selection_cases.rs"),
     include_str!("security_policy/http_exposure_cases.rs"),
     include_str!("security_policy/ftp_control_cases.rs"),
+    include_str!("security_policy/telnet_prompt_cases.rs"),
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("arp_binding_tests.rs"),
     include_str!("dns_transaction_tests.rs"),

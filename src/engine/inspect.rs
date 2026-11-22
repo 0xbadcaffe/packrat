@@ -94,14 +94,19 @@ impl AnalysisCore {
             );
         }
         for hit in &findings.vulnerabilities {
-            self.alert_center.record_correlated(
-                hit.pkt_no,
+            let scope = (
+                pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
+                pkt.outer_vlan_id,
+                pkt.vlan_id,
+            );
+            self.alert_center.record_with_context(
+                (hit.pkt_no, &[], AlertFlow::from_packet(pkt)),
                 pkt.timestamp,
                 "EXPOSURE",
-                "HIGH",
+                if hit.kind == "Telnet authentication prompt" { "MEDIUM" } else { "HIGH" },
                 hit.kind,
                 &hit.detail,
-                format!("{}>{}", pkt.src, pkt.dst),
+                format!("{scope:?}:{}:{:?}>{}:{:?}", pkt.src, pkt.src_port, pkt.dst, pkt.dst_port),
             );
         }
         for alert in &findings.authentication {

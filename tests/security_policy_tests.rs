@@ -288,3 +288,5 @@ mod tls_selection_cases;
 mod http_exposure_cases;
 #[path = "security_policy/ftp_control_cases.rs"]
 mod ftp_control_cases;
+#[path = "security_policy/telnet_prompt_cases.rs"]
+mod telnet_prompt_cases;

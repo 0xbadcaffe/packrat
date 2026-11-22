@@ -15,22 +15,24 @@ impl SecurityEngine {
     }
 
     pub(super) fn check_vuln(&mut self, pkt: &Packet) {
-        let dst_port = pkt.dst_port.unwrap_or(0);
-        let src_port = pkt.src_port.unwrap_or(0);
-        let bytes = &pkt.bytes;
-
-        // Cleartext Telnet credentials
-        if dst_port == 23 || src_port == 23 {
-            let payload = Self::ascii_payload(bytes, 54);
-            if payload.contains("login:") || payload.contains("Password:") {
-                self.push_vuln(VulnHit {
-                    pkt_no: pkt.no,
-                    kind: "Cleartext Telnet Credential",
-                    detail: format!("Telnet login prompt from {}", pkt.src),
-                });
-            }
+        if pkt.src_port != Some(23)
+            || pkt.capture.as_ref().is_some_and(|capture| capture.link_type != 1)
+        {
+            return;
         }
-
+        let Some(TcpFrame::Segment(segment)) =
+            parse_ipv4_tcp_frame(&pkt.bytes).or_else(|| parse_ipv6_tcp_frame(&pkt.bytes))
+        else { return };
+        let source = if segment.from_a { segment.key.endpoint_a } else { segment.key.endpoint_b };
+        if segment.complete && source.port() == 23 && segment.flags & 0x07 == 0
+            && let Some(prompt) = telnet_wire::authentication_prompt(segment.payload)
+        {
+            self.push_vuln(VulnHit {
+                pkt_no: pkt.no,
+                kind: "Telnet authentication prompt",
+                detail: format!("{source} sent a {prompt} prompt over Telnet; client credentials were not observed"),
+            });
+        }
     }
 
     // ─── Repeated Service Observations ────────────────────────────────────────

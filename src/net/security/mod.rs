@@ -90,6 +90,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "HTTP request smuggling ambiguity",
     "Cleartext HTTP Basic authorization",
     "Anonymous FTP login accepted",
+    "Telnet authentication prompt",
     "Critical industrial control command",
     "Industrial state-changing command",
     "DNS reply without observed query",
@@ -136,6 +137,7 @@ mod scans;
 mod signatures;
 mod smb_wire;
 mod tcp_wire;
+mod telnet_wire;
 mod tracking_helpers;
 mod types;
 mod vulnerabilities;

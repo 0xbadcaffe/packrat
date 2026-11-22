@@ -145,6 +145,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the anonymous FTP policy and review server logs for file listings, reads, or writes.",
         ),
         (
+            "EXPOSURE", "Telnet authentication prompt", "telnet.authentication_prompt", 1, Heuristic,
+            "Verify whether Telnet is expected and migrate remote administration to SSH; the prompt alone does not establish credential transmission.",
+        ),
+        (
             "TLS", "SSL 3.0 selected", "tls.ssl30_selected", 1, DirectObservation,
             "Verify the server's minimum protocol version and identify the client or intermediary requiring SSL 3.0.",
         ),
