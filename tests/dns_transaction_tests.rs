@@ -224,7 +224,7 @@ fn dns_integrity_keeps_transactions_and_alert_evidence_within_capture_scope() {
             let alert = alerts.iter().find(|a| a.last_packet == last_packet).unwrap();
             let rule = alert.provenance.as_ref().unwrap();
             assert_eq!(rule.rule_id, "dns.competing_responders");
-            assert_eq!(rule.revision, 4);
+            assert_eq!(rule.revision, 5);
             assert_eq!(alert.hit_count, 1);
             assert_eq!(alert.packet_refs, expected, "{other:?}");
         }
@@ -460,7 +460,7 @@ fn nxdomain_burst_counts_distinct_matched_names_and_keeps_packet_pairs() {
 }
 
 #[test]
-fn dns_conflict_exports_the_query_and_both_replies_as_one_hit() {
+fn dns_conflict_exports_the_query_and_both_replies_per_exchange() {
     let mut core = AnalysisCore::default();
     for (first_packet, transaction_id) in [(1, 49), (4, 50)] {
         let query = dns_packet(first_packet, false, "10.0.0.5", "10.0.0.53", transaction_id, "safe.example");
@@ -478,10 +478,10 @@ fn dns_conflict_exports_the_query_and_both_replies_as_one_hit() {
     assert_eq!(conflicts.len(), 2);
     assert_eq!(conflicts[0].hit_count, 1);
     assert_eq!(conflicts[0].packet_refs, [1, 2, 3]);
-    assert_eq!(conflicts[1].id, conflicts[0].id);
-    assert_eq!(conflicts[1].hit_count, 2);
+    assert_ne!(conflicts[1].id, conflicts[0].id);
+    assert_eq!(conflicts[1].hit_count, 1);
     assert_eq!(conflicts[1].packet_no, 6);
-    assert_eq!(conflicts[1].packet_refs, [1, 2, 3, 4, 5, 6]);
+    assert_eq!(conflicts[1].packet_refs, [4, 5, 6]);
 }
 
 #[test]

@@ -67,7 +67,18 @@ impl DnsScope {
     }
 }
 
-pub(crate) fn alert_correlation_key(packet: &Packet) -> String {
+pub(crate) fn alert_correlation_key(packet: &Packet, finding: &DnsFinding) -> String {
+    if matches!(
+        finding.kind,
+        DnsFindingKind::QuestionMismatch
+            | DnsFindingKind::UnexpectedResponder
+            | DnsFindingKind::ConflictingResponse
+            | DnsFindingKind::ChangedReply
+            | DnsFindingKind::ChangedAnswerSet
+    ) && let Some(query) = finding.related_packets.first()
+    {
+        return format!("{:?}:query:{query}", DnsScope::from_packet(packet));
+    }
     format!("{:?}:{}>{}", DnsScope::from_packet(packet), packet.src, packet.dst)
 }
 

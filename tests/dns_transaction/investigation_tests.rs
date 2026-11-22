@@ -81,3 +81,32 @@ fn exact_copies_of_retained_alternate_dns_replies_do_not_increment_alert_hits() 
         assert_eq!(exchange.replies.iter().map(|reply| reply.packet).collect::<Vec<_>>(), [2, 3, 5]);
     }
 }
+
+#[test]
+fn dns_integrity_alerts_group_only_replies_to_the_same_observed_query() {
+    let mut core = AnalysisCore::default();
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let alternate_a = "10.0.0.54";
+    let alternate_b = "10.0.0.55";
+    for packet in [
+        dns_packet(1, false, client, resolver, 55, "first.example"),
+        dns_packet(2, false, client, resolver, 56, "second.example"),
+        dns_packet(3, true, resolver, client, 55, "first.example"),
+        dns_packet(4, true, resolver, client, 56, "second.example"),
+        dns_packet(5, true, alternate_a, client, 55, "first.example"),
+        dns_packet(6, true, alternate_a, client, 56, "second.example"),
+        dns_packet(7, true, alternate_b, client, 55, "first.example"),
+    ] {
+        core.analyze(&packet);
+    }
+
+    let alerts: Vec<_> = core.alert_center.items.iter()
+        .filter(|alert| alert.title == "Conflicting DNS responses").collect();
+    assert_eq!(alerts.len(), 2);
+    assert_ne!(alerts[0].correlation_key, alerts[1].correlation_key);
+    assert_eq!(alerts[0].hit_count, 2);
+    assert_eq!(alerts[0].packet_refs, [1, 3, 5, 7]);
+    assert_eq!(alerts[1].hit_count, 1);
+    assert_eq!(alerts[1].packet_refs, [2, 4, 6]);
+}

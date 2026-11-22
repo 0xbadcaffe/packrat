@@ -251,6 +251,7 @@ impl SecurityEngine {
                     ("DNS answer set changed at the same resolver", Severity::Medium)
                 }
             };
+            let correlation_key = crate::analysis::dns_transactions::alert_correlation_key(pkt, &finding);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
@@ -259,7 +260,7 @@ impl SecurityEngine {
                     detail: finding.detail,
                 },
                 related_packets: finding.related_packets,
-                correlation_key: Some(crate::analysis::dns_transactions::alert_correlation_key(pkt)),
+                correlation_key: Some(correlation_key),
             });
         }
     }
