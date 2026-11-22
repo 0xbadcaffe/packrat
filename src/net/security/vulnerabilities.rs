@@ -42,25 +42,6 @@ impl SecurityEngine {
             }
         }
 
-        // Weak TLS: TLS 1.0 or SSL 3.0
-        if dst_port == 443 || src_port == 443 {
-            let tls10: &[u8] = &[0x16, 0x03, 0x01];
-            let ssl30: &[u8] = &[0x16, 0x03, 0x00];
-            if bytes.starts_with(tls10) {
-                self.push_vuln(VulnHit {
-                    pkt_no: pkt.no,
-                    kind: "Weak TLS 1.0",
-                    detail: format!("TLS 1.0 record from {}", pkt.src),
-                });
-            } else if bytes.starts_with(ssl30) {
-                self.push_vuln(VulnHit {
-                    pkt_no: pkt.no,
-                    kind: "Weak SSL 3.0",
-                    detail: format!("SSL 3.0 record from {}", pkt.src),
-                });
-            }
-        }
-
         // Cleartext Telnet credentials
         if dst_port == 23 || src_port == 23 {
             let payload = Self::ascii_payload(bytes, 54);

@@ -282,3 +282,5 @@ mod lookup_marker_cases;
 mod tcp_reset_cases;
 #[path = "security_policy/smb_anonymous_cases.rs"]
 mod smb_anonymous_cases;
+#[path = "security_policy/tls_selection_cases.rs"]
+mod tls_selection_cases;

@@ -90,68 +90,39 @@ impl SecurityEngine {
     }
 
     pub(super) fn check_tls(&mut self, pkt: &Packet) {
-        let dst_port = pkt.dst_port.unwrap_or(0);
-        let src_port = pkt.src_port.unwrap_or(0);
-        if dst_port != 443 && src_port != 443 {
+        if pkt.src_port != Some(443)
+            || !matches!(crate::analysis::stream::tcp_port_pair(pkt), Some((443, _)))
+        {
             return;
         }
-        let bytes = &pkt.bytes;
-        if bytes.len() < 6 {
+        let Some((version, cipher)) = crate::analysis::stream::tcp_segment_payload(pkt)
+            .and_then(|(_, payload)| crate::analysis::encrypted_insight::parse_anchored_server_hello(payload))
+        else {
             return;
-        }
-
-        // TLS 1.0
-        if bytes.starts_with(&[0x16, 0x03, 0x01]) {
+        };
+        let legacy = match version {
+            0x0300 => Some("SSL 3.0 selected"),
+            0x0301 => Some("TLS 1.0 selected"),
+            0x0302 => Some("TLS 1.1 selected"),
+            _ => None,
+        };
+        if let Some(kind) = legacy {
             self.push_tls(TlsWeakness {
                 pkt_no: pkt.no,
                 src_ip: pkt.src.clone(),
                 dst_ip: pkt.dst.clone(),
-                kind: "TLS 1.0",
-                detail: format!("TLS 1.0 handshake from {}", pkt.src),
+                kind,
+                detail: format!("{}: {kind} in ServerHello; handshake completion unverified", pkt.src),
             });
         }
-        // SSL 3.0
-        else if bytes.starts_with(&[0x16, 0x03, 0x00]) {
+        if version <= 0x0303 && matches!(cipher, 0x0003..=0x0005) {
             self.push_tls(TlsWeakness {
                 pkt_no: pkt.no,
                 src_ip: pkt.src.clone(),
                 dst_ip: pkt.dst.clone(),
-                kind: "SSL 3.0 (POODLE)",
-                detail: format!("SSL 3.0 record from {}", pkt.src),
+                kind: "RC4 selected",
+                detail: format!("{} selected RC4 cipher 0x{cipher:04x} in ServerHello; handshake completion unverified", pkt.src),
             });
-        }
-
-        // Self-signed: SHA-1 with RSA OID 1.2.840.113549.1.1.5
-        let sha1_oid: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x05];
-        if Self::contains_bytes(bytes, sha1_oid) {
-            self.push_tls(TlsWeakness {
-                pkt_no: pkt.no,
-                src_ip: pkt.src.clone(),
-                dst_ip: pkt.dst.clone(),
-                kind: "SHA-1 Certificate",
-                detail: format!("sha1WithRSA cert OID from {}", pkt.src),
-            });
-        }
-
-        // RC4 cipher suites in Client Hello (record type 0x16, handshake type 0x01)
-        if bytes.get(0).copied() == Some(0x16) && bytes.get(5).copied() == Some(0x01) {
-            // Scan for cipher suites 0x0005 (RC4-SHA) or 0x000a (RC4-MD5)
-            let rc4_suites: &[&[u8]] = &[&[0x00, 0x05], &[0x00, 0x0a]];
-            for suite in rc4_suites {
-                if Self::contains_bytes(bytes, suite) {
-                    self.push_tls(TlsWeakness {
-                        pkt_no: pkt.no,
-                        src_ip: pkt.src.clone(),
-                        dst_ip: pkt.dst.clone(),
-                        kind: "RC4 Cipher Suite",
-                        detail: format!(
-                            "RC4 cipher 0x{:02x}{:02x} offered from {}",
-                            suite[0], suite[1], pkt.src
-                        ),
-                    });
-                    break;
-                }
-            }
         }
     }
 }

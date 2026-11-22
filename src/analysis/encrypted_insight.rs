@@ -94,6 +94,56 @@ pub fn parse_server_hello(raw: &[u8]) -> Option<(u16, u16)> {
     Some((version, read_u16(record, cipher_pos)?))
 }
 
+/// Read a complete ServerHello at the start of a TCP payload for passive alerts.
+pub(crate) fn parse_anchored_server_hello(payload: &[u8]) -> Option<(u16, u16)> {
+    if payload.first() != Some(&0x16) || !matches!(read_u16(payload, 1)?, 0x0300..=0x0303) {
+        return None;
+    }
+    let record_len = usize::from(read_u16(payload, 3)?);
+    if record_len > 16_384 {
+        return None;
+    }
+    let record = payload.get(5..5 + record_len)?;
+    let &[2, a, b, c] = record.first_chunk::<4>()? else { return None };
+    let hello = record.get(4..4 + u32::from_be_bytes([0, a, b, c]) as usize)?;
+    let legacy = read_u16(hello, 0)?;
+    let session_len = usize::from(*hello.get(34)?);
+    if !matches!(legacy, 0x0300..=0x0303) || session_len > 32 {
+        return None;
+    }
+    let cipher_pos = 35 + session_len;
+    let cipher = read_u16(hello, cipher_pos)?;
+    let compression = *hello.get(cipher_pos + 2)?;
+    let remainder = hello.get(cipher_pos + 3..)?;
+    if remainder.is_empty() {
+        return Some((legacy, cipher));
+    }
+    let extension_len = usize::from(read_u16(remainder, 0)?);
+    let mut extensions = remainder.get(2..)?;
+    if extensions.len() != extension_len {
+        return None;
+    }
+    let mut selected = None;
+    while !extensions.is_empty() {
+        let kind = read_u16(extensions, 0)?;
+        let len = usize::from(read_u16(extensions, 2)?);
+        let data = extensions.get(4..4 + len)?;
+        if kind == 0x002b {
+            // TLS 1.3 and later select the version in supported_versions, not legacy_version.
+            if selected.is_some() || len != 2 || legacy != 0x0303 || compression != 0 {
+                return None;
+            }
+            let version = read_u16(data, 0)?;
+            if version < 0x0304 {
+                return None;
+            }
+            selected = Some(version);
+        }
+        extensions = extensions.get(4 + len..)?;
+    }
+    Some((selected.unwrap_or(legacy), cipher))
+}
+
 fn find_handshake(raw: &[u8], handshake_type: u8) -> Option<&[u8]> {
     let start = raw.windows(6).position(|window| {
         window[0] == 0x16 && window[1] == 0x03 && window[5] == handshake_type

@@ -137,6 +137,22 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the server's anonymous access policy and check subsequent TREE_CONNECT responses or server share audit logs.",
         ),
         (
+            "TLS", "SSL 3.0 selected", "tls.ssl30_selected", 1, DirectObservation,
+            "Verify the server's minimum protocol version and identify the client or intermediary requiring SSL 3.0.",
+        ),
+        (
+            "TLS", "TLS 1.0 selected", "tls.tls10_selected", 1, DirectObservation,
+            "Verify the server or proxy's minimum protocol version and check which clients still require TLS 1.0.",
+        ),
+        (
+            "TLS", "TLS 1.1 selected", "tls.tls11_selected", 1, DirectObservation,
+            "Verify the server or proxy's minimum protocol version and check which clients still require TLS 1.1.",
+        ),
+        (
+            "TLS", "RC4 selected", "tls.rc4_selected", 1, DirectObservation,
+            "Verify the selected cipher in ServerHello and remove RC4 from the server or proxy's allowed cipher suites.",
+        ),
+        (
             "IDS", "NBNS WPAD address reply", "nbns.wpad_address_reply", 1, DirectObservation,
             "Check whether the responder is an approved proxy discovery service and whether the client used it.",
         ),

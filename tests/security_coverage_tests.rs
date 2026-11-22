@@ -9,6 +9,10 @@ struct CoverageGroup {
 
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
+        signatures: &["SSL 3.0 selected", "TLS 1.0 selected", "TLS 1.1 selected", "RC4 selected"],
+        positive_test: "tls_alerts_require_complete_server_selections",
+    },
+    CoverageGroup {
         signatures: &["SMB2 anonymous session accepted"],
         positive_test: "anonymous_smb_requires_a_successful_server_session_setup",
     },
@@ -204,6 +208,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy/dhcp_cases.rs"),
     include_str!("security_policy/tcp_reset_cases.rs"),
     include_str!("security_policy/smb_anonymous_cases.rs"),
+    include_str!("security_policy/tls_selection_cases.rs"),
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("arp_binding_tests.rs"),
     include_str!("dns_transaction_tests.rs"),

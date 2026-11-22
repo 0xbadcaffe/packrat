@@ -133,14 +133,20 @@ impl AnalysisCore {
             );
         }
         for weakness in &findings.tls {
-            self.alert_center.record_correlated(
-                weakness.pkt_no,
+            let scope = (
+                pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
+                pkt.outer_vlan_id,
+                pkt.vlan_id,
+            );
+            self.alert_center.record_with_context(
+                (weakness.pkt_no, &[], AlertFlow::from_packet(pkt)),
                 pkt.timestamp,
                 "TLS",
                 "MEDIUM",
                 weakness.kind,
                 &weakness.detail,
-                format!("{}>{}", weakness.src_ip, weakness.dst_ip),
+                format!("{scope:?}:{}:{}>{}:{}", weakness.src_ip, pkt.src_port.unwrap_or(0),
+                    weakness.dst_ip, pkt.dst_port.unwrap_or(0)),
             );
         }
         for suspect in self.security.dns_suspects.iter().filter(|suspect| {
