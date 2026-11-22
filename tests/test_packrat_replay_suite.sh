@@ -19,6 +19,10 @@ packrat-analyze() {
         "$PACKRAT_TEST_DIRECTORY/benign fixture.pcap")
             [[ $# == 4 && $1 == --expect-alert && $2 == scan.horizontal=0 && $3 == -- ]] || return 2
             verdict=passed
+            case ${PACKRAT_TEST_CANDIDATE:-} in
+                append) printf '%s\n' growth >>"${*: -1}" ;;
+                replace) mv -- "$PACKRAT_TEST_DIRECTORY/next.pcap" "${*: -1}" ;;
+            esac
             ;;
         "$PACKRAT_TEST_DIRECTORY/changed.pcap")
             [[ $# == 4 && $1 == --expect-alert-frame && $2 == scan.horizontal=12 && $3 == -- ]] || return 2
@@ -68,6 +72,7 @@ packrat-baseline() {
     case ${PACKRAT_TEST_BASELINE:-} in
         unstable) printf '%s\n' changed >>"${*: -1}" ;;
         unavailable) return 2 ;;
+        record) touch -- "$PACKRAT_TEST_DIRECTORY/baseline-called" ;;
     esac
     printf '%s\n' '{"type":"summary","alerts_opened":1,"rule_counts":{"scan.horizontal":1},
         "alert_expectations":{"verdict":"failed","checks":[{"rule_id":"scan.horizontal","expected":0,"observed":1}]}}' |
@@ -95,6 +100,35 @@ jq -e '
 
 jq -c '.cases = [.cases[0]]' <<< "$sample" >"$manifest"
 bash "$suite" "$manifest" | jq -e '.total == 1 and .passed == 1' >/dev/null
+(
+    # shellcheck disable=SC2329 # Exported to the replay script.
+    stat() {
+        [[ $# == 5 && $1 == -L && $2 == -f && $3 == '%d:%i:%z:%Fm:%Fc' && $4 == -- ]] || return 1
+        command stat -L --format='%d:%i:%s:%y:%z' -- "$5"
+    }
+    export -f stat
+    bash "$suite" "$manifest" | jq -e '.passed == 1' >/dev/null
+    status=0
+    result=$(PACKRAT_TEST_CANDIDATE=append bash "$suite" "$manifest") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.inconclusive == 1 and .cases[0].capture_check == "unstable"' <<< "$result" >/dev/null
+)
+for mode in append replace; do
+    cp -- "$scratch/benign fixture.pcap" "$scratch/next.pcap"
+    status=0
+    result=$(PACKRAT_TEST_CANDIDATE="$mode" bash "$suite" "$manifest") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.inconclusive == 1 and .score.scored_cases == 0 and
+        (.cases[0] | .capture_check == "unstable" and .score == null and
+         .summary.alert_expectations.verdict == "passed")' <<< "$result" >/dev/null
+done
+status=0
+result=$(PACKRAT_TEST_CANDIDATE=append PACKRAT_TEST_BASELINE=record PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline \
+    bash "$suite" "$manifest") || status=$?
+[[ $status == 1 && ! -e $scratch/baseline-called ]]
+jq -e '.inconclusive == 1 and .comparable == 0 and
+    (.cases[0] | .comparison == "capture_unstable" and .capture_check == "unstable" and .baseline == null)' \
+    <<< "$result" >/dev/null
 PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline bash "$suite" "$manifest" |
     jq -e '.comparable == 1 and .passed == 1 and .cases[0].baseline.verdict == "failed"
         and .cases[0].comparison == "comparable" and .cases[0].delta.alerts_opened == -1

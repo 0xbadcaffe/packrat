@@ -11,6 +11,7 @@ usage() {
         'Set "allow_truncated":true only for a case intentionally replaying partial frames.' \
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
         'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.' \
+        'A capture that changes during replay is marked inconclusive, even without a baseline.' \
         'Set PACKRAT_REPLAY_BASELINE_ANALYZER to an older analyzer command or executable path to compare results.'
 }
 
@@ -133,8 +134,21 @@ replay_case() {
     '
 }
 
+gnu_stamp='%d:%i:%s:%y:%z'
+bsd_stamp='%d:%i:%z:%Fm:%Fc'
+stat_style=unavailable
+if stat -L --format="$gnu_stamp" -- "$base" >/dev/null 2>&1; then
+    stat_style=gnu
+elif stat -L -f "$bsd_stamp" -- "$base" >/dev/null 2>&1; then
+    stat_style=bsd
+fi
+
 capture_stamp() {
-    stat -L --format='%d:%i:%s:%y:%z' -- "$capture" 2>/dev/null
+    case $stat_style in
+        gnu) stat -L --format="$gnu_stamp" -- "$capture" 2>/dev/null ;;
+        bsd) stat -L -f "$bsd_stamp" -- "$capture" 2>/dev/null ;;
+        *) return 1 ;;
+    esac
 }
 
 results=()
@@ -149,9 +163,16 @@ while IFS= read -r label; do
             "--expect-alert-frame", ($id + "=" + (floor | tostring)))
     ' <<< "$label")
 
-    if [[ -n $baseline ]]; then stamp=$(capture_stamp) || stamp=; fi
+    stamp=$(capture_stamp) || stamp=
     candidate=$(replay_case packrat-analyze)
-    if [[ -n $baseline ]]; then
+    after_candidate=$(capture_stamp) || after_candidate=
+    if [[ -z $stamp || $stamp != "$after_candidate" ]]; then
+        candidate=$(jq -c --arg before "$stamp" --arg after "$after_candidate" --arg baseline "$baseline" '
+            .verdict = "inconclusive" | .score = null
+            | .capture_check = (if $before == "" and $after == "" then "unavailable" else "unstable" end)
+            | if $baseline == "" then . else .comparison = "capture_unstable" end
+        ' <<< "$candidate")
+    elif [[ -n $baseline ]]; then
         reference=$(replay_case "$baseline")
         after=$(capture_stamp) || after=
         candidate=$(jq -c --argjson reference "$reference" --arg before "$stamp" --arg after "$after" '
@@ -167,7 +188,7 @@ while IFS= read -r label; do
                 else null end;
             .baseline = $reference
             | if $before == "" or $before != $after then
-                .verdict = "inconclusive" | .score = null | .comparison = "capture_unstable"
+                .verdict = "inconclusive" | .score = null | .comparison = "capture_unstable" | .capture_check = "unstable"
               elif .score == null or $reference.score == null then
                 .comparison = "inconclusive"
               else
