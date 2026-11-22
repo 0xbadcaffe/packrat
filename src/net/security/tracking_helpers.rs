@@ -1,4 +1,5 @@
 use super::*;
+use std::{collections::VecDeque, ops::Range};
 
 pub(super) struct TcpOverlap {
     pub(super) previous_frame: u64,
@@ -7,23 +8,16 @@ pub(super) struct TcpOverlap {
 }
 
 pub(super) fn conflicting_tcp_overlap(
-    slices: &std::collections::VecDeque<FragmentSlice>,
+    slices: &VecDeque<FragmentSlice>,
     payload_sequence: u32,
     payload: &[u8],
 ) -> Option<TcpOverlap> {
     slices.iter().find_map(|existing| {
-        // Represent the retained slice relative to the new start across sequence wrap.
-        let start = i64::from(existing.start.wrapping_sub(payload_sequence) as i32);
-        let overlap_start = start.max(0);
-        let overlap_end = (start + existing.data.len() as i64).min(payload.len() as i64);
-        if overlap_end <= overlap_start {
-            return None;
-        }
-        let new_offset = overlap_start as usize;
-        let old_offset = (overlap_start - start) as usize;
-        let compared_bytes = (overlap_end - overlap_start) as usize;
-        let difference = payload[new_offset..new_offset + compared_bytes].iter()
-            .zip(&existing.data[old_offset..old_offset + compared_bytes])
+        let (range, saved) = overlapping_tcp_bytes(existing, payload_sequence, payload.len())?;
+        let compared_bytes = range.len();
+        let new_offset = range.start;
+        let difference = payload[range].iter()
+            .zip(saved)
             .position(|(new, old)| new != old)?;
         Some(TcpOverlap {
             previous_frame: existing.packet_no,
@@ -31,6 +25,53 @@ pub(super) fn conflicting_tcp_overlap(
             difference_sequence: payload_sequence.wrapping_add((new_offset + difference) as u32),
         })
     })
+}
+
+fn overlapping_tcp_bytes(
+    existing: &FragmentSlice,
+    payload_sequence: u32,
+    payload_len: usize,
+) -> Option<(Range<usize>, &[u8])> {
+    // Align the retained slice to the incoming sequence, including wrap through zero.
+    let start = i64::from(existing.start.wrapping_sub(payload_sequence) as i32);
+    let overlap_start = start.max(0);
+    let overlap_end = (start + existing.data.len() as i64).min(payload_len as i64);
+    if overlap_end <= overlap_start {
+        return None;
+    }
+    let old_offset = (overlap_start - start) as usize;
+    let count = (overlap_end - overlap_start) as usize;
+    Some((overlap_start as usize..overlap_end as usize, &existing.data[old_offset..old_offset + count]))
+}
+
+pub(super) fn tcp_payload_already_seen(
+    slices: &VecDeque<FragmentSlice>,
+    payload_sequence: u32,
+    payload: &[u8],
+) -> bool {
+    let mut matching = Vec::new();
+    for existing in slices {
+        if let Some((range, saved)) = overlapping_tcp_bytes(existing, payload_sequence, payload.len())
+            && payload[range.clone()] == *saved
+        {
+            if range.len() == payload.len() {
+                return true;
+            }
+            matching.push(range);
+        }
+    }
+    matching.sort_unstable_by_key(|range| range.start);
+    let mut covered = 0;
+    for range in matching {
+        if range.start > covered {
+            break;
+        }
+        covered = covered.max(range.end);
+        if covered == payload.len() {
+            return true;
+        }
+    }
+    false
 }
 
 pub(super) fn evict_oldest_scan_source(states: &mut HashMap<ScanSourceKey, SourceScanState>) {

@@ -73,7 +73,9 @@ impl AnalysisCore {
                 alert.pkt_no,
                 pkt.timestamp,
             );
-            let flow = if alert.signature == "Periodic fixed-size traffic" {
+            let flow = if matches!(alert.signature,
+                "Periodic fixed-size traffic" | "TCP payload after reset" | "Conflicting TCP retransmission"
+            ) {
                 observed_alert_flow(pkt)
             } else {
                 None

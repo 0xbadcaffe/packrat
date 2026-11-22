@@ -190,6 +190,7 @@ impl SecurityEngine {
                 && let Some(reset) = state.reset
                 && (0.0..=TCP_STATE_TTL_SECS).contains(&(pkt.timestamp - reset.timestamp))
                 && !duplicate
+                && !tcp_payload_already_seen(&slices.slices, payload_sequence, segment.payload)
             {
                 state.post_reset_alerted = true;
                 post_reset = Some(reset);

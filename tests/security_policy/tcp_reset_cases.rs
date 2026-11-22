@@ -142,3 +142,32 @@ fn ipv6_tcp_integrity_ignores_incomplete_or_fragmented_resets() {
         assert!(result.ids.iter().all(|finding| finding.alert.signature != TITLE));
     }
 }
+
+#[test]
+fn post_reset_rule_ignores_unchanged_data_split_across_segments() {
+    let mut core = AnalysisCore::default();
+    core.analyze(&ipv4_tcp_packet(1, u32::MAX - 1, 0x18, b"ab"));
+    core.analyze(&ipv4_tcp_packet(2, 0, 0x18, b"cd"));
+    core.analyze(&ipv4_tcp_packet(3, 2, 0x04, b""));
+    core.analyze(&ipv4_tcp_packet(4, u32::MAX - 1, 0x18, b"abcd"));
+    core.analyze(&ipv4_tcp_packet(5, u32::MAX, 0x18, b"bc"));
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+
+    core.analyze(&ipv4_tcp_packet(6, u32::MAX, 0x18, b"bcde"));
+    let finding = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(finding.packet_refs, [3, 6]);
+    let flow = finding.flow.unwrap();
+    assert_eq!(flow.source.to_string(), "203.0.113.9:50000");
+    assert_eq!(flow.destination.to_string(), "10.0.0.5:443");
+}
+
+#[test]
+fn post_reset_rule_does_not_treat_a_gap_as_known_bytes() {
+    let mut engine = SecurityEngine::default();
+    engine.update(&ipv6_tcp_packet(1, 100, 0x18, b"ab"));
+    engine.update(&ipv6_tcp_packet(2, 104, 0x18, b"ef"));
+    engine.update(&ipv6_tcp_packet(3, 106, 0x04, b""));
+    let result = engine.inspect(&ipv6_tcp_packet(4, 100, 0x18, b"abcdef"));
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == TITLE).unwrap();
+    assert_eq!(finding.related_packets, [3]);
+}
