@@ -126,3 +126,37 @@ fn detects_large_high_entropy_outbound_transfer() {
         );
     }
 }
+
+#[test]
+fn outbound_volume_counts_captured_bytes_above_the_display_length_limit() {
+    use packrat_tui::net::{
+        packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution},
+        parser::parse_captured,
+    };
+
+    const FRAME: usize = 65_535 + 14;
+    const TOTAL: usize = 1_000_000;
+    const TITLE: &str = "Large asymmetric outbound transfer";
+    let mut complete = SecurityEngine::default();
+    let mut truncated = SecurityEngine::default();
+    for no in 1..=16 {
+        let wire = if no < 16 { FRAME } else { TOTAL - 15 * FRAME };
+        let packet = outbound_tcp(no, &vec![0; wire - 54]);
+        let parse = |len| parse_captured(&packet.bytes[..len], no, CaptureMetadata {
+            timestamp: Some(CaptureTimestamp {
+                ticks: no, resolution: TimestampResolution::Decimal(0), offset_seconds: 0,
+            }),
+            captured_length: len as u32, wire_length: wire as u32, link_type: 1,
+            section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+        }).unwrap();
+        complete.update(&parse(wire));
+        truncated.update(&parse(wire - 1));
+        assert!(truncated.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+        if no < 16 {
+            assert!(complete.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+        }
+    }
+    let alert = complete.ids_alerts.iter().find(|alert| alert.signature == TITLE).unwrap();
+    assert_eq!(alert.pkt_no, 16);
+    assert!(alert.detail.contains("1000000 captured outbound bytes"));
+}

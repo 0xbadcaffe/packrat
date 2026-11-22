@@ -62,7 +62,7 @@ impl ExfilState {
             }
         };
         let bucket = &mut self.buckets[index];
-        let length = u64::from(packet.length);
+        let length = packet.bytes.len() as u64;
         let mut high_entropy_payload = false;
         if outbound {
             bucket.outbound = bucket.outbound.saturating_add(length);
