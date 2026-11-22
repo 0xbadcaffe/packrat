@@ -78,12 +78,7 @@ fn vlan_replay_detects_double_tag_native_pcp_and_dtp() {
     pcp.vlan_pcp = Some(7);
     intel.ingest(&pcp);
 
-    let dtp = ethernet_packet(
-        4,
-        [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x04],
-        [0x01, 0x00, 0x0c, 0xcc, 0xcc, 0xcc],
-        None,
-    );
+    let dtp = dtp::fixture(4, 0x2004, None);
     intel.ingest(&dtp);
 
     assert!(
@@ -108,7 +103,7 @@ fn vlan_replay_detects_double_tag_native_pcp_and_dtp() {
         intel
             .alerts
             .iter()
-            .any(|alert| alert.category == "DTP" && alert.severity == AlertSeverity::Critical)
+            .any(|alert| alert.category == "DTP" && alert.severity == AlertSeverity::Info)
     );
 }
 

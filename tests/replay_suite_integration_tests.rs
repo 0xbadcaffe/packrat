@@ -8,6 +8,8 @@ mod dns_replay;
 mod transfer_replay;
 #[path = "support/arp.rs"]
 mod arp;
+#[path = "replay_suite/dtp.rs"]
+mod dtp_replay;
 
 use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};

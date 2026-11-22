@@ -5,6 +5,9 @@ use packrat_tui::net::packet::Packet;
 use packrat_tui::net::security::SecurityEngine;
 use rstest::rstest;
 
+#[path = "support/dtp.rs"]
+mod dtp;
+
 fn packet(protocol: &str, destination_port: u16, info: &str, bytes: Vec<u8>) -> Packet {
     Packet {
         capture: None,

@@ -3,13 +3,15 @@
 //! Detects:
 //!   • Double-tagging / VLAN-hopping (QinQ frames from non-trunk context)
 //!   • Native VLAN 1 usage (industry best-practice violation)
-//!   • DTP negotiation frames (precursor to switch-spoofing attacks)
+//!   • DTP negotiation observations
 //!   • MAC appearing on multiple VLANs (potential VLAN-hopping or misconfiguration)
 //!   • PCP=7 (Network Control priority) from a non-router source
 //!   • Untagged traffic on a VLAN-aware segment
 
 use std::collections::{HashMap, HashSet, BTreeMap};
 use crate::net::packet::Packet;
+#[path = "vlan_dtp.rs"]
+mod dtp;
 
 // ─── DTP detection ────────────────────────────────────────────────────────────
 // DTP frames are sent to the Cisco multicast MAC 01:00:0c:cc:cc:cc
@@ -146,12 +148,11 @@ impl VlanIntel {
         };
 
         // ── DTP detection ────────────────────────────────────────────────────
-        // DTP frames dst MAC 01:00:0c:cc:cc:cc — switch-spoofing precursor
-        if mac_dst == DTP_DST_MAC {
+        if mac_dst == DTP_DST_MAC && dtp::parse_dtp_negotiation(&pkt.bytes).is_some() {
             self.raise(
-                AlertSeverity::Critical,
+                AlertSeverity::Info,
                 "DTP",
-                format!("DTP frame from {} — potential switch-spoofing / trunk negotiation attack", mac_src),
+                format!("DTP negotiation observed from {mac_src}; port policy and trunk state are unverified"),
                 pkt.no, pkt.timestamp,
                 format!("DTP:{}", mac_src),
             );

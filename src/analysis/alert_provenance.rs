@@ -61,6 +61,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the two frames with trunk, VLAN and switch-port policy. A shared MAC alone does not establish forwarding between VLANs.",
         ),
         (
+            "VLAN", "DTP", "vlan.dtp_negotiation", 1, DirectObservation,
+            "Check whether dynamic trunk negotiation is expected on this switch port. Confirm trunk state with switch logs before escalating.",
+        ),
+        (
             "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 6, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
