@@ -12,6 +12,7 @@ mod investigation;
 mod negative_answers;
 mod record_wire;
 mod replies;
+mod tcp_wire;
 
 use correlation::{ExchangeBucket, ReplyMatch};
 pub use investigation::{DnsExchangeEvidence, DnsReplyEvidence};
@@ -50,6 +51,13 @@ struct TransactionKey {
     client: String,
     client_port: u16,
     id: u16,
+    tcp_resolver: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+enum DnsTransport {
+    Udp,
+    Tcp,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -57,21 +65,43 @@ struct DnsScope {
     interface: Option<(u32, u32)>,
     outer_vlan: Option<u16>,
     inner_vlan: Option<u16>,
+    transport: DnsTransport,
 }
 
 impl DnsScope {
-    fn from_packet(packet: &Packet) -> Self {
+    fn from_packet(packet: &Packet, transport: DnsTransport) -> Self {
         Self {
             interface: packet.capture.as_ref().map(|capture| {
                 (capture.section_id, capture.interface_id)
             }),
             outer_vlan: packet.outer_vlan_id,
             inner_vlan: packet.vlan_id,
+            transport,
+        }
+    }
+
+    fn transaction(self, client: &str, client_port: u16, id: u16, resolver: &str) -> TransactionKey {
+        TransactionKey {
+            scope: self,
+            client: client.into(),
+            client_port,
+            id,
+            tcp_resolver: (self.transport == DnsTransport::Tcp).then(|| resolver.into()),
         }
     }
 }
 
+fn dns_payload(packet: &Packet) -> Option<(DnsTransport, u16, u16, &[u8])> {
+    if let Some((source, destination, payload)) = udp_payload(packet) {
+        return Some((DnsTransport::Udp, source, destination, payload));
+    }
+    let (source, destination, payload) = tcp_wire::dns_payload(packet)?;
+    Some((DnsTransport::Tcp, source, destination, payload))
+}
+
 pub(crate) fn alert_correlation_key(packet: &Packet, finding: &DnsFinding) -> String {
+    let transport = dns_payload(packet).map_or(DnsTransport::Udp, |(transport, ..)| transport);
+    let scope = DnsScope::from_packet(packet, transport);
     if matches!(
         finding.kind,
         DnsFindingKind::QuestionMismatch
@@ -81,9 +111,9 @@ pub(crate) fn alert_correlation_key(packet: &Packet, finding: &DnsFinding) -> St
             | DnsFindingKind::ChangedAnswerSet
     ) && let Some(query) = finding.related_packets.first()
     {
-        return format!("{:?}:query:{query}", DnsScope::from_packet(packet));
+        return format!("{scope:?}:query:{query}");
     }
-    format!("{:?}:{}>{}", DnsScope::from_packet(packet), packet.src, packet.dst)
+    format!("{scope:?}:{}>{}", packet.src, packet.dst)
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +155,7 @@ pub struct DnsTransactionTracker {
 
 impl DnsTransactionTracker {
     pub fn observe(&mut self, packet: &Packet) -> Vec<DnsFinding> {
-        let Some((source_port, destination_port, payload)) = udp_payload(packet) else {
+        let Some((transport, source_port, destination_port, payload)) = dns_payload(packet) else {
             return Vec::new();
         };
         if source_port != 53 && destination_port != 53 {
@@ -151,18 +181,13 @@ impl DnsTransactionTracker {
         let Some(message) = parse_single_question(payload, header) else {
             return Vec::new();
         };
-        let scope = DnsScope::from_packet(packet);
+        let scope = DnsScope::from_packet(packet, transport);
 
         if !message.response {
             let jndi_label = message.question.qclass == 1
                 && dns_name_has_label(&message.question.name, "jndi");
             self.insert_query(
-                TransactionKey {
-                    scope,
-                    client: packet.src.clone(),
-                    client_port: source_port,
-                    id: message.id,
-                },
+                scope.transaction(&packet.src, source_port, message.id, &packet.dst),
                 PendingQuery {
                     packet_no: packet.no,
                     server: packet.dst.clone(),
@@ -181,12 +206,7 @@ impl DnsTransactionTracker {
                 Vec::new()
             };
         }
-        let key = TransactionKey {
-            scope,
-            client: packet.dst.clone(),
-            client_port: destination_port,
-            id: message.id,
-        };
+        let key = scope.transaction(&packet.dst, destination_port, message.id, &packet.src);
         let (exchange, ambiguous) = if let Some(bucket) = self.exchanges.get_mut(&key) {
             bucket.expire(packet.timestamp);
             match bucket.find_reply(packet.timestamp, &packet.src, &message.question) {

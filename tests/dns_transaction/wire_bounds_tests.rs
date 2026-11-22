@@ -44,3 +44,74 @@ fn dns_transport_requires_consistent_ip_headers_link_type_and_supported_tag_dept
         assert_eq!(findings[0].kind, DnsFindingKind::ReplyWithoutObservedQuery);
     }
 }
+
+fn tcp_dns(no: u64, reply: bool, resolver_octet: u8, name: &str) -> Packet {
+    let dns = dns_packet(no, reply, "", "", 5, name);
+    let message = &dns.bytes[42..];
+    let mut wire = vec![0; 54];
+    wire[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    wire[14] = 0x45;
+    wire[16..18].copy_from_slice(&((42 + message.len()) as u16).to_be_bytes());
+    wire[22] = 64;
+    wire[23] = 6;
+    let client = [10, 0, 0, 8];
+    let resolver = [10, 0, 0, resolver_octet];
+    let (source, destination, ports) = if reply {
+        (resolver, client, [53_u16, 40_000])
+    } else {
+        (client, resolver, [40_000_u16, 53])
+    };
+    wire[26..30].copy_from_slice(&source);
+    wire[30..34].copy_from_slice(&destination);
+    wire[34..36].copy_from_slice(&ports[0].to_be_bytes());
+    wire[36..38].copy_from_slice(&ports[1].to_be_bytes());
+    wire[46] = 0x50;
+    wire[47] = 0x18;
+    wire.extend((message.len() as u16).to_be_bytes());
+    wire.extend(message);
+    packrat_tui::net::parser::parse_ethernet(&wire, no, no as f64)
+}
+
+#[test]
+fn tcp_dns_exchange_requires_one_complete_message_and_matches_the_resolver() {
+    let mut tracker = DnsTransactionTracker::default();
+    let udp_query = dns_packet(1, false, "10.0.0.8", "10.0.0.53", 5, "udp.test");
+    assert!(tracker.observe(&udp_query).is_empty());
+    let tcp_reply = tcp_dns(2, true, 53, "tcp.test");
+    assert_eq!(
+        tracker.observe(&tcp_reply)[0].kind,
+        DnsFindingKind::ReplyWithoutObservedQuery
+    );
+
+    let query = tcp_dns(3, false, 53, "tcp.test");
+    assert!(tracker.observe(&query).is_empty());
+    let different_peer = tcp_dns(4, true, 54, "tcp.test");
+    assert_eq!(
+        tracker.observe(&different_peer)[0].kind,
+        DnsFindingKind::ReplyWithoutObservedQuery
+    );
+    let mut partial = tcp_dns(5, true, 53, "tcp.test");
+    partial.bytes.pop();
+    let mut extra = tcp_dns(6, true, 53, "tcp.test");
+    extra.bytes.extend([0, 12]);
+    let ip_length = (extra.bytes.len() - 14) as u16;
+    extra.bytes[16..18].copy_from_slice(&ip_length.to_be_bytes());
+    for packet in [partial, extra] {
+        assert!(tracker.observe(&packet).is_empty());
+        assert!(tracker.exchange_for_packet(&packet).is_none());
+    }
+
+    let reply = tcp_dns(7, true, 53, "tcp.test");
+    assert!(tracker.observe(&reply).is_empty());
+    let exchange = tracker.exchange_for_packet(&reply).unwrap();
+    assert_eq!(exchange.transport, "TCP");
+    assert_eq!(exchange.query_packet, 3);
+    assert_eq!(exchange.replies[0].packet, 7);
+    assert!(
+        tracker
+            .exchange_for_packet(&udp_query)
+            .unwrap()
+            .replies
+            .is_empty()
+    );
+}

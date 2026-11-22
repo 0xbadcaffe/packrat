@@ -6,7 +6,7 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
     let lines = match exchange {
         Some(exchange) => {
             let mut lines = vec![
-                Line::styled(format!("Transaction 0x{:04x}", exchange.transaction_id), heading()),
+                Line::styled(format!("{} transaction 0x{:04x}", exchange.transport, exchange.transaction_id), heading()),
                 Line::raw(format!("{}  type {}  class {}", exchange.question, exchange.query_type, exchange.query_class)),
                 Line::raw(format!("Client [{}]:{}", exchange.client, exchange.client_port)),
                 Line::raw(format!("Expected resolver {}", exchange.expected_resolver)),
@@ -42,7 +42,7 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
             }
             lines
         }
-        None => vec![Line::raw("No retained UDP DNS exchange matches this frame.")],
+        None => vec![Line::raw("No retained DNS exchange matches this frame.")],
     };
     f.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false })
