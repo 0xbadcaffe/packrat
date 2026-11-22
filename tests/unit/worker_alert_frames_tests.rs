@@ -20,7 +20,7 @@ fn worker_handoff_keeps_only_referenced_frames_and_is_opt_in() {
     let history = VecDeque::from([packet(1, 14), packet(2, 15), packet(3, 16)]);
     let trigger = packet(4, 17);
     assert!(alert_frames(&core, &analysis, &trigger, &history).is_empty());
-    core.alert_center.archive_alert_packets = true;
+    core.alert_center.archive_evidence_rules = Some(Vec::new());
     let frames = alert_frames(&core, &analysis, &trigger, &history);
     assert_eq!(frames.iter().map(|p| p.no).collect::<Vec<_>>(), [1, 3, 4]);
     assert_eq!(frames[2].bytes, trigger.bytes);
@@ -30,7 +30,7 @@ fn worker_handoff_keeps_only_referenced_frames_and_is_opt_in() {
 fn worker_handoff_prioritizes_trigger_and_bounds_payload_and_frame_count() {
     let mut core = AnalysisCore::default();
     core.alert_center.capture_id = Some("current".into());
-    core.alert_center.archive_alert_packets = true;
+    core.alert_center.archive_evidence_rules = Some(Vec::new());
     let references: Vec<_> = (1..=40).collect();
     core.alert_center.record_correlated_with_evidence(
         (41, &references), 41.0, "TEST", "CRITICAL", "Finding", "observation", "flow",

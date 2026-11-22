@@ -30,6 +30,7 @@ pub struct StartupOptions {
     pub endpoint_evidence_path: Option<std::path::PathBuf>,
     pub archive_path: Option<std::path::PathBuf>,
     pub archive_alert_evidence_only: bool,
+    pub archive_evidence_rules: Vec<String>,
     pub archive_limits: crate::storage::packet_archive::ArchiveLimits,
     pub vlan_policy: crate::analysis::vlan::VlanPolicy,
 }
@@ -38,7 +39,7 @@ pub fn usage() -> String {
     let endpoint_help =
         "      --endpoint-evidence PATH import endpoint impact evidence as NDJSON\n      --single-tag-interface NAME  flag stacked VLAN tags on an exact capture interface; repeatable\n";
     let base = usage_base();
-    base.replace("      --socket-events", &format!("{endpoint_help}      --archive PATH           retain packets and SQLite index (pauses at limits)\n      --archive-alert-evidence PATH  retain only referenced HIGH/CRITICAL alert frames, not restored cases\n      --archive-max-mib N      archived packet bytes in MiB (default: 256)\n      --archive-max-frames N   total indexed frames (default: 100000)\n      --socket-events"))
+    base.replace("      --socket-events", &format!("{endpoint_help}      --archive PATH           retain packets and SQLite index (pauses at limits)\n      --archive-alert-evidence PATH  retain referenced HIGH/CRITICAL alert frames, not restored cases\n      --archive-evidence-rule RULE_ID  also retain referenced frames for this rule (up to 16, selective archive only)\n      --archive-max-mib N      archived packet bytes in MiB (default: 256)\n      --archive-max-frames N   total indexed frames (default: 100000)\n      --socket-events"))
 }
 
 pub(super) fn usage_base() -> &'static str {
@@ -71,6 +72,7 @@ where
         endpoint_evidence_path: None,
         archive_path: None,
         archive_alert_evidence_only: false,
+        archive_evidence_rules: Vec::new(),
         archive_limits: Default::default(),
         vlan_policy: Default::default(),
     };
@@ -88,6 +90,11 @@ where
                     .ok_or_else(|| format!("{flag} requires a directory"))?;
                 options.archive_path = Some(value.into());
                 options.archive_alert_evidence_only = flag == "--archive-alert-evidence";
+            }
+            "--archive-evidence-rule" => {
+                index += 1;
+                let rule = args.get(index).ok_or("--archive-evidence-rule requires a rule ID")?;
+                options.archive_evidence_rules.push(rule.clone());
             }
             "--archive-max-mib" | "--archive-max-frames" => {
                 archive_limits_set = true;
@@ -205,7 +212,26 @@ where
     if options.archive_path.is_none() && archive_limits_set {
         return Err("Archive limits require --archive PATH or --archive-alert-evidence PATH".into());
     }
+    validate_archive_evidence_rules(options.archive_alert_evidence_only, &options.archive_evidence_rules)?;
     Ok(CliAction::Run(options))
+}
+
+pub(super) fn validate_archive_evidence_rules(selective: bool, rules: &[String]) -> Result<(), String> {
+    if !rules.is_empty() && !selective {
+        return Err("--archive-evidence-rule requires --archive-alert-evidence PATH".into());
+    }
+    if rules.len() > 16 {
+        return Err("Specify at most 16 archive evidence rules".into());
+    }
+    for (index, rule) in rules.iter().enumerate() {
+        if !crate::analysis::alert_provenance::is_registered_rule_id(rule) {
+            return Err(format!("Unknown archive evidence rule: {rule:?}"));
+        }
+        if rules[..index].contains(rule) {
+            return Err(format!("Duplicate archive evidence rule: {rule}"));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn list_interfaces(include_simulated: bool) -> Vec<String> {

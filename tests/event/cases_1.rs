@@ -34,6 +34,20 @@ fn alert_archive_is_an_explicit_alternative_to_full_capture_retention() {
 }
 
 #[test]
+fn archive_evidence_rule_requires_a_registered_exact_id_and_selective_mode() {
+    let rule = "tcp.payload_after_observed_reset";
+    let args = ["--archive-evidence-rule", rule, "--archive-alert-evidence", "evidence"];
+    let CliAction::Run(options) = app::parse_startup_args(args).unwrap() else {
+        panic!("Expected run options");
+    };
+    assert_eq!(options.archive_evidence_rules, [rule]);
+    assert!(app::parse_startup_args(&args[..2]).is_err());
+    assert!(app::parse_startup_args(["--archive", "all", "--archive-evidence-rule", rule]).is_err());
+    assert!(app::parse_startup_args(["--archive-alert-evidence", "evidence", "--archive-evidence-rule", "tcp.*"]).is_err());
+    assert!(app::parse_startup_args(args.into_iter().chain(["--archive-evidence-rule", rule])).is_err());
+}
+
+#[test]
 fn single_tag_interface_policy_requires_distinct_printable_names() {
     let parsed = app::parse_startup_args(["--single-tag-interface", "wlan1", "--single-tag-interface", "Access Link"]).unwrap();
     let CliAction::Run(options) = parsed else { panic!("Expected run options") };
@@ -67,6 +81,7 @@ fn parse_startup_args_defaults_to_capture() {
             endpoint_evidence_path: None,
             archive_path: None,
             archive_alert_evidence_only: false,
+            archive_evidence_rules: Vec::new(),
             archive_limits: Default::default(),
             vlan_policy: Default::default(),
         })
@@ -94,6 +109,7 @@ fn parse_startup_args_enables_simulation() {
             endpoint_evidence_path: None,
             archive_path: None,
             archive_alert_evidence_only: false,
+            archive_evidence_rules: Vec::new(),
             archive_limits: Default::default(),
             vlan_policy: Default::default(),
         })
@@ -117,6 +133,7 @@ fn parse_startup_args_enables_simulation() {
             endpoint_evidence_path: None,
             archive_path: None,
             archive_alert_evidence_only: false,
+            archive_evidence_rules: Vec::new(),
             archive_limits: Default::default(),
             vlan_policy: Default::default(),
         })
@@ -162,6 +179,7 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             endpoint_evidence_path: None,
             archive_path: None,
             archive_alert_evidence_only: false,
+            archive_evidence_rules: Vec::new(),
             archive_limits: Default::default(),
             vlan_policy: Default::default(),
         })
@@ -190,6 +208,7 @@ fn parse_startup_args_accepts_key_log_path() {
             endpoint_evidence_path: None,
             archive_path: None,
             archive_alert_evidence_only: false,
+            archive_evidence_rules: Vec::new(),
             archive_limits: Default::default(),
             vlan_policy: Default::default(),
         })

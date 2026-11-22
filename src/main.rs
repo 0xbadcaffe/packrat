@@ -60,7 +60,8 @@ async fn main() -> Result<()> {
     let (packet_tx, mut packet_rx) = tokio::sync::mpsc::channel::<Packet>(10_000);
     let mut app = App::new_with_mode(packet_tx, options.mode);
     if let Some(archive) = packet_archive {
-        app.set_packet_archive(archive).map_err(anyhow::Error::msg)?;
+        app.set_packet_archive_with_rules(archive, options.archive_evidence_rules)
+            .map_err(anyhow::Error::msg)?;
     }
     app.traffic_latch.mode = options.latch_mode;
     app.traffic_latch.expires_seconds = options.latch_expiry_seconds;

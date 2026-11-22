@@ -20,7 +20,7 @@ backup_dir=
 stage_binary=
 archive_path=
 archive_flag=--archive
-archive_limits=() vlan_policy_args=()
+archive_limits=() archive_rule_args=() vlan_policy_args=()
 enable_alert_evidence=false
 
 error() { printf '%s\n' "$*" >&2; }
@@ -268,7 +268,7 @@ launch_capture() {
     local session=$1 executable=$2 archive
     local -a archive_args=("${vlan_policy_args[@]}")
     archive=$(archive_for_session "$session")
-    if [[ -n $archive ]]; then archive_args+=("$archive_flag" "$archive" "${archive_limits[@]}"); fi
+    if [[ -n $archive ]]; then archive_args+=("$archive_flag" "$archive" "${archive_limits[@]}" "${archive_rule_args[@]}"); fi
     case $session in
         "$main_session")
             tmux new-session -d -s "$session" -c / -x 150 -y 40 \

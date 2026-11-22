@@ -110,9 +110,12 @@ source "$root/scripts/packrat-rollout.sh"
     if read_launch_profile "${profile[@]}" --archive "$archive" --simulation; then exit 1; fi
     if read_launch_profile "${profile[@]}" --archive "$archive" --archive-max-frames 0; then exit 1; fi
     if read_launch_profile "${profile[@]}" --archive "$archive" --archive-alert-evidence /other; then exit 1; fi
-    read_launch_profile "${profile[@]}" --archive-alert-evidence "$archive" --archive-max-frames 4096
-    [[ $(launch_capture "$main_session" /candidate) == *$'<--archive-alert-evidence>\n<'"$archive"$'>\n<--archive-max-frames>\n<4096>' ]]
-    [[ $(launch_capture "$bridge_session" /candidate) == *$'<--archive-alert-evidence>\n</backup/stage-data/packet-archive>'* ]]
+    rule=tcp.payload_after_observed_reset
+    if read_launch_profile "${profile[@]}" --archive "$archive" --archive-evidence-rule "$rule"; then exit 1; fi
+    if read_launch_profile "${profile[@]}" --archive-alert-evidence "$archive" --archive-evidence-rule "$rule" --archive-evidence-rule "$rule"; then exit 1; fi
+    read_launch_profile "${profile[@]}" --archive-alert-evidence "$archive" --archive-max-frames 4096 --archive-evidence-rule "$rule"
+    [[ $(launch_capture "$main_session" /candidate) == *$'<--archive-alert-evidence>\n<'"$archive"$'>\n<--archive-max-frames>\n<4096>\n<--archive-evidence-rule>\n<'"$rule>" ]]
+    [[ $(launch_capture "$bridge_session" /candidate) == *$'<--archive-alert-evidence>\n</backup/stage-data/packet-archive>'*$'<--archive-evidence-rule>\n<'"$rule>" ]]
     sample=$good
     if capture_health_sample; then exit 1; fi
     sample=$(jq -c '.archive_alert_evidence_only = true' <<< "$good")

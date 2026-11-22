@@ -5,7 +5,8 @@ evidence_max_frames=8192
 
 read_launch_profile() {
     local flag value path='' mode=--archive max_mib='' max_frames=''
-    local -a limits=() policy=()
+    local -a limits=() policy=() rule_args=()
+    local -A rules=()
     local LC_ALL=C
     [[ ${1-} == "$installed" && ${2-} == --telemetry-listen && ${3-} == "$health_addr" ]] || return 1
     shift 3
@@ -22,6 +23,12 @@ read_launch_profile() {
                 [[ -z $path && $value == /* && $value != / ]] || return 1
                 path=$value mode=$flag
                 ;;
+            --archive-evidence-rule)
+                [[ $value =~ ^[a-z0-9][a-z0-9_.-]{0,127}$ && ${#rule_args[@]} -lt 32 ]] || return 1
+                [[ ! -v 'rules[$value]' ]] || return 1
+                rules[$value]=1
+                rule_args+=("$flag" "$value")
+                ;;
             --archive-max-mib)
                 [[ -z $max_mib && $value =~ ^[1-9][0-9]*$ ]] || return 1
                 max_mib=$value
@@ -37,9 +44,11 @@ read_launch_profile() {
         shift 2
     done
     [[ -n $path || ${#limits[@]} == 0 ]] || return 1
+    [[ ${#rule_args[@]} == 0 || $mode == --archive-alert-evidence ]] || return 1
     archive_path=$path
     archive_flag=$mode
     archive_limits=("${limits[@]}") vlan_policy_args=("${policy[@]}")
+    archive_rule_args=("${rule_args[@]}")
 }
 
 apply_requested_profile() {
@@ -69,6 +78,7 @@ candidate_supports_profile() {
     help=$("$candidate" --help) || return 1
     [[ $help == *--telemetry-listen* ]] || return 1
     [[ ${#vlan_policy_args[@]} == 0 || $help == *'--single-tag-interface NAME'* ]] || return 1
+    [[ ${#archive_rule_args[@]} == 0 || $help == *'--archive-evidence-rule RULE_ID'* ]] || return 1
     [[ -z $archive_path ]] ||
         [[ $help == *"$archive_flag PATH"* && $help == *--archive-max-mib* && $help == *--archive-max-frames* ]]
 }

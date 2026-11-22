@@ -125,7 +125,7 @@ impl App {
         let previous_active = self.worklist.active;
         for alert in &context.alerts {
             self.archive_alert_packets(alert, evidence);
-            if context.auto_pin {
+            if context.auto_pin && alert.is_priority_evidence() {
                 let current = evidence.binary_search_by_key(&alert.packet_no, |packet| packet.no)
                     .ok().map(|index| &evidence[index]);
                 self.retain_automatic_alert_evidence(alert, current);

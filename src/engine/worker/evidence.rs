@@ -12,7 +12,7 @@ pub(super) fn alert_frames(
     current: &Packet,
     history: &VecDeque<Packet>,
 ) -> Vec<Packet> {
-    if !core.alert_center.archive_alert_packets || analysis.alert_pins.is_empty() {
+    if core.alert_center.archive_evidence_rules.is_none() || analysis.alert_pins.is_empty() {
         return Vec::new();
     }
     let alert_ids: HashSet<_> = analysis.alert_pins.iter().copied().collect();

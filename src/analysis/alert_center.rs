@@ -3,6 +3,8 @@
 use std::collections::HashSet;
 use super::alert_provenance::{self, AlertProvenance};
 
+mod evidence;
+
 const MAX_ALERTS: usize = 2_000;
 const AUTOMATIC_EVIDENCE_PRIORITY: u8 = 80;
 pub(crate) const MAX_ALERT_PACKET_REFS: usize = 128;
@@ -154,18 +156,6 @@ impl AlertFlow {
     }
 }
 
-impl AlertItem {
-    pub(crate) fn evidence_frame_numbers(&self) -> Vec<u64> {
-        let mut frames = Vec::with_capacity(self.packet_refs.len() + 3);
-        frames.extend([self.first_packet, self.packet_no, self.last_packet]);
-        frames.extend(self.packet_refs.iter().copied());
-        frames.retain(|&number| number > 0);
-        frames.sort_unstable();
-        frames.dedup();
-        frames
-    }
-}
-
 fn one() -> u64 { 1 }
 
 #[derive(Debug)]
@@ -175,7 +165,7 @@ pub struct AlertCenter {
     pub severity_filter: AlertSeverityFilter,
     pub automation_mode: AutomationMode,
     pub(crate) capture_id: Option<String>,
-    pub(crate) archive_alert_packets: bool,
+    pub(crate) archive_evidence_rules: Option<Vec<String>>,
     next_id: u64,
     fingerprints: HashSet<String>,
     pending_pins: Vec<u64>,
@@ -190,7 +180,7 @@ impl Default for AlertCenter {
             severity_filter: AlertSeverityFilter::All,
             automation_mode: AutomationMode::Off,
             capture_id: None,
-            archive_alert_packets: false,
+            archive_evidence_rules: None,
             next_id: 0,
             fingerprints: HashSet::new(),
             pending_pins: Vec::new(),
@@ -328,9 +318,8 @@ impl AlertCenter {
                     item.priority = priority;
                     item.severity = severity;
                 }
-                if (self.automation_mode != AutomationMode::Off || self.archive_alert_packets)
-                    && item.priority >= AUTOMATIC_EVIDENCE_PRIORITY
-                    && (evidence_changed || became_high)
+                if (evidence_changed || became_high)
+                    && item.queue_evidence(self.automation_mode != AutomationMode::Off, self.archive_evidence_rules.as_deref())
                     && !self.pending_pins.contains(&item.id)
                 {
                     self.pending_pins.push(item.id);
@@ -367,10 +356,10 @@ impl AlertCenter {
         };
         retain_packet_refs(&mut item, packet_no, related_packets);
         self.pending_exports.push(item.clone());
-        self.items.push(item);
-        if (self.automation_mode != AutomationMode::Off || self.archive_alert_packets) && priority >= AUTOMATIC_EVIDENCE_PRIORITY {
+        if item.queue_evidence(self.automation_mode != AutomationMode::Off, self.archive_evidence_rules.as_deref()) {
             self.pending_pins.push(self.next_id);
         }
+        self.items.push(item);
         if self.items.len() > MAX_ALERTS {
             let evicted = self.items.remove(0);
             self.fingerprints.remove(&fingerprint_for(&evicted));
