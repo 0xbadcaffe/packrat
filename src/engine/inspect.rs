@@ -1,25 +1,5 @@
 use super::*;
-use crate::analysis::alert_center::{AlertFlow, AlertTransport};
-
-fn observed_alert_flow(pkt: &Packet) -> Option<AlertFlow> {
-    let (transport, source_port, destination_port) =
-        if let Some((source, destination)) = crate::analysis::stream::tcp_port_pair(pkt) {
-            (AlertTransport::Tcp, source, destination)
-        } else {
-            let (source, destination, _) = crate::analysis::dns_transactions::udp_payload(pkt)?;
-            (AlertTransport::Udp, source, destination)
-        };
-    if source_port == 0 || destination_port == 0
-        || pkt.src_port != Some(source_port) || pkt.dst_port != Some(destination_port)
-    {
-        return None;
-    }
-    Some(AlertFlow {
-        transport,
-        source: std::net::SocketAddr::new(pkt.src.parse().ok()?, source_port),
-        destination: std::net::SocketAddr::new(pkt.dst.parse().ok()?, destination_port),
-    })
-}
+use crate::analysis::alert_center::AlertFlow;
 
 impl AnalysisCore {
     pub fn analyze_with_history<I>(&mut self, pkt: &Packet, history: I) -> PacketAnalysis
@@ -77,8 +57,9 @@ impl AnalysisCore {
             );
             let flow = if matches!(alert.signature,
                 "Periodic fixed-size traffic" | "TCP payload after reset" | "Conflicting TCP retransmission"
+                | "Industrial state-changing command" | "Critical industrial control command"
             ) {
-                observed_alert_flow(pkt)
+                AlertFlow::from_packet(pkt)
             } else {
                 None
             };

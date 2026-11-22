@@ -204,20 +204,29 @@ impl SecurityEngine {
     pub(super) fn record_industrial_finding(
         &mut self, pkt: &Packet, finding: industrial_policy::IndustrialFinding, frames: Vec<u64>,
     ) {
-        self.push_ids_with_evidence(IdsAlert {
-            pkt_no: pkt.no,
-            signature: if finding.critical {
-                "Critical industrial control command"
-            } else {
-                "Industrial state-changing command"
+        let scope = service_scope(pkt);
+        let interface = pkt.capture.as_ref().and_then(|meta| meta.interface_name.as_deref());
+        let transport = crate::analysis::alert_center::AlertFlow::from_packet(pkt).map(|flow| flow.transport);
+        let key = format!("{scope:?}:{interface:?}:{}:{}:{transport:?}:[{}]:{:?}>[{}]:{:?}",
+            finding.protocol, finding.operation, pkt.src, pkt.src_port, pkt.dst, pkt.dst_port);
+        self.push_ids_finding(IdsFinding {
+            alert: IdsAlert {
+                pkt_no: pkt.no,
+                signature: if finding.critical {
+                    "Critical industrial control command"
+                } else {
+                    "Industrial state-changing command"
+                },
+                severity: if finding.critical {
+                    Severity::Critical
+                } else {
+                    Severity::High
+                },
+                detail: finding.detail(pkt),
             },
-            severity: if finding.critical {
-                Severity::Critical
-            } else {
-                Severity::High
-            },
-            detail: finding.detail(pkt),
-        }, frames);
+            related_packets: frames,
+            correlation_key: Some(key),
+        });
     }
 
     pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet) {

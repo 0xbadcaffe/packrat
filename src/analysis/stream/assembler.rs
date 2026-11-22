@@ -199,7 +199,7 @@ impl StreamAssembler {
         let Some((source_port, destination_port)) = tcp_port_pair(pkt) else {
             return Unanchored;
         };
-        if destination_port != 502 || source_port == 502 {
+        if destination_port != 502 || source_port == 502 || pkt.src_port != Some(source_port) {
             return Unanchored;
         }
         let Some(stream) = StreamKey::from_packet(pkt).and_then(|key| self.streams.get_mut(&key.id())) else {

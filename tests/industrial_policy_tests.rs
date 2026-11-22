@@ -148,7 +148,7 @@ fn industrial_alert_exposes_a_policy_hint_not_a_claim_of_execution() {
         .find(|alert| alert.title == "Industrial state-changing command").unwrap();
     let provenance = alert.provenance.as_ref().unwrap();
     assert_eq!(provenance.rule_id, "industrial.state_change");
-    assert_eq!(provenance.revision, 4);
+    assert_eq!(provenance.revision, 5);
     assert_eq!(provenance.confidence, packrat_tui::analysis::alert_provenance::EvidenceConfidence::Heuristic);
     assert!(provenance.verification_hint.contains("does not prove a state change"));
     assert_eq!(alert.packet_refs, [1]);
@@ -258,4 +258,49 @@ fn anchored_modbus_does_not_reinterpret_a_continuation_or_retransmission() {
     let alert = core.alert_center.items.iter().find(rule).unwrap();
     assert_eq!(alert.packet_refs, [4]);
     assert_eq!(alert.hit_count, 1);
+}
+
+#[test]
+fn industrial_alerts_group_only_the_same_operation_transport_and_scope() {
+    use packrat_tui::engine::AnalysisCore;
+    use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
+    let packet = |no: u64, tcp, interface_id, vlan, operation| {
+        let mut payload = [0_u8; 13];
+        payload[..2].copy_from_slice(&[0x05, 0x64]);
+        payload[12] = operation;
+        let mut packet = industrial_packet("DNP3", 20_000, tcp, &payload);
+        packet.no = no;
+        packet.timestamp = no as f64;
+        packet.vlan_id = Some(vlan);
+        packet.capture = Some(CaptureMetadata {
+            timestamp: Some(CaptureTimestamp { ticks: no, resolution: TimestampResolution::Decimal(0), offset_seconds: 0 }),
+            captured_length: packet.bytes.len() as u32,
+            wire_length: packet.bytes.len() as u32,
+            link_type: 1,
+            interface_id,
+            section_id: 0,
+            interface_name: None,
+            comments: Vec::new(),
+        });
+        packet
+    };
+    let mut core = AnalysisCore::default();
+    for input in [
+        packet(1, true, 0, 10, 2),
+        packet(2, false, 0, 10, 2),
+        packet(3, true, 0, 20, 2),
+        packet(4, true, 1, 10, 2),
+        packet(5, true, 0, 10, 3),
+        packet(6, true, 0, 10, 2),
+    ] {
+        core.analyze(&input);
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter()
+        .filter(|alert| alert.title == "Industrial state-changing command").collect();
+    assert_eq!(alerts.len(), 5);
+    assert_eq!(alerts[0].packet_refs, [1, 6]);
+    assert_eq!(alerts[0].hit_count, 2);
+    assert_eq!(alerts[0].flow.unwrap().transport, packrat_tui::analysis::alert_center::AlertTransport::Tcp);
+    assert_eq!(alerts[1].flow.unwrap().transport, packrat_tui::analysis::alert_center::AlertTransport::Udp);
+    assert!(alerts[2..].iter().all(|alert| alert.packet_refs.len() == 1 && alert.hit_count == 1));
 }

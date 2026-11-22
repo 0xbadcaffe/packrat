@@ -132,6 +132,28 @@ pub struct AlertFlow {
     pub destination: std::net::SocketAddr,
 }
 
+impl AlertFlow {
+    pub(crate) fn from_packet(pkt: &crate::net::packet::Packet) -> Option<Self> {
+        let (transport, source_port, destination_port) =
+            if let Some((source, destination)) = crate::analysis::stream::tcp_port_pair(pkt) {
+                (AlertTransport::Tcp, source, destination)
+            } else {
+                let (source, destination, _) = crate::analysis::dns_transactions::udp_payload(pkt)?;
+                (AlertTransport::Udp, source, destination)
+            };
+        if source_port == 0 || destination_port == 0
+            || pkt.src_port != Some(source_port) || pkt.dst_port != Some(destination_port)
+        {
+            return None;
+        }
+        Some(Self {
+            transport,
+            source: std::net::SocketAddr::new(pkt.src.parse().ok()?, source_port),
+            destination: std::net::SocketAddr::new(pkt.dst.parse().ok()?, destination_port),
+        })
+    }
+}
+
 impl AlertItem {
     pub(crate) fn evidence_frame_numbers(&self) -> Vec<u64> {
         let mut frames = Vec::with_capacity(self.packet_refs.len() + 3);

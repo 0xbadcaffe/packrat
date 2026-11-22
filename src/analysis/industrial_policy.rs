@@ -28,6 +28,9 @@ pub fn inspect(packet: &Packet) -> Option<IndustrialFinding> {
         return None;
     }
     let (protocol, ports, payload) = transport_payload(packet)?;
+    if [packet.src_port, packet.dst_port] != ports.map(Some) {
+        return None;
+    }
     if protocol == 6 && ports.contains(&502) {
         return if ports[1] == 502 && ports[0] != 502 {
             inspect_modbus(payload)
