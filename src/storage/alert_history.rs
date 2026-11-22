@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
-use std::{collections::HashSet, fs::File, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}};
+use std::{collections::HashSet, fs::{File, OpenOptions}, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}};
 
 use crate::analysis::alert_center::{AlertDisposition, AlertFlow, MAX_ALERT_PACKET_REFS};
 use crate::analysis::alert_provenance::EvidenceConfidence;
@@ -24,12 +24,28 @@ impl<'a> AlertLogs<'a> {
     }
 
     pub(super) fn open_newest(&self) -> Result<Vec<(&'a Path, File)>> {
-        std::iter::once(self.active).chain(self.previous.iter().rev().map(PathBuf::as_path))
+        std::iter::once(self.active)
+            .chain(self.previous.iter().rev().map(PathBuf::as_path))
             .map(|path| {
-                File::open(path).map(|file| (path, file))
+                open_regular_log(path).map(|file| (path, file))
                     .with_context(|| format!("Open alert log {}", path.display()))
             }).collect()
     }
+}
+
+fn open_regular_log(path: &Path) -> Result<File> {
+    ensure!(path.metadata()?.is_file(), "Not a regular alert log");
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // The path might be replaced with a FIFO between metadata and open.
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    ensure!(file.metadata()?.is_file(), "Not a regular alert log");
+    Ok(file)
 }
 
 #[derive(Serialize)]

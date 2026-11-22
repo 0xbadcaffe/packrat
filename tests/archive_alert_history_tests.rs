@@ -3,6 +3,52 @@ use std::{io::Write, process::Command};
 use packrat_tui::analysis::alert_center::{AlertCenter, AlertDisposition, AlertFlow, AlertTransport};
 use serde_json::{Value, json};
 
+#[cfg(unix)]
+#[test]
+fn archive_rejects_fifo_alert_logs_without_waiting_for_a_writer() {
+    use std::{
+        ffi::CString,
+        os::unix::{ffi::OsStrExt, fs::symlink},
+        process::Stdio,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("regular.jsonl");
+    std::fs::write(&log, "").unwrap();
+    let fifo = directory.path().join("pipe.jsonl");
+    let fifo_name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: fifo_name is a valid, null-terminated path in our temporary directory.
+    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+    let fifo_alias = directory.path().join("linked-pipe.jsonl");
+    symlink(&fifo, &fifo_alias).unwrap();
+
+    for paths in [vec![fifo], vec![log.clone(), "--previous-log".into(), fifo_alias]] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+            .arg("--alerts").args(paths).stderr(Stdio::piped()).spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                child.kill().ok();
+                child.wait().unwrap();
+                panic!("Archive CLI blocked on a non-regular log");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Not a regular alert log"));
+    }
+
+    let regular_alias = directory.path().join("linked-regular.jsonl");
+    symlink(&log, &regular_alias).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--alerts").arg(regular_alias).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), json!([]));
+}
+
 #[test]
 fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     let directory = tempfile::tempdir().unwrap();
