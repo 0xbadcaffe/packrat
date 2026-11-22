@@ -53,6 +53,13 @@ mock_archive() {
         jq -c '.capture_run_id = "0000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
         mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
     fi
+    if [[ -n ${PACKRAT_TEST_WATCH_ID_RACE:-} ]]; then
+        jq -c --arg race "$PACKRAT_TEST_WATCH_ID_RACE" '
+            .alert_log_identity = null
+            | if $race == "downgrade" then .alert_watcher_open_log_required = false else . end
+        ' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
+        mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
+    fi
     case ${PACKRAT_TEST_LOG_RACE:-} in
         append) printf '%s\n' snapshot >>"$PACKRAT_TEST_LOG" ;;
         truncate) : >"$PACKRAT_TEST_LOG" ;;
@@ -287,6 +294,33 @@ check_failure 1 alert_log_unverified
 [[ ! -e $PACKRAT_TEST_CALL ]]
 jq -c --arg log "$scratch/other.jsonl" '.alert_watcher_log = $log' <<< "$sample" >"$health"
 check_failure 1 alert_log_mismatch
+[[ ! -e $PACKRAT_TEST_CALL ]]
+
+strict_sample() {
+    jq -c --arg identity "$(stat -Lc '%d:%i' "$PACKRAT_TEST_LOG")" \
+        '. + {alert_watcher_open_log_required:true,alert_watcher_source_matches:true,
+            alert_log_storage:"private",alert_log_identity:$identity}' <<< "$sample"
+}
+strict_sample >"$health"
+result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+jq -e '.status == "current" and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
+PACKRAT_TEST_WATCH_ID_RACE=1 check_failure 1 alert_log_watcher_unverified
+rm -- "$PACKRAT_TEST_CALL"
+check_failure 1 alert_log_watcher_unverified
+[[ ! -e $PACKRAT_TEST_CALL ]]
+strict_sample >"$health"
+PACKRAT_TEST_WATCH_ID_RACE=downgrade check_failure 1 alert_log_watcher_unverified
+rm -- "$PACKRAT_TEST_CALL"
+strict_sample >"$health"
+mv -- "$PACKRAT_TEST_LOG" "$scratch/unfollowed.jsonl"
+touch -- "$PACKRAT_TEST_LOG"
+check_failure 1 alert_log_watcher_unverified
+[[ ! -e $PACKRAT_TEST_CALL ]]
+strict_sample >"$health"
+bash "$triage" "$health" "$PACKRAT_TEST_LOG" | jq -e '.status == "current"' >/dev/null
+rm -- "$PACKRAT_TEST_CALL"
+jq -c '.alert_log_storage = "unsafe"' <<< "$sample" >"$health"
+check_failure 1 alert_log_watcher_unverified
 [[ ! -e $PACKRAT_TEST_CALL ]]
 
 printf '%s\n' "$sample" >"$health"

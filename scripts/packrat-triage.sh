@@ -15,6 +15,7 @@ usage() {
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
+        'Strict watcher mode rejects a live log whose file identity has not been verified by the watcher.' \
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
         'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
         'Set PACKRAT_TRIAGE_ARCHIVE or PACKRAT_TRIAGE_PROJECT, plus PACKRAT_TRIAGE_EVIDENCE_ALERT_ID, to check one alert.' \
@@ -232,6 +233,19 @@ match_log() {
     fi
 }
 
+verify_watch_identity() {
+    jq -e --arg identity "$1" '
+        .health | if .alert_watcher_open_log_required == true or $required then
+            .alert_watcher_open_log_required == true
+            and .alert_log_storage == "private" and .alert_watcher_source_matches == true
+            and .alert_log_identity == $identity
+        else .alert_log_storage != "unsafe" and .alert_log_storage != "unavailable" end
+    ' --argjson required "$watch_identity_required" <<< "$state" >/dev/null || {
+        report alert_log_watcher_unverified
+        return 1
+    }
+}
+
 previous_log_stamps() {
     local path stamp
     for path in "${previous_logs[@]}"; do
@@ -302,6 +316,7 @@ if [[ $mode == live ]]; then
     session=$(jq -er '.health.alert_session_id' <<< "$state")
     capture=$(jq -er '.health.capture_id' <<< "$state")
     run=$(jq -c '.health.capture_run_id' <<< "$state")
+    watch_identity_required=$(jq -c '.health.alert_watcher_open_log_required == true' <<< "$state")
 elif [[ $mode == saved ]]; then
     state=$(jq -cn --arg session "$session" --arg capture "$capture" --arg target "$target_alert" '
         {mode:"saved",health:null,scope:{session_id:$session,capture_id:$capture}}
@@ -314,10 +329,11 @@ if [[ $mode != list_saved ]]; then scope_args=(--session "$session" --capture-id
 
 if [[ ! -f $alert_log ]] ||
    ! read -r log_identity log_size <<< "$(stat -L --format='%d:%i %s' -- "$alert_log")" ||
-   [[ -z $log_identity || ! $log_size =~ ^[0-9]+$ ]]; then
+   [[ ! $log_identity =~ ^[0-9]{1,20}:[0-9]{1,20}$ || ! $log_size =~ ^[0-9]+$ ]]; then
     report alert_log_unavailable
     exit 2
 fi
+if [[ $mode == live ]]; then verify_watch_identity "$log_identity" || exit 1; fi
 if ! previous_stamps=$(previous_log_stamps); then
     report previous_log_unavailable
     exit 2
@@ -403,6 +419,7 @@ if ! latest_stamps=$(previous_log_stamps) || [[ $latest_stamps != "$previous_sta
     report previous_log_changed
     exit 1
 fi
+if [[ $mode == live ]]; then verify_watch_identity "$latest_identity" || exit 1; fi
 if [[ $mode == list_saved ]]; then
     index=$(report_saved_index)
     printf '%s\n' "$index"

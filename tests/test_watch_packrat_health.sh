@@ -73,14 +73,10 @@ readlink() {
 }
 
 stat() {
-    if [[ $1 == -L ]]; then
-        [[ $* == "-L --format=%d:%i -- $PACKRAT_FAKE_TAIL_SOURCE" ]] || return 1
-        [[ ${PACKRAT_FAKE_FD_PROTECTED:-0} == 0 ]] || return 1
-        printf '%s\n' 20:150
-    elif [[ $1 == --format=%f:%h:%u ]]; then
+    if [[ $1 == '--format=%f:%h:%u %d:%i' ]]; then
         [[ $# == 3 && $2 == -- && $3 == "$PACKRAT_ALERT_LOG" ]] || return 1
         [[ ${PACKRAT_FAKE_FD_PROTECTED:-0} == 0 && ${PACKRAT_FAKE_LOG_MISSING:-0} == 0 ]] || return 1
-        printf '%s\n' "${PACKRAT_FAKE_LOG_METADATA:-8180:1:0}"
+        printf '%s %s\n' "${PACKRAT_FAKE_LOG_METADATA:-8180:1:0}" "${PACKRAT_FAKE_LOG_ID:-20:150}"
     else
         command stat "$@"
     fi
@@ -170,6 +166,7 @@ PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
     .issues == [] and .alert_watcher_alive and .alert_watcher_pipeline_alive and .alert_watcher_source_matches
     and .alert_watcher_log == $log and .disk_path == "/var/lib/packrat lab"
     and .alert_log_storage == "private"
+    and .alert_log_identity == null
     and (.alert_watcher_open_log_required | not)
 ' >/dev/null
 
@@ -178,7 +175,8 @@ for protected in 0 1; do
         PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_ALERT_VERIFY_OPEN=1 PACKRAT_FAKE_FD_PROTECTED=$protected \
         PACKRAT_FAKE_OPEN_FDS=$'11:34\n20:150' bash "$watch" --once |
         jq -e '.issues == [] and .alert_watcher_open_log_required
-            and .alert_watcher_source_matches and .alert_log_storage == "private"' >/dev/null
+            and .alert_watcher_source_matches and .alert_log_storage == "private"
+            and .alert_log_identity == "20:150"' >/dev/null
 done
 
 with_storage_log() {
@@ -215,7 +213,7 @@ output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOL
     bash "$watch" --once) || status=$?
 [[ $status == 1 ]]
 jq -e '.issues == ["alert_watcher_source_unverified"] and .alert_watcher_open_log_required
-    and (.alert_watcher_source_matches | not)' <<< "$output" >/dev/null
+    and (.alert_watcher_source_matches | not) and .alert_log_identity == null' <<< "$output" >/dev/null
 for parser_input in 'pipe:[101]' /dev/null; do
     status=0
     output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \

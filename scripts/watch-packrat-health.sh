@@ -125,16 +125,16 @@ disk_free_kib() {
 }
 
 alert_log_storage() {
-    local metadata mode links owner
-    local -a probe=(stat --format='%f:%h:%u' -- "$alert_log")
+    local metadata mode links owner identity
+    local -a probe=(stat --format='%f:%h:%u %d:%i' -- "$alert_log")
     metadata=$(LC_ALL=C "${probe[@]}" 2>/dev/null) ||
         metadata=$(LC_ALL=C sudo -n -- "${probe[@]}" 2>/dev/null) || return 1
-    [[ $metadata =~ ^([0-9a-fA-F]{1,8}):([0-9]{1,20}):([0-9]{1,10})$ ]] || return 1
+    [[ $metadata =~ ^([0-9a-fA-F]{1,8}):([0-9]{1,20}):([0-9]{1,10})\ ([0-9]{1,20}:[0-9]{1,20})$ ]] || return 1
     mode=$((16#${BASH_REMATCH[1]}))
-    links=${BASH_REMATCH[2]} owner=${BASH_REMATCH[3]}
+    links=${BASH_REMATCH[2]} owner=${BASH_REMATCH[3]} identity=${BASH_REMATCH[4]}
     if (( (mode & 0170000) == 0100000 && (mode & 077) == 0 )) &&
        [[ $links == 1 && ( -z $alert_log_owner || $owner == "$alert_log_owner" ) ]]; then
-        printf '%s\n' private
+        printf 'private %s\n' "$identity"
     else
         printf '%s\n' unsafe
     fi
@@ -166,9 +166,7 @@ alert_pipeline_processes() {
 }
 
 alert_log_open() {
-    local expected opened
-    expected=$(stat -L --format='%d:%i' -- "$alert_log" 2>/dev/null) ||
-        expected=$(sudo -n -- stat -L --format='%d:%i' -- "$alert_log" 2>/dev/null) || return 1
+    local expected=$2 opened
     [[ $expected =~ ^[0-9]+:[0-9]+$ ]] || return 1
     local -a lookup=(find -L "/proc/$1/fd" -maxdepth 1 -type f -printf '%D:%i\n')
     opened=$("${lookup[@]}" 2>/dev/null) ||
@@ -207,7 +205,7 @@ alert_log_followed() {
         "$follow" || continue
         if [[ $alert_verify_open == 0 ]]; then return 0; fi
         if pipe=$(read_pipe "/proc/$pid/fd/1") && [[ -n ${parser_pipes[$pipe]:-} ]] &&
-            alert_log_open "$pid"; then
+            alert_log_open "$pid" "$2"; then
             printf '%s\n' "${parser_pipes[$pipe]}"
             return 0
         fi
@@ -233,10 +231,14 @@ alert_context_followed() {
 
 read_health() {
     local sample watcher=null pipeline=null source=null context=null processes parser pane_info dead pane disk=null free_kib
-    local storage=''
+    local storage='' identity='' storage_probe
     if [[ -n $alert_context_watcher ]]; then context=false; fi
     if [[ -n $alert_log ]]; then
-        storage=$(alert_log_storage) || storage=unavailable
+        if storage_probe=$(alert_log_storage); then
+            read -r storage identity <<< "$storage_probe"
+        else
+            storage=unavailable
+        fi
     fi
     sample=$(curl --disable --fail --silent --max-time 3 --noproxy '*' "http://127.0.0.1:$port/health") || sample=null
     if [[ -n $alert_session ]]; then
@@ -249,7 +251,7 @@ read_health() {
                 if processes=$(alert_pipeline_processes "$pane"); then
                     pipeline=true
                     if [[ -n $alert_log ]]; then
-                        if parser=$(alert_log_followed "$processes"); then
+                        if parser=$(alert_log_followed "$processes" "$identity"); then
                             source=true
                             if [[ -n $alert_context_watcher ]] && alert_context_followed "$processes" "$parser"; then
                                 context=true
@@ -271,7 +273,7 @@ read_health() {
     printf '%s\n' "$sample" | jq -Rcse \
         --argjson watcher "$watcher" --argjson pipeline "$pipeline" --argjson source "$source" --argjson context "$context" \
         --arg alert_log "$alert_log" --arg expected_interface "$expected_interface" --arg disk_path "$disk_path" \
-        --arg storage "$storage" \
+        --arg storage "$storage" --arg identity "$identity" \
         --argjson verify_open "$alert_verify_open" \
         --argjson disk "$disk" --argjson min_free "$min_free" --argjson require_archive "$require_archive" \
         --argjson baseline "$baseline" --argjson clock "$SECONDS" --argjson expect_traffic "$expect_traffic" '
@@ -342,6 +344,7 @@ read_health() {
             alert_watcher_open_log_required: ($verify_open == 1),
             alert_watcher_log: (if $alert_log == "" then null else $alert_log end),
             alert_log_storage: (if $storage == "" then null else $storage end),
+            alert_log_identity: (if $verify_open == 1 and $source == true then $identity else null end),
             archive_enabled: $archive_enabled,
             archive_paused: ($archive_paused // false),
             archive_alert_evidence_only: ($h.archive_alert_evidence_only | if type == "boolean" then . else null end),
@@ -423,7 +426,7 @@ while :; do
         state=$(jq -cn --argjson baseline "$baseline" '
             {issues:["monitor_input_error"],next_baseline:{drops:$baseline.drops,truncated:$baseline.truncated,packets:null}}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled]' <<< "$state") || exit 2
     event=
     if "$once"; then
         event=sample
