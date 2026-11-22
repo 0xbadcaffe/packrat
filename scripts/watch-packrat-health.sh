@@ -16,7 +16,7 @@ usage() {
         'PACKRAT_ALERT_LOG_OWNER_UID (optional expected numeric owner of the private alert log),' \
         'PACKRAT_ALERT_VERIFY_OPEN (1 verifies the open file and pipe; uses noninteractive sudo if needed),' \
         'PACKRAT_ALERT_CONTEXT_WATCHER (optional absolute Bash script path; requires open-pipe verification),' \
-        'PACKRAT_REQUIRE_ARCHIVE (1 reports missing or inactive packet archiving),' \
+        'PACKRAT_REQUIRE_ARCHIVE (1 requires active archiving; alert-evidence also verifies selective retention),' \
         'PACKRAT_MIN_FREE_MIB (512). Health requests always use IPv4 loopback.'
 }
 
@@ -78,8 +78,8 @@ if [[ $alert_pipeline != 0 && $alert_pipeline != 1 ]]; then
     printf '%s\n' 'PACKRAT_ALERT_PIPELINE must be 0 or 1.' >&2
     exit 2
 fi
-if [[ $require_archive != 0 && $require_archive != 1 ]]; then
-    printf '%s\n' 'PACKRAT_REQUIRE_ARCHIVE must be 0 or 1.' >&2
+if [[ $require_archive != 0 && $require_archive != 1 && $require_archive != alert-evidence ]]; then
+    printf '%s\n' 'PACKRAT_REQUIRE_ARCHIVE must be 0, 1, or alert-evidence.' >&2
     exit 2
 fi
 if [[ $alert_pipeline == 1 ]] && { [[ -z $alert_session ]] || ! command -v ps >/dev/null; }; then
@@ -275,7 +275,7 @@ read_health() {
         --arg alert_log "$alert_log" --arg expected_interface "$expected_interface" --arg disk_path "$disk_path" \
         --arg storage "$storage" --arg identity "$identity" \
         --argjson verify_open "$alert_verify_open" \
-        --argjson disk "$disk" --argjson min_free "$min_free" --argjson require_archive "$require_archive" \
+        --argjson disk "$disk" --argjson min_free "$min_free" --arg require_archive "$require_archive" \
         --argjson baseline "$baseline" --argjson clock "$SECONDS" --argjson expect_traffic "$expect_traffic" '
         (try fromjson catch null) as $health |
         (if ($health|type) == "object" then $health else {} end) as $h |
@@ -314,6 +314,7 @@ read_health() {
          then ([0, $clock - $last_progress] | max) else null end) as $no_progress |
         ($h.archive_enabled | if type == "boolean" then . else null end) as $archive_enabled |
         ($h.archive_paused | if type == "boolean" then . else null end) as $archive_paused |
+        ($h.archive_alert_evidence_only | if type == "boolean" then . else null end) as $evidence_only |
         {
             capture_active: ($h.capture_active // false),
             capture_run_id: $run,
@@ -346,8 +347,11 @@ read_health() {
             alert_log_storage: (if $storage == "" then null else $storage end),
             alert_log_identity: (if $verify_open == 1 and $source == true then $identity else null end),
             archive_enabled: $archive_enabled,
-            archive_paused: ($archive_paused // false),
-            archive_alert_evidence_only: ($h.archive_alert_evidence_only | if type == "boolean" then . else null end),
+            archive_paused: $archive_paused,
+            archive_alert_evidence_only: $evidence_only,
+            archive_requirement: (if $require_archive == "1" then "active"
+                                  elif $require_archive == "alert-evidence" then "alert_evidence_only"
+                                  else null end),
             disk_path: $disk_path,
             disk_free_mib: $disk,
             issues: [
@@ -377,9 +381,14 @@ read_health() {
                     (if $h.capture_active == true and $queue != null and $queue.depth * 4 >= $queue.capacity * 3
                      then "capture_queue_high" else empty end),
                     (if $archive_paused == true then "archive_paused"
-                     elif $require_archive == 1 then
+                     elif $require_archive != "0" then
                         if $archive_enabled == false then "archive_disabled"
                         elif $archive_enabled != true or $archive_paused != false then "archive_status_unavailable"
+                        else empty end
+                     else empty end),
+                    (if $require_archive == "alert-evidence" and $archive_enabled == true then
+                        if $evidence_only == false then "archive_full_capture_unexpected"
+                        elif $evidence_only == null then "archive_mode_unavailable"
                         else empty end
                      else empty end)
                 end,
@@ -426,7 +435,7 @@ while :; do
         state=$(jq -cn --argjson baseline "$baseline" '
             {issues:["monitor_input_error"],next_baseline:{drops:$baseline.drops,truncated:$baseline.truncated,packets:null}}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled, .archive_paused, .archive_alert_evidence_only]' <<< "$state") || exit 2
     event=
     if "$once"; then
         event=sample

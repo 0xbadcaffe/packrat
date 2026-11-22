@@ -136,6 +136,8 @@ archive_samples=$(jq -c '
 PACKRAT_REQUIRE_ARCHIVE=1 PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$archive_samples" bash "$watch" | jq -se '
     map(.issues) == [["archive_disabled"], [], ["archive_paused"], ["archive_status_unavailable"], ["archive_status_unavailable"]]
     and map(.archive_enabled) == [false,true,true,true,null]
+    and map(.archive_paused) == [false,false,true,null,false]
+    and all(.[]; .archive_requirement == "active")
 ' >/dev/null
 PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$archive_samples" bash "$watch" | jq -se '
     map(.issues) == [[], [], ["archive_paused"], [], []]
@@ -144,6 +146,20 @@ PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$archive_samples" bash "$watch" | jq 
 status=0
 PACKRAT_REQUIRE_ARCHIVE=true bash "$watch" --once >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
+
+evidence_samples=$(jq -c '
+    [. + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:true},
+     . + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:false},
+     . + {archive_enabled:true,archive_paused:true,archive_alert_evidence_only:false},
+     . + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:"true"},
+     . + {archive_enabled:false,archive_paused:false}]
+' <<< "$PACKRAT_FAKE_HEALTH")
+PACKRAT_REQUIRE_ARCHIVE=alert-evidence PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$evidence_samples" bash "$watch" | jq -se '
+    map(.issues) == [[], ["archive_full_capture_unexpected"], ["archive_paused","archive_full_capture_unexpected"],
+                     ["archive_mode_unavailable"], ["archive_disabled"]]
+    and map(.archive_alert_evidence_only) == [true,false,false,null,null]
+    and all(.[]; .archive_requirement == "alert_evidence_only")
+' >/dev/null
 
 interface_samples=$(jq -c '
     [. + {capture_interface:"wlan1"},

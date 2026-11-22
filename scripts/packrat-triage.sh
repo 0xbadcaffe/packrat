@@ -395,7 +395,8 @@ if [[ -n $socket_file ]]; then
 fi
 evidence=null
 evidence_failed=false
-if [[ $auto_evidence == 1 ]] && jq -e '.health.archive_enabled == true' <<< "$state" >/dev/null; then
+if [[ $auto_evidence == 1 ]] &&
+    jq -e '.health | .archive_enabled == true and (.archive_paused | type == "boolean")' <<< "$state" >/dev/null; then
     evidence_id=$(jq -r --argjson limit "$alert_limit" '
         .[:$limit] as $recent
         | first(("CRITICAL", "HIGH") as $severity | $recent[]

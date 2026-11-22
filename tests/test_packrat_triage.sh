@@ -254,6 +254,9 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
         <<< "$result" >/dev/null
     result=$(PACKRAT_TEST_ALERT_COUNT=0 run_auto)
     jq -e '.evidence_selection == "automatic" and .evidence_status == null and .alerts == []' <<< "$result" >/dev/null
+    jq -c '.archive_enabled = true | .archive_paused = null' <<< "$sample" >"$health"
+    result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
+    jq -e '.live_packet_archive == "unknown" and .evidence_status == null' <<< "$result" >/dev/null
     printf '%s\n' "$sample" >"$health"
     result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
     jq -e '.evidence_selection == "automatic" and .evidence_status == null' <<< "$result" >/dev/null
