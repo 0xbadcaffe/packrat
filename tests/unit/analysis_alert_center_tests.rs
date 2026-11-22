@@ -74,6 +74,25 @@ fn watch_pins_high_findings_and_triage_adds_deterministic_advice() {
 }
 
 #[test]
+fn watch_queues_new_frames_and_priority_promotions_without_duplicate_requests() {
+    let mut center = AlertCenter::default();
+    center.automation_mode = AutomationMode::Watch;
+    center.record(10, "IDS", "MEDIUM", "Finding", "first");
+    assert!(center.drain_pending_pins().is_empty());
+    center.record(10, "IDS", "HIGH", "Finding", "promoted");
+    assert_eq!(center.drain_pending_pins(), [1]);
+    center.record(10, "IDS", "HIGH", "Finding", "repeat without new evidence");
+    assert!(center.drain_pending_pins().is_empty());
+    center.record(20, "IDS", "HIGH", "Finding", "new frame");
+    center.record(21, "IDS", "HIGH", "Finding", "another new frame");
+    assert_eq!(center.drain_pending_pins(), [1]);
+    assert_eq!(center.items[0].packet_refs, [10, 20, 21]);
+    center.automation_mode = AutomationMode::Off;
+    center.record(22, "IDS", "HIGH", "Finding", "automatic evidence disabled");
+    assert!(center.drain_pending_pins().is_empty());
+}
+
+#[test]
 fn restored_alerts_continue_with_unique_ids_and_deduplication() {
     let mut original = AlertCenter::default();
     original.record(7, "IDS", "HIGH", "Probe", "detail");

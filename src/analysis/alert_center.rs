@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use super::alert_provenance::{self, AlertProvenance};
 
 const MAX_ALERTS: usize = 2_000;
+const AUTOMATIC_EVIDENCE_PRIORITY: u8 = 80;
 pub(crate) const MAX_ALERT_PACKET_REFS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -251,13 +252,22 @@ impl AlertCenter {
                 item.packet_no = packet_no;
                 item.last_packet = packet_no;
                 item.last_seen = timestamp;
-                retain_packet_refs(item, packet_no, related_packets);
+                let evidence_changed = retain_packet_refs(item, packet_no, related_packets);
                 item.hit_count = item.hit_count.saturating_add(1);
                 item.detail = detail;
                 let priority = priority_for(&severity);
+                let became_high = item.priority < AUTOMATIC_EVIDENCE_PRIORITY
+                    && priority >= AUTOMATIC_EVIDENCE_PRIORITY;
                 if priority > item.priority {
                     item.priority = priority;
                     item.severity = severity;
+                }
+                if self.automation_mode != AutomationMode::Off
+                    && item.priority >= AUTOMATIC_EVIDENCE_PRIORITY
+                    && (evidence_changed || became_high)
+                    && !self.pending_pins.contains(&item.id)
+                {
+                    self.pending_pins.push(item.id);
                 }
                 self.pending_exports.push(item.clone());
             }
@@ -291,7 +301,7 @@ impl AlertCenter {
         retain_packet_refs(&mut item, packet_no, related_packets);
         self.pending_exports.push(item.clone());
         self.items.push(item);
-        if self.automation_mode != AutomationMode::Off && priority >= 80 {
+        if self.automation_mode != AutomationMode::Off && priority >= AUTOMATIC_EVIDENCE_PRIORITY {
             self.pending_pins.push(self.next_id);
         }
         if self.items.len() > MAX_ALERTS {
@@ -364,21 +374,23 @@ impl AlertCenter {
     }
 }
 
-fn retain_packet_ref(alert: &mut AlertItem, packet_no: u64) {
+fn retain_packet_ref(alert: &mut AlertItem, packet_no: u64) -> bool {
     if alert.packet_refs.contains(&packet_no) {
-        return;
+        return false;
     }
     if alert.packet_refs.len() == MAX_ALERT_PACKET_REFS {
         alert.packet_refs.remove(0);
     }
     alert.packet_refs.push(packet_no);
+    true
 }
 
-fn retain_packet_refs(alert: &mut AlertItem, packet_no: u64, related_packets: &[u64]) {
+fn retain_packet_refs(alert: &mut AlertItem, packet_no: u64, related_packets: &[u64]) -> bool {
+    let mut changed = false;
     for &related in related_packets {
-        retain_packet_ref(alert, related);
+        changed |= retain_packet_ref(alert, related);
     }
-    retain_packet_ref(alert, packet_no);
+    changed | retain_packet_ref(alert, packet_no)
 }
 
 fn fingerprint_for(item: &AlertItem) -> String {

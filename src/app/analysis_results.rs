@@ -134,15 +134,31 @@ impl App {
         }
         self.project_dirty |= self.worklist.add(InvestigationItem::Alert(alert.id));
         let mut frames = alert.evidence_frame_numbers();
-        frames.retain(|&frame| self.frame_may_be_local(scope, frame));
-        let trigger = current.filter(|packet| packet.no == alert.packet_no)
-            .or_else(|| self.packets.iter().find(|packet| packet.no == alert.packet_no));
-        if let Some(packet) = trigger && frames.binary_search(&packet.no).is_ok() {
-            self.project_dirty |= self.worklist.pin_packet(packet).unwrap_or(false);
+        frames.retain(|&frame| {
+            self.frame_may_be_local(scope, frame) && self.worklist.retained_packet(frame).is_none()
+        });
+        if frames.is_empty() {
+            return;
         }
+        let trigger = current.filter(|packet| packet.no == alert.packet_no)
+            .or_else(|| {
+                frames.binary_search(&alert.packet_no).ok()?;
+                self.packets.iter().find(|packet| packet.no == alert.packet_no)
+            });
+        if let Some(packet) = trigger && let Ok(index) = frames.binary_search(&packet.no) {
+            self.project_dirty |= self.worklist.pin_packet(packet).unwrap_or(false);
+            frames.remove(index);
+        }
+        let mut remaining = frames.len();
         for packet in &self.packets {
-            if packet.no != alert.packet_no && frames.binary_search(&packet.no).is_ok() {
-                self.project_dirty |= self.worklist.pin_packet(packet).unwrap_or(false);
+            if remaining == 0 {
+                break;
+            }
+            if frames.binary_search(&packet.no).is_ok()
+                && self.worklist.pin_packet(packet).unwrap_or(false)
+            {
+                self.project_dirty = true;
+                remaining -= 1;
             }
         }
     }

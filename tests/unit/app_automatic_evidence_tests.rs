@@ -39,6 +39,33 @@ fn watch_preserves_trigger_and_prior_evidence_without_stealing_selection() {
     );
     assert!(app.project_dirty);
     assert!(!app.worklist.open);
+
+    let follow_up = packet(30);
+    let pins = {
+        let mut core = app.core.edit();
+        core.alert_center.record_correlated(
+            30,
+            3.0,
+            "IDS",
+            "HIGH",
+            "Finding",
+            "follow-up observation",
+            "flow-a",
+        );
+        core.alert_center.drain_pending_pins()
+    };
+    let update = PacketAnalysis {
+        alert_pins: pins,
+        ..Default::default()
+    };
+    let context = app.analysis_context(&update).unwrap();
+    app.handle_packet_analysis(update, context, false, false, Some(&follow_up));
+    assert_eq!(app.worklist.active_packet_no(), Some(9));
+    assert_eq!(
+        app.worklist.retained_packet(30).unwrap().bytes,
+        follow_up.bytes
+    );
+    assert!(app.worklist.retained_packet(20).is_some());
 }
 
 #[test]
