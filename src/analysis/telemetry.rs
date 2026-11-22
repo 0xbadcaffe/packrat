@@ -173,6 +173,7 @@ impl TelemetryHub {
             "service": "packrat",
             "telemetry_fresh": age.is_some_and(|age| age <= Duration::from_secs(5)),
             "capture_active": snapshot.capturing,
+            "packets_total": snapshot.packets_total,
             "capture_run_id": snapshot.capture_run_id.map(|id| format!("{id:016x}")),
             "capture_interface": snapshot.capture_interface.as_deref(),
             "capture_id": snapshot.capture_id.as_deref(),

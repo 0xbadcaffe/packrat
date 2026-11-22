@@ -39,6 +39,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
 
     hub.publish(TelemetrySnapshot {
         capturing: true,
+        packets_total: 1042,
         capture_run_id: Some(0xfedc_ba98_7654_3210),
         capture_interface: Some("wlan1".into()),
         capture_id: Some("0123456789abcdef0123456789abcdef".into()),
@@ -49,6 +50,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     });
     assert_eq!(health()["telemetry_fresh"], true);
     assert_eq!(health()["capture_active"], true);
+    assert_eq!(health()["packets_total"], 1042);
     assert_eq!(health()["capture_run_id"], "fedcba9876543210");
     assert_eq!(health()["capture_interface"], "wlan1");
     assert_eq!(health()["capture_id"], "0123456789abcdef0123456789abcdef");

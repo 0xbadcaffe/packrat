@@ -64,6 +64,7 @@ bash "$watch" --once | jq -e '
     and .pcap_buffer_drops == 0 and .alert_watcher_alive == true and .alert_watcher_pipeline_alive == null
     and .archive_enabled == null and .alert_watcher_log == null and .poll_interval_seconds == 15
     and .disk_path == "/"
+    and .packets_total == null and .packets_since_last_poll == null
 ' >/dev/null
 
 pipeline=$'91 2 Ss bash\n92 91 S sudo\n93 92 S sudo\n94 93 S tail'
@@ -259,6 +260,26 @@ PACKRAT_FAKE_STEPS=4 PACKRAT_FAKE_SAMPLES="$scopes" bash "$watch" | jq -se '
     length == 3 and all(.[]; .alert_session_id == "1234-567")
     and map(.capture_id | .[-1:]) == ["1", "2", "2"]
     and map(.pcap_buffer_drops_delta) == [null, 0, 1]
+' >/dev/null
+
+packet_samples=$(jq -cn --argjson scopes "$scopes" '
+    $scopes[0] as $first | $scopes[2] as $second
+    | ($second | .capture_run_id = "000000000000000b") as $restarted
+    | [($first | .packets_total = 10),
+       ($first | .packets_total = 17),
+       ($first | .packets_total = 17),
+       ($second | .packets_total = 2),
+       ($second | .packets_total = 5),
+       null,
+       ($second | .packets_total = 11),
+       ($restarted | .packets_total = 17),
+       ($restarted | .packets_total = 1)]
+')
+PACKRAT_FAKE_STEPS=9 PACKRAT_HEALTH_HEARTBEAT=1 PACKRAT_FAKE_SAMPLES="$packet_samples" bash "$watch" | jq -se '
+    map(.packets_total) == [10,17,17,2,5,null,11,17,1]
+    and map(.packets_since_last_poll) == [null,7,0,null,3,null,null,null,null]
+    and .[5].issues == ["health_unreachable"]
+    and all(.[] | select(.event == "heartbeat"); .issues == ["pcap_buffer_drops"])
 ' >/dev/null
 
 printf '%s\n' 'Packrat health watcher tests passed'

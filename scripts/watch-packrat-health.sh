@@ -178,6 +178,8 @@ read_health() {
                               then . else null end) as $session |
         ($h.pcap_buffer_drops | if type == "number" and . >= 0 and . <= 4294967295 and floor == .
                                  then . else null end) as $drops |
+        ($h.packets_total | if type == "number" and . >= 0 and . <= 9007199254740991 and floor == .
+                            then . else null end) as $packets |
         ($h.capture_queue | if type == "object" and (.depth | type == "number")
            and (.capacity | type == "number") and .capacity > 0 and .depth >= 0 and .depth <= .capacity
            then . else null end) as $queue |
@@ -192,12 +194,19 @@ read_health() {
             capture_id: $capture,
             alert_session_id: $session,
             telemetry_fresh: ($h.telemetry_fresh // false),
+            packets_total: (if $usable then $packets else null end),
+            packets_since_last_poll: (
+                if $usable and $run != null and $capture != null and $packets != null
+                   and $baseline.packets.run == $run and $baseline.packets.capture == $capture
+                   and $packets >= $baseline.packets.total
+                then $packets - $baseline.packets.total else null end
+            ),
             pcap_buffer_drops: $drops,
             capture_queue: $queue,
             pcap_buffer_drops_delta: (
-                if $usable and $run != null and $drops != null and $baseline.run == $run
-                   and $drops >= $baseline.drops
-                then $drops - $baseline.drops else null end
+                if $usable and $run != null and $drops != null and $baseline.drops.run == $run
+                   and $drops >= $baseline.drops.total
+                then $drops - $baseline.drops.total else null end
             ),
             alert_saving: ($h.alert_saving // false),
             alert_watcher_alive: (if $pipeline == false or $source == false then false else $watcher end),
@@ -238,11 +247,17 @@ read_health() {
                 (if $disk == null then "disk_space_unknown"
                  elif $disk < $min_free then "disk_space_low" else empty end)
             ],
-            next_baseline: (
-                if $usable and $run != null and $drops != null then {run:$run,drops:$drops}
-                elif $usable and $run != $baseline.run then null
-                else $baseline end
-            )
+            next_baseline: {
+                drops: (
+                    if $usable and $run != null and $drops != null then {run:$run,total:$drops}
+                    elif $usable and $run != $baseline.drops.run then null
+                    else $baseline.drops end
+                ),
+                packets: (
+                    if $usable and $run != null and $capture != null and $packets != null
+                    then {run:$run,capture:$capture,total:$packets} else null end
+                )
+            }
         }'
 }
 
@@ -265,7 +280,8 @@ publish_state() {
 
 while :; do
     if ! state=$(read_health); then
-        state=$(jq -cn --argjson baseline "$baseline" '{issues:["monitor_input_error"],next_baseline:$baseline}')
+        state=$(jq -cn --argjson baseline "$baseline" '
+            {issues:["monitor_input_error"],next_baseline:{drops:$baseline.drops,packets:null}}')
     fi
     change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_id, .alert_session_id, .pcap_buffer_drops, .archive_enabled]' <<< "$state") || exit 2
     event=
