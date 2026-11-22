@@ -58,6 +58,11 @@ jq '.updated_at=(now + 120 | todateiso8601)' "$state" >"$scratch/future.json"
 check_status "$scratch/future.json" snapshot_future 1
 jq '.updated_at="invalid"' "$state" >"$scratch/invalid.json"
 check_status "$scratch/invalid.json" snapshot_invalid 2
+for change in 'del(.capture_id)' '.session_id="bad session"' '.recent_alerts=null' '.alert_saving=false' 'del(.packets)' \
+    '.issues=["capture_stalled"]' '.alert_log_integrity.invalid_records=1' '.alert_log_integrity.stopped_at_scan_budget=true'; do
+    jq "$change" "$state" >"$scratch/invalid.json"
+    check_status "$scratch/invalid.json" snapshot_invalid 2
+done
 
 (
     # shellcheck source=scripts/packrat-rollout.sh
@@ -75,6 +80,14 @@ check_status "$scratch/invalid.json" snapshot_invalid 2
     triage_state="$scratch/missing.json"
     if triage_watcher_ready "$scope"; then exit 1; fi
 )
+
+for change in 'del(.health.capture_id)' '.health.alert_session_id="bad session"' '.alerts=null' 'del(.health.packets_total)' \
+    '.health.alert_saving=false' '.health.issues=[null]' '.alert_log_integrity.invalid_records=1'; do
+    live current 12 '[]' "$medium" | jq "$change" >"$report"
+    bash "$watch" --once "$state" -- cat "$report" >/dev/null
+    jq -e '.status=="triage_unavailable"' "$state" >/dev/null
+    check_status "$state" triage_unhealthy 1
+done
 
 many=$(jq -cn '[range(1; 52) | {alert_id:.,severity:"LOW",rule_id:"bad token",disposition:"unknown"}]')
 live current 12 '[]' "$many" >"$report"

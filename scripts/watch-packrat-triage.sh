@@ -3,6 +3,17 @@ set -euo pipefail
 umask 077
 export LC_ALL=C
 
+snapshot_validation='
+    def scope_id: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
+    def valid_current:
+        .status != "current" or (
+            (.capture_id | scope_id) != null and (.session_id | scope_id) != null and
+            (.packets | type == "number" and . >= 0 and . <= 9007199254740991 and floor == .) and
+            .alert_saving == true and .issues == [] and (.recent_alerts | type == "array") and
+            .alert_log_integrity.invalid_records == 0 and .alert_log_integrity.oversized_records == 0 and
+            (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null));
+'
+
 usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh [--once|--supervise] STATE.json -- TRIAGE_COMMAND [ARG ...]' \
         '       watch-packrat-triage.sh --check STATE.json' \
@@ -48,12 +59,11 @@ check_snapshot() {
     if [[ ! -r $state || ! -O $state ]] ||
        ! raw=$(head -c 131073 -- "$state" 2>/dev/null) ||
        (( ${#raw} > 131072 )) ||
-       ! result=$(jq -cse '
-        def scope_id: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
+       ! result=$(jq -cse "$snapshot_validation"'
         select(length == 1) | .[0] | objects
         | select(.record_type == "capture_triage_watch" and
             (.status | type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z")) and
-            (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .))
+            (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .) and valid_current)
         | (now - (.updated_at | fromdateiso8601) | floor) as $age
         | {status:(if $age < -5 then "snapshot_future"
                    elif $age > .max_age_seconds then "snapshot_stale"
@@ -113,8 +123,8 @@ exec {lock_fd}>>"$state.lock"
 flock -n "$lock_fd" || { printf '%s\n' 'Triage state is already being refreshed.' >&2; exit 2; }
 
 sanitize() {
-    jq -cse '
-        def token: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
+    jq -cse "$snapshot_validation"'
+        def token: scope_id;
         def counter: if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end;
         def flag: if type == "boolean" then . else null end;
         def severity: if . == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" then . else null end;
@@ -122,6 +132,8 @@ sanitize() {
             . == "Benign" or . == "Contained" or . == "Closed" then . else null end;
         select(length == 1) | .[0] | objects
         | select(.record_type == "capture_triage" and (.status | token) != null)
+        | select(.status != "current" or (.health.issues == [] and
+            (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null)))
         | {
             status, capture_id:(.health.capture_id | token), session_id:(.health.alert_session_id | token),
             interface:(.health.capture_interface | token),
@@ -155,7 +167,7 @@ sanitize() {
                    confidence:(.confidence | token), packet_evidence_status:(.packet_evidence_status | token),
                    next_evidence_step:(.next_evidence_step | token)}
                 | select(.alert_id > 0 and (.severity == "HIGH" or .severity == "CRITICAL"))) else null end)
-          }'
+          } | select(valid_current)'
 }
 
 read_status() {
@@ -180,10 +192,11 @@ prior=null
 if ! "$once" && [[ -f $state && -O $state ]]; then
     # A restart can recover only a recent, bounded snapshot from this watcher.
     prior=$(head -c 65537 -- "$state" |
-        jq -Rces '
+        jq -Rces "$snapshot_validation"'
             select(utf8bytelength <= 65536) | fromjson | objects
             | select(.record_type == "capture_triage_watch"
-                and (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .))
+                and (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .)
+                and valid_current)
             | (now - (.updated_at | fromdateiso8601) | floor) as $age
             | select($age >= -5 and $age <= .max_age_seconds)
             | .last_observed // .
