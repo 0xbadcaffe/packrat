@@ -140,11 +140,39 @@ fn dnp3_crc_matches(data: &[u8], encoded: &[u8]) -> bool {
     encoded == (!crc).to_le_bytes()
 }
 
-fn inspect_s7(payload: &[u8]) -> Option<IndustrialFinding> {
-    if payload.len() < 18 || payload[0] != 0x03 || payload[1] != 0x00 || payload[7] != 0x32 {
+fn inspect_s7(mut payload: &[u8]) -> Option<IndustrialFinding> {
+    while !payload.is_empty() {
+        if payload.get(..2)? != [0x03, 0x00] {
+            return None;
+        }
+        let record_length = usize::from(read_u16(payload, 2)?);
+        if record_length < 7 {
+            return None;
+        }
+        let record = payload.get(..record_length)?;
+        if let Some(finding) = s7_job(record) {
+            return Some(finding);
+        }
+        payload = &payload[record_length..];
+    }
+    None
+}
+
+fn s7_job(record: &[u8]) -> Option<IndustrialFinding> {
+    // A COTP Data TPDU with EOT and a locally complete S7 Job.
+    if record.get(4..6)? != [0x02, 0xf0] || record[6] & 0x80 == 0 {
         return None;
     }
-    let (operation, critical) = match payload[17] {
+    let pdu = record.get(7..)?;
+    if pdu.get(..2)? != [0x32, 0x01] {
+        return None;
+    }
+    let parameter_length = usize::from(read_u16(pdu, 6)?);
+    let data_length = usize::from(read_u16(pdu, 8)?);
+    if parameter_length == 0 || 10 + parameter_length + data_length != pdu.len() {
+        return None;
+    }
+    let (operation, critical) = match pdu[10] {
         0x05 => ("write variable", false),
         0x28 => ("PLC control", true),
         0x29 => ("PLC stop", true),

@@ -113,11 +113,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the responder is an approved proxy discovery service and whether the client used it.",
         ),
         (
-            "IDS", "Critical industrial control command", "industrial.critical_control", 4, Heuristic,
+            "IDS", "Critical industrial control command", "industrial.critical_control", 5, Heuristic,
             "Verify the command and response against controller logs and approved maintenance. This packet does not prove execution.",
         ),
         (
-            "IDS", "Industrial state-changing command", "industrial.state_change", 7, Heuristic,
+            "IDS", "Industrial state-changing command", "industrial.state_change", 8, Heuristic,
             "Check the controller, operator authorization, and response. A write-like packet does not prove a state change.",
         ),
         (

@@ -55,6 +55,11 @@ fn bacnet_header_fixture(service: u8) -> [u8; 11] {
     [0x81, 0x0a, 0, 11, 1, 0x04, 0, 0, 1, service, 0]
 }
 
+fn s7_job_header_fixture(operation: u8) -> [u8; 18] {
+    // Framing-only fixture: the function marker has no operation arguments.
+    [3, 0, 0, 18, 2, 0xf0, 0x80, 0x32, 1, 0, 0, 0, 1, 0, 1, 0, 0, operation]
+}
+
 #[test]
 fn identifies_state_changing_modbus_dnp3_s7_and_bacnet_operations() {
     let mut modbus = vec![0_u8; 8];
@@ -63,10 +68,7 @@ fn identifies_state_changing_modbus_dnp3_s7_and_bacnet_operations() {
 
     let dnp3 = dnp3_header_fixture(4);
 
-    let mut s7 = vec![0_u8; 18];
-    s7[..2].copy_from_slice(&[0x03, 0x00]);
-    s7[7] = 0x32;
-    s7[17] = 0x05;
+    let s7 = s7_job_header_fixture(5);
 
     let bacnet = bacnet_header_fixture(20);
 
@@ -155,7 +157,7 @@ fn industrial_alert_exposes_a_policy_hint_not_a_claim_of_execution() {
         .find(|alert| alert.title == "Industrial state-changing command").unwrap();
     let provenance = alert.provenance.as_ref().unwrap();
     assert_eq!(provenance.rule_id, "industrial.state_change");
-    assert_eq!(provenance.revision, 7);
+    assert_eq!(provenance.revision, 8);
     assert_eq!(provenance.confidence, packrat_tui::analysis::alert_provenance::EvidenceConfidence::Heuristic);
     assert!(provenance.verification_hint.contains("does not prove a state change"));
     assert_eq!(alert.packet_refs, [1]);
@@ -170,6 +172,30 @@ fn bacnet_policy_accepts_only_direct_unsegmented_confirmed_requests() {
     for (offset, value) in [
         (1, 0), (1, 4), (1, 11), (3, 10), (3, 12), (4, 2),
         (5, 0x84), (5, 0x24), (5, 0x0c), (6, 0x08), (6, 0x04), (6, 0x20),
+    ] {
+        let mut other = request;
+        other[offset] = value;
+        assert!(inspect(&other).is_none(), "offset {offset}, value {value}");
+    }
+    for end in 0..request.len() {
+        assert!(inspect(&request[..end]).is_none());
+    }
+}
+
+#[test]
+fn s7_policy_requires_complete_tpkt_job_framing() {
+    let inspect = |payload: &[u8]| industrial_policy::inspect(&industrial_packet("S7comm", 102, true, payload));
+    let request = s7_job_header_fixture(5);
+    assert_eq!(inspect(&request).unwrap().operation, "write variable");
+    let read = s7_job_header_fixture(4);
+    assert!(inspect(&read).is_none());
+    let mut coalesced = read.to_vec();
+    coalesced.extend(request);
+    assert_eq!(inspect(&coalesced).unwrap().operation, "write variable");
+
+    for (offset, value) in [
+        (0, 2), (1, 1), (3, 6), (3, 17), (3, 19), (4, 3), (5, 0xd0),
+        (6, 0), (7, 0), (8, 3), (14, 0), (14, 2), (16, 1),
     ] {
         let mut other = request;
         other[offset] = value;
