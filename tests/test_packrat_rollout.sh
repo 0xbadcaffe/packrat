@@ -65,27 +65,39 @@ source "$root/scripts/packrat-rollout.sh"
     sample='{"status":"ok","service":"packrat","telemetry_fresh":true,"capture_active":true,
         "alert_saving":true,"pcap_buffer_drops":0,"archive_paused":true,"capture_interface":"wlan1",
         "capture_run_id":"0000000000000001","capture_id":"00000000000000000000000000000002"}'
-    if health_ready; then exit 1; fi
+    if capture_health_sample; then exit 1; fi
     sample=$(jq -c '.archive_paused = false' <<< "$sample")
-    if health_ready; then exit 1; fi
+    if capture_health_sample; then exit 1; fi
     sample=$(jq -c '.archive_enabled = true' <<< "$sample")
-    health_ready
+    [[ $(capture_health_sample) == legacy ]]
     expected_addr=$stage_health_addr
-    health_ready "$stage_health_addr" true
+    [[ $(capture_health_sample "$stage_health_addr" true) == legacy ]]
     good=$sample
     for update in '.service = "other"' '.capture_interface = "eth0"' 'del(.capture_interface)' \
         '.capture_id = "invalid"' '.capture_run_id = null' '.pcap_buffer_drops = 1'; do
         sample=$(jq -c "$update" <<< "$good")
-        if health_ready "$stage_health_addr" true; then exit 1; fi
+        if capture_health_sample "$stage_health_addr" true; then exit 1; fi
     done
     expected_addr=$health_addr
     sample=$(jq -c 'del(.capture_interface) | .pcap_buffer_drops = 1' <<< "$good")
-    health_ready
+    [[ $(capture_health_sample) == legacy ]]
     sample=$(jq -c '.capture_interface = "eth0"' <<< "$good")
-    if health_ready; then exit 1; fi
+    if capture_health_sample; then exit 1; fi
     sample=$good
     sample=$(jq -c '.pcap_buffer_drops = "0"' <<< "$sample")
-    if health_ready; then exit 1; fi
+    if capture_health_sample; then exit 1; fi
+
+    packet_count() { printf '%s\n' 12; }
+    sample=$good
+    [[ $(capture_progress_sample "$main_session" "$health_addr" false) == '12 legacy' ]]
+    sample=$(jq -c '.packets_total = 42' <<< "$good")
+    [[ $(capture_progress_sample "$main_session" "$health_addr" false) == \
+        '42 0000000000000001:00000000000000000000000000000002' ]]
+    for update in '.packets_total = null' '.packets_total = -1' '.packets_total = "42"' \
+        '.packets_total = 4.2' '.capture_interface = null' '.capture_id = null'; do
+        sample=$(jq -c ".packets_total = 42 | $update" <<< "$good")
+        if capture_progress_sample "$main_session" "$health_addr" false; then exit 1; fi
+    done
 
     if read_launch_profile "${profile[@]}" --archive relative; then exit 1; fi
     if read_launch_profile "${profile[@]}" --archive "$archive" --archive /other; then exit 1; fi
@@ -128,23 +140,23 @@ data_dir=$scratch
     tick=0
     phase=recover
     sleep() { tick=$((tick + 1)); }
-    packet_count() {
+    capture_progress_sample() {
+        [[ $* == "$bridge_session $stage_health_addr true" ]] || return 1
+        [[ $phase != recover || $tick != 1 ]] || return 1
+        local scope=first
+        if [[ $phase == restarted && $tick -ge 2 ]]; then scope=second; fi
         if [[ $phase == idle ]]; then
-            printf '%s\n' 9
+            printf '9 %s\n' "$scope"
         elif [[ $phase == reset && $tick == 1 ]]; then
-            printf '%s\n' 8
+            printf '8 %s\n' "$scope"
         else
-            printf '%s\n' "$tick"
+            printf '%s %s\n' "$tick" "$scope"
         fi
     }
     capture_pid() {
         if [[ $phase == changed && $tick -ge 2 ]]; then printf '%s\n' 43; else printf '%s\n' 42; fi
     }
     capture_storage_ready() { return 0; }
-    health_ready() {
-        [[ $* == "$stage_health_addr true" ]] &&
-            [[ $phase != recover || $tick != 1 ]]
-    }
     verify_capture_progress "$bridge_session" /candidate true >"$scratch/progress"
     [[ $tick == 4 && $(<"$scratch/progress") == *'from 2 to 4 across 3 healthy samples' ]]
     phase=reset
@@ -152,6 +164,10 @@ data_dir=$scratch
     verify_capture_progress "$bridge_session" /candidate true >"$scratch/progress"
     [[ $tick == 4 && $(<"$scratch/progress") == *'from 2 to 4 across 3 healthy samples' ]]
     phase=changed
+    tick=0
+    verify_capture_progress "$bridge_session" /candidate true >"$scratch/progress"
+    [[ $tick == 4 && $(<"$scratch/progress") == *'from 2 to 4 across 3 healthy samples' ]]
+    phase=restarted
     tick=0
     verify_capture_progress "$bridge_session" /candidate true >"$scratch/progress"
     [[ $tick == 4 && $(<"$scratch/progress") == *'from 2 to 4 across 3 healthy samples' ]]

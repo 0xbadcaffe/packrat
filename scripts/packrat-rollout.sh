@@ -53,20 +53,38 @@ capture_pid() {
     printf '%s\n' "$found"
 }
 
-health_ready() {
+capture_health_sample() {
     local address=${1:-$health_addr} require_fresh_capture=${2:-false}
     curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$address/health" |
-        jq -e --arg archive "$archive_path" --arg interface "$interface" --argjson fresh "$require_fresh_capture" '
-            .status == "ok" and .service == "packrat"
+        jq -er --arg archive "$archive_path" --arg interface "$interface" --argjson fresh "$require_fresh_capture" '
+            def scoped:
+                .capture_interface == $interface
+                and (.capture_run_id | type == "string" and test("\\A[0-9a-f]{16}\\z"))
+                and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
+            select(.status == "ok" and .service == "packrat"
             and .telemetry_fresh == true and .capture_active == true and .alert_saving == true
             and (.alert_save_failed | not)
             and (.pcap_buffer_drops | type == "number" and . >= 0 and . <= 4294967295 and floor == .)
-            and (if $fresh then
-                    .pcap_buffer_drops == 0 and .capture_interface == $interface
-                    and (.capture_run_id | type == "string" and test("\\A[0-9a-f]{16}\\z"))
-                    and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"))
+            and (if $fresh then .pcap_buffer_drops == 0 and scoped
                  else .capture_interface == null or .capture_interface == $interface end)
-            and ($archive == "" or (.archive_enabled == true and .archive_paused == false))' >/dev/null
+            and ($archive == "" or (.archive_enabled == true and .archive_paused == false)))
+            | if has("packets_total") then
+                select(scoped and (.packets_total | type == "number" and . >= 0
+                    and . <= 9007199254740991 and floor == .))
+                | "\(.packets_total) \(.capture_run_id):\(.capture_id)"
+              else "legacy" end
+        '
+}
+
+capture_progress_sample() {
+    local session=$1 health_row count
+    health_row=$(capture_health_sample "$2" "$3") || return 1
+    if [[ $health_row == legacy ]]; then
+        count=$(packet_count "$session") || return 1
+        [[ $count =~ ^(0|[1-9][0-9]{0,17})$ ]] || return 1
+        health_row="$count legacy"
+    fi
+    printf '%s\n' "$health_row"
 }
 
 capture_file_open() {
@@ -208,12 +226,9 @@ preflight() {
         error "Current capture uses a different launch profile; refusing to drop its options"
         return 1
     fi
-    [[ $(packet_count "$main_session") =~ ^[0-9]+$ ]] || {
-        error "Current capture is not on $interface"
-        return 1
-    }
     candidate_supports_profile || { error "Candidate does not support the current capture options"; return 1; }
-    health_ready || { error "Current capture telemetry or alert logging is unhealthy"; return 1; }
+    capture_progress_sample "$main_session" "$health_addr" false >/dev/null ||
+        { error "Cannot verify current capture progress on $interface"; return 1; }
     capture_storage_ready "$pid" "$main_session" &&
         sudo -n test -f "$data_dir/alerts.jsonl" || return 1
     local stamp
@@ -306,17 +321,19 @@ start_capture() {
 
 verify_capture_progress() {
     local session=$1 executable=$2 require_fresh_capture=$3
-    local attempt count pid address=$health_addr stable=0 first_count=0 last_count=0 stable_pid=
+    local attempt sample count scope pid address=$health_addr
+    local stable=0 first_count=0 last_count=0 stable_pid='' stable_scope=''
     if [[ $session == "$bridge_session" ]]; then address=$stage_health_addr; fi
     for attempt in {1..30}; do
-        count=$(packet_count "$session") || count=
-        if [[ $count =~ ^(0|[1-9][0-9]{0,17})$ ]] &&
+        if sample=$(capture_progress_sample "$session" "$address" "$require_fresh_capture") &&
+           read -r count scope <<< "$sample" &&
            pid=$(capture_pid "$session" "$executable") &&
-           capture_storage_ready "$pid" "$session" &&
-           health_ready "$address" "$require_fresh_capture"; then
-            if [[ $pid != "$stable_pid" ]] || (( stable == 0 || count < last_count )); then
+           capture_storage_ready "$pid" "$session"; then
+            if [[ $pid != "$stable_pid" || $scope != "$stable_scope" ]] ||
+                (( stable == 0 || count < last_count )); then
                 stable=0
                 stable_pid=$pid
+                stable_scope=$scope
                 first_count=$count
             fi
             last_count=$count
