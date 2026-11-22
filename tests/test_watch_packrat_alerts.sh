@@ -3,6 +3,8 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 watch="$root/scripts/watch-packrat-alerts.sh"
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
 export PACKRAT_WATCH_MAX_ALERTS=1024
 bash -n "$watch"
 
@@ -32,7 +34,7 @@ fixture() {
     '
 }
 
-fixture | bash "$watch" | jq -se '
+fixture | bash "$watch" 2>"$scratch/errors" | jq -se '
     length == 5
     and map(.event) == ["first_seen","updated","updated","first_seen","first_seen"]
     and map(.changes) == [[],["evidence","hit_count"],["disposition"],[],[]]
@@ -52,6 +54,14 @@ fixture | bash "$watch" | jq -se '
         and .observation_to_notification_seconds >= 0
         and (has("bytes") or has("packet_refs") or has("evidence_frames_internal") | not))
 ' >/dev/null
+jq -se 'map(.reason) == ["malformed_json","invalid_record","invalid_alert"]
+    and all(.[]; .record_type == "capture_alert_input" and .rejected == 1)' "$scratch/errors" >/dev/null
+
+for _ in {1..5}; do printf '%s\n' '{private malformed text'; done |
+    bash "$watch" 2>"$scratch/errors" >"$scratch/alerts"
+[[ ! -s $scratch/alerts ]]
+jq -se 'map(.rejected) == [1,2,4] and all(.[]; .reason == "malformed_json")
+    and (tostring | contains("private malformed text") | not)' "$scratch/errors" >/dev/null
 
 jq -cn '
     {schema_version:1,record_type:"alert",session_id:"123-45",
@@ -64,7 +74,7 @@ jq -cn '
     ($a | .alert.id = 9007199254740992),
     $a,
     ($a | del(.alert.capture_id))
-' | bash "$watch" | jq -se '
+' | bash "$watch" 2>"$scratch/errors" | jq -se '
     length == 2 and all(.[]; .event == "first_seen" and .alert_id == 7 and .packet_no == null)
     and .[0].capture_id == ("a" * 128) and .[1].capture_id == null
 ' >/dev/null
@@ -79,13 +89,14 @@ jq -cn '
     ($alert | .alert.packet_refs = [1,3,4,5]),
     ($alert | .alert.packet_refs = "legacy"),
     ($alert | .alert.detail = ("x" * 1048576))
-' | bash "$watch" | jq -se '
+' | bash "$watch" 2>"$scratch/errors" | jq -se '
     map(.event) == ["first_seen","updated","updated","updated"]
     and map(.evidence_frame_count) == [3,3,4,2]
     and all(.[]; .first_seen == null and .last_seen == null
         and .observation_to_notification_seconds == null
         and (has("evidence_frames_internal") or has("packet_refs") | not))
 ' >/dev/null
+jq -se 'length == 1 and .[0].reason == "oversized"' "$scratch/errors" >/dev/null
 
 jq -cn '
     {schema_version:1,record_type:"alert",session_id:"test",alert:{id:1,severity:"MEDIUM",last_seen:4102444800}} as $first

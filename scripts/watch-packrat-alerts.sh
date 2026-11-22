@@ -5,6 +5,7 @@ usage() {
     printf '%s\n' 'Usage: bash watch-packrat-alerts.sh < alerts.jsonl' \
         'Reads Packrat JSONL from stdin and emits first sightings, existing findings, and changed snapshots.' \
         'Notifications include update reasons and time since the latest observed packet.' \
+        'Rejected alert input is counted and reported to stderr without its contents.' \
         'PACKRAT_WATCH_MAX_ALERTS sets the in-memory alert history (default: 1024).'
 }
 case ${1-} in
@@ -59,10 +60,7 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
                ($after | [.source, .title, .detail]) then "description" else empty end
         ] end;
     def record:
-        select(utf8bytelength <= 1048576)
-        | (try fromjson catch empty)
-        | objects
-        | select(.record_type == "alert" and .schema_version == 1)
+        select(.schema_version == 1)
         | select((.session_id | identifier) and (.alert | type == "object"))
         | .alert as $a
         | select(($a.id | positive_counter) != null)
@@ -91,9 +89,35 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
             verify: ($rule.verification_hint | text(240))
         };
 
-    foreach (inputs | record) as $alert (
-        {seen: {}, slots: [], next: 0, emit: null};
-        ([$alert.session_id, $alert.alert_id, $alert.capture_id] | tojson) as $key
+    def input_record:
+        if length == 0 then empty
+        elif utf8bytelength > 1048576 then {reason:"oversized"}
+        else (try {row:fromjson} catch {reason:"malformed_json"})
+            | if .reason != null then .
+              elif (.row | type) != "object" then {reason:"invalid_record"}
+              elif .row.record_type != "alert" then empty
+              else [.row | record]
+                | if length == 0 then {reason:"invalid_alert"} else {alert:.[0]} end
+              end
+        end;
+
+    def reject($reason):
+        .emit = null
+        | .rejected[$reason] as $previous
+        | (($previous.count // 0) + 1) as $count
+        | ($previous.next // 1) as $next
+        # Report the first rejection, then powers of two, to bound terminal noise.
+        | .rejected[$reason] = {count:$count, next:(if $count == $next then $next * 2 else $next end)}
+        | if $count == $next then
+            ({record_type:"capture_alert_input", reason:$reason, rejected:$count} | tostring + "\n" | stderr)
+            as $notice | .
+          else . end;
+
+    foreach (inputs | input_record) as $input (
+        {seen: {}, slots: [], next: 0, emit: null, rejected:{}};
+        if $input.reason != null then reject($input.reason)
+        else $input.alert as $alert
+        | ([$alert.session_id, $alert.alert_id, $alert.capture_id] | tojson) as $key
         | .seen[$key] as $previous
         # A clock-only change is context for the next finding, not a notification.
         | if ($previous | del(.first_seen, .last_seen)) ==
@@ -118,6 +142,7 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
                     then $emitted - $alert.last_seen else null end
                 )
             })
-          end;
+          end
+        end;
         .emit | select(. != null)
     )'
