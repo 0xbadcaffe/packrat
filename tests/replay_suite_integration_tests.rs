@@ -161,7 +161,8 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
     let report: Value = serde_json::from_slice(&comparison.stdout).unwrap();
     assert_eq!(report["comparable"], 3);
     assert_eq!(report["cases"][1]["delta"], json!({
-        "alerts_opened": 0, "alert_snapshots": 0, "missed_opening_frames": 0,
+        "alerts_opened": 0, "alert_snapshots": 0, "unregistered_alerts": 0, "rule_openings": {},
+        "missed_opening_frames": 0,
         "unexpected_openings": 0, "count_deficit": 0, "count_surplus": 0
     }));
 

@@ -45,7 +45,11 @@ packrat-analyze() {
 export -f packrat-analyze
 
 packrat-baseline() {
-    [[ $* == "--expect-alert scan.horizontal=0 -- $PACKRAT_TEST_DIRECTORY/benign fixture.pcap" ]] || return 2
+    [[ $# == 4 && $1 == --expect-alert && $2 == scan.horizontal=0 && $3 == -- ]] || return 2
+    case $4 in
+        "$PACKRAT_TEST_DIRECTORY/benign fixture.pcap"|"$PACKRAT_TEST_DIRECTORY/unlisted.pcap") ;;
+        *) return 2 ;;
+    esac
     case ${PACKRAT_TEST_BASELINE:-} in
         unstable) printf '%s\n' changed >>"${*: -1}" ;;
         unavailable) return 2 ;;
@@ -79,7 +83,15 @@ bash "$suite" "$manifest" | jq -e '.total == 1 and .passed == 1' >/dev/null
 PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline bash "$suite" "$manifest" |
     jq -e '.comparable == 1 and .passed == 1 and .cases[0].baseline.verdict == "failed"
         and .cases[0].comparison == "comparable" and .cases[0].delta.alerts_opened == -1
-        and .cases[0].delta.count_surplus == -1 and .cases[0].delta.alert_snapshots == null' >/dev/null
+        and .cases[0].delta.count_surplus == -1 and .cases[0].delta.alert_snapshots == null
+        and .cases[0].delta.rule_openings == {"scan.horizontal":-1}' >/dev/null
+
+shifted="$scratch/shifted.json"
+jq -c '.cases[0].capture = "unlisted.pcap"' "$manifest" >"$shifted"
+PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline bash "$suite" "$shifted" |
+    jq -e '.comparable == 1 and .cases[0].delta.alerts_opened == 0
+        and .cases[0].delta.unregistered_alerts == 0
+        and .cases[0].delta.rule_openings == {"scan.horizontal":-1,"scan.vertical":1}' >/dev/null
 for mode in unstable unavailable; do
     status=0
     result=$(PACKRAT_TEST_BASELINE="$mode" PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline \

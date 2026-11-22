@@ -105,6 +105,16 @@ while IFS= read -r label; do
         reference=$(replay_case "$baseline")
         after=$(capture_stamp) || after=
         candidate=$(jq -c --argjson reference "$reference" --arg before "$stamp" --arg after "$after" '
+            def difference($candidate; $baseline):
+                if ($candidate | type) == "number" and ($baseline | type) == "number"
+                then $candidate - $baseline else null end;
+            def rule_differences($candidate; $baseline):
+                if ($candidate | type) == "object" and ($baseline | type) == "object" then
+                    ($candidate + $baseline | keys) as $rules
+                    | reduce $rules[] as $rule ({};
+                        (($candidate[$rule] // 0) - ($baseline[$rule] // 0)) as $delta
+                        | if $delta == 0 then . else .[$rule] = $delta end)
+                else null end;
             .baseline = $reference
             | if $before == "" or $before != $after then
                 .verdict = "inconclusive" | .score = null | .comparison = "capture_unstable"
@@ -113,11 +123,10 @@ while IFS= read -r label; do
               else
                 .comparison = "comparable"
                 | .delta = ({
-                    alerts_opened: (.summary.alerts_opened - $reference.summary.alerts_opened),
-                    alert_snapshots: (
-                        if .summary.alert_snapshots == null or $reference.summary.alert_snapshots == null
-                        then null else .summary.alert_snapshots - $reference.summary.alert_snapshots end
-                    )
+                    alerts_opened: difference(.summary.alerts_opened; $reference.summary.alerts_opened),
+                    alert_snapshots: difference(.summary.alert_snapshots; $reference.summary.alert_snapshots),
+                    unregistered_alerts: difference(.unregistered_alerts; $reference.unregistered_alerts),
+                    rule_openings: rule_differences(.summary.rule_counts; $reference.summary.rule_counts)
                   } + (.score | with_entries(.key as $key | .value -= $reference.score[$key])))
               end
         ' <<< "$candidate")
