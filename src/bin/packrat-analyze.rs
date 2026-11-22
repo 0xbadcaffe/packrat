@@ -5,6 +5,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
 use packrat_tui::engine::{AnalysisCore, PacketDisposition};
+use packrat_tui::net::packet::CaptureMetadata;
 use packrat_tui::pcap_replay::stream_pcap;
 use serde::Serialize;
 use serde_json::json;
@@ -22,6 +23,7 @@ fn analyze(
     path: &Path,
     helper: Option<std::path::PathBuf>,
     alerts_only: bool,
+    allow_truncated: bool,
     mut replay: ReplayAlerts,
     output: &mut impl Write,
 ) -> Result<(), String> {
@@ -32,7 +34,9 @@ fn analyze(
     let mut history = VecDeque::with_capacity(256);
     let mut analyzed = 0u64;
     let mut skipped = 0u64;
+    let mut truncated_frames = 0u64;
     let packets = stream_pcap(path, |packet| {
+        truncated_frames += u64::from(packet.capture.as_ref().is_some_and(CaptureMetadata::truncated));
         let outcome = core.analyze_with_history(&packet, history.iter().cloned());
         if outcome.disposition != PacketDisposition::Analyzed {
             skipped += 1;
@@ -64,12 +68,13 @@ fn analyze(
         history.push_back(packet);
         Ok(())
     })?;
-    let evaluation = replay.evaluate(analyzed > 0 && skipped == 0);
+    let evaluation = replay.evaluate(analyzed > 0 && skipped == 0 && (truncated_frames == 0 || allow_truncated));
     if alerts_only {
         event(
             output,
             &json!({
                 "type": "summary", "packets": packets, "analyzed": analyzed, "skipped": skipped,
+                "truncated_frames": truncated_frames, "allow_truncated": allow_truncated,
                 "alert_scope": "grouped_alerts", "alerts_opened": replay.opened,
                 "alert_snapshots": replay.snapshots, "rule_counts": replay.rule_counts,
                 "alert_expectations": evaluation, "containment": "disabled"
@@ -134,7 +139,8 @@ fn analyze(
     event(
         output,
         &json!({"type": "summary", "packets": packets,
-        "analyzed": analyzed, "skipped": skipped, "http_exchanges": exchanges + http2_exchanges + http3_exchanges,
+        "analyzed": analyzed, "skipped": skipped, "truncated_frames": truncated_frames,
+        "http_exchanges": exchanges + http2_exchanges + http3_exchanges,
         "http1_exchanges": exchanges, "http2_exchanges": http2_exchanges,
         "http3_exchanges": http3_exchanges, "quic_decode_errors": core.quic_scope.decode_errors,
         "http3_pushes": http3_pushes, "http3_control_streams": http3_control_streams,
@@ -155,12 +161,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = None;
     let mut helper = None;
     let mut alerts_only = false;
+    let mut allow_truncated = false;
     let mut replay = ReplayAlerts::default();
     let mut positional = false;
     while let Some(arg) = args.next() {
         if !positional && (arg == "--help" || arg == "-h") {
             println!(
-                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--expect-alert-frame RULE_ID=FRAME] [--quic-decode-helper PROGRAM] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nExpectations imply --alerts-only and exit nonzero on mismatches or skipped input. --expect-alert counts newly grouped alerts; --expect-alert-frame labels their exact opening frames for a rule. Repeat the frame option for each expected frame.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
+                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--expect-alert-frame RULE_ID=FRAME] [--allow-truncated] [--quic-decode-helper PROGRAM] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nExpectations imply --alerts-only and exit nonzero on mismatches or skipped input. Truncated frames make expectations inconclusive unless --allow-truncated is set. --expect-alert counts newly grouped alerts; --expect-alert-frame labels their exact opening frames for a rule. Repeat the frame option for each expected frame.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
             );
             return Ok(());
         }
@@ -170,6 +177,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if !positional && arg == "--alerts-only" {
             alerts_only = true;
+        } else if !positional && arg == "--allow-truncated" {
+            allow_truncated = true;
         } else if !positional && arg == "--expect-alert" {
             let expectation = args.next().ok_or("Missing RULE_ID=COUNT after --expect-alert")?;
             replay.expect(expectation.to_str().ok_or("Alert expectations must be UTF-8")?)?;
@@ -198,6 +207,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Path::new(&input),
         helper,
         alerts_only,
+        allow_truncated,
         replay,
         &mut BufWriter::new(stdout.lock()),
     )?;

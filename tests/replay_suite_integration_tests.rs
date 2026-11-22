@@ -275,6 +275,10 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
         }
         writer.flush().unwrap();
         let mut case = json!({"name":name, "capture":file, "expect_counts":{(rule):expected}});
+        if !payload.is_empty() {
+            // These fixtures intentionally vary the wire length independently of the captured bytes.
+            case["allow_truncated"] = json!(true);
+        }
         if expected > 0 {
             case["opening_frames"] = json!({(rule):[7 + prefix_frames]});
             case["opening_evidence"] = json!([{
@@ -294,8 +298,10 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
     assert_eq!(report["passed"], 6);
     assert_eq!(report["score"]["unexpected_openings"], 0);
     assert_eq!(report["cases"][4]["evidence_checks"][0]["observed_frames"], json!([3, 4, 5, 6, 7, 8, 9]));
+    assert_eq!(report["cases"][0]["summary"]["truncated_frames"], 7);
+    assert_eq!(report["cases"][3]["summary"]["truncated_frames"], 0);
 
-    let mut mislabeled = labels;
+    let mut mislabeled = labels.clone();
     mislabeled["cases"][4]["opening_evidence"][0]["frames"] = json!([2, 4, 5, 6, 7, 8, 9]);
     std::fs::write(&manifest, mislabeled.to_string()).unwrap();
     let output = run_suite(&manifest);
@@ -304,6 +310,15 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
     assert_eq!(report["failed"], 1);
     assert_eq!(report["score"]["unexpected_openings"], 0);
     assert_eq!(report["cases"][4]["evidence_checks"][0]["passed"], false);
+
+    let mut strict_input = labels;
+    strict_input["cases"][0]["allow_truncated"] = json!(false);
+    std::fs::write(&manifest, strict_input.to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inconclusive"], 1);
+    assert_eq!(report["cases"][0]["score"], Value::Null);
 
     let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
         .arg("--alerts-only").arg(root.join("fixed.pcapng")).output().unwrap();

@@ -8,6 +8,7 @@ usage() {
         'Use opening_frames to label exact frames, for example {"scan.horizontal":[12]}.' \
         'Use opening_evidence to check exact supporting frames: [{"rule_id":"scan.horizontal","opening_frame":12,"frames":[2,12]}].' \
         'Use expect_snapshots to also check the total number of openings and updates in a case.' \
+        'Set "allow_truncated":true only for a case intentionally replaying partial frames.' \
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
         'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.' \
         'Set PACKRAT_REPLAY_BASELINE_ANALYZER to an older analyzer command or executable path to compare results.'
@@ -38,6 +39,7 @@ if ! validated=$(head -c 65537 -- "$1" | jq -Rces '
         . as $case |
         type == "object" and (.name | text(128)) and (.capture | text(1024))
         and ((has("expect_snapshots") | not) or (.expect_snapshots | count))
+        and ((has("allow_truncated") | not) or (.allow_truncated | type == "boolean"))
         and ((.expect_counts // {}) | type == "object" and rules and all(.[]; count))
         and ((.opening_frames // {}) | type == "object" and rules and all(.[]; frame_list))
         and ((if has("opening_evidence") then .opening_evidence else [] end)
@@ -76,7 +78,8 @@ replay_case() {
                 ($label.opening_evidence // [] | map(key(.rule_id; .opening_frame))) as $keys |
                 reduce inputs as $row ({summary:null, evidence:{}};
                 if $row.type == "summary" then
-                    .summary = ($row | {packets,analyzed,skipped,alerts_opened,alert_snapshots,rule_counts,alert_expectations})
+                    .summary = ($row | {packets,analyzed,skipped,truncated_frames,allow_truncated,
+                        alerts_opened,alert_snapshots,rule_counts,alert_expectations})
                 elif ($keys | length) > 0 and $row.type == "alert" and $row.schema_version == 1
                     and $row.alert.hit_count == 1 and ($row.alert.provenance.rule_id | type == "string")
                     and ($row.alert.packet_no | ordinal)
@@ -140,6 +143,7 @@ while IFS= read -r label; do
     capture=$(jq -er '.capture' <<< "$label")
     if [[ $capture != /* ]]; then capture="$base/$capture"; fi
     mapfile -t options < <(jq -r '
+        (if .allow_truncated == true then "--allow-truncated" else empty end),
         (.expect_counts // {} | to_entries[] | "--expect-alert", (.key + "=" + (.value | floor | tostring))),
         (.opening_frames // {} | to_entries[] | .key as $id | .value[] |
             "--expect-alert-frame", ($id + "=" + (floor | tostring)))

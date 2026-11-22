@@ -167,6 +167,47 @@ fn unsupported_link_types_are_reported_not_silently_analyzed() {
     let replay = run_with(&path, &["--expect-alert-frame", "scan.horizontal=1"]);
     assert!(!replay.status.success());
     assert_eq!(read_events(&replay).last().unwrap()["alert_expectations"]["verdict"], "inconclusive");
+    let replay = run_with(&path, &["--allow-truncated", "--expect-alert", "scan.horizontal=0"]);
+    assert!(!replay.status.success());
+    assert_eq!(read_events(&replay).last().unwrap()["alert_expectations"]["verdict"], "inconclusive");
+}
+
+#[test]
+fn truncated_frames_cannot_satisfy_replay_labels_without_explicit_opt_in() {
+    use packrat_tui::net::packet::{CaptureTimestamp, TimestampResolution};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("truncated.pcapng");
+    let mut packet = support::tcp(1, 100, 0x10, b"sample bytes", false);
+    let wire_length = packet.bytes.len() as u32;
+    packet.bytes.truncate(54);
+    packet.capture = Some(CaptureMetadata {
+        timestamp: Some(CaptureTimestamp { ticks: 1, resolution: TimestampResolution::Decimal(0), offset_seconds: 0 }),
+        captured_length: packet.bytes.len() as u32,
+        wire_length,
+        link_type: 1,
+        interface_id: 0,
+        section_id: 0,
+        interface_name: None,
+        comments: vec![],
+    });
+    let mut writer = PcapNgWriter::create(&path).unwrap();
+    writer.write_packet(&packet).unwrap();
+    writer.flush().unwrap();
+    let output = run(&path);
+    assert_eq!(events(&output).last().unwrap()["truncated_frames"], 1);
+
+    let output = run_with(&path, &["--expect-alert", "scan.horizontal=0"]);
+    assert!(!output.status.success());
+    let summary = &read_events(&output)[0];
+    assert_eq!(summary["truncated_frames"], 1);
+    assert_eq!(summary["skipped"], 0);
+    assert_eq!(summary["alert_expectations"]["verdict"], "inconclusive");
+
+    let output = run_with(&path, &["--allow-truncated", "--expect-alert", "scan.horizontal=0"]);
+    let summary = &events(&output)[0];
+    assert_eq!(summary["allow_truncated"], true);
+    assert_eq!(summary["truncated_frames"], 1);
+    assert_eq!(summary["alert_expectations"]["verdict"], "passed");
 }
 
 #[test]
