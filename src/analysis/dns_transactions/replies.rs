@@ -25,7 +25,7 @@ pub(super) struct AlternateResponse {
 struct ComparisonBaseline {
     packet: u64,
     resolver: String,
-    answer_fingerprint: Option<[u8; 32]>,
+    answer_fingerprint: Option<answers::AnswerFingerprint>,
 }
 
 impl ComparisonBaseline {
@@ -33,7 +33,7 @@ impl ComparisonBaseline {
         Self {
             packet: packet.no,
             resolver: packet.src.clone(),
-            answer_fingerprint: answers::answer_fingerprint(message.bytes, message.answer_offset),
+            answer_fingerprint: answers::answer_fingerprint(message),
         }
     }
 }
@@ -87,17 +87,23 @@ impl RecentResponse {
             )
         } else {
             let (kind, difference) = match (
-                baseline.answer_fingerprint,
-                answers::answer_fingerprint(message.bytes, message.answer_offset),
+                baseline.answer_fingerprint.as_ref(),
+                answers::answer_fingerprint(message),
             ) {
-                (Some(before), Some(after)) if before == after => return ReplyOutcome::Repeat,
-                (Some(_), Some(_)) => (
+                (Some(before), Some(after)) if before.rcode != after.rcode => (
                     DnsFindingKind::ChangedAnswerSet,
-                    "a different answer set or base response code",
+                    format!("a different response code ({} to {})", before.rcode, after.rcode),
+                ),
+                (Some(before), Some(after)) if before.digest.is_some() && before.digest == after.digest => {
+                    return ReplyOutcome::Repeat;
+                }
+                (Some(before), Some(after)) if before.digest.is_some() && after.digest.is_some() => (
+                    DnsFindingKind::ChangedAnswerSet,
+                    "a different answer set".into(),
                 ),
                 _ => (
                     DnsFindingKind::ChangedReply,
-                    "different reply bytes; answer comparison unavailable",
+                    "different reply bytes; answer comparison unavailable".into(),
                 ),
             };
             (kind, format!("{difference} from resolver {}", baseline.resolver))

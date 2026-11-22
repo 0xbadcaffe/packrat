@@ -22,9 +22,13 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
                 lines.push(Line::raw("No matched reply retained"));
             }
             for reply in exchange.replies {
+                let code = reply.response_code.map_or_else(
+                    || format!("base RCODE {} (full code unverified)", reply.base_rcode),
+                    |code| format!("RCODE {code}"),
+                );
                 lines.push(Line::raw(format!(
-                    "{} Reply #{} from {}  base RCODE {}",
-                    marker(packet.no, reply.packet), reply.packet, reply.resolver, reply.base_rcode,
+                    "{} Reply #{} from {}  {code}",
+                    marker(packet.no, reply.packet), reply.packet, reply.resolver,
                 )));
                 if reply.question != exchange.question {
                     lines.push(Line::raw(format!("  Reply question: {}", reply.question)));

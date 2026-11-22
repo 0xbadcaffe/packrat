@@ -1,6 +1,47 @@
 use super::*;
 
 #[test]
+fn edns_reply_comparison_uses_validated_full_response_codes() {
+    fn add_opt(reply: &mut Packet, payload: u16, ext_rcode: u8, options: &[u8]) {
+        reply.bytes[53] = 1; // ARCOUNT.
+        reply.bytes.extend([0, 0, 41]);
+        reply.bytes.extend(payload.to_be_bytes());
+        reply.bytes.extend([ext_rcode, 0, 0, 0]);
+        reply.bytes.extend((options.len() as u16).to_be_bytes());
+        reply.bytes.extend(options);
+        reply.length = reply.bytes.len() as u16;
+        reply.bytes[16..18].copy_from_slice(&(reply.length - 14).to_be_bytes());
+        reply.bytes[38..40].copy_from_slice(&(reply.length - 34).to_be_bytes());
+    }
+
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let mut tracker = DnsTransactionTracker::default();
+    let query = dns_packet(1, false, client, resolver, 69, "example.test");
+    let plain = dns_packet(2, true, resolver, client, 69, "example.test");
+    let mut metadata_change = dns_packet(3, true, resolver, client, 69, "example.test");
+    add_opt(&mut metadata_change, 1232, 0, &[0, 12, 0, 2, 0, 0]);
+    let mut code_change = dns_packet(4, true, resolver, client, 69, "example.test");
+    append_answer(&mut code_change, &[0xc0, 0x0c], 65_280, 300, &[1]);
+    add_opt(&mut code_change, 1232, 1, &[]);
+    let mut malformed = dns_packet(5, true, resolver, client, 69, "example.test");
+    add_opt(&mut malformed, 1232, 1, &[0, 12, 0, 4, 0, 0]);
+    for packet in [&query, &plain, &metadata_change] {
+        assert!(tracker.observe(packet).is_empty());
+    }
+    let changed = tracker.observe(&code_change);
+    assert_eq!(changed[0].kind, DnsFindingKind::ChangedAnswerSet);
+    assert_eq!(changed[0].related_packets, [1, 2]);
+    assert!(changed[0].detail.contains("response code (0 to 16)"));
+    let weak = tracker.observe(&malformed);
+    assert_eq!(weak[0].kind, DnsFindingKind::ChangedReply);
+    assert!(weak[0].detail.contains("answer comparison unavailable"));
+    let evidence = tracker.exchange_for_packet(&query).unwrap();
+    assert_eq!(evidence.replies.iter().map(|reply| reply.response_code).collect::<Vec<_>>(),
+        [Some(0), Some(16), None]);
+}
+
+#[test]
 fn repeated_pending_dns_queries_keep_the_original_alert_anchor() {
     let client = "10.0.0.5";
     let resolver = "10.0.0.53";

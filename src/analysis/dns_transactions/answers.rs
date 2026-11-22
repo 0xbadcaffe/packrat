@@ -1,14 +1,22 @@
 use sha2::{Digest, Sha256};
 
-use super::{parse_name, record_wire::txt_character_bytes};
+use super::{DnsMessage, parse_name, record_wire};
 
 const MAX_ANSWERS: usize = 64;
-const MAX_MESSAGE_BYTES: usize = 4096;
+#[derive(Debug)]
+pub(super) struct AnswerFingerprint {
+    pub(super) rcode: u16,
+    pub(super) digest: Option<[u8; 32]>,
+}
 
-pub(super) fn answer_fingerprint(bytes: &[u8], mut offset: usize) -> Option<[u8; 32]> {
-    if bytes.len() > MAX_MESSAGE_BYTES || bytes.get(2)? & 0x02 != 0 || word(bytes, 4)? != 1 {
-        return None;
-    }
+pub(super) fn answer_fingerprint(message: &DnsMessage<'_>) -> Option<AnswerFingerprint> {
+    let rcode = record_wire::summarize_response(message, false)?.rcode;
+    Some(AnswerFingerprint { rcode, digest: answer_digest(message) })
+}
+
+fn answer_digest(message: &DnsMessage<'_>) -> Option<[u8; 32]> {
+    let bytes = message.bytes;
+    let mut offset = message.answer_offset;
     let count = usize::from(word(bytes, 6)?);
     if count > MAX_ANSWERS {
         return None;
@@ -30,7 +38,7 @@ pub(super) fn answer_fingerprint(bytes: &[u8], mut offset: usize) -> Option<[u8;
             2 | 5 | 12 | 39 => name_rdata(bytes, start, end, 0)?,
             15 => name_rdata(bytes, start, end, 2)?, // MX
             33 => name_rdata(bytes, start, end, 6)?, // SRV
-            16 if txt_character_bytes(data).is_some() => data.to_vec(),
+            16 if record_wire::txt_character_bytes(data).is_some() => data.to_vec(),
             _ => return None,
         };
         answers.push((owner, rr_type, class, canonical));
@@ -40,7 +48,6 @@ pub(super) fn answer_fingerprint(bytes: &[u8], mut offset: usize) -> Option<[u8;
     answers.dedup();
 
     let mut hash = Sha256::new();
-    hash.update([bytes[3] & 0x0f]); // Base response code.
     for (owner, rr_type, class, rdata) in answers {
         hash.update((owner.len() as u32).to_be_bytes());
         hash.update(owner.as_bytes());

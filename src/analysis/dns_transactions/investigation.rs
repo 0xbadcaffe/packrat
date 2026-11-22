@@ -1,6 +1,6 @@
 use crate::net::packet::Packet;
 
-use super::{DnsMessage, DnsScope, DnsTransactionTracker, TransactionKey, parse_message, udp_payload};
+use super::{DnsMessage, DnsScope, DnsTransactionTracker, TransactionKey, parse_message, record_wire, udp_payload};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DnsReplyEvidence {
@@ -8,6 +8,7 @@ pub struct DnsReplyEvidence {
     pub resolver: String,
     pub question: String,
     pub base_rcode: u8,
+    pub response_code: Option<u16>,
 }
 
 impl DnsReplyEvidence {
@@ -17,6 +18,7 @@ impl DnsReplyEvidence {
             resolver: packet.src.clone(),
             question: message.question.name.clone(),
             base_rcode: message.bytes[3] & 0x0f,
+            response_code: record_wire::summarize_response(message, false).map(|summary| summary.rcode),
         }
     }
 }

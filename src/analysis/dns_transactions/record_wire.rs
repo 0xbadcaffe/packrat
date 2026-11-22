@@ -33,7 +33,7 @@ pub(super) fn summarize_response(message: &DnsMessage<'_>, count_txt: bool) -> O
         offset = start + u16::from_be_bytes([header[8], header[9]]) as usize;
         let data = bytes.get(start..offset)?;
         if header[..2] == [0, 41] {
-            if record < additional_start || !owner.is_empty() || saw_opt {
+            if record < additional_start || !owner.is_empty() || saw_opt || !valid_opt_data(data) {
                 return None;
             }
             saw_opt = true;
@@ -43,6 +43,16 @@ pub(super) fn summarize_response(message: &DnsMessage<'_>, count_txt: bool) -> O
         }
     }
     (offset == bytes.len()).then_some(summary)
+}
+
+fn valid_opt_data(mut data: &[u8]) -> bool {
+    while !data.is_empty() {
+        let Some(header) = data.get(..4) else { return false };
+        let length = usize::from(u16::from_be_bytes([header[2], header[3]]));
+        let Some(rest) = data.get(4 + length..) else { return false };
+        data = rest;
+    }
+    true
 }
 
 pub(super) fn txt_character_bytes(mut data: &[u8]) -> Option<usize> {
