@@ -61,7 +61,10 @@ source "$root/scripts/packrat-rollout.sh"
         printf '%s\n' "$sample"
     }
     expected_addr=$health_addr
-    sample='{"status":"ok","telemetry_fresh":true,"capture_active":true,"alert_saving":true,"pcap_buffer_drops":0,"archive_paused":true}'
+    interface=wlan1
+    sample='{"status":"ok","service":"packrat","telemetry_fresh":true,"capture_active":true,
+        "alert_saving":true,"pcap_buffer_drops":0,"archive_paused":true,"capture_interface":"wlan1",
+        "capture_run_id":"0000000000000001","capture_id":"00000000000000000000000000000002"}'
     if health_ready; then exit 1; fi
     sample=$(jq -c '.archive_paused = false' <<< "$sample")
     if health_ready; then exit 1; fi
@@ -69,10 +72,18 @@ source "$root/scripts/packrat-rollout.sh"
     health_ready
     expected_addr=$stage_health_addr
     health_ready "$stage_health_addr" true
-    sample=$(jq -c '.pcap_buffer_drops = 1' <<< "$sample")
-    if health_ready "$stage_health_addr" true; then exit 1; fi
+    good=$sample
+    for update in '.service = "other"' '.capture_interface = "eth0"' 'del(.capture_interface)' \
+        '.capture_id = "invalid"' '.capture_run_id = null' '.pcap_buffer_drops = 1'; do
+        sample=$(jq -c "$update" <<< "$good")
+        if health_ready "$stage_health_addr" true; then exit 1; fi
+    done
     expected_addr=$health_addr
+    sample=$(jq -c 'del(.capture_interface) | .pcap_buffer_drops = 1' <<< "$good")
     health_ready
+    sample=$(jq -c '.capture_interface = "eth0"' <<< "$good")
+    if health_ready; then exit 1; fi
+    sample=$good
     sample=$(jq -c '.pcap_buffer_drops = "0"' <<< "$sample")
     if health_ready; then exit 1; fi
 

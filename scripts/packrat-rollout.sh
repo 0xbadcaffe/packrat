@@ -52,13 +52,18 @@ capture_pid() {
 }
 
 health_ready() {
-    local address=${1:-$health_addr} require_zero_drops=${2:-false}
+    local address=${1:-$health_addr} require_fresh_capture=${2:-false}
     curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$address/health" |
-        jq -e --arg archive "$archive_path" --argjson require_zero "$require_zero_drops" '
-            .status == "ok" and .telemetry_fresh and .capture_active and .alert_saving
+        jq -e --arg archive "$archive_path" --arg interface "$interface" --argjson fresh "$require_fresh_capture" '
+            .status == "ok" and .service == "packrat"
+            and .telemetry_fresh == true and .capture_active == true and .alert_saving == true
             and (.alert_save_failed | not)
             and (.pcap_buffer_drops | type == "number" and . >= 0 and . <= 4294967295 and floor == .)
-            and (if $require_zero then .pcap_buffer_drops == 0 else true end)
+            and (if $fresh then
+                    .pcap_buffer_drops == 0 and .capture_interface == $interface
+                    and (.capture_run_id | type == "string" and test("\\A[0-9a-f]{16}\\z"))
+                    and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"))
+                 else .capture_interface == null or .capture_interface == $interface end)
             and ($archive == "" or (.archive_enabled == true and .archive_paused == false))' >/dev/null
 }
 
@@ -208,7 +213,7 @@ launch_capture() {
 }
 
 start_capture() {
-    local session=$1 executable=$2 require_zero_drops=${3:-true}
+    local session=$1 executable=$2 require_fresh_capture=${3:-true}
     local index attempt count pid address=$health_addr baseline=
     if [[ $session == "$bridge_session" ]]; then address=$stage_health_addr; fi
     index=$(printf '%s\n' /sys/class/net/* | LC_ALL=C sort |
@@ -229,7 +234,7 @@ start_capture() {
         if [[ $count =~ ^[0-9]+$ ]]; then
             if [[ -n $baseline ]] && (( count > baseline )); then
                 pid=$(capture_pid "$session" "$executable") || return 1
-                if capture_storage_ready "$pid" "$session" && health_ready "$address" "$require_zero_drops"; then
+                if capture_storage_ready "$pid" "$session" && health_ready "$address" "$require_fresh_capture"; then
                     printf '%s: %s packet count increased to %s\n' "$session" "$interface" "$count"
                     return 0
                 fi
