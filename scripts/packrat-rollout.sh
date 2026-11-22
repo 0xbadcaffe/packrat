@@ -85,6 +85,17 @@ primary_alert_log_stamp() {
     sudo -n stat --format='%d:%i:%s:%y:%z' -- "$data_dir/alerts.jsonl"
 }
 
+primary_capture_stamp() {
+    local pid
+    pid=$(capture_pid "$main_session" "$installed") || return 1
+    curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$health_addr/health" |
+        jq -ce --arg pid "$pid" '
+            select(.service == "packrat" and .status == "ok"
+                and .telemetry_fresh == true and .capture_active == true)
+            | {pid:$pid, capture_run_id, capture_id, alert_session_id}
+        '
+}
+
 read_launch_profile() {
     local flag value path='' max_mib='' max_frames=''
     local -a limits=()
@@ -262,10 +273,14 @@ verify_capture_progress() {
 }
 
 stop_capture() {
-    local session=$1 executable=$2 pid
-    if ! tmux has-session -t "=$session" 2>/dev/null; then return 0; fi
+    local session=$1 executable=$2 expected_pid=${3:-} pid
+    if ! tmux has-session -t "=$session" 2>/dev/null; then
+        [[ -z $expected_pid ]]
+        return
+    fi
     [[ $(tmux display-message -p -t "=$session:" '#{session_attached}') == 0 ]] || return 1
     pid=$(capture_pid "$session" "$executable") || return 1
+    [[ -z $expected_pid || $pid == "$expected_pid" ]] || return 1
     tmux send-keys -t "=$session:" Escape C-c || return 1
     sleep 2
     if sudo -n kill -0 "$pid" 2>/dev/null; then
@@ -285,9 +300,14 @@ retire_bridge() {
 }
 
 rollout() {
-    local alert_log_before alert_log_now
+    local alert_log_before alert_log_now primary_before primary_now primary_pid
     alert_log_before=$(primary_alert_log_stamp) && [[ -n $alert_log_before ]] ||
         { error "Cannot check the primary alert log; current capture not stopped"; return 1; }
+    if ! primary_before=$(primary_capture_stamp) ||
+       ! primary_pid=$(jq -er '.pid | strings | select(test("^[1-9][0-9]*$"))' <<< "$primary_before"); then
+        error "Cannot verify the primary capture identity; current capture not stopped"
+        return 1
+    fi
     prepare_backup_and_stage || { error "Backup or staging failed; current capture not stopped"; return 1; }
     printf 'Rollback binary: %s/packrat\n' "$backup_dir"
     printf 'Staging alert log: %s\n' "$(alert_log_for_session "$bridge_session")"
@@ -304,7 +324,12 @@ rollout() {
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi
-    if ! stop_capture "$main_session" "$installed"; then
+    if ! primary_now=$(primary_capture_stamp) || [[ $primary_now != "$primary_before" ]]; then
+        error "Primary capture changed or is unavailable; stage not promoted. Current capture not stopped."
+        retire_bridge || error "Inspect $bridge_session before retrying"
+        return 1
+    fi
+    if ! stop_capture "$main_session" "$installed" "$primary_pid"; then
         error "Could not stop the current capture; verified staging capture left running"
         return 1
     fi

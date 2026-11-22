@@ -139,6 +139,20 @@ data_dir=$scratch
     [[ $tick == 30 ]]
 )
 
+(
+    tmux() {
+        case $1 in
+            has-session) return 0 ;;
+            display-message) printf '%s\n' 0 ;;
+            send-keys) touch -- "$scratch/signaled"; return 2 ;;
+            *) return 2 ;;
+        esac
+    }
+    capture_pid() { printf '%s\n' 43; }
+    if stop_capture "$main_session" "$installed" 42; then exit 1; fi
+    [[ ! -e $scratch/signaled ]]
+)
+
 sudo() {
     [[ $1 == -n && $2 == stat ]] || return 1
     shift
@@ -162,6 +176,11 @@ prepare_backup_and_stage() {
     [[ $scenario != backup_fail ]]
 }
 
+primary_capture_stamp() {
+    [[ $primary_stamp != unavailable ]] || return 1
+    printf '{"pid":"42","capture_id":"%s"}\n' "$primary_stamp"
+}
+
 start_capture() {
     local session=$1 binary=$2 require_zero=${3:-true}
     trace+=("start:$session:$binary")
@@ -170,6 +189,8 @@ start_capture() {
         case $scenario in
             new_alert) printf '%s\n' 'new finding in primary' >>"$data_dir/alerts.jsonl" ;;
             log_disappears) mv -- "$data_dir/alerts.jsonl" "$data_dir/alerts.saved" ;;
+            primary_changed) primary_stamp=other ;;
+            primary_disappears) primary_stamp=unavailable ;;
         esac
         [[ $scenario != stage_fail ]]
     else
@@ -181,6 +202,10 @@ start_capture() {
 
 stop_capture() {
     trace+=("stop:$1:$2")
+    if [[ $primary_cutover == true && $1 == "$main_session" ]]; then
+        primary_cutover=false
+        [[ ${3-} == 42 ]] || return 2
+    fi
     [[ $scenario != cannot_stop ]]
 }
 
@@ -197,6 +222,9 @@ run_scenario() {
     shift 2
     local -a trace=()
     local main_starts=0
+    local primary_cutover=true
+    local primary_stamp=original
+    if [[ $scenario == primary_missing ]]; then primary_stamp=unavailable; fi
     rollout >/dev/null 2>&1 || actual=$?
     [[ $actual == "$expected" ]]
     if [[ "${trace[*]}" != "$*" ]]; then
@@ -211,6 +239,9 @@ run_scenario new_alert 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario log_disappears 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario log_missing 1
 mv -- "$data_dir/alerts.saved" "$data_dir/alerts.jsonl"
+run_scenario primary_missing 1
+run_scenario primary_changed 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario primary_disappears 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario cannot_stop 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat
 run_scenario success 0 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat retire-stage
