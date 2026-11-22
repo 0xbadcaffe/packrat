@@ -1,82 +1,28 @@
 use super::*;
 
+const HTTP_PORTS: [u16; 5] = [80, 8080, 3000, 8000, 8888];
+const MAX_HTTP_HEADER_BYTES: usize = 16_384;
+const MAX_HTTP_HEADERS: usize = 48;
+
 impl SecurityEngine {
     // ─── HTTP Analytics ───────────────────────────────────────────────────────
 
     pub(super) fn check_http(&mut self, pkt: &Packet) {
-        let dst_port = pkt.dst_port.unwrap_or(0);
-        let src_port = pkt.src_port.unwrap_or(0);
-        let http_ports = [80u16, 8080, 3000, 8000, 8888];
-        if !http_ports.contains(&dst_port) && !http_ports.contains(&src_port) {
+        if ![pkt.src_port, pkt.dst_port].into_iter().flatten().any(|port| HTTP_PORTS.contains(&port)) {
             return;
         }
-
-        let payload = Self::ascii_payload(&pkt.bytes, 54);
-        if payload.is_empty() {
+        let Some((source, destination)) = crate::analysis::stream::tcp_port_pair(pkt) else {
             return;
-        }
-
-        let mut method = String::new();
-        let mut path = String::new();
-        let mut user_agent = String::new();
-        let mut response_code: Option<u16> = None;
-
-        let first_line = payload.lines().next().unwrap_or("");
-
-        // Request: "GET /path HTTP/1.1"
-        for m in &[
-            "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT",
-        ] {
-            if first_line.starts_with(m) {
-                method = m.to_string();
-                let parts: Vec<&str> = first_line.splitn(3, ' ').collect();
-                if parts.len() >= 2 {
-                    path = parts[1].to_string();
-                }
-                break;
-            }
-        }
-
-        // Response: "HTTP/1.1 200 OK"
-        if first_line.starts_with("HTTP/") {
-            let parts: Vec<&str> = first_line.splitn(3, ' ').collect();
-            if parts.len() >= 2 {
-                if let Ok(code) = parts[1].parse::<u16>() {
-                    response_code = Some(code);
-                }
-            }
-        }
-
-        // User-Agent header
-        for line in payload.lines() {
-            let lower = line.to_lowercase();
-            if lower.starts_with("user-agent:") {
-                user_agent = line[11..].trim().to_string();
-                break;
-            }
-        }
-
-        if method.is_empty() && response_code.is_none() && path.is_empty() {
+        };
+        let Some((_, payload)) = crate::analysis::stream::tcp_segment_payload(pkt) else {
             return;
-        }
+        };
+        let Some(record) = http_observation(pkt, source, destination, payload) else { return };
 
         if self.http_records.len() >= MAX_ENTRIES {
             self.http_records.remove(0);
         }
-        self.http_records.push(HttpRecord {
-            pkt_no: pkt.no,
-            src_ip: pkt.src.clone(),
-            dst_ip: pkt.dst.clone(),
-            port: if http_ports.contains(&dst_port) {
-                dst_port
-            } else {
-                src_port
-            },
-            method,
-            path,
-            user_agent,
-            response_code,
-        });
+        self.http_records.push(record);
     }
 
     // ─── TLS/SSL Weakness ─────────────────────────────────────────────────────
@@ -125,4 +71,38 @@ impl SecurityEngine {
             });
         }
     }
+}
+
+fn http_observation(pkt: &Packet, source: u16, destination: u16, payload: &[u8]) -> Option<HttpRecord> {
+    let payload = &payload[..payload.len().min(MAX_HTTP_HEADER_BYTES)];
+    let mut headers = [httparse::EMPTY_HEADER; MAX_HTTP_HEADERS];
+    let (port, method, path, user_agent, response_code) = if payload.starts_with(b"HTTP/") {
+        if !HTTP_PORTS.contains(&source) {
+            return None;
+        }
+        let mut response = httparse::Response::new(&mut headers);
+        if !response.parse(payload).ok()?.is_complete() {
+            return None;
+        }
+        let status = response.code.filter(|code| (100..=599).contains(code))?;
+        (source, String::new(), String::new(), String::new(), Some(status))
+    } else {
+        if !HTTP_PORTS.contains(&destination) {
+            return None;
+        }
+        let mut request = httparse::Request::new(&mut headers);
+        if !request.parse(payload).ok()?.is_complete() {
+            return None;
+        }
+        let user_agent = request.headers.iter().find(|field| field.name.eq_ignore_ascii_case("user-agent"))
+            .and_then(|field| std::str::from_utf8(field.value).ok()).unwrap_or_default();
+        (destination, display_field(request.method?, 32), display_field(request.path?, 512),
+            display_field(user_agent, 256), None)
+    };
+    Some(HttpRecord { pkt_no: pkt.no, src_ip: pkt.src.clone(), dst_ip: pkt.dst.clone(), port,
+        method, path, user_agent, response_code })
+}
+
+fn display_field(value: &str, limit: usize) -> String {
+    value.chars().take(limit).map(|ch| if ch.is_control() { ' ' } else { ch }).collect()
 }

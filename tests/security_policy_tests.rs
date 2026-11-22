@@ -302,3 +302,5 @@ mod stp_indication_cases;
 mod ndp_hop_limit_cases;
 #[path = "security_policy/payload_byte_run_cases.rs"]
 mod payload_byte_run_cases;
+#[path = "security_policy/http_observation_cases.rs"]
+mod http_observation_cases;

@@ -150,19 +150,4 @@ impl SecurityEngine {
             .count()
     }
 
-    pub(super) fn ascii_payload(bytes: &[u8], offset: usize) -> String {
-        if bytes.len() <= offset {
-            return String::new();
-        }
-        bytes[offset..]
-            .iter()
-            .map(|&b| {
-                if b.is_ascii() && (b >= 0x20 || b == b'\n' || b == b'\r' || b == b'\t') {
-                    b as char
-                } else {
-                    '.'
-                }
-            })
-            .collect()
-    }
 }
