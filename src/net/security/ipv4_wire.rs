@@ -70,20 +70,19 @@ pub(super) fn parse_ipv4_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
     }
 
     let fragment_field = u16::from_be_bytes([raw[ip_offset + 6], raw[ip_offset + 7]]);
-    if fragment_field & 0x1fff != 0 {
+    if fragment_field & 0x3fff != 0 {
         return None;
     }
 
     let total_len = usize::from(u16::from_be_bytes([raw[ip_offset + 2], raw[ip_offset + 3]]));
     let src: [u8; 4] = raw[ip_offset + 12..ip_offset + 16].try_into().ok()?;
     let dst: [u8; 4] = raw[ip_offset + 16..ip_offset + 20].try_into().ok()?;
-    Some(parse_tcp_transport(
+    parse_tcp_transport(
         &raw[ip_offset + ip_header_len..],
-        total_len.saturating_sub(ip_header_len),
+        total_len.checked_sub(ip_header_len)?,
         Ipv4Addr::from(src).into(),
         Ipv4Addr::from(dst).into(),
-        fragment_field & 0x2000 == 0,
-    ))
+    )
 }
 
 pub(super) enum Ipv4DiscoveryProbe {

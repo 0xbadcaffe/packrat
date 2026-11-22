@@ -4,6 +4,41 @@ use packrat_tui::net::{packet::Packet, parser::parse_ethernet};
 
 const TITLE: &str = "TCP payload after reset";
 
+#[test]
+fn incomplete_tcp_capture_is_not_a_malformed_header() {
+    const MALFORMED: &str = "Malformed TCP header";
+    let mut snaplen = ipv4_tcp_packet(1, 100, 0x04, b"");
+    snaplen.bytes.truncate(34 + 13);
+    let mut first_fragment = ipv4_tcp_packet(2, 100, 0x04, b"");
+    first_fragment.bytes[16..18].copy_from_slice(&36_u16.to_be_bytes());
+    first_fragment.bytes[20] = 0x20;
+    first_fragment.bytes.truncate(34 + 16);
+    let mut short_datagram = first_fragment.clone();
+    short_datagram.no = 3;
+    short_datagram.timestamp = 3.0;
+    short_datagram.bytes[20] = 0;
+    let mut invalid_offset = ipv4_tcp_packet(4, 100, 0x04, b"");
+    invalid_offset.bytes[46] = 0x40;
+    let mut invalid_ip_length = ipv4_tcp_packet(5, 100, 0x04, b"");
+    invalid_ip_length.bytes[16..18].copy_from_slice(&19_u16.to_be_bytes());
+
+    let mut core = AnalysisCore::default();
+    for packet in [
+        &snaplen,
+        &first_fragment,
+        &short_datagram,
+        &invalid_offset,
+        &invalid_ip_length,
+    ] {
+        core.analyze(packet);
+    }
+    let evidence: Vec<_> = core.security.ids_alerts.iter()
+        .filter(|alert| alert.signature == MALFORMED)
+        .map(|alert| alert.pkt_no)
+        .collect();
+    assert_eq!(evidence, [3, 4]);
+}
+
 fn ipv6_tcp_packet(no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
     let tcp = ipv4_tcp_packet(no, sequence, flags, payload);
     let mut options_and_tcp = vec![6, 0, 0, 0, 0, 0, 0, 0];

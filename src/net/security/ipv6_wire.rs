@@ -95,13 +95,12 @@ pub(super) fn parse_ipv6_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
     {
         return None;
     }
-    Some(parse_tcp_transport(
+    parse_tcp_transport(
         packet.transport,
         packet.transport.len(),
         Ipv6Addr::from(packet.source).into(),
         Ipv6Addr::from(packet.destination).into(),
-        true,
-    ))
+    )
 }
 
 pub(super) fn is_ipv6_link_local(address: &[u8; 16]) -> bool {
