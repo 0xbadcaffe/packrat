@@ -49,6 +49,7 @@ cmp -s "$state" "$scratch/output"
 check_status "$state" current 0
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
+    and .journal_status=="not_checked" and .journal_pending_events==0
     and .link_type==1 and .link_decodable and .truncated_frames==0 and .disk_free_mib==2048
     and .review_queue[0].packet_evidence_status=="partial"
     and .archive_mode=="alert_evidence" and .archive_rule_ids==["traffic.periodic_fixed_size"]
@@ -340,6 +341,9 @@ live current 91 '[]' >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/unsafe-output" 2>"$scratch/unsafe-errors" &
 watch_pid=$!
 await_packets 91
+jq -e '.journal_status=="write_failed" and .journal_pending_events==1' "$state" >/dev/null
+bash "$watch" --check "$state" | jq -e '.status=="current" and .journal_status=="write_failed"
+    and .journal_pending_events==1' >/dev/null
 for _ in {1..80}; do
     if grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"; then break; fi
     sleep 0.1
@@ -348,13 +352,15 @@ grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"
 live current 92 '[]' | jq '.live_packet_archive="paused"' >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 92
+jq -e '.journal_status=="write_failed" and .journal_pending_events==2' "$state" >/dev/null
 for _ in {1..80}; do
     if jq -se 'map(.packets)==[91,92]' "$scratch/unsafe-output" >/dev/null 2>&1; then break; fi
     sleep 0.1
 done
 rm -- "$state.events.jsonl"
 for _ in {1..80}; do
-    if jq -se 'map(.packets)==[91,92]' "$state.events.jsonl" >/dev/null 2>&1; then break; fi
+    if jq -se 'map(.packets)==[91,92]' "$state.events.jsonl" >/dev/null 2>&1 &&
+       jq -e '.journal_status=="current" and .journal_pending_events==0' "$state" >/dev/null; then break; fi
     sleep 0.1
 done
 kill "$watch_pid"
@@ -363,4 +369,5 @@ watch_pid=''
 grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"
 cmp -s "$scratch/rotation-output" "$journal"
 cmp -s "$scratch/unsafe-output" "$state.events.jsonl"
+jq -e '.journal_status=="current" and .journal_pending_events==0' "$state" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'

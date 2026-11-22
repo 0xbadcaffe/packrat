@@ -72,6 +72,10 @@ check_snapshot() {
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
            triage_status:.status, age_seconds:$age, max_age_seconds,
+           journal_status:(.journal_status | if . == "current" or . == "write_failed" or
+              . == "disabled" or . == "not_checked" then . else null end),
+           journal_pending_events:(.journal_pending_events |
+              if type == "number" and . >= 0 and . <= 16 and floor == . then . else null end),
            alert_sample_gap:(.alert_sample_gap | if type == "boolean" then . else null end),
            capture_id:(.capture_id | scope_id), session_id:(.session_id | scope_id)}' <<< "$raw" 2>/dev/null); then
         printf '%s\n' '{"status":"snapshot_invalid"}'
@@ -259,6 +263,15 @@ temp=''
 timer=''
 trap 'if [[ -n $temp ]]; then rm -f -- "$temp"; fi' EXIT
 trap 'if [[ -n $timer ]]; then kill "$timer" 2>/dev/null || :; wait "$timer" 2>/dev/null || :; fi; exit 0' HUP INT TERM
+publish_snapshot() {
+    snapshot=$(jq -c --arg journal_status "$1" --argjson pending "${#pending_journal[@]}" '
+        . + {journal_status:$journal_status,journal_pending_events:$pending}' <<< "$snapshot")
+    temp=$(mktemp -- "$directory/.packrat-triage.XXXXXXXX")
+    printf '%s\n' "$snapshot" >"$temp"
+    mv -fT -- "$temp" "$state"
+    temp=''
+}
+
 previous=''
 prior=null
 if [[ -f $state && -O $state ]]; then
@@ -328,11 +341,7 @@ while :; do
                 })
               else . end' <<< "$snapshot")
     snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")
-    temp=$(mktemp -- "$directory/.packrat-triage.XXXXXXXX")
-    printf '%s\n' "$snapshot" >"$temp"
-    mv -fT -- "$temp" "$state"
-    temp=''
-    if "$once"; then printf '%s\n' "$snapshot"; break; fi
+    if "$once"; then publish_snapshot not_checked; printf '%s\n' "$snapshot"; break; fi
     key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id, .last_observed)' <<< "$snapshot")
     if [[ $key != "$previous" ]]; then
         event=$(jq -c 'del(.last_observed)' <<< "$event")
@@ -352,7 +361,12 @@ while :; do
         printf '%s\n' "$event"
         previous=$key
     fi
-    if (( ${#pending_journal[@]} > 0 )); then flush_journal; fi
+    journal_status=disabled
+    if [[ $journal_enabled == 1 ]]; then
+        if (( ${#pending_journal[@]} > 0 )); then flush_journal; fi
+        if "$journal_failed"; then journal_status=write_failed; else journal_status=current; fi
+    fi
+    publish_snapshot "$journal_status"
     prior=$(jq -c '.last_observed // .' <<< "$snapshot")
     sleep "$interval" {lock_fd}>&- &
     timer=$!
