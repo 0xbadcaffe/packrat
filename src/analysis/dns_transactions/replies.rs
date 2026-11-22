@@ -25,6 +25,7 @@ pub(super) struct AlternateResponse {
 struct ComparisonBaseline {
     packet: u64,
     resolver: String,
+    truncated: bool,
     answer_fingerprint: Option<answers::AnswerFingerprint>,
 }
 
@@ -33,6 +34,7 @@ impl ComparisonBaseline {
         Self {
             packet: packet.no,
             resolver: packet.src.clone(),
+            truncated: message.truncated(),
             answer_fingerprint: answers::answer_fingerprint(message),
         }
     }
@@ -79,6 +81,20 @@ impl RecentResponse {
             self.retain(packet, message, fingerprint, true);
             return ReplyOutcome::FirstMatch;
         };
+
+        // TC indicates a partial response (RFC 2181, section 9), not an answer change.
+        if baseline.resolver == packet.src && (baseline.truncated || message.truncated()) {
+            let promote = baseline.truncated && !message.truncated();
+            if promote {
+                self.baseline = Some(ComparisonBaseline::new(packet, message));
+            }
+            self.retain(packet, message, fingerprint, promote);
+            return if promote && query.server == packet.src {
+                ReplyOutcome::FirstMatch
+            } else {
+                ReplyOutcome::Repeat
+            };
+        }
 
         let (kind, detail) = if baseline.resolver != packet.src {
             (

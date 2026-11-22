@@ -33,6 +33,9 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
                 if reply.question != exchange.question {
                     lines.push(Line::raw(format!("  Reply question: {}", reply.question)));
                 }
+                if reply.truncated {
+                    lines.push(Line::raw("  DNS TC bit set: answer may be incomplete"));
+                }
             }
             if exchange.additional_replies_omitted {
                 lines.push(Line::raw("Additional replies exceeded the investigation limit"));

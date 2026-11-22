@@ -110,6 +110,12 @@ struct DnsMessage<'a> {
     bytes: &'a [u8],
 }
 
+impl DnsMessage<'_> {
+    fn truncated(&self) -> bool {
+        self.bytes[2] & 0x02 != 0
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct DnsTransactionTracker {
     exchanges: HashMap<TransactionKey, ExchangeBucket>,

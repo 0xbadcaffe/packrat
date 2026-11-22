@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn truncated_replies_are_retained_but_complete_replies_anchor_dns_comparison() {
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let mut tracker = DnsTransactionTracker::default();
+    let query = dns_packet(1, false, client, resolver, 69, "example.test");
+    let mut truncated = dns_packet(2, true, resolver, client, 69, "example.test");
+    truncated.bytes[44] |= 0x02;
+    let mut full = dns_packet(3, true, resolver, client, 69, "example.test");
+    append_answer(&mut full, &[0xc0, 0x0c], 1, 300, &[192, 0, 2, 1]);
+    let mut partial = dns_packet(4, true, resolver, client, 69, "example.test");
+    partial.bytes[44] |= 0x02;
+    append_answer(&mut partial, &[0xc0, 0x0c], 1, 300, &[192, 0, 2, 2]);
+    for packet in [&query, &truncated, &full, &partial] {
+        assert!(tracker.observe(packet).is_empty(), "frame {}", packet.no);
+    }
+
+    let mut changed = dns_packet(5, true, resolver, client, 69, "example.test");
+    append_answer(&mut changed, &[0xc0, 0x0c], 1, 300, &[192, 0, 2, 2]);
+    let result = tracker.observe(&changed);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].kind, DnsFindingKind::ChangedAnswerSet);
+    assert_eq!(result[0].related_packets, [1, 3]);
+    let replies = tracker.exchange_for_packet(&query).unwrap().replies;
+    assert_eq!(
+        replies.iter().map(|reply| (reply.packet, reply.truncated)).collect::<Vec<_>>(),
+        [(2, true), (3, false), (4, true), (5, false)]
+    );
+
+    let mut competing = dns_packet(6, true, "10.0.0.54", client, 69, "example.test");
+    competing.bytes[44] |= 0x02;
+    let result = tracker.observe(&competing);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].kind, DnsFindingKind::ConflictingResponse);
+    assert_eq!(result[0].related_packets, [1, 3]);
+}
+
+#[test]
 fn edns_reply_comparison_uses_validated_full_response_codes() {
     fn add_opt(reply: &mut Packet, payload: u16, ext_rcode: u8, options: &[u8]) {
         reply.bytes[53] = 1; // ARCOUNT.

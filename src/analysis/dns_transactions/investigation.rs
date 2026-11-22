@@ -9,6 +9,7 @@ pub struct DnsReplyEvidence {
     pub question: String,
     pub base_rcode: u8,
     pub response_code: Option<u16>,
+    pub truncated: bool,
 }
 
 impl DnsReplyEvidence {
@@ -19,6 +20,7 @@ impl DnsReplyEvidence {
             question: message.question.name.clone(),
             base_rcode: message.bytes[3] & 0x0f,
             response_code: record_wire::summarize_response(message, false).map(|summary| summary.rcode),
+            truncated: message.truncated(),
         }
     }
 }
