@@ -159,10 +159,17 @@ impl StreamAssembler {
             return None;
         }
 
-        let checked = &mut stream.tls_prefix_checked[usize::from(from_client)];
+        let direction = usize::from(from_client);
+        let checked = &mut stream.tls_prefix_checked[direction];
         let track_tls_prefix = observe_tls && !*checked && data.first().is_none_or(|&kind| kind == 0x16);
-        let progress = consume_contiguous(data, next_seq_slot, pending, segment, track_tls_prefix);
+        let track_dns = observe_tls && stream.dns_offsets[direction].is_some()
+            && (sport == 53 || pkt.dst_port == Some(53));
+        let check_limit = if track_dns { usize::MAX } else if track_tls_prefix { MAX_TLS_RECORD_BYTES } else { 0 };
+        let progress = consume_contiguous(data, next_seq_slot, pending, segment, check_limit);
         *checked |= progress.prefix_conflict;
+        if track_dns && progress.prefix_conflict {
+            stream.dns_offsets[direction] = None;
+        }
         stream.truncated |= progress.discarded_bytes > 0;
         let added_bytes = !progress.segments.is_empty();
         for emitted in progress.segments {
@@ -197,6 +204,25 @@ impl StreamAssembler {
 
     pub fn get(&self, id: &str) -> Option<&ReassembledStream> {
         self.streams.get(id)
+    }
+
+    pub(crate) fn observe_tcp_dns(&mut self, pkt: &Packet) -> DnsTcpObservation {
+        if pkt.src_port != Some(53) && pkt.dst_port != Some(53) {
+            return DnsTcpObservation::Unanchored;
+        }
+        let Some((source, destination)) = tcp_port_pair(pkt) else {
+            return DnsTcpObservation::Unanchored;
+        };
+        if (source != 53 && destination != 53)
+            || (pkt.src_port, pkt.dst_port) != (Some(source), Some(destination))
+        {
+            return DnsTcpObservation::Unanchored;
+        }
+        let Some(stream) = StreamKey::from_packet(pkt).and_then(|key| self.streams.get_mut(&key.id())) else {
+            return DnsTcpObservation::Unanchored;
+        };
+        let from_a = format!("{}:{source}", pkt.src) == stream.key.ep_a;
+        dns::observe(stream, from_a, source, destination)
     }
 
     pub(crate) fn observe_modbus(

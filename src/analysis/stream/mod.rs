@@ -58,10 +58,12 @@ pub fn is_tcp_transport(proto: &str) -> bool {
 }
 
 mod assembler;
+mod dns;
 mod sequence;
 mod tools;
 mod wire;
 pub use assembler::StreamAssembler;
+pub(crate) use dns::{DnsTcpObservation, DnsTcpRecord};
 use sequence::*;
 pub use tools::{StreamMatch, StreamOverlayState, export_segments, search_segments};
 pub use wire::tcp_payload_offset;
@@ -176,6 +178,7 @@ pub struct ReassembledStream {
     server_initial_syn: Option<u32>,
     modbus_offset: Option<usize>,
     tls_prefix_checked: [bool; 2],
+    dns_offsets: [Option<usize>; 2],
 }
 
 impl ReassembledStream {
@@ -209,6 +212,7 @@ impl ReassembledStream {
             first_seen: ts,
             last_seen: ts,
             modbus_offset: Some(0),
+            dns_offsets: [Some(0); 2],
             ..Default::default()
         }
     }

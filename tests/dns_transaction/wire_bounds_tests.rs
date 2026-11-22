@@ -115,3 +115,81 @@ fn tcp_dns_exchange_requires_one_complete_message_and_matches_the_resolver() {
             .is_empty()
     );
 }
+
+fn tcp_dns_slice(template: &Packet, no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
+    let mut wire = template.bytes[..54].to_vec();
+    wire[16..18].copy_from_slice(&((40 + payload.len()) as u16).to_be_bytes());
+    wire[38..42].copy_from_slice(&sequence.to_be_bytes());
+    wire[47] = flags;
+    wire.extend(payload);
+    packrat_tui::net::parser::parse_ethernet(&wire, no, no as f64)
+}
+
+#[test]
+fn reconstructed_tcp_dns_exchanges_retain_frames_and_separate_coalesced_messages() {
+    let query = tcp_dns(1, false, 53, "first.test");
+    let mut query2 = tcp_dns(1, false, 53, "second.test");
+    query2.bytes[56..58].copy_from_slice(&6_u16.to_be_bytes());
+    let reply = tcp_dns(1, true, 53, "different.test");
+    let mut reply2 = tcp_dns(1, true, 53, "second.test");
+    reply2.bytes[56..58].copy_from_slice(&6_u16.to_be_bytes());
+
+    let mut core = AnalysisCore::default();
+    core.analyze(&tcp_dns_slice(&query, 1, 100, 0x02, &[]));
+    core.analyze(&tcp_dns_slice(&reply, 2, 500, 0x12, &[]));
+    let first = tcp_dns_slice(&query, 3, 101, 0x18, &query.bytes[54..59]);
+    core.analyze(&first);
+    let mut rest = query.bytes[59..].to_vec();
+    rest.extend_from_slice(&query2.bytes[54..]);
+    let shared = tcp_dns_slice(&query, 4, 106, 0x18, &rest);
+    core.analyze(&shared);
+
+    let mut responses = reply.bytes[54..].to_vec();
+    responses.extend_from_slice(&reply2.bytes[54..]);
+    core.analyze(&tcp_dns_slice(&reply, 5, 505, 0x18, &responses[4..]));
+    assert!(
+        core.alert_center
+            .items
+            .iter()
+            .all(|alert| alert.title != "DNS transaction question mismatch")
+    );
+    core.analyze(&tcp_dns_slice(&reply, 6, 501, 0x18, &responses[..4]));
+    let alert = core
+        .alert_center
+        .items
+        .iter()
+        .find(|alert| alert.title == "DNS transaction question mismatch")
+        .unwrap();
+    assert_eq!(alert.packet_no, 6);
+    assert_eq!(alert.packet_refs, [4, 3, 5, 6]);
+    let exchange = core.security.dns_exchange_for_packet(&first).unwrap();
+    assert_eq!(exchange.question, "first.test");
+    assert_eq!(exchange.query_frames, [3, 4]);
+    assert_eq!(exchange.replies[0].frames, [5, 6]);
+    assert!(core.security.dns_exchange_for_packet(&shared).is_none());
+    assert!(
+        core.alert_center
+            .items
+            .iter()
+            .all(|alert| alert.title != "DNS reply without observed query")
+    );
+}
+
+#[test]
+fn reconstructed_dns_does_not_use_conflicting_stream_bytes() {
+    let reply = tcp_dns(1, true, 53, "sample.test");
+    let bytes = &reply.bytes[54..];
+    let mut core = AnalysisCore::default();
+    core.analyze(&tcp_dns_slice(&reply, 1, 500, 0x12, &[]));
+    core.analyze(&tcp_dns_slice(&reply, 2, 501, 0x18, &bytes[..8]));
+    let mut overlap = bytes[4..8].to_vec();
+    overlap[0] ^= 1;
+    core.analyze(&tcp_dns_slice(&reply, 3, 505, 0x18, &overlap));
+    core.analyze(&tcp_dns_slice(&reply, 4, 509, 0x18, &bytes[8..]));
+    assert!(
+        core.alert_center
+            .items
+            .iter()
+            .all(|alert| alert.title != "DNS reply without observed query")
+    );
+}

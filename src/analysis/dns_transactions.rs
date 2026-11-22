@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::net::packet::Packet;
+use crate::analysis::stream::{DnsTcpObservation, DnsTcpRecord};
 use sha2::{Digest, Sha256};
 
 mod answers;
@@ -13,6 +14,8 @@ mod negative_answers;
 mod record_wire;
 mod replies;
 mod tcp_wire;
+mod udp_wire;
+pub(crate) use udp_wire::udp_payload;
 
 use correlation::{ExchangeBucket, ReplyMatch};
 pub use investigation::{DnsExchangeEvidence, DnsReplyEvidence};
@@ -99,8 +102,12 @@ fn dns_payload(packet: &Packet) -> Option<(DnsTransport, u16, u16, &[u8])> {
     Some((DnsTransport::Tcp, source, destination, payload))
 }
 
-pub(crate) fn alert_correlation_key(packet: &Packet, finding: &DnsFinding) -> String {
-    let transport = dns_payload(packet).map_or(DnsTransport::Udp, |(transport, ..)| transport);
+pub(crate) fn alert_correlation_key(packet: &Packet, finding: &DnsFinding, id: Option<u16>) -> String {
+    let transport = if id.is_some() {
+        DnsTransport::Tcp
+    } else {
+        dns_payload(packet).map_or(DnsTransport::Udp, |(transport, ..)| transport)
+    };
     let scope = DnsScope::from_packet(packet, transport);
     if matches!(
         finding.kind,
@@ -111,7 +118,7 @@ pub(crate) fn alert_correlation_key(packet: &Packet, finding: &DnsFinding) -> St
             | DnsFindingKind::ChangedAnswerSet
     ) && let Some(query) = finding.related_packets.first()
     {
-        return format!("{scope:?}:query:{query}");
+        return format!("{scope:?}:query:{query}:{id:?}");
     }
     format!("{scope:?}:{}>{}", packet.src, packet.dst)
 }
@@ -119,6 +126,7 @@ pub(crate) fn alert_correlation_key(packet: &Packet, finding: &DnsFinding) -> St
 #[derive(Debug, Clone)]
 struct PendingQuery {
     packet_no: u64,
+    frames: Vec<u64>,
     server: String,
     question: Question,
     timestamp: f64,
@@ -138,6 +146,15 @@ struct DnsMessage<'a> {
     question: Question,
     answer_offset: usize,
     bytes: &'a [u8],
+    frames: &'a [u64],
+}
+
+fn append_evidence(destination: &mut Vec<u64>, frames: &[u64]) {
+    for &frame in frames {
+        if !destination.contains(&frame) {
+            destination.push(frame);
+        }
+    }
 }
 
 impl DnsMessage<'_> {
@@ -158,6 +175,34 @@ impl DnsTransactionTracker {
         let Some((transport, source_port, destination_port, payload)) = dns_payload(packet) else {
             return Vec::new();
         };
+        self.observe_message(packet, transport, (source_port, destination_port), payload, &[])
+    }
+
+    pub(crate) fn observe_stream(
+        &mut self, packet: &Packet, observation: DnsTcpObservation,
+    ) -> Vec<(Option<u16>, DnsFinding)> {
+        let DnsTcpObservation::Anchored { source, destination, records } = observation else {
+            let Some((transport, source, destination, bytes)) = dns_payload(packet) else { return Vec::new(); };
+            let id = (transport == DnsTransport::Tcp).then(|| DnsQueryHeader::parse(bytes)).flatten()
+                .map(|header| header.id);
+            return self.observe_message(packet, transport, (source, destination), bytes, &[])
+                .into_iter().map(|finding| (id, finding)).collect();
+        };
+        let mut output = Vec::new();
+        for DnsTcpRecord { bytes, frames } in records {
+            let id = DnsQueryHeader::parse(&bytes).map(|header| header.id);
+            for mut finding in self.observe_message(packet, DnsTransport::Tcp, (source, destination), &bytes, &frames) {
+                append_evidence(&mut finding.related_packets, &frames);
+                output.push((id, finding));
+            }
+        }
+        output
+    }
+
+    fn observe_message(
+        &mut self, packet: &Packet, transport: DnsTransport, (source_port, destination_port): (u16, u16),
+        payload: &[u8], frames: &[u64],
+    ) -> Vec<DnsFinding> {
         if source_port != 53 && destination_port != 53 {
             return Vec::new();
         }
@@ -178,9 +223,10 @@ impl DnsTransactionTracker {
                 ),
             }];
         }
-        let Some(message) = parse_single_question(payload, header) else {
+        let Some(mut message) = parse_single_question(payload, header) else {
             return Vec::new();
         };
+        message.frames = frames;
         let scope = DnsScope::from_packet(packet, transport);
 
         if !message.response {
@@ -190,6 +236,7 @@ impl DnsTransactionTracker {
                 scope.transaction(&packet.src, source_port, message.id, &packet.dst),
                 PendingQuery {
                     packet_no: packet.no,
+                    frames: frames.to_vec(),
                     server: packet.dst.clone(),
                     question: message.question,
                     timestamp: packet.timestamp,
@@ -237,13 +284,18 @@ impl DnsTransactionTracker {
             match previous.observe_follow_up(packet, query, &message) {
                 ReplyOutcome::FirstMatch => {}
                 ReplyOutcome::Repeat => return Vec::new(),
-                ReplyOutcome::Finding(finding) => return vec![finding],
+                    ReplyOutcome::Finding(mut finding) => {
+                        append_evidence(&mut finding.related_packets, &query.frames);
+                        return vec![finding];
+                    }
             }
         } else {
             let matches = query.question == message.question;
             exchange.reply = Some(RecentResponse::new(packet, &message, matches));
             if !matches {
-                return vec![question_mismatch(query, &message)];
+                let mut finding = question_mismatch(query, &message);
+                append_evidence(&mut finding.related_packets, &query.frames);
+                return vec![finding];
             }
         }
 
@@ -273,6 +325,9 @@ impl DnsTransactionTracker {
                 ),
                 related_packets: vec![query.packet_no],
             });
+        }
+        for finding in &mut findings {
+            append_evidence(&mut finding.related_packets, &query.frames);
         }
         findings
     }
@@ -345,6 +400,7 @@ fn parse_single_question(bytes: &[u8], header: DnsQueryHeader) -> Option<DnsMess
     let qtype = u16::from_be_bytes([*bytes.get(end)?, *bytes.get(end + 1)?]);
     let qclass = u16::from_be_bytes([*bytes.get(end + 2)?, *bytes.get(end + 3)?]);
     Some(DnsMessage {
+        frames: &[],
         id: header.id,
         response: header.response,
         question: Question {
@@ -403,69 +459,6 @@ pub(crate) fn parse_name(bytes: &[u8], start: usize) -> Option<(String, usize)> 
         }
         labels.push(escaped);
         cursor = label_end;
-    }
-    None
-}
-
-pub(crate) fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
-    if packet.capture.as_ref().is_some_and(|metadata| metadata.link_type != 1) {
-        return None;
-    }
-    let raw = packet.bytes.as_slice();
-    let mut network = 14usize;
-    let mut ether_type = u16::from_be_bytes([*raw.get(12)?, *raw.get(13)?]);
-    for _ in 0..2 {
-        if !matches!(ether_type, 0x8100 | 0x88a8) {
-            break;
-        }
-        ether_type = u16::from_be_bytes([*raw.get(network + 2)?, *raw.get(network + 3)?]);
-        network += 4;
-    }
-    let (transport, network_end) = match ether_type {
-        0x0800 if raw.get(network)? >> 4 == 4 && raw.get(network + 9) == Some(&17) => {
-            let ihl = usize::from(raw.get(network)? & 0x0f) * 4;
-            let fragment = u16::from_be_bytes(raw.get(network + 6..network + 8)?.try_into().ok()?);
-            if ihl < 20 || fragment & 0x3fff != 0 {
-                return None;
-            }
-            let length = u16::from_be_bytes(raw.get(network + 2..network + 4)?.try_into().ok()?);
-            (network + ihl, network + usize::from(length))
-        }
-        0x86dd if raw.get(network)? >> 4 == 6 => {
-            let length = u16::from_be_bytes(raw.get(network + 4..network + 6)?.try_into().ok()?);
-            let end = network + 40 + usize::from(length);
-            (ipv6_udp_offset(&raw[..end.min(raw.len())], network)?, end)
-        }
-        _ => return None,
-    };
-    let udp = raw.get(transport..network_end.min(raw.len()))?;
-    let &[src_hi, src_lo, dst_hi, dst_lo, len_hi, len_lo, _, _] = udp.first_chunk::<8>()?;
-    let udp_length = usize::from(u16::from_be_bytes([len_hi, len_lo]));
-    Some((
-        u16::from_be_bytes([src_hi, src_lo]),
-        u16::from_be_bytes([dst_hi, dst_lo]),
-        udp.get(8..udp_length)?,
-    ))
-}
-
-fn ipv6_udp_offset(raw: &[u8], network: usize) -> Option<usize> {
-    let mut next = *raw.get(network + 6)?;
-    let mut cursor = network + 40;
-    for _ in 0..16 {
-        if next == 17 {
-            return Some(cursor);
-        }
-        match next {
-            0 | 43 | 60 => {
-                next = *raw.get(cursor)?;
-                cursor = cursor.checked_add(((*raw.get(cursor + 1)? as usize) + 1) * 8)?;
-            }
-            51 => {
-                next = *raw.get(cursor)?;
-                cursor = cursor.checked_add(((*raw.get(cursor + 1)? as usize) + 2) * 4)?;
-            }
-            _ => return None,
-        }
     }
     None
 }

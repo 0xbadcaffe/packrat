@@ -236,8 +236,8 @@ impl SecurityEngine {
         });
     }
 
-    pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet) {
-        for finding in self.dns_transactions.observe(pkt) {
+    pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet, dns: crate::analysis::stream::DnsTcpObservation) {
+        for (id, finding) in self.dns_transactions.observe_stream(pkt, dns) {
             let (signature, severity) = match finding.kind {
                 DnsFindingKind::InvalidQuestionCount => ("DNS invalid question count", Severity::Low),
                 DnsFindingKind::ReplyWithoutObservedQuery => {
@@ -264,7 +264,7 @@ impl SecurityEngine {
                     ("DNS answer set changed at the same resolver", Severity::Medium)
                 }
             };
-            let correlation_key = crate::analysis::dns_transactions::alert_correlation_key(pkt, &finding);
+            let correlation_key = crate::analysis::dns_transactions::alert_correlation_key(pkt, &finding, id);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,

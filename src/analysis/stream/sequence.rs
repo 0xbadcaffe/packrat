@@ -59,11 +59,11 @@ pub(super) fn consume_contiguous(
     next_sequence: &mut Option<u32>,
     pending: &mut Vec<PendingTcpSegment>,
     first: PendingTcpSegment,
-    track_tls_prefix: bool,
+    overlap_check_limit: usize,
 ) -> AssemblyProgress {
     let mut progress = AssemblyProgress::default();
-    if track_tls_prefix {
-        progress.prefix_conflict = conflicts_with_prefix(data, *next_sequence, &first);
+    if overlap_check_limit != 0 {
+        progress.prefix_conflict = conflicts_with_prefix(data, *next_sequence, &first, overlap_check_limit);
     }
     progress.fin_consumed = consume_one(data, next_sequence, first, &mut progress);
 
@@ -77,8 +77,8 @@ pub(super) fn consume_contiguous(
         };
         pending.retain(|segment| {
             let payload_end = segment.sequence.wrapping_add(segment.payload.len() as u32);
-            if track_tls_prefix && !progress.prefix_conflict {
-                progress.prefix_conflict = conflicts_with_prefix(data, Some(expected), segment);
+            if overlap_check_limit != 0 && !progress.prefix_conflict {
+                progress.prefix_conflict = conflicts_with_prefix(data, Some(expected), segment, overlap_check_limit);
             }
             sequence_delta(payload_end, expected) > 0 || (segment.fin && payload_end == expected)
         });
@@ -96,12 +96,12 @@ pub(super) fn consume_contiguous(
     progress
 }
 
-fn conflicts_with_prefix(data: &[u8], expected: Option<u32>, segment: &PendingTcpSegment) -> bool {
+fn conflicts_with_prefix(data: &[u8], expected: Option<u32>, segment: &PendingTcpSegment, limit: usize) -> bool {
     let Some(expected) = expected else { return false };
     let behind = sequence_delta(expected, segment.sequence).max(0) as usize;
     let offset = data.len().saturating_sub(behind);
     let skipped = behind.saturating_sub(data.len());
-    let end = data.len().min(MAX_TLS_RECORD_BYTES);
+    let end = data.len().min(limit);
     let count = behind.saturating_sub(skipped)
         .min(segment.payload.len().saturating_sub(skipped))
         .min(end.saturating_sub(offset));

@@ -12,6 +12,9 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
                 Line::raw(format!("Expected resolver {}", exchange.expected_resolver)),
                 Line::raw(format!("{} Query #{}", marker(packet.no, exchange.query_packet), exchange.query_packet)),
             ];
+            for frame in exchange.query_frames.into_iter().filter(|&frame| frame != exchange.query_packet) {
+                lines.push(Line::raw(format!("{}   Query bytes #{frame}", marker(packet.no, frame))));
+            }
             for frame in exchange.repeated_query_packets {
                 lines.push(Line::raw(format!("{} Repeat query #{frame}", marker(packet.no, frame))));
             }
@@ -35,6 +38,9 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
                 }
                 if reply.truncated {
                     lines.push(Line::raw("  DNS TC bit set: answer may be incomplete"));
+                }
+                for frame in reply.frames.into_iter().filter(|&frame| frame != reply.packet) {
+                    lines.push(Line::raw(format!("{}   Reply bytes #{frame}", marker(packet.no, frame))));
                 }
             }
             if exchange.additional_replies_omitted {

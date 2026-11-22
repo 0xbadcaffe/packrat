@@ -27,8 +27,12 @@ impl App {
         if self.dns_frame_origin(exchange.query_packet) != origin {
             return None;
         }
+        exchange.query_frames.retain(|&query| self.dns_frame_origin(query) == origin);
         exchange.repeated_query_packets.retain(|&query| self.dns_frame_origin(query) == origin);
         exchange.replies.retain(|reply| self.dns_frame_origin(reply.packet) == origin);
+        for reply in &mut exchange.replies {
+            reply.frames.retain(|&frame| self.dns_frame_origin(frame) == origin);
+        }
         Some(exchange)
     }
 
@@ -48,9 +52,12 @@ impl App {
             self.set_status("No retained DNS exchange for this frame");
             return;
         };
-        let frames: Vec<_> = std::iter::once(exchange.query_packet)
+        let mut frames: Vec<_> = std::iter::once(exchange.query_packet)
+            .chain(exchange.query_frames)
             .chain(exchange.repeated_query_packets)
-            .chain(exchange.replies.iter().map(|reply| reply.packet)).collect();
+            .chain(exchange.replies.iter().flat_map(|reply| std::iter::once(reply.packet).chain(reply.frames.iter().copied()))).collect();
+        frames.sort_unstable();
+        frames.dedup();
         let Some(index) = frames.iter().position(|&frame| frame == current) else { return };
         let mut archive = None;
         let mut attempted_archive = false;

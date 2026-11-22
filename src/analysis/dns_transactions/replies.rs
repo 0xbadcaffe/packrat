@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 
-use super::{DnsFinding, DnsFindingKind, DnsMessage, DnsReplyEvidence, PendingQuery, answers};
+use super::{DnsFinding, DnsFindingKind, DnsMessage, DnsReplyEvidence, PendingQuery, answers, append_evidence};
 use crate::net::packet::Packet;
 
 const MAX_ALTERNATE_REPLIES: usize = 8;
@@ -24,6 +24,7 @@ pub(super) struct AlternateResponse {
 #[derive(Debug)]
 struct ComparisonBaseline {
     packet: u64,
+    frames: Vec<u64>,
     resolver: String,
     truncated: bool,
     answer_fingerprint: Option<answers::AnswerFingerprint>,
@@ -33,6 +34,7 @@ impl ComparisonBaseline {
     fn new(packet: &Packet, message: &DnsMessage<'_>) -> Self {
         Self {
             packet: packet.no,
+            frames: message.frames.to_vec(),
             resolver: packet.src.clone(),
             truncated: message.truncated(),
             answer_fingerprint: answers::answer_fingerprint(message),
@@ -124,7 +126,8 @@ impl RecentResponse {
             };
             (kind, format!("{difference} from resolver {}", baseline.resolver))
         };
-        let related_packets = vec![query.packet_no, baseline.packet];
+        let mut related_packets = vec![query.packet_no, baseline.packet];
+        append_evidence(&mut related_packets, &baseline.frames);
         self.retain(packet, message, fingerprint, false);
         ReplyOutcome::Finding(DnsFinding {
             kind,

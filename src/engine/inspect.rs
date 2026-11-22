@@ -32,8 +32,9 @@ impl AnalysisCore {
         // explicit operator review; lower severities remain in the Security tab.
         let segmented_tls = self.streams.ingest_observing_tls(pkt);
         let modbus = self.streams.observe_modbus(pkt);
+        let dns = self.streams.observe_tcp_dns(pkt);
         let findings = self.security.inspect_with_context(
-            pkt, modbus, segmented_tls.as_ref().map(|(selection, _)| *selection),
+            pkt, modbus, segmented_tls.as_ref().map(|(selection, _)| *selection), dns,
         );
         for finding in &findings.ids {
             let alert = &finding.alert;

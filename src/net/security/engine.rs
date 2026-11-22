@@ -107,10 +107,12 @@ impl SecurityEngine {
 
     /// Process a single packet through all detection engines.
     pub fn update(&mut self, pkt: &Packet) {
-        self.update_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None);
+        self.update_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None,
+            crate::analysis::stream::DnsTcpObservation::Unanchored);
     }
 
-    fn update_with_context(&mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation, tls: Option<(u16, u16)>) {
+    fn update_with_context(&mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation,
+        tls: Option<(u16, u16)>, dns: crate::analysis::stream::DnsTcpObservation) {
         self.findings = DetectionBatch::default();
         self.check_ipv4_fragments(pkt);
         let no_new_tcp_payload = self.check_tcp_integrity(pkt);
@@ -123,7 +125,7 @@ impl SecurityEngine {
         self.check_ipv6_fragment_reassembly(pkt);
         self.check_http_request_smuggling(pkt);
         self.check_industrial_policy(pkt, modbus);
-        self.check_dns_transaction_integrity(pkt);
+        self.check_dns_transaction_integrity(pkt, dns);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -136,13 +138,15 @@ impl SecurityEngine {
     }
 
     pub fn inspect(&mut self, pkt: &Packet) -> DetectionBatch {
-        self.inspect_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None)
+        self.inspect_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None,
+            crate::analysis::stream::DnsTcpObservation::Unanchored)
     }
 
     pub(crate) fn inspect_with_context(
         &mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation, tls: Option<(u16, u16)>,
+        dns: crate::analysis::stream::DnsTcpObservation,
     ) -> DetectionBatch {
-        self.update_with_context(pkt, modbus, tls);
+        self.update_with_context(pkt, modbus, tls, dns);
         std::mem::take(&mut self.findings)
     }
 
