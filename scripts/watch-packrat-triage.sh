@@ -21,6 +21,7 @@ usage() {
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
         'alert_sample_gap warns that a burst may have exceeded the recent-alert sample; review saved history.' \
+        'Continuous mode journals sanitized changes in STATE.json.events.jsonl and one 1 MiB rotation (PACKRAT_TRIAGE_WATCH_JOURNAL=0 disables this).' \
         'Supervision retries unexpected exits with backoff; configuration errors stop the supervisor.' \
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
@@ -87,8 +88,13 @@ fi
 shift 2
 interval=${PACKRAT_TRIAGE_WATCH_INTERVAL:-30}
 deadline=${PACKRAT_TRIAGE_WATCH_TIMEOUT:-25}
+journal_enabled=${PACKRAT_TRIAGE_WATCH_JOURNAL:-1}
 if [[ ! $interval =~ ^[1-9][0-9]{0,4}$ || ! $deadline =~ ^[1-9][0-9]{0,4}$ ]]; then
     printf '%s\n' 'Triage interval and deadline must be positive seconds.' >&2
+    exit 2
+fi
+if [[ $journal_enabled != 0 && $journal_enabled != 1 ]]; then
+    printf '%s\n' 'PACKRAT_TRIAGE_WATCH_JOURNAL must be 0 or 1.' >&2
     exit 2
 fi
 for command in jq timeout flock; do
@@ -123,6 +129,29 @@ if "$supervise"; then
 fi
 exec {lock_fd}>>"$state.lock"
 flock -n "$lock_fd" || { printf '%s\n' 'Triage state is already being refreshed.' >&2; exit 2; }
+
+journal="$state.events.jsonl" journal_limit=1048576 journal_failed=false
+journal_path_safe() {
+    local path=$1 attrs
+    [[ ! -L $path ]] || return 1
+    [[ -e $path ]] || return 0
+    [[ -f $path && -O $path ]] && attrs=$(stat --format='%a:%h' -- "$path") &&
+        [[ $attrs =~ ^([0-7]{3,4}):1$ ]] && (( (8#${BASH_REMATCH[1]} & 077) == 0 ))
+}
+
+append_journal() {
+    local size=0 line=$1
+    journal_path_safe "$journal" && journal_path_safe "$journal.1" || return 1
+    (( ${#line} + 1 <= journal_limit )) || return 1
+    if [[ -f $journal ]]; then
+        size=$(stat --format='%s' -- "$journal") || return 1
+        [[ $size =~ ^[0-9]{1,7}$ ]] && (( size <= journal_limit )) || return 1
+    fi
+    if (( size + ${#line} + 1 > journal_limit )); then
+        mv -fT -- "$journal" "$journal.1" || return 1
+    fi
+    printf '%s\n' "$line" >>"$journal"
+}
 
 sanitize() {
     jq -cse "$snapshot_validation"'
@@ -291,7 +320,16 @@ while :; do
     if "$once"; then printf '%s\n' "$snapshot"; break; fi
     key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id, .last_observed)' <<< "$snapshot")
     if [[ $key != "$previous" ]]; then
-        jq -c 'del(.last_observed)' <<< "$event"
+        event=$(jq -c 'del(.last_observed)' <<< "$event")
+        if [[ $journal_enabled == 1 ]]; then
+            if append_journal "$event"; then
+                journal_failed=false
+            elif ! "$journal_failed"; then
+                printf '%s\n' 'Triage event journal write failed; live monitoring continues.' >&2
+                journal_failed=true
+            fi
+        fi
+        printf '%s\n' "$event"
         previous=$key
     fi
     prior=$(jq -c '.last_observed // .' <<< "$snapshot")

@@ -203,6 +203,8 @@ jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_ale
     and .[8].alert_changes.updated==[{alert_id:9,fields:["disposition","packet_evidence_status"]}]
     and .[9].highest_observed_alert_id==9 and .[10].alert_changes.newly_observed==[]
     and .[11].highest_observed_alert_id==12 and .[11].alert_changes==null' "$scratch/events" >/dev/null
+cmp -s "$scratch/events" "$state.events.jsonl"
+[[ $(stat --format='%a' "$state.events.jsonl") == 600 ]]
 
 jq '.updated_at=(now - 360 | todateiso8601) | .capture_id="a" | .highest_observed_alert_id=99' "$state" >"$scratch/stale.next"
 mv -- "$scratch/stale.next" "$state"
@@ -313,4 +315,38 @@ watch_pid=''
 jq -se 'length==1 and .[0].alert_changes.updated==
     [{alert_id:2,fields:["hit_count","disposition"]}] and .[0].alert_changes.newly_observed==[]
     ' "$scratch/queue-events" >/dev/null
+
+state="$scratch/journal-rotation.json"
+journal="$state.events.jsonl"
+truncate -s 1048570 "$journal"
+chmod 0600 "$journal"
+live current 90 '[]' >"$report"
+PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/rotation-output" &
+watch_pid=$!
+await_packets 90
+for _ in {1..80}; do
+    if [[ -s $journal && -f $journal.1 ]] &&
+       jq -se 'length==1 and .[0].packets==90' "$journal" >/dev/null 2>&1; then break; fi
+    sleep 0.1
+done
+kill "$watch_pid"
+wait "$watch_pid"
+watch_pid=''
+[[ $(stat --format='%s' "$journal.1") == 1048570 ]]
+cmp -s "$scratch/rotation-output" "$journal"
+state="$scratch/journal-unsafe.json"
+ln -s "$journal" "$state.events.jsonl"
+live current 91 '[]' >"$report"
+PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/unsafe-output" 2>"$scratch/unsafe-errors" &
+watch_pid=$!
+await_packets 91
+for _ in {1..80}; do
+    if grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"; then break; fi
+    sleep 0.1
+done
+kill "$watch_pid"
+wait "$watch_pid"
+watch_pid=''
+grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"
+cmp -s "$scratch/rotation-output" "$journal"
 printf '%s\n' 'Packrat triage watcher tests passed'
