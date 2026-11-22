@@ -5,7 +5,7 @@ usage() {
     printf '%s\n' 'Usage: bash watch-packrat-health.sh [--once]' \
         'Environment: PACKRAT_HEALTH_PORT (9477), PACKRAT_HEALTH_INTERVAL (15 seconds),' \
         'PACKRAT_HEALTH_HEARTBEAT (300 seconds between unchanged reports; 0 disables),' \
-        'PACKRAT_HEALTH_STATE_FILE (optional absolute path for the latest published record),' \
+        'PACKRAT_HEALTH_STATE_FILE (optional absolute path refreshed every poll),' \
         'PACKRAT_EXPECT_INTERFACE (optional expected live capture interface),' \
         'PACKRAT_ALERT_SESSION (optional tmux session), PACKRAT_DISK_PATH (/),' \
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
@@ -237,12 +237,9 @@ fi
 
 publish_state() {
     local record=$1
-    if [[ -n $state_file ]]; then
-        pending_state=$(mktemp -- "${state_file%/*}/.packrat-health.XXXXXXXX") || return 1
-        printf '%s\n' "$record" >"$pending_state" && mv -T -- "$pending_state" "$state_file" || return 1
-        pending_state=
-    fi
-    printf '%s\n' "$record"
+    pending_state=$(mktemp -- "${state_file%/*}/.packrat-health.XXXXXXXX") || return 1
+    printf '%s\n' "$record" >"$pending_state" && mv -T -- "$pending_state" "$state_file" || return 1
+    pending_state=
 }
 
 while :; do
@@ -260,14 +257,17 @@ while :; do
     elif (( heartbeat > 0 && SECONDS - last_emit >= heartbeat )); then
         event=heartbeat
     fi
-    if [[ -n $event ]]; then
-        record=$(jq -c --arg time "$(date -u +%FT%TZ)" --arg event "$event" '
+    if [[ -n $event || -n $state_file ]]; then
+        record=$(jq -c --arg time "$(date -u +%FT%TZ)" --arg event "${event:-sample}" '
             del(.next_baseline) + {record_type:"capture_health", timestamp:$time, event:$event}
         ' <<< "$state") || exit 2
-        if ! publish_state "$record"; then
+        if [[ -n $state_file ]] && ! publish_state "$record"; then
             printf '%s\n' 'Could not publish the capture health record.' >&2
             exit 2
         fi
+    fi
+    if [[ -n $event ]]; then
+        printf '%s\n' "$record" || exit 2
         previous=$change_key
         last_emit=$SECONDS
     fi

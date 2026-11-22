@@ -184,6 +184,12 @@ PACKRAT_HEALTH_HEARTBEAT=-1 bash "$watch" --once >/dev/null 2>&1 || status=$?
     [[ $(<"$PACKRAT_HEALTH_STATE_FILE") == "$stream" ]]
     [[ $(stat --format=%a -- "$PACKRAT_HEALTH_STATE_FILE") == 600 ]]
 
+    samples=$(jq -c '[., . + {capture_queue:{depth:5,capacity:100}}]' <<< "$PACKRAT_FAKE_HEALTH")
+    PACKRAT_FAKE_STEPS=2 PACKRAT_FAKE_SAMPLES="$samples" PACKRAT_HEALTH_HEARTBEAT=0 \
+        bash "$watch" | jq -se 'length == 1 and .[0].event == "initial" and .[0].capture_queue == null' >/dev/null
+    jq -e '.event == "sample" and .capture_queue.depth == 5 and .issues == []' \
+        "$PACKRAT_HEALTH_STATE_FILE" >/dev/null
+
     status=0
     stream=$(PACKRAT_FAKE_HEALTH=unreachable bash "$watch" --once) || status=$?
     [[ $status == 1 && $(<"$PACKRAT_HEALTH_STATE_FILE") == "$stream" ]]
