@@ -338,6 +338,52 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn industrial_replay_keeps_split_request_evidence_on_its_own_interface() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let write_like = [0, 2, 0, 0, 0, 2, 1, 6];
+    let read = [0, 1, 0, 0, 0, 6, 1, 3, 0, 0, 0, 1];
+    let write_capture = |name: &str, segments: &[(u32, u32, u8, &[u8])]| {
+        let mut writer = PcapNgWriter::create(&root.join(name)).unwrap();
+        for (index, &(interface_id, sequence, flags, bytes)) in segments.iter().enumerate() {
+            let frame = index as u64 + 1;
+            let mut packet = support::tcp(frame, sequence, flags, bytes, false);
+            packet.bytes[36..38].copy_from_slice(&502_u16.to_be_bytes());
+            let length = packet.bytes.len() as u32;
+            packet.capture = Some(CaptureMetadata {
+                timestamp: Some(CaptureTimestamp { ticks: frame, resolution: TimestampResolution::Decimal(0), offset_seconds: 0 }),
+                captured_length: length, wire_length: length, link_type: 1,
+                section_id: 0, interface_id, interface_name: None, comments: Vec::new(),
+            });
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+    };
+    write_capture("benign.pcapng", &[(0, 100, 0x02, &[]), (0, 101, 0x18, &read)]);
+    write_capture("scoped.pcapng", &[
+        (0, 100, 0x02, &[]), (1, 100, 0x02, &[]),
+        (0, 106, 0x18, &write_like[5..]), (1, 106, 0x18, &write_like[5..]),
+        (0, 101, 0x18, &write_like[..5]), (1, 101, 0x18, &write_like[..5]),
+        (0, 101, 0x18, &write_like[..5]),
+    ]);
+    let manifest = root.join("industrial.json");
+    let rule = "industrial.state_change";
+    let labels = json!({"version":1,"strict":true,"cases":[
+        {"name":"ordinary read", "capture":"benign.pcapng", "expect_counts":{(rule):0}},
+        {"name":"separate streams", "capture":"scoped.pcapng", "expect_counts":{(rule):2},
+         "expect_snapshots":2, "opening_frames":{(rule):[5,6]},
+         "opening_evidence":[{"rule_id":rule,"opening_frame":5,"frames":[3,5]},
+                             {"rule_id":rule,"opening_frame":6,"frames":[4,6]}]}
+    ]});
+    std::fs::write(&manifest, labels.to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], 2);
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn outbound_transfer_replay_checks_thresholds_scope_and_packet_samples() {
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();

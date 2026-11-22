@@ -351,6 +351,10 @@ fn industrial_alerts_group_only_the_same_operation_transport_and_scope() {
     assert_eq!(alerts[0].packet_refs, [1, 6]);
     assert_eq!(alerts[0].hit_count, 2);
     assert_eq!(alerts[0].flow.unwrap().transport, packrat_tui::analysis::alert_center::AlertTransport::Tcp);
+    assert!(alerts[0].detail.contains("10.0.0.5:50000 to 10.0.0.10:20000"));
+    assert!(alerts[0].detail.contains("capture section 0, interface 0, VLAN 10"));
+    assert!(alerts[2].detail.contains("VLAN 20"));
+    assert!(alerts[3].detail.contains("interface 1, VLAN 10"));
     assert_eq!(alerts[1].flow.unwrap().transport, packrat_tui::analysis::alert_center::AlertTransport::Udp);
     assert!(alerts[2..].iter().all(|alert| alert.packet_refs.len() == 1 && alert.hit_count == 1));
 }

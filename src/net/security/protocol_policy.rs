@@ -35,7 +35,7 @@ impl SecurityEngine {
                 && let Some((previous, frame)) = observe_dhcp_server(state, server, pkt)
             {
                 let kind = if message.message_type == 2 { "OFFER" } else { "ACK" };
-                let scope_name = dhcp_scope_name(scope);
+                let scope_name = network_scope_name(scope);
                 self.push_ids_finding(IdsFinding {
                     alert: IdsAlert {
                         pkt_no: pkt.no,
@@ -52,7 +52,7 @@ impl SecurityEngine {
         } else if !message.client_identity.is_empty()
             && let Some((count, related_packets)) = dhcp_client_burst(state, message.client_identity, pkt)
         {
-            let scope_name = dhcp_scope_name(scope);
+            let scope_name = network_scope_name(scope);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
@@ -206,9 +206,16 @@ impl SecurityEngine {
     ) {
         let scope = service_scope(pkt);
         let interface = pkt.capture.as_ref().and_then(|meta| meta.interface_name.as_deref());
-        let transport = crate::analysis::alert_center::AlertFlow::from_packet(pkt).map(|flow| flow.transport);
+        let flow = crate::analysis::alert_center::AlertFlow::from_packet(pkt);
+        let transport = flow.map(|flow| flow.transport);
         let key = format!("{scope:?}:{interface:?}:{}:{}:{transport:?}:[{}]:{:?}>[{}]:{:?}",
             finding.protocol, finding.operation, pkt.src, pkt.src_port, pkt.dst, pkt.dst_port);
+        let scope_name = network_scope_name(scope);
+        let detail = match flow {
+            Some(flow) => format!("{} {} from {} to {} on {scope_name}",
+                finding.protocol, finding.operation, flow.source, flow.destination),
+            None => format!("{} on {scope_name}", finding.detail(pkt)),
+        };
         self.push_ids_finding(IdsFinding {
             alert: IdsAlert {
                 pkt_no: pkt.no,
@@ -222,7 +229,7 @@ impl SecurityEngine {
                 } else {
                     Severity::High
                 },
-                detail: finding.detail(pkt),
+                detail,
             },
             related_packets: frames,
             correlation_key: Some(key),
@@ -271,7 +278,7 @@ impl SecurityEngine {
     }
 }
 
-fn dhcp_scope_name(scope: ServiceScope) -> String {
+fn network_scope_name(scope: ServiceScope) -> String {
     let (interface, outer_vlan, vlan) = scope;
     let interface = interface.map_or_else(
         || "unknown capture interface".to_owned(),
