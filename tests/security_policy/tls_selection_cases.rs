@@ -1,33 +1,12 @@
 use super::*;
 use packrat_tui::{engine::AnalysisCore, net::parser::parse_ethernet};
-
-fn server_hello(version: u16, cipher: u16, extensions: &[u8]) -> Vec<u8> {
-    let mut body = version.to_be_bytes().to_vec();
-    body.extend([0x7f; 32]);
-    body.push(0); // Session ID length.
-    body.extend(cipher.to_be_bytes());
-    body.push(0); // No compression.
-    if !extensions.is_empty() {
-        body.extend((extensions.len() as u16).to_be_bytes());
-        body.extend(extensions);
-    }
-    let mut record = vec![0x16, 3, 1]; // This compatibility field is never the selected version.
-    record.extend(((body.len() + 4) as u16).to_be_bytes());
-    record.extend([2, 0, 0, body.len() as u8]);
-    record.extend(body);
-    record
-}
+#[path = "../support/tls_selection.rs"]
+mod tls_wire;
+use tls_wire::{server_hello, tls_packet, tls_segment};
 
 fn https_packet(no: u64, payload: &[u8], from_server: bool) -> Packet {
     let (source, destination) = if from_server { (443, 50000) } else { (50000, 443) };
-    tls_packet(no, source, destination, payload)
-}
-
-fn tls_packet(no: u64, source: u16, destination: u16, payload: &[u8]) -> Packet {
-    let mut raw = ipv4_tcp_packet(no, no as u32 * 1000, 0x18, payload).bytes;
-    raw[34..36].copy_from_slice(&source.to_be_bytes());
-    raw[36..38].copy_from_slice(&destination.to_be_bytes());
-    parse_ethernet(&raw, no, no as f64)
+    tls_packet(no, no as u32 * 1000, 0x18, source, destination, payload)
 }
 
 #[test]
@@ -100,9 +79,9 @@ fn tls_selection_on_alternate_ports_requires_a_framed_tcp_server_hello() {
     let hello = server_hello(0x0302, 0xc011, &[]);
     let mut invalid_type = hello.clone();
     invalid_type[5] = 1;
-    core.analyze(&tls_packet(1, 8443, 50000, &invalid_type));
-    core.analyze(&tls_packet(2, 993, 50000, &hello[..hello.len() - 1]));
-    let mut udp = tls_packet(3, 8443, 50000, &hello).bytes;
+    core.analyze(&tls_segment(1, 1000, 0x18, &invalid_type));
+    core.analyze(&tls_packet(2, 2000, 0x18, 993, 50000, &hello[..hello.len() - 1]));
+    let mut udp = tls_segment(3, 3000, 0x18, &hello).bytes;
     udp.drain(42..54);
     udp[23] = 17;
     udp[38..40].copy_from_slice(&((8 + hello.len()) as u16).to_be_bytes());
@@ -111,8 +90,8 @@ fn tls_selection_on_alternate_ports_requires_a_framed_tcp_server_hello() {
     core.analyze(&parse_ethernet(&udp, 3, 3.0));
     assert!(core.alert_center.items.iter().all(|alert| alert.source != "TLS"));
 
-    core.analyze(&tls_packet(4, 8443, 50000, &hello));
-    core.analyze(&tls_packet(5, 993, 50000, &hello));
+    core.analyze(&tls_segment(4, 4000, 0x18, &hello));
+    core.analyze(&tls_packet(5, 5000, 0x18, 993, 50000, &hello));
     let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "TLS").collect();
     assert_eq!(alerts.len(), 4);
     for (port, frame) in [(8443, 4), (993, 5)] {
@@ -120,13 +99,6 @@ fn tls_selection_on_alternate_ports_requires_a_framed_tcp_server_hello() {
         assert_eq!(scoped.len(), 2);
         assert!(scoped.iter().all(|alert| alert.packet_refs == [frame]));
     }
-}
-
-fn tls_segment(no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
-    let mut wire = tls_packet(no, 8443, 50000, payload).bytes;
-    wire[38..42].copy_from_slice(&sequence.to_be_bytes());
-    wire[47] = flags;
-    parse_ethernet(&wire, no, no as f64)
 }
 
 #[test]
@@ -168,5 +140,25 @@ fn segmented_tls_selection_rejects_unanchored_or_conflicting_prefixes() {
         }
         core.analyze(&tls_segment(4, 120, 0x18, &hello[19..]));
         assert!(core.alert_center.items.iter().all(|alert| alert.source != "TLS"));
+    }
+}
+
+#[test]
+fn segmented_tls_checks_overlap_starting_before_the_stream_prefix() {
+    let hello = server_hello(0x0302, 0xc011, &[]);
+    for conflict in [false, true] {
+        let mut core = AnalysisCore::default();
+        core.analyze(&tls_segment(1, 100, 0x12, &[]));
+        core.analyze(&tls_segment(2, 101, 0x18, &hello[..19]));
+        let mut overlap = vec![0; 3];
+        overlap.extend_from_slice(&hello[..8]);
+        if conflict {
+            overlap[7] ^= 1;
+        }
+        core.analyze(&tls_segment(3, 98, 0x18, &overlap));
+        core.analyze(&tls_segment(4, 120, 0x18, &hello[19..]));
+        let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "TLS").collect();
+        assert_eq!(alerts.len(), if conflict { 0 } else { 2 });
+        assert!(alerts.iter().all(|alert| alert.packet_refs == [2, 4]));
     }
 }

@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
-
+#[path = "replay_suite/tls.rs"]
+mod tls;
 #[path = "support/http.rs"]
 mod support;
 #[path = "support/dns_replay.rs"]
@@ -21,7 +22,6 @@ use std::{path::Path, process::{Command, Output}};
 fn run_suite(manifest: &Path) -> Output {
     run_suite_with_baseline(manifest, None)
 }
-
 fn run_suite_with_baseline(manifest: &Path, baseline: Option<&str>) -> Output {
     let analyzer = Path::new(env!("CARGO_BIN_EXE_packrat-analyze"));
     let existing_path = std::env::var_os("PATH").unwrap_or_default();

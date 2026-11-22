@@ -99,10 +99,13 @@ pub(super) fn consume_contiguous(
 fn conflicts_with_prefix(data: &[u8], expected: Option<u32>, segment: &PendingTcpSegment) -> bool {
     let Some(expected) = expected else { return false };
     let behind = sequence_delta(expected, segment.sequence).max(0) as usize;
-    let Some(offset) = data.len().checked_sub(behind) else { return false };
+    let offset = data.len().saturating_sub(behind);
+    let skipped = behind.saturating_sub(data.len());
     let end = data.len().min(MAX_TLS_RECORD_BYTES);
-    let count = behind.min(segment.payload.len()).min(end.saturating_sub(offset));
-    count > 0 && data[offset..offset + count] != segment.payload[..count]
+    let count = behind.saturating_sub(skipped)
+        .min(segment.payload.len().saturating_sub(skipped))
+        .min(end.saturating_sub(offset));
+    count > 0 && data[offset..offset + count] != segment.payload[skipped..skipped + count]
 }
 
 pub(super) fn consume_one(
