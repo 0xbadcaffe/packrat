@@ -397,6 +397,11 @@ fn detects_invalid_ipv6_neighbor_discovery_and_binding_change() {
         255,
         &neighbor_advertisement(target, [0, 1, 2, 3, 4, 6]),
     ));
+    assert!(!security.ids_alerts.iter().any(|alert| alert.signature == "IPv6 neighbor binding changed"));
+    security.update(&ipv6_control_packet(
+        3, [0, 1, 2, 3, 4, 5], source, 255,
+        &neighbor_advertisement(target, [0, 1, 2, 3, 4, 5]),
+    ));
 
     assert!(
         security

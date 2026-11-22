@@ -290,3 +290,5 @@ mod http_exposure_cases;
 mod ftp_control_cases;
 #[path = "security_policy/telnet_prompt_cases.rs"]
 mod telnet_prompt_cases;
+#[path = "security_policy/ndp_binding_cases.rs"]
+mod ndp_binding_cases;

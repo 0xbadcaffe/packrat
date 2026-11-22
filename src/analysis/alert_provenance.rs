@@ -61,6 +61,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare all three claims with switch learning, DHCP leases, and failover logs; check whether endpoint neighbor entries actually changed.",
         ),
         (
+            "IDS", "IPv6 neighbor binding changed", "ipv6.ndp_binding_change", 1, Correlated,
+            "Compare both advertisements with the authorized address assignments and endpoint neighbor tables; distinguish failover from spoofing.",
+        ),
+        (
             "VLAN", "MAC-VLAN-Cross", "vlan.mac_crossing", 1, Correlated,
             "Compare the two frames with trunk, VLAN and switch-port policy. A shared MAC alone does not establish forwarding between VLANs.",
         ),

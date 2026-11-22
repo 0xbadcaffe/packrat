@@ -1,4 +1,7 @@
 use super::*;
+use std::net::Ipv6Addr;
+
+const NDP_BINDING_WINDOW_SECS: f64 = 300.0;
 
 impl SecurityEngine {
     // ─── IPv6 / Layer-2 Control Plane ───────────────────────────────────────
@@ -88,28 +91,8 @@ impl SecurityEngine {
             }
         }
 
-        if icmp_type == 136 && inspection.transport.len() >= 24 {
-            let target: [u8; 16] = inspection.transport[8..24].try_into().unwrap_or([0; 16]);
-            if let Some(mac) = ndp_target_link_layer_address(&inspection.transport[24..]) {
-                if let Some(previous) = self.ndp_bindings.get(&target).copied() {
-                    if previous != mac {
-                        alerts.push((
-                            "IPv6 neighbor binding changed",
-                            Severity::Critical,
-                            format!(
-                                "Neighbor Advertisement changed target ownership from {} to {}",
-                                format_mac(previous),
-                                format_mac(mac)
-                            ),
-                        ));
-                    }
-                }
-                if self.ndp_bindings.len() < MAX_CONTROL_PLANE_IDENTITIES
-                    || self.ndp_bindings.contains_key(&target)
-                {
-                    self.ndp_bindings.insert(target, mac);
-                }
-            }
+        if icmp_type == 136 {
+            self.track_neighbor_advertisement(pkt, &inspection);
         }
 
         for (signature, severity, detail) in alerts {
@@ -118,6 +101,52 @@ impl SecurityEngine {
                 signature,
                 severity,
                 detail,
+            });
+        }
+    }
+
+    fn track_neighbor_advertisement(&mut self, pkt: &Packet, inspection: &Ipv6Inspection<'_>) {
+        let data = inspection.transport;
+        if !inspection.complete || inspection.fragmented || inspection.extension_count > 32
+            || inspection.hop_limit != 255 || !pkt.timestamp.is_finite() || data.len() < 24 || data[1] != 0
+            || (data[4] & 0x40 != 0 && Ipv6Addr::from(inspection.destination).is_multicast())
+        {
+            return;
+        }
+        let Ok(target) = <[u8; 16]>::try_from(&data[8..24]) else { return };
+        if [target, inspection.source].into_iter().map(Ipv6Addr::from)
+            .any(|address| address.is_multicast() || address.is_unspecified())
+        {
+            return;
+        }
+        let Some(mac) = ndp_target_link_layer_address(&data[24..]) else { return };
+        let scope = service_scope(pkt);
+        let key = (scope, target);
+        let previous = self.ndp_bindings.get(&key).copied();
+        if previous.is_some_and(|entry| entry.timestamp > pkt.timestamp || entry.frame == pkt.no) {
+            return;
+        }
+        if previous.is_none() && self.ndp_bindings.len() >= MAX_CONTROL_PLANE_IDENTITIES {
+            self.ndp_bindings.retain(|_, entry| pkt.timestamp - entry.timestamp <= NDP_BINDING_WINDOW_SECS);
+            if self.ndp_bindings.len() >= MAX_CONTROL_PLANE_IDENTITIES { return; }
+        }
+        self.ndp_bindings.insert(key, NdpObservation { mac, timestamp: pkt.timestamp, frame: pkt.no });
+        if let Some(previous) = previous
+            && previous.mac != mac && pkt.timestamp - previous.timestamp <= NDP_BINDING_WINDOW_SECS
+        {
+            let target = Ipv6Addr::from(target);
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "IPv6 neighbor binding changed",
+                    severity: Severity::Medium,
+                    detail: format!(
+                        "Neighbor Advertisements for {target} claimed {} and then {}; endpoint cache change was not verified",
+                        format_mac(previous.mac), format_mac(mac),
+                    ),
+                },
+                related_packets: vec![previous.frame],
+                correlation_key: Some(format!("{scope:?}:{target}")),
             });
         }
     }

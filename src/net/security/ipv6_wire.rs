@@ -105,18 +105,26 @@ pub(super) fn ethernet_source_mac(raw: &[u8]) -> Option<[u8; 6]> {
 }
 
 pub(super) fn ndp_target_link_layer_address(mut options: &[u8]) -> Option<[u8; 6]> {
-    while options.len() >= 2 {
-        let option_type = options[0];
-        let option_len = usize::from(options[1]) * 8;
+    let mut mac = None;
+    while !options.is_empty() {
+        let option_type = *options.first()?;
+        let option_len = usize::from(*options.get(1)?) * 8;
         if option_len == 0 || option_len > options.len() {
             return None;
         }
-        if option_type == 2 && option_len >= 8 {
-            return options[2..8].try_into().ok();
+        if option_type == 2 {
+            if option_len != 8 || mac.is_some() {
+                return None;
+            }
+            let address: [u8; 6] = options[2..8].try_into().ok()?;
+            if address == [0; 6] || address[0] & 1 != 0 {
+                return None;
+            }
+            mac = Some(address);
         }
         options = &options[option_len..];
     }
-    None
+    mac
 }
 
 pub(super) fn format_mac(mac: [u8; 6]) -> String {
