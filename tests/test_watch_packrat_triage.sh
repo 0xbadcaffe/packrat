@@ -64,6 +64,13 @@ for change in 'del(.capture_id)' '.session_id="bad session"' '.recent_alerts=nul
     check_status "$scratch/invalid.json" snapshot_invalid 2
 done
 
+mixed_queue=$(jq -c '. + [.[0] + {alert_id:8,severity:"MEDIUM",archive_rule:true},
+    .[0] + {alert_id:9,severity:"MEDIUM",archive_rule:false}]' <<<"$queue")
+live current 13 "$mixed_queue" "$medium" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '(.review_queue | map(.alert_id))==[7,8] and .review_queue[1].archive_rule
+    and .review_queue[1].severity=="MEDIUM" and (tostring | contains("private") | not)' "$state" >/dev/null
+
 (
     # shellcheck source=scripts/packrat-rollout.sh
     source "$root/scripts/packrat-rollout.sh"

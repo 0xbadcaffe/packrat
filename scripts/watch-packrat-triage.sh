@@ -167,8 +167,10 @@ sanitize() {
             review_queue:(.review_queue | if type == "array" then .[:5] | map(objects
                 | {alert_id:(.alert_id | counter), severity:(.severity | token), rule_id:(.rule_id | token),
                    confidence:(.confidence | token), packet_evidence_status:(.packet_evidence_status | token),
+                   archive_rule:(.archive_rule | flag),
                    next_evidence_step:(.next_evidence_step | token)}
-                | select(.alert_id > 0 and (.severity == "HIGH" or .severity == "CRITICAL"))) else null end)
+                | select(.alert_id > 0 and (.severity == "HIGH" or .severity == "CRITICAL" or
+                    (.archive_rule == true and (.severity == "MEDIUM" or .severity == "LOW"))))) else null end)
           } | select(valid_current)'
 }
 

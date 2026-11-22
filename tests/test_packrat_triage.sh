@@ -264,7 +264,10 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
     PACKRAT_TEST_AUTO_QUEUE=configured run_auto | jq -e '.evidence_status == null' >/dev/null
     jq -c '. + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:true,
         archive_evidence_rules:["tcp.payload_after_observed_reset"]}' <<< "$sample" >"$health"
-    PACKRAT_TEST_AUTO_QUEUE=configured run_auto | jq -e '.evidence_status.alert_id==42 and .alerts[1].packet_evidence_status=="partial" and .review_queue==[]' >/dev/null
+    PACKRAT_TEST_AUTO_QUEUE=configured run_auto | jq -e '.evidence_status.alert_id==42
+        and .alerts[1].packet_evidence_status=="partial" and .open_priority_alerts_in_sample==0
+        and (.review_queue | map({alert_id,severity,archive_rule,packet_evidence_status}))==
+            [{alert_id:42,severity:"MEDIUM",archive_rule:true,packet_evidence_status:"partial"}]' >/dev/null
     result=$(PACKRAT_TEST_AUTO_QUEUE=backlog run_auto)
     jq -e '.has_more_alerts and .priority_sample_limit == 512 and .priority_sample_at_limit == false
         and (.alerts | length) == 50 and all(.alerts[]; .alert_id != 42)

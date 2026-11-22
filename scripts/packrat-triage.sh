@@ -71,10 +71,7 @@ fi
 previous_logs=("$@")
 previous_args=()
 for log in "${previous_logs[@]}"; do
-    if [[ ! -f $log ]]; then
-        printf 'Previous alert log is not a regular file: %s\n' "$log" >&2
-        exit 2
-    fi
+    [[ -f $log ]] || { printf 'Previous alert log is not a regular file: %s\n' "$log" >&2; exit 2; }
     previous_args+=(--previous-log "$log")
 done
 
@@ -93,7 +90,7 @@ if [[ -n $target_alert && -n $evidence_id && $target_alert != "$evidence_id" ]];
     printf '%s\n' 'The evidence alert ID must match the requested saved alert.' >&2
     exit 2
 fi
-socket_status=not_configured
+socket_status=not_configured archive_rules='[]'
 if [[ -n $socket_file ]]; then
     if [[ $socket_file != /* || $socket_file == */ || $socket_file == *[[:cntrl:]]* ]]; then
         printf '%s\n' 'PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE requires an absolute file path.' >&2
@@ -146,7 +143,7 @@ load_state() {
 
 report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
-        --argjson query_limit "$query_limit" \
+        --argjson query_limit "$query_limit" --argjson rules "$archive_rules" \
         --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" --arg selection "$evidence_selection" '
         def packet_evidence($evidence):
             if .alert_id == $evidence.alert_id and $evidence.status == "checked" then
@@ -176,19 +173,21 @@ report() {
         | (if $alerts == null then null else $alerts[:$limit] |
             map(. + {packet_evidence_status:packet_evidence($evidence)}) end) as $sample
         | (if $alerts == null then null else [
-            ("CRITICAL", "HIGH") as $severity | $alerts | to_entries[]
+            ("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | $alerts | to_entries[]
             | (.key < $limit) as $recent | .value
             | select(.severity == $severity and (.disposition == "New" or .disposition == "Reviewing"))
+            | ($severity == "MEDIUM" or $severity == "LOW") as $opt_in
+            | select(($opt_in | not) or (.rule_id as $rule | any($rules[]; . == $rule)))
             | .packet_evidence_status = packet_evidence($evidence)
             | {alert_id,title,rule_id,severity,confidence,verify,packet_evidence_status,
-               in_recent_alerts:$recent,next_evidence_step:(.packet_evidence_status | evidence_step)}
+               archive_rule:$opt_in,in_recent_alerts:$recent,next_evidence_step:(.packet_evidence_status | evidence_step)}
           ] end) as $review
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
              live_packet_archive:(.[0] | live_archive),
              has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
              alerts:$sample,
              priority_sample_limit:$query_limit, priority_sample_at_limit:.[3].stopped_at_limit,
-             open_priority_alerts_in_sample:(if $review == null then null else $review | length end),
+             open_priority_alerts_in_sample:(if $review == null then null else $review | map(select(.archive_rule | not)) | length end),
              review_queue:(if $review == null then null else $review[:5] end),
              evidence_selection:$selection, evidence_status:$evidence,
              alert_log_integrity:.[3], socket_context_status:$socket}
@@ -416,14 +415,15 @@ if [[ -n $socket_file ]]; then
         socket_status=unavailable
     fi
 fi
-evidence=null
-evidence_failed=false
-if [[ $auto_evidence == 1 ]] &&
-    jq -e '.health | .archive_enabled == true and (.archive_paused | type == "boolean")' <<< "$state" >/dev/null; then
+evidence=null evidence_failed=false archive_available=false
+if jq -e '.health | .archive_enabled == true and (.archive_paused | type == "boolean")' <<< "$state" >/dev/null; then
     archive_rules=$(jq -c '.health | if .archive_alert_evidence_only == true and
         (.archive_evidence_rules | type == "array" and length <= 16 and all(.[];
             type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z")))
         then .archive_evidence_rules else [] end' <<< "$state")
+    archive_available=true
+fi
+if [[ $auto_evidence == 1 ]] && "$archive_available"; then
     evidence_id=$(jq -r --argjson rules "$archive_rules" '
         first(("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | .[]
             | select(.severity == $severity and (.disposition == "New" or .disposition == "Reviewing")
