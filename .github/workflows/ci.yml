@@ -60,6 +60,10 @@ jobs:
       - name: cargo test
         run: cargo test --locked
 
+      - name: Replay a labeled corpus through the real analyzer
+        if: runner.os == 'Linux'
+        run: cargo test --locked --test replay_suite_integration_tests -- --ignored
+
       - name: Headless build without terminal dependencies
         run: cargo test --locked --no-default-features --all-targets
 
