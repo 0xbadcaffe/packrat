@@ -26,7 +26,10 @@ fn correlation_keys_keep_distinct_conversations_separate() {
 #[test]
 fn retains_bounded_packet_references_for_correlated_alerts() {
     let mut center = AlertCenter::default();
-    for packet_no in 1..=(MAX_ALERT_PACKET_REFS as u64 + 3) {
+    center.record_correlated_with_evidence(
+        (3, &[0, 1, 2]), 3.0, "IDS", "HIGH", "Probe", "opening evidence", "flow-a",
+    );
+    for packet_no in 4..=(MAX_ALERT_PACKET_REFS as u64 + 3) {
         center.record_correlated(
             packet_no,
             packet_no as f64,
@@ -40,8 +43,15 @@ fn retains_bounded_packet_references_for_correlated_alerts() {
 
     let alert = &center.items[0];
     assert_eq!(alert.packet_refs.len(), MAX_ALERT_PACKET_REFS);
-    assert_eq!(alert.packet_refs.first(), Some(&4));
+    assert_eq!(&alert.packet_refs[..9], &[1, 2, 3, 4, 5, 6, 7, 8, 12]);
     assert_eq!(alert.packet_refs.last(), Some(&131));
+    assert_eq!(alert.hit_count, 129);
+
+    let mut oversized = alert.clone();
+    oversized.packet_refs = (1..=131).collect();
+    let mut restored = AlertCenter::default();
+    restored.restore(vec![oversized], AutomationMode::Off);
+    assert_eq!(restored.items[0].packet_refs, alert.packet_refs);
 }
 
 #[test]

@@ -6,6 +6,7 @@ use super::alert_provenance::{self, AlertProvenance};
 const MAX_ALERTS: usize = 2_000;
 const AUTOMATIC_EVIDENCE_PRIORITY: u8 = 80;
 pub(crate) const MAX_ALERT_PACKET_REFS: usize = 128;
+const EARLY_ALERT_PACKET_REFS: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum AutomationMode {
@@ -172,7 +173,8 @@ impl AlertCenter {
                 }
             }
             if item.packet_refs.len() > MAX_ALERT_PACKET_REFS {
-                item.packet_refs.drain(..item.packet_refs.len() - MAX_ALERT_PACKET_REFS);
+                let end = EARLY_ALERT_PACKET_REFS + item.packet_refs.len() - MAX_ALERT_PACKET_REFS;
+                item.packet_refs.drain(EARLY_ALERT_PACKET_REFS..end);
             }
         }
         self.fingerprints = items.iter().map(fingerprint_for).collect();
@@ -375,11 +377,12 @@ impl AlertCenter {
 }
 
 fn retain_packet_ref(alert: &mut AlertItem, packet_no: u64) -> bool {
-    if alert.packet_refs.contains(&packet_no) {
+    if packet_no == 0 || alert.packet_refs.contains(&packet_no) {
         return false;
     }
     if alert.packet_refs.len() == MAX_ALERT_PACKET_REFS {
-        alert.packet_refs.remove(0);
+        // Keep the opening context as well as the most recent sightings.
+        alert.packet_refs.remove(EARLY_ALERT_PACKET_REFS);
     }
     alert.packet_refs.push(packet_no);
     true
