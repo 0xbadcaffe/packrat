@@ -13,7 +13,8 @@ usage() {
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
         '--list-saved groups the latest 512 distinct saved alerts by session and capture; counts cover only that sample.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
-        'review_queue lists up to five open CRITICAL or HIGH alerts from the displayed sample, with evidence next steps.' \
+        'review_queue lists up to five open CRITICAL or HIGH alerts from up to 512 distinct matching alerts, even outside the recent list.' \
+        'priority_sample_at_limit means older alerts may not have been reviewed.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'Strict watcher mode rejects a live log whose file identity has not been verified by the watcher.' \
@@ -59,8 +60,7 @@ else
     shift 2
 fi
 alert_limit=50
-query_limit=$((alert_limit + 1))
-if [[ $mode == list_saved ]]; then query_limit=512; fi
+query_limit=512
 limit_args=(--limit "$query_limit")
 if [[ -n $target_alert ]]; then
     alert_limit=1 query_limit=1
@@ -145,9 +145,10 @@ load_state() {
 
 report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
+        --argjson query_limit "$query_limit" \
         --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" --arg selection "$evidence_selection" '
         def packet_evidence($evidence):
-            if .alert_id == $evidence.alert_id and $evidence.in_recent_alerts == true and $evidence.status == "checked" then
+            if .alert_id == $evidence.alert_id and $evidence.status == "checked" then
                 if all($evidence.frames[]; .status == "complete") then "complete"
                 elif any($evidence.frames[]; .status == "complete" or .status == "truncated" or .status == "length_unknown")
                 then "partial"
@@ -173,16 +174,19 @@ report() {
         | .[2] as $evidence
         | (if $alerts == null then null else $alerts[:$limit] |
             map(. + {packet_evidence_status:packet_evidence($evidence)}) end) as $sample
-        | (if $sample == null then null else [
-            ("CRITICAL", "HIGH") as $severity | $sample[]
+        | (if $alerts == null then null else [
+            ("CRITICAL", "HIGH") as $severity | $alerts | to_entries[]
+            | (.key < $limit) as $recent | .value
             | select(.severity == $severity and (.disposition == "New" or .disposition == "Reviewing"))
+            | .packet_evidence_status = packet_evidence($evidence)
             | {alert_id,title,rule_id,severity,confidence,verify,packet_evidence_status,
-               next_evidence_step:(.packet_evidence_status | evidence_step)}
+               in_recent_alerts:$recent,next_evidence_step:(.packet_evidence_status | evidence_step)}
           ] end) as $review
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
              live_packet_archive:(.[0] | live_archive),
              has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
              alerts:$sample,
+             priority_sample_limit:$query_limit, priority_sample_at_limit:.[3].stopped_at_limit,
              open_priority_alerts_in_sample:(if $review == null then null else $review | length end),
              review_queue:(if $review == null then null else $review[:5] end),
              evidence_selection:$selection, evidence_status:$evidence,
@@ -414,9 +418,8 @@ evidence=null
 evidence_failed=false
 if [[ $auto_evidence == 1 ]] &&
     jq -e '.health | .archive_enabled == true and (.archive_paused | type == "boolean")' <<< "$state" >/dev/null; then
-    evidence_id=$(jq -r --argjson limit "$alert_limit" '
-        .[:$limit] as $recent
-        | first(("CRITICAL", "HIGH") as $severity | $recent[]
+    evidence_id=$(jq -r '
+        first(("CRITICAL", "HIGH") as $severity | .[]
             | select(.severity == $severity and (.disposition == "New" or .disposition == "Reviewing")
                 and (.evidence_frame_count | type == "number" and . >= 1 and . <= 131 and floor == .))
             | .alert_id | select(type == "number" and . >= 1 and . <= 999999999999999 and floor == .))

@@ -39,9 +39,8 @@ mock_archive() {
              frames:($statuses | to_entries | map({frame_number:(.key + 1),status:.value,bytes:[0,1]}))}'
         return
     fi
-    local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' limit=51
-    if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope='' limit=512; fi
-    local selector="--limit $limit"
+    local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' selector='--limit 512'
+    if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope=''; fi
     if [[ -n ${PACKRAT_TEST_TARGET:-} ]]; then selector="--alert-id $PACKRAT_TEST_TARGET"; fi
     [[ $* == "--alerts $PACKRAT_TEST_LOG$scope $selector --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
@@ -79,7 +78,7 @@ mock_archive() {
                 + (if $priority == "1" then {severity:"HIGH",disposition:"New"} else {} end)
                 + (if $large == "1" then {detail: ("\ud83d\udd0d" * 512), title: ("\ud83d\udd0d" * 160)}
                    else {} end)]'
-    elif [[ $limit == 512 ]]; then
+    elif [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then
         jq -cn '
             {session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
              alert_id:1,first_seen:10,last_seen:20,severity:"HIGH",detail:"not in index"} as $base
@@ -100,7 +99,10 @@ mock_archive() {
                   ($valid + {alert_id:44,severity:"HIGH",disposition:"New"}),
                   ($valid + {severity:"CRITICAL",disposition:"Reviewing"}),
                   ($valid + {alert_id:41,severity:"CRITICAL",disposition:"New"})
-              ] else [$valid] + (if $mismatch == "" then [] else
+              ] elif $queue == "backlog" then
+                [range(101;43;-1) | $valid + {alert_id:.,severity:"LOW",disposition:"New"}]
+                + [($valid + {severity:"HIGH",disposition:"New"})]
+              else [$valid] + (if $mismatch == "" then [] else
                 [($valid | .alert_id = 43 | .[$mismatch] = "other")]
               end) end'
     fi
@@ -109,10 +111,10 @@ mock_archive() {
 packrat-archive() {
     if [[ ${1-} != --alerts ]]; then mock_archive "$@"; return; fi
     mock_archive "$@" | jq -c --argjson invalid "${PACKRAT_TEST_INVALID_RECORDS:-0}" \
-        --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" --arg index "${PACKRAT_TEST_INDEX:-0}" \
+        --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" \
         --arg target "${PACKRAT_TEST_TARGET:-}" '
         {alerts:.,integrity:{invalid_records:$invalid,oversized_records:$oversized,
-            stopped_at_limit:(length == (if $target != "" then 1 elif $index == "1" then 512 else 51 end))}}'
+            stopped_at_limit:(length == (if $target != "" then 1 else 512 end))}}'
 }
 
 timeout() {
@@ -216,7 +218,7 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
     result=$(PACKRAT_TEST_ALERT_COUNT=0 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
     [[ $status == 2 ]]
     jq -e '.alerts == [] and .evidence_status.status == "alert_evidence_changed"' <<< "$result" >/dev/null
-    result=$(PACKRAT_TEST_ALERT_COUNT=51 PACKRAT_TEST_ALERT_OFFSET=50 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+    result=$(PACKRAT_TEST_ALERT_COUNT=512 PACKRAT_TEST_ALERT_OFFSET=50 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e '.has_more_alerts and .evidence_status.status == "checked"
         and .evidence_status.in_recent_alerts == false' <<< "$result" >/dev/null
     status=0
@@ -259,6 +261,12 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
     result=$(PACKRAT_TEST_ALERT_COUNT=0 run_auto)
     jq -e '.evidence_selection == "automatic" and .evidence_status == null and .alerts == []
         and .open_priority_alerts_in_sample == 0 and .review_queue == []' <<< "$result" >/dev/null
+    result=$(PACKRAT_TEST_AUTO_QUEUE=backlog run_auto)
+    jq -e '.has_more_alerts and .priority_sample_limit == 512 and .priority_sample_at_limit == false
+        and (.alerts | length) == 50 and all(.alerts[]; .alert_id != 42)
+        and .open_priority_alerts_in_sample == 1 and .review_queue[0].alert_id == 42
+        and .review_queue[0].in_recent_alerts == false and .review_queue[0].packet_evidence_status == "partial"
+        and .evidence_status.status == "checked" and .evidence_status.in_recent_alerts == false' <<< "$result" >/dev/null
     jq -c '.archive_enabled = true | .archive_paused = null' <<< "$sample" >"$health"
     result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
     jq -e '.live_packet_archive == "unknown" and .evidence_status == null' <<< "$result" >/dev/null
@@ -280,8 +288,11 @@ result=$(PACKRAT_TEST_ALERT_COUNT=51 PACKRAT_TEST_LARGE_ALERTS=1 bash "$triage" 
 jq -e '.has_more_alerts and (.alerts | length) == 50 and all(.alerts[]; (.detail | length) == 512)' \
     <<< "$result" >/dev/null
 result=$(PACKRAT_TEST_ALERT_COUNT=51 PACKRAT_TEST_OPEN_PRIORITY=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
-jq -e '.has_more_alerts and .open_priority_alerts_in_sample == 50
+jq -e '.has_more_alerts and .open_priority_alerts_in_sample == 51
     and [.review_queue[].alert_id] == [51,50,49,48,47]' <<< "$result" >/dev/null
+result=$(PACKRAT_TEST_ALERT_COUNT=512 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+jq -e '.has_more_alerts and .priority_sample_at_limit and .open_priority_alerts_in_sample == 0' \
+    <<< "$result" >/dev/null
 
 previous="$scratch/older log.jsonl"
 touch -- "$previous"
