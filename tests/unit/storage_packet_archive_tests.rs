@@ -1,4 +1,34 @@
 use super::*;
+
+#[test]
+fn archive_index_bounds_metadata_and_preserves_other_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archive");
+    let mut writer = PacketArchive::open(&path).unwrap();
+    let frame = |number| parse_ethernet(&[1, 2, 3], number, number as f64);
+    writer.append(&[frame(1)]).unwrap();
+    let mut oversized = frame(3);
+    oversized.info = "x".repeat(reader::MAX_ARCHIVE_ROW_BYTES as usize * 2);
+    assert!(writer.append(&[frame(2), oversized]).is_err());
+    assert_eq!(writer.count().unwrap(), 1);
+    assert_eq!(std::fs::metadata(path.join("packets.bin")).unwrap().len(), 3);
+
+    writer.append(&[frame(2)]).unwrap();
+    drop(writer);
+    let index = Connection::open(path.join("index.sqlite")).unwrap();
+    let mut oversized_metadata = frame(1);
+    oversized_metadata.bytes.clear();
+    oversized_metadata.info = "x".repeat(reader::MAX_ARCHIVE_ROW_BYTES as usize * 2);
+    index.execute(
+        "UPDATE packets SET metadata=?1 WHERE id=1",
+        [serde_json::to_string(&oversized_metadata).unwrap()],
+    ).unwrap();
+    drop(index);
+
+    let mut reader = PacketArchive::open_readonly(&path).unwrap();
+    assert!(reader.packet(1).is_err());
+    assert_eq!(reader.packet(2).unwrap().no, 2);
+}
 use crate::net::parser::parse_ethernet;
 
 #[test]

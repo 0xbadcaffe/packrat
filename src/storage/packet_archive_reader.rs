@@ -1,6 +1,18 @@
 use rusqlite::{Connection, OpenFlags};
+use rusqlite::limits::Limit;
 use std::fs::{File, Metadata, OpenOptions};
 use std::path::{Path, PathBuf};
+
+pub(super) const MAX_ARCHIVE_ROW_BYTES: i32 = 256 * 1024;
+
+pub(super) fn open_index(path: &Path, flags: OpenFlags) -> Result<Connection, String> {
+    let db = Connection::open_with_flags(path, flags | OpenFlags::SQLITE_OPEN_NOFOLLOW)
+        .map_err(|error| error.to_string())?;
+    // Packet bytes live outside SQLite. Only bounded metadata should enter or leave the index.
+    db.set_limit(Limit::SQLITE_LIMIT_LENGTH, MAX_ARCHIVE_ROW_BYTES)
+        .map_err(|error| error.to_string())?;
+    Ok(db)
+}
 
 fn validate_type(path: &Path, metadata: &Metadata, directory: bool) -> Result<(), String> {
     let valid = if directory { metadata.is_dir() } else { metadata.is_file() };
@@ -43,7 +55,6 @@ pub(super) fn open_entries(directory: &Path) -> Result<(Connection, File), Strin
     for sidecar in ["index.sqlite-wal", "index.sqlite-shm", "index.sqlite-journal"] {
         check_entry(&directory.join(sidecar), false, true)?;
     }
-    let db = Connection::open_with_flags(index, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW)
-        .map_err(|error| error.to_string())?;
+    let db = open_index(&index, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     Ok((db, bytes))
 }

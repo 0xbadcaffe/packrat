@@ -93,10 +93,7 @@ impl PacketArchive {
         let index = directory.join("index.sqlite");
         drop(private_file(&index)?);
         let bytes = private_file(&directory.join("packets.bin"))?;
-        let mut db = Connection::open_with_flags(
-            index,
-            rusqlite::OpenFlags::default() | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
-        ).map_err(|error| error.to_string())?;
+        let mut db = reader::open_index(&index, rusqlite::OpenFlags::default())?;
         db.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|error| error.to_string())?;
         db.execute_batch(
