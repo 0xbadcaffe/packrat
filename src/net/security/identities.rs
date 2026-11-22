@@ -2,6 +2,7 @@ use super::*;
 use std::net::Ipv4Addr;
 
 const ARP_COMPARISON_WINDOW_SECS: f64 = 300.0;
+const ARP_SOURCE_MISMATCH: &str = "ARP reply sender differs from Ethernet source";
 
 fn arp_reply_sender(raw: &[u8]) -> Option<(Ipv4Addr, [u8; 6])> {
     let (offset, 0x0806) = ethernet_network_header(raw)? else { return None };
@@ -27,6 +28,28 @@ impl SecurityEngine {
         }
         let Some((ip, mac)) = arp_reply_sender(&pkt.bytes) else { return };
         let scope = service_scope(pkt);
+        let Some(ethernet_mac) = pkt.bytes.get(6..12).and_then(|bytes| <[u8; 6]>::try_from(bytes).ok())
+        else { return };
+        // VRRP IPv4 replies can put a physical MAC in Ethernet and a virtual MAC in ARP.
+        let vrrp_ipv4_sender = matches!(mac, [0, 0, 0x5e, 0, 1, 1..=255]);
+        if ethernet_mac != mac && ethernet_mac != [0; 6] && ethernet_mac[0] & 1 == 0
+            && !vrrp_ipv4_sender
+        {
+            let ethernet = format_mac(ethernet_mac);
+            let sender = format_mac(mac);
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: ARP_SOURCE_MISMATCH,
+                    severity: Severity::Low,
+                    detail: format!(
+                        "ARP reply for {ip} names sender {sender}, while the Ethernet source is {ethernet}; whether any host accepted the ARP claim is unknown"
+                    ),
+                },
+                related_packets: Vec::new(),
+                correlation_key: Some(format!("{scope:?}:{ip}:{ethernet}:{sender}")),
+            });
+        }
         let key = (scope, ip);
         let known = self.ip_to_mac.get(&key).copied();
         if known.is_some_and(|entry| entry.timestamp > pkt.timestamp) {

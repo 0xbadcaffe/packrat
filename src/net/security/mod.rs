@@ -73,6 +73,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "IPv6 neighbor binding changed",
     "STP topology change",
     "LLDP chassis identity changed",
+    "ARP reply sender differs from Ethernet source",
     "Periodic fixed-size traffic",
     "Large asymmetric outbound transfer",
     "High-entropy outbound transfer",

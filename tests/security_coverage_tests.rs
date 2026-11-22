@@ -137,6 +137,10 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "ignores_read_only_modbus_and_emits_critical_control_alerts",
     },
     CoverageGroup {
+        signatures: &["ARP reply sender differs from Ethernet source"],
+        positive_test: "arp_source_mismatch_is_distinct_from_binding_changes_and_vrrp",
+    },
+    CoverageGroup {
         signatures: &["DNS transaction question mismatch"],
         positive_test: "correlates_matching_transactions_and_rejects_question_substitution",
     },
@@ -192,6 +196,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy/dhcp_cases.rs"),
     include_str!("security_policy/tcp_reset_cases.rs"),
     include_str!("ipv6_fragment_tests.rs"),
+    include_str!("arp_binding_tests.rs"),
     include_str!("dns_transaction_tests.rs"),
     include_str!("dns_transaction/txt_reply_tests.rs"),
     include_str!("dns_transaction/external_resolver_tests.rs"),

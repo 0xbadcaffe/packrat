@@ -2,6 +2,7 @@ use packrat_tui::engine::AnalysisCore;
 use packrat_tui::net::{packet::Packet, parser::parse_ethernet};
 
 const TITLE: &str = "ARP binding changed";
+const SOURCE_MISMATCH: &str = "ARP reply sender differs from Ethernet source";
 
 fn reply(frame: u64, time: f64, vlan: u16, host: u8) -> Packet {
     let sender = [2, 0, 0, 0, 0, host];
@@ -72,4 +73,37 @@ fn arp_claim_history_ignores_requests_truncation_old_baselines_and_older_timesta
             .iter()
             .all(|alert| alert.title != TITLE)
     );
+}
+
+#[test]
+fn arp_source_mismatch_is_distinct_from_binding_changes_and_vrrp() {
+    let mut core = AnalysisCore::default();
+    core.analyze(&reply(1, 1.0, 10, 1));
+    let mut vrrp = reply(2, 2.0, 20, 1);
+    vrrp.bytes[26..32].copy_from_slice(&[0, 0, 0x5e, 0, 1, 7]);
+    core.analyze(&vrrp);
+    let mut mismatch = reply(3, 3.0, 10, 1);
+    mismatch.bytes[11] = 0x25;
+    core.analyze(&mismatch);
+
+    let mut invalid = mismatch.clone();
+    invalid.no = 4;
+    invalid.bytes[6] |= 1;
+    core.analyze(&invalid);
+    let mut truncated = mismatch.clone();
+    truncated.no = 5;
+    truncated.bytes.truncate(33);
+    core.analyze(&truncated);
+
+    let findings: Vec<_> = core.alert_center.items.iter()
+        .filter(|alert| alert.title == SOURCE_MISMATCH).collect();
+    assert_eq!(findings.len(), 1);
+    let alert = findings[0];
+    assert_eq!(alert.severity, "LOW");
+    assert_eq!(alert.packet_refs, [3]);
+    assert!(alert.detail.contains("02:00:00:00:00:25"));
+    assert!(alert.detail.contains("02:00:00:00:00:01"));
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "arp.reply_source_mismatch");
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+    assert!(core.incidents.incidents.is_empty());
 }

@@ -49,6 +49,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both ARP replies with DHCP leases, failover events, and the affected host's neighbor table.",
         ),
         (
+            "IDS", "ARP reply sender differs from Ethernet source", "arp.reply_source_mismatch", 1, DirectObservation,
+            "Compare the Ethernet source and ARP sender with switch and neighbor tables. Check for authorized address rewriting or gateway redundancy.",
+        ),
+        (
             "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 6, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
