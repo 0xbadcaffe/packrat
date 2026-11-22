@@ -259,6 +259,8 @@ read_health() {
                               then . else null end) as $session |
         ($h.pcap_buffer_drops | if type == "number" and . >= 0 and . <= 4294967295 and floor == .
                                  then . else null end) as $drops |
+        ($h.capture_truncated_frames | if type == "number" and . >= 0 and . <= 9007199254740991
+                                      and floor == . then . else null end) as $truncated |
         ($h.packets_total | if type == "number" and . >= 0 and . <= 9007199254740991 and floor == .
                             then . else null end) as $packets |
         ($h.capture_queue | if type == "object" and (.depth | type == "number")
@@ -266,6 +268,14 @@ read_health() {
            then . else null end) as $queue |
         ($h.status == "ok" and $h.telemetry_fresh == true and $h.capture_active == true) as $usable |
         ($usable and $run != null and $capture != null and $packets != null) as $has_counter |
+        def counter_delta($current; $previous):
+            if $usable and $run != null and $current != null and $previous.run == $run
+               and $current >= $previous.total
+            then $current - $previous.total else null end;
+        def next_counter($current; $previous):
+            if $usable and $run != null and $current != null then {run:$run,total:$current}
+            elif $usable and $run != $previous.run then null
+            else $previous end;
         ($has_counter and $baseline.packets.run == $run and $baseline.packets.capture == $capture) as $same_counter |
         (if $same_counter and $packets == $baseline.packets.total
          then ($baseline.packets.last_progress // $clock) else $clock end) as $last_progress |
@@ -291,12 +301,10 @@ read_health() {
             packets_without_progress_seconds: $no_progress,
             expect_traffic_seconds: $expect_traffic,
             pcap_buffer_drops: $drops,
+            pcap_buffer_drops_delta: counter_delta($drops; $baseline.drops),
+            capture_truncated_frames: (if $usable then $truncated else null end),
+            capture_truncated_frames_delta: counter_delta($truncated; $baseline.truncated),
             capture_queue: $queue,
-            pcap_buffer_drops_delta: (
-                if $usable and $run != null and $drops != null and $baseline.drops.run == $run
-                   and $drops >= $baseline.drops.total
-                then $drops - $baseline.drops.total else null end
-            ),
             alert_saving: ($h.alert_saving // false),
             alert_watcher_alive: (if $pipeline == false or $source == false or $context == false then false else $watcher end),
             alert_watcher_pipeline_alive: $pipeline,
@@ -330,6 +338,8 @@ read_health() {
                     (if $drops != null then
                          if $drops > 0 then "pcap_buffer_drops" else empty end
                      else "pcap_stats_unavailable" end),
+                    (if $usable and $truncated != null and $truncated > 0
+                     then "capture_frames_truncated" else empty end),
                     (if $h.capture_active == true and $queue != null and $queue.depth * 4 >= $queue.capacity * 3
                      then "capture_queue_high" else empty end),
                     (if $archive_paused == true then "archive_paused"
@@ -347,11 +357,8 @@ read_health() {
                  elif $disk < $min_free then "disk_space_low" else empty end)
             ],
             next_baseline: {
-                drops: (
-                    if $usable and $run != null and $drops != null then {run:$run,total:$drops}
-                    elif $usable and $run != $baseline.drops.run then null
-                    else $baseline.drops end
-                ),
+                drops: next_counter($drops; $baseline.drops),
+                truncated: next_counter($truncated; $baseline.truncated),
                 packets: (
                     if $has_counter
                     then {run:$run,capture:$capture,total:$packets,last_progress:$last_progress}
@@ -381,9 +388,9 @@ publish_state() {
 while :; do
     if ! state=$(read_health); then
         state=$(jq -cn --argjson baseline "$baseline" '
-            {issues:["monitor_input_error"],next_baseline:{drops:$baseline.drops,packets:null}}')
+            {issues:["monitor_input_error"],next_baseline:{drops:$baseline.drops,truncated:$baseline.truncated,packets:null}}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .pcap_buffer_drops, .archive_enabled]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled]' <<< "$state") || exit 2
     event=
     if "$once"; then
         event=sample

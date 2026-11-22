@@ -35,9 +35,7 @@ impl CaptureSource for LiveCapture {
                         }
                         Err(error) => return Err(format!("Capture read failed: {error}")),
                     };
-                    if raw.header.len < raw.header.caplen {
-                        return Err("Invalid capture packet length".into());
-                    }
+                    stats.observe_frame_lengths(raw.header.caplen, raw.header.len)?;
                     let metadata = CaptureMetadata {
                         timestamp: Some(pcap_timestamp(
                             raw.header.ts.tv_sec as i64,

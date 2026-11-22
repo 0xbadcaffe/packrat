@@ -349,6 +349,20 @@ PACKRAT_FAKE_STEPS=8 PACKRAT_FAKE_SAMPLES="$samples" bash "$watch" | jq -se '
     and all(.[]; has("next_baseline") | not)
 ' >/dev/null
 
+truncation_samples=$(jq -cn --argjson health "$PACKRAT_FAKE_HEALTH" '
+    ($health + {capture_run_id:"000000000000000a"}) as $a
+    | ($a | .capture_run_id = "000000000000000b") as $b
+    | [$a, ($a | .capture_truncated_frames = 0),
+       ($a | .capture_truncated_frames = 2), null, ($a | .capture_truncated_frames = 5),
+       ($b | .capture_truncated_frames = 0)]
+')
+PACKRAT_FAKE_STEPS=6 PACKRAT_FAKE_SAMPLES="$truncation_samples" bash "$watch" | jq -se '
+    map(.capture_truncated_frames) == [null,0,2,null,5,0]
+    and map(.capture_truncated_frames_delta) == [null,null,2,null,3,null]
+    and map(.issues) == [[],[],["capture_frames_truncated"],["health_unreachable"],["capture_frames_truncated"],[]]
+    and all(.[] | select(.capture_truncated_frames != null); .pcap_buffer_drops == 0)
+' >/dev/null
+
 scopes=$(jq -c '
     . + {capture_run_id:"000000000000000a",pcap_buffer_drops:2,
         alert_session_id:"1234-567",capture_id:"00000000000000000000000000000001"} as $first |

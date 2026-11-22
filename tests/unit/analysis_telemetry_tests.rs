@@ -13,8 +13,10 @@ fn metrics_do_not_report_unknown_loss_as_zero() {
     let unknown = TelemetrySnapshot::default().openmetrics();
     assert!(unknown.contains("packrat_capture_pcap_stats_available 0"));
     assert!(!unknown.contains("packrat_capture_pcap_buffer_drops"));
+    assert!(!unknown.contains("packrat_capture_truncated_frames_total"));
     let known = TelemetrySnapshot {
         pcap_buffer_drops: Some(0),
+        capture_truncated_frames: Some(2),
         alert_saving: true,
         archive_enabled: true,
         archive_paused: true,
@@ -22,6 +24,7 @@ fn metrics_do_not_report_unknown_loss_as_zero() {
     }.openmetrics();
     assert!(known.contains("packrat_capture_pcap_stats_available 1"));
     assert!(known.contains("packrat_capture_pcap_buffer_drops 0"));
+    assert!(known.contains("packrat_capture_truncated_frames_total 2"));
     assert!(known.contains("packrat_alert_saving 1"));
     assert!(known.contains("packrat_archive_paused 1"));
 }
@@ -38,6 +41,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert!(health()["capture_link_decodable"].is_null());
     assert!(health()["alert_session_id"].is_null());
     assert!(health()["pcap_buffer_drops"].is_null());
+    assert!(health()["capture_truncated_frames"].is_null());
 
     hub.publish(TelemetrySnapshot {
         capturing: true,
@@ -48,6 +52,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
         capture_id: Some("0123456789abcdef0123456789abcdef".into()),
         alert_session_id: Some("1000000-42".into()),
         pcap_buffer_drops: Some(9),
+        capture_truncated_frames: Some(2),
         alert_save_failed: true,
         ..Default::default()
     });
@@ -61,6 +66,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert_eq!(health()["capture_id"], "0123456789abcdef0123456789abcdef");
     assert_eq!(health()["alert_session_id"], "1000000-42");
     assert_eq!(health()["pcap_buffer_drops"], 9);
+    assert_eq!(health()["capture_truncated_frames"], 2);
     assert_eq!(health()["alert_saving"], false);
     assert_eq!(health()["alert_save_failed"], true);
 

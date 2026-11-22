@@ -182,6 +182,7 @@ impl App {
             alert_session_id: Some(self.alert_session_id.clone()),
             capture_queue: queue,
             pcap_buffer_drops: self.pcap_buffer_drops(),
+            capture_truncated_frames: self.capture_handle.as_ref().and_then(crate::capture::CaptureTask::truncated_frames),
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),
             alert_save_failed: self.alert_save_error_reported.is_some() || core.alert_save_error.is_some(),
             archive_enabled: self.packet_archive.is_some(),

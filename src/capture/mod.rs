@@ -14,11 +14,16 @@ pub struct CaptureTask {
 pub(crate) struct CaptureStats {
     dropped: AtomicU64,
     link_type: AtomicU64,
+    truncated_frames: AtomicU64,
 }
 
 impl Default for CaptureStats {
     fn default() -> Self {
-        Self { dropped: AtomicU64::new(u64::MAX), link_type: AtomicU64::new(u64::MAX) }
+        Self {
+            dropped: AtomicU64::new(u64::MAX),
+            link_type: AtomicU64::new(u64::MAX),
+            truncated_frames: AtomicU64::new(0),
+        }
     }
 }
 
@@ -31,6 +36,17 @@ impl CaptureStats {
     #[cfg(any(feature = "real-capture", test))]
     pub(crate) fn publish_link_type(&self, link_type: u32) {
         self.link_type.store(u64::from(link_type), Ordering::Relaxed);
+    }
+
+    #[cfg(any(feature = "real-capture", test))]
+    pub(crate) fn observe_frame_lengths(&self, captured: u32, wire: u32) -> Result<(), String> {
+        if captured > wire {
+            return Err("Invalid capture packet length".into());
+        }
+        if captured < wire {
+            self.truncated_frames.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
     }
 
     fn dropped(&self) -> Option<u32> {
@@ -77,6 +93,10 @@ impl CaptureTask {
 
     pub fn link_type(&self) -> Option<u32> {
         u32::try_from(self.stats.link_type.load(Ordering::Relaxed)).ok()
+    }
+
+    pub fn truncated_frames(&self) -> Option<u64> {
+        self.link_type().map(|_| self.stats.truncated_frames.load(Ordering::Relaxed))
     }
 
     pub fn result(&mut self) -> Option<Result<(), String>> {
