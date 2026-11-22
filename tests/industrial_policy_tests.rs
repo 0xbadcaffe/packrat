@@ -148,7 +148,41 @@ fn industrial_alert_exposes_a_policy_hint_not_a_claim_of_execution() {
         .find(|alert| alert.title == "Industrial state-changing command").unwrap();
     let provenance = alert.provenance.as_ref().unwrap();
     assert_eq!(provenance.rule_id, "industrial.state_change");
+    assert_eq!(provenance.revision, 2);
     assert_eq!(provenance.confidence, packrat_tui::analysis::alert_provenance::EvidenceConfidence::Heuristic);
     assert!(provenance.verification_hint.contains("does not prove a state change"));
     assert_eq!(alert.packet_refs, [1]);
+}
+
+#[test]
+fn modbus_policy_uses_complete_request_boundaries_and_ignores_replies() {
+    let write_like = [0, 2, 0, 0, 0, 2, 1, 6];
+    let read_only = [0, 1, 0, 0, 0, 6, 1, 3, 0, 0, 0, 1];
+    let inspect = |payload: &[u8]| industrial_policy::inspect(&industrial_packet("Modbus", 502, true, payload));
+    assert!(inspect(&read_only).is_none());
+    let mut coalesced = read_only.to_vec();
+    coalesced.extend_from_slice(&write_like);
+    assert_eq!(inspect(&coalesced).unwrap().operation, "write single register");
+
+    let mut malformed = write_like;
+    for length in [0_u16, 1, 3] {
+        malformed[4..6].copy_from_slice(&length.to_be_bytes());
+        assert!(inspect(&malformed).is_none());
+    }
+    malformed = write_like;
+    malformed[3] = 1;
+    assert!(inspect(&malformed).is_none());
+    let mut overlong = write_like.to_vec();
+    overlong.resize(261, 0);
+    overlong[5] = 255;
+    assert!(inspect(&overlong).is_none());
+    for end in 0..write_like.len() {
+        assert!(inspect(&write_like[..end]).is_none());
+    }
+
+    let mut reply = industrial_packet("Modbus", 502, true, &write_like);
+    reply.bytes[34..36].copy_from_slice(&502_u16.to_be_bytes());
+    reply.bytes[36..38].copy_from_slice(&50_000_u16.to_be_bytes());
+    std::mem::swap(&mut reply.src_port, &mut reply.dst_port);
+    assert!(industrial_policy::inspect(&reply).is_none());
 }

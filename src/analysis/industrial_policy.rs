@@ -24,7 +24,11 @@ pub fn inspect(packet: &Packet) -> Option<IndustrialFinding> {
     }
     let (protocol, ports, payload) = transport_payload(packet)?;
     if protocol == 6 && ports.contains(&502) {
-        return inspect_modbus(payload);
+        return if ports[1] == 502 && ports[0] != 502 {
+            inspect_modbus(payload)
+        } else {
+            None
+        };
     }
     if ports.contains(&20_000) {
         return inspect_dnp3(payload);
@@ -38,11 +42,24 @@ pub fn inspect(packet: &Packet) -> Option<IndustrialFinding> {
     None
 }
 
-fn inspect_modbus(payload: &[u8]) -> Option<IndustrialFinding> {
-    if payload.len() < 8 || payload[2..4] != [0, 0] {
-        return None;
+fn inspect_modbus(mut payload: &[u8]) -> Option<IndustrialFinding> {
+    while !payload.is_empty() {
+        let length = usize::from(read_u16(payload, 4)?);
+        // The MBAP length covers the unit identifier and the bounded PDU.
+        if !(2..=254).contains(&length) || read_u16(payload, 2)? != 0 {
+            return None;
+        }
+        let message = payload.get(..6 + length)?;
+        if let Some(operation) = modbus_operation(message[7]) {
+            return Some(IndustrialFinding { protocol: "Modbus/TCP", operation, critical: false });
+        }
+        payload = &payload[message.len()..];
     }
-    let operation = match payload[7] {
+    None
+}
+
+fn modbus_operation(code: u8) -> Option<&'static str> {
+    Some(match code {
         5 => "write single coil",
         6 => "write single register",
         8 => "diagnostics",
@@ -52,8 +69,7 @@ fn inspect_modbus(payload: &[u8]) -> Option<IndustrialFinding> {
         22 => "mask write register",
         23 => "read/write multiple registers",
         _ => return None,
-    };
-    Some(IndustrialFinding { protocol: "Modbus/TCP", operation, critical: false })
+    })
 }
 
 fn inspect_dnp3(payload: &[u8]) -> Option<IndustrialFinding> {
