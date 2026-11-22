@@ -1,22 +1,21 @@
 use super::*;
+use crate::analysis::alert_center::AlertItem;
 use crate::analysis::impact::EndpointEvidence;
 use crate::analysis::incident::Incident;
 use crate::engine::PacketAnalysis;
 
+#[derive(Default)]
 pub(super) struct AnalysisContext {
     incidents: Vec<Incident>,
     endpoints: Vec<EndpointEvidence>,
     independent: std::collections::HashSet<u64>,
+    alerts: Vec<AlertItem>,
 }
 
 impl App {
     pub(super) fn analysis_context(&self, analysis: &PacketAnalysis) -> Option<AnalysisContext> {
-        if analysis.incidents.is_empty() {
-            return Some(AnalysisContext {
-                incidents: Vec::new(),
-                endpoints: Vec::new(),
-                independent: Default::default(),
-            });
+        if analysis.incidents.is_empty() && analysis.alert_pins.is_empty() {
+            return Some(AnalysisContext::default());
         }
         self.query_core(|core| {
             let incidents: Vec<_> = analysis
@@ -51,9 +50,12 @@ impl App {
                 .map(|incident| incident.id)
                 .collect();
             AnalysisContext {
+                endpoints: if incidents.is_empty() { Vec::new() } else { core.endpoint_evidence.clone() },
                 incidents,
-                endpoints: core.endpoint_evidence.clone(),
                 independent,
+                alerts: analysis.alert_pins.iter().filter_map(|id| {
+                    core.alert_center.items.iter().find(|item| item.id == *id).cloned()
+                }).collect(),
             }
         })
     }
@@ -64,6 +66,7 @@ impl App {
         context: AnalysisContext,
         live: bool,
         restoring: bool,
+        current: Option<&Packet>,
     ) {
         if restoring {
             return;
@@ -117,8 +120,30 @@ impl App {
                 notice.id, notice.label
             ));
         }
-        for id in analysis.alert_pins {
-            self.worklist.add(InvestigationItem::Alert(id));
+        let previous_active = self.worklist.active;
+        for alert in &context.alerts {
+            self.retain_automatic_alert_evidence(alert, current);
+        }
+        self.worklist.active = previous_active;
+    }
+
+    fn retain_automatic_alert_evidence(&mut self, alert: &AlertItem, current: Option<&Packet>) {
+        let scope = self.alert_evidence_scope(alert);
+        if scope.local_mismatch().is_some() {
+            return;
+        }
+        self.project_dirty |= self.worklist.add(InvestigationItem::Alert(alert.id));
+        let mut frames = alert.evidence_frame_numbers();
+        frames.retain(|&frame| self.frame_may_be_local(scope, frame));
+        let trigger = current.filter(|packet| packet.no == alert.packet_no)
+            .or_else(|| self.packets.iter().find(|packet| packet.no == alert.packet_no));
+        if let Some(packet) = trigger && frames.binary_search(&packet.no).is_ok() {
+            self.project_dirty |= self.worklist.pin_packet(packet).unwrap_or(false);
+        }
+        for packet in &self.packets {
+            if packet.no != alert.packet_no && frames.binary_search(&packet.no).is_ok() {
+                self.project_dirty |= self.worklist.pin_packet(packet).unwrap_or(false);
+            }
         }
     }
 }

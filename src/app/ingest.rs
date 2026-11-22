@@ -129,7 +129,7 @@ impl App {
                 .edit()
                 .analyze_with_history(&pkt, self.packets.iter().cloned());
             if let Some(context) = self.analysis_context(&analysis) {
-                self.handle_packet_analysis(analysis, context, live, restoring);
+                self.handle_packet_analysis(analysis, context, live, restoring, Some(&pkt));
             }
         }
         self.retain_analyzed_display(pkt, restoring);

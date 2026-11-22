@@ -239,7 +239,7 @@ impl App {
                         });
                     return false;
                 };
-                self.handle_packet_analysis(analysis, context, live, restoring);
+                self.handle_packet_analysis(analysis, context, live, restoring, None);
             }
             WorkerEvent::Updated {
                 generation: event_generation,

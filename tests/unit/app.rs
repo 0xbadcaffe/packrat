@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "app_saved_case_evidence_tests.rs"]
 mod saved_case_evidence;
+#[path = "app_automatic_evidence_tests.rs"]
+mod automatic_evidence;
 
 #[test]
 fn background_restore_preserves_acknowledgements_without_reopening_alerts() {
