@@ -211,7 +211,11 @@ impl App {
         let mut archived = 0;
         let mut retained = Vec::with_capacity(packet_refs.len());
         for packet_no in packet_refs {
-            let local = scope_mismatch.is_none().then(|| self.packet_by_no(packet_no)).flatten().cloned();
+            let saved = self.saved_alert_pin(&alert, packet_no);
+            let local = saved.or_else(|| {
+                self.frame_may_be_local(evidence_scope, packet_no)
+                    .then(|| self.packet_by_no(packet_no)).flatten()
+            }).cloned();
             let from_archive = local.is_none() && same_capture;
             let packet = if from_archive {
                 if reader.is_none() && !archive_error {
@@ -269,7 +273,7 @@ impl App {
             retained.len(),
             archived,
             unavailable,
-            scope_mismatch
+            scope_mismatch.map(|reason| if retained.is_empty() { reason } else { "saved case" })
                 .or(archive_error.then_some("archive read failed"))
                 .map_or_else(String::new, |reason| format!(" ({reason})"))
         ));

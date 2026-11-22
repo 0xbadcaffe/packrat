@@ -157,6 +157,7 @@ pub struct App {
     pub packet_archive: Option<crate::storage::packet_archive::ArchiveWorker>,
     capture_id: Option<std::sync::Arc<str>>,
     capture_frame_high_water: u64,
+    restored_project_max_frame: u64,
     pub evidence_vault: EvidenceVault,
     pub telemetry: TelemetryHub,
     pub socket_scope: SocketScope,
@@ -281,6 +282,22 @@ fn restore_investigation_tray(
             tray.pin_packet(packet)?;
         }
     }
+    let mut scope_counts = std::collections::HashMap::<u64, usize>::new();
+    for packet in &state.pinned_packets {
+        if state.pinned_packet_scopes.contains_key(&packet.no) {
+            *scope_counts.entry(packet.no).or_default() += 1;
+        }
+    }
+    for (&frame, scope) in &state.pinned_packet_scopes {
+        if frame == 0
+            || !crate::storage::packet_archive::valid_capture_id(scope)
+            || tray.retained_packet(frame).is_none()
+            || scope_counts.get(&frame) != Some(&1)
+        {
+            return Err("Invalid saved capture scope for pinned packet".into());
+        }
+    }
+    tray.restored_packet_scopes = state.pinned_packet_scopes.clone();
     tray.active = state
         .active_investigation
         .filter(|index| *index < tray.items.len());

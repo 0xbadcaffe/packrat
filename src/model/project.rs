@@ -13,7 +13,7 @@ use crate::model::tags::TagStore;
 use crate::storage::case_bundle::ObjectEntry;
 use crate::net::packet::Packet;
 
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum SavedInvestigationItem {
@@ -90,6 +90,9 @@ pub struct ProjectState {
     /// Pinned evidence survives live-buffer eviction in either save mode.
     #[serde(default)]
     pub pinned_packets: Vec<Packet>,
+    /// Capture IDs for scoped pins. Older projects intentionally have no mapping.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub pinned_packet_scopes: std::collections::BTreeMap<u64, String>,
     #[serde(default)]
     pub incident_state: Option<crate::analysis::incident::IncidentSnapshot>,
     #[serde(default)]
@@ -123,6 +126,7 @@ impl ProjectState {
             pcap_data:      None,
             embedded_packets: Vec::new(),
             pinned_packets: Vec::new(),
+            pinned_packet_scopes: Default::default(),
             incident_state: None,
             endpoint_evidence: Vec::new(),
             alert_items: Vec::new(),

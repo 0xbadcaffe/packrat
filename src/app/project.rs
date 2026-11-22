@@ -59,6 +59,15 @@ impl App {
             .into_iter()
             .filter_map(|no| self.packet_by_no(no).cloned())
             .collect();
+        for packet in &state.pinned_packets {
+            let scope = self.worklist.restored_packet_scopes.get(&packet.no).map(String::as_str)
+                .or_else(|| {
+                    (packet.no > self.restored_project_max_frame).then(|| self.capture_id.as_deref()).flatten()
+                });
+            if let Some(scope) = scope {
+                state.pinned_packet_scopes.insert(packet.no, scope.to_owned());
+            }
+        }
         state.incident_state = Some(core.incidents.snapshot());
         state.endpoint_evidence = core.endpoint_evidence.clone();
         state.guard_simulation = self.response_preview.clone();
@@ -158,6 +167,13 @@ impl App {
             return Err("Saved packet history exceeds analysis budget".into());
         }
         self.try_clear_packets()?;
+        self.restored_project_max_frame = state
+            .pinned_packets
+            .iter()
+            .chain(&state.embedded_packets)
+            .map(|packet| packet.no)
+            .max()
+            .unwrap_or(0);
         if self.capture_id.is_some() {
             // Never let a newly accepted frame reuse a historical evidence number.
             self.capture_frame_high_water = state
@@ -171,7 +187,8 @@ impl App {
                 .chain(tray.packet_nos())
                 .chain(state.embedded_packets.iter().map(|packet| packet.no))
                 .max()
-                .unwrap_or(0);
+                .unwrap_or(0)
+                .max(self.restored_project_max_frame);
         }
         if self.background_analysis_enabled() {
             self.enqueue_offline_packets(state.embedded_packets, true)?;

@@ -114,6 +114,7 @@ impl App {
             packet_archive: None,
             capture_id: None,
             capture_frame_high_water: 0,
+            restored_project_max_frame: 0,
             evidence_vault: EvidenceVault::default(),
             telemetry: TelemetryHub::default(),
             socket_scope: SocketScope::default(),

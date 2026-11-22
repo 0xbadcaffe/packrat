@@ -152,6 +152,7 @@ pub struct InvestigationTray {
     pub active: Option<usize>,
     pub open: bool,
     pub(super) retained_packets: std::collections::HashMap<u64, Packet>,
+    pub(super) restored_packet_scopes: std::collections::BTreeMap<u64, String>,
     pub(super) retained_bytes: usize,
 }
 
@@ -218,6 +219,7 @@ impl InvestigationTray {
         }
         let removed = self.items.remove(index);
         if let InvestigationItem::Packet(no) = &removed {
+            self.restored_packet_scopes.remove(no);
             if let Some(packet) = self.retained_packets.remove(no) {
                 self.retained_bytes -= Self::packet_cost(&packet);
             }

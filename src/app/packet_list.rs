@@ -27,6 +27,7 @@ impl App {
         }
         self.capture_id = capture_id;
         self.capture_frame_high_water = 0;
+        self.restored_project_max_frame = 0;
         self.pending_analysis.clear();
         self.pending_analysis_bytes = 0;
         self.pending_analysis_events.clear();
