@@ -175,13 +175,13 @@ pub(super) struct BehaviorFlowKey {
     pub(super) first: (String, u16),
     pub(super) second: (String, u16),
     pub(super) protocol: String,
-    pub(super) vlan: (Option<u16>, Option<u16>),
+    pub(super) scope: ServiceScope,
 }
 
 #[derive(Debug)]
 pub(super) struct BeaconSample {
     pub(super) timestamp: f64,
-    pub(super) size: u16,
+    pub(super) size: u32,
     pub(super) packet_no: u64,
 }
 

@@ -96,6 +96,58 @@ fn periodic_traffic_alerts_once_per_conversation_and_keeps_directional_evidence(
 }
 
 #[test]
+fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
+    use packrat_tui::{
+        engine::AnalysisCore,
+        net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution},
+    };
+
+    let packet = |no, timestamp, wire_length, section_id, interface_id| {
+        let mut packet = behavior_packet(no, timestamp, 120, vec![0; 120]);
+        packet.capture = Some(CaptureMetadata {
+            timestamp: Some(CaptureTimestamp {
+                ticks: timestamp as u64,
+                resolution: TimestampResolution::Decimal(0),
+                offset_seconds: 0,
+            }),
+            captured_length: 120,
+            wire_length,
+            link_type: 1,
+            section_id,
+            interface_id,
+            interface_name: None,
+            comments: Vec::new(),
+        });
+        packet
+    };
+    let is_periodic = |item: &packrat_tui::analysis::alert_center::AlertItem| {
+        item.title == "Periodic fixed-size traffic"
+    };
+    let mut truncated = AnalysisCore::default();
+    for index in 0..7 {
+        truncated.analyze(&packet(index + 1, index as f64 * 10.0,
+            if index % 2 == 0 { 200 } else { 900 }, 0, 0));
+    }
+    assert!(!truncated.alert_center.items.iter().any(is_periodic));
+
+    for alternate_scope in [(0, 1), (1, 0)] {
+        let mut scoped = AnalysisCore::default();
+        for index in 0..7 {
+            let (section, interface) = if index % 2 == 0 { (0, 0) } else { alternate_scope };
+            scoped.analyze(&packet(index + 1, index as f64 * 10.0, 900, section, interface));
+        }
+        assert!(!scoped.alert_center.items.iter().any(is_periodic));
+
+        for index in 4..7 {
+            scoped.analyze(&packet(index + 4, index as f64 * 20.0, 900, 0, 0));
+        }
+        let alert = scoped.alert_center.items.iter().find(|item| is_periodic(item)).unwrap();
+        assert_eq!(alert.packet_refs, [1, 3, 5, 7, 8, 9, 10]);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 2);
+    }
+}
+
+#[test]
 fn detects_large_high_entropy_outbound_transfer() {
     let mut security = SecurityEngine::default();
     let encrypted_like = (0..60_000)

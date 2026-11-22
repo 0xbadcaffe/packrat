@@ -106,11 +106,12 @@ impl SecurityEngine {
         } else {
             (destination, source, 1)
         };
+        let scope = service_scope(pkt);
         let key = BehaviorFlowKey {
             first: (first.0.into(), first.1),
             second: (second.0.into(), second.1),
             protocol: pkt.protocol.clone(),
-            vlan: (pkt.outer_vlan_id, pkt.vlan_id),
+            scope,
         };
         if !self.beacon_flows.contains_key(&key) {
             evict_oldest_beacon(&mut self.beacon_flows);
@@ -130,7 +131,7 @@ impl SecurityEngine {
         }
         samples.push(BeaconSample {
             timestamp: pkt.timestamp,
-            size: pkt.length,
+            size: pkt.capture.as_ref().map_or(u32::from(pkt.length), |meta| meta.wire_length),
             packet_no: pkt.no,
         });
         if !beacon_pattern(samples) {
@@ -154,8 +155,8 @@ impl SecurityEngine {
             },
             related_packets,
             correlation_key: Some(format!(
-                "{} [{:?},{:?}] [{}]:{}<>[{}]:{}",
-                pkt.protocol, pkt.outer_vlan_id, pkt.vlan_id, first.0, first.1, second.0, second.1,
+                "{} {scope:?} [{}]:{}<>[{}]:{}",
+                pkt.protocol, first.0, first.1, second.0, second.1,
             )),
         });
     }
