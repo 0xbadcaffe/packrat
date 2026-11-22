@@ -202,7 +202,7 @@ impl SecurityEngine {
         }
         // Keep distinct attempts within one second of the latest observed packet.
         state.attempts.retain(|attempt| state.last_seen - attempt.timestamp <= SYN_FLOOD_WINDOW_SECS);
-        if state.attempts.is_empty() {
+        if state.attempts.len() < SYN_FLOOD_THRESHOLD.div_ceil(2) {
             state.alerted = false;
         }
         if state.attempts.iter().any(|attempt| {

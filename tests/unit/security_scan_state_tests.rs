@@ -58,3 +58,28 @@ fn scan_rules_rearm_after_most_evidence_expires_without_realerting_on_sustained_
         assert_eq!(latest.related_packets, (25..=35).collect::<Vec<_>>());
     }
 }
+
+#[test]
+fn syn_rule_records_renewed_spikes_but_not_sustained_or_retransmitted_syns() {
+    let mut engine = SecurityEngine::default();
+    let mut packet = parse_ethernet(&[], 1, 1.0);
+    packet.src = "192.0.2.1".into();
+    packet.dst = "198.51.100.1".into();
+    let mut observe = |engine: &mut SecurityEngine, time: f64, count: usize, sequence: Option<u32>| {
+        for _ in 0..count {
+            packet.timestamp = time;
+            engine.record_syn_arrival(&packet, 443, 40_000, sequence.unwrap_or(packet.no as u32));
+            packet.no += 1;
+        }
+        engine.ids_alerts.len()
+    };
+    assert_eq!(observe(&mut engine, 1.0, 50, None), 0);
+    assert_eq!(observe(&mut engine, 1.5, 50, None), 1);
+    assert_eq!(observe(&mut engine, 2.25, 50, None), 1);
+    assert_eq!(observe(&mut engine, 3.0, 1, None), 1);
+    assert_eq!(observe(&mut engine, 3.5, 120, Some(151)), 1);
+    assert_eq!(observe(&mut engine, 3.5, 99, None), 2);
+    let renewed = engine.findings.ids.last().unwrap();
+    assert_eq!(renewed.alert.pkt_no, 370);
+    assert_eq!(renewed.related_packets, std::iter::once(151).chain(272..370).collect::<Vec<_>>());
+}
