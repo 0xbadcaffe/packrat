@@ -10,6 +10,8 @@ use std::sync::{Arc, OnceLock};
 
 #[path = "packet_archive_policy.rs"]
 mod policy;
+#[path = "packet_archive_reader.rs"]
+mod reader;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArchiveLimits {
@@ -77,12 +79,7 @@ fn private_file(path: &Path) -> Result<File, String> {
 
 impl PacketArchive {
     pub fn open_readonly(directory: &Path) -> Result<Self, String> {
-        let db = Connection::open_with_flags(
-            directory.join("index.sqlite"),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .map_err(|error| error.to_string())?;
-        let bytes = File::open(directory.join("packets.bin")).map_err(|error| error.to_string())?;
+        let (db, bytes) = reader::open_entries(directory)?;
         Ok(Self { db, bytes, _writer_guard: None })
     }
 

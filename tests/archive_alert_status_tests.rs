@@ -7,6 +7,70 @@ use packrat_tui::net::parser::parse_ethernet;
 use packrat_tui::storage::packet_archive::PacketArchive;
 use serde_json::{Value, json};
 
+#[cfg(unix)]
+#[test]
+fn archive_reader_rejects_named_pipes_and_symlinks_without_waiting() {
+    use std::{
+        ffi::CString,
+        os::unix::{ffi::OsStrExt, fs::symlink},
+        path::Path,
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+
+    let scratch = tempfile::tempdir().unwrap();
+    let archive = scratch.path().join("archive");
+    drop(PacketArchive::open(&archive).unwrap());
+    let run = |path: &Path| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+            .arg(path).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                child.kill().ok();
+                child.wait().unwrap();
+                panic!("Archive reader blocked on {}", path.display());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        child.wait_with_output().unwrap()
+    };
+    assert!(run(&archive).status.success());
+    let reject = |path: &Path, name: &str| {
+        let output = run(path);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("not a real directory or regular file") && error.contains(name), "{error}");
+    };
+    let file = archive.join("packets.bin");
+    let backup = scratch.path().join("original.bin");
+    std::fs::rename(&file, &backup).unwrap();
+    let fifo = CString::new(file.as_os_str().as_bytes()).unwrap();
+    // SAFETY: fifo is a valid, null-terminated path in the fixture directory.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    reject(&archive, "packets.bin");
+    std::fs::remove_file(&file).unwrap();
+    symlink(&backup, &file).unwrap();
+    reject(&archive, "packets.bin");
+    std::fs::remove_file(&file).unwrap();
+    std::fs::rename(&backup, &file).unwrap();
+    let sidecar = archive.join("index.sqlite-wal");
+    let sidecar_backup = scratch.path().join("original.wal");
+    if sidecar.exists() {
+        std::fs::rename(&sidecar, &sidecar_backup).unwrap();
+    }
+    symlink(&file, &sidecar).unwrap();
+    reject(&archive, "index.sqlite-wal");
+    std::fs::remove_file(&sidecar).unwrap();
+    if sidecar_backup.exists() {
+        std::fs::rename(&sidecar_backup, &sidecar).unwrap();
+    }
+    let alias = scratch.path().join("alias");
+    symlink(&archive, &alias).unwrap();
+    reject(&alias, "alias");
+    assert!(run(&archive).status.success());
+}
+
 #[test]
 fn project_alert_status_checks_only_unique_scoped_pins_against_the_log() {
     use packrat_tui::model::project::{ProjectSaveMode, ProjectState};
