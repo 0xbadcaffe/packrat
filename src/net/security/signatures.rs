@@ -2,7 +2,7 @@ use super::*;
 
 impl SecurityEngine {
     pub(super) fn check_ids(&mut self, pkt: &Packet) {
-        Self::scan_ids(pkt, |alert, correlation_key| {
+        Self::scan_ids(pkt, false, |alert, correlation_key| {
             // Reassembly may already have reported the same signature on this frame.
             if !self.findings.ids.iter().any(|finding| {
                 finding.alert.pkt_no == alert.pkt_no && finding.alert.signature == alert.signature
@@ -23,7 +23,7 @@ impl SecurityEngine {
         frames: &[u64],
         identification: u32,
     ) {
-        Self::scan_ids(synthetic, |mut alert, _| {
+        Self::scan_ids(synthetic, true, |mut alert, _| {
             alert.detail = format!(
                 "{}; matched after IPv6 reassembly of {} captured frames",
                 alert.detail,
@@ -46,7 +46,7 @@ impl SecurityEngine {
         });
     }
 
-    fn scan_ids(pkt: &Packet, mut emit: impl FnMut(IdsAlert, Option<String>)) {
+    fn scan_ids(pkt: &Packet, reassembled: bool, mut emit: impl FnMut(IdsAlert, Option<String>)) {
         let dst_port = pkt.dst_port.unwrap_or(0);
         let src_port = pkt.src_port.unwrap_or(0);
         let bytes = &pkt.bytes;
@@ -70,15 +70,17 @@ impl SecurityEngine {
         }
 
         // ── Log4Shell ───────────────────────────────────────────────────────
-        if Self::contains_str_ci(bytes, b"${jndi:") {
+        if lookup_payload(pkt, reassembled)
+            .is_some_and(|payload| Self::contains_str_ci(payload, b"${jndi:"))
+        {
             emit(
                 IdsAlert {
                     pkt_no: pkt.no,
                     signature: "Log4Shell (CVE-2021-44228)",
-                    severity: Severity::Critical,
+                    severity: Severity::Medium,
                     detail: format!(
-                        "${{jndi:}} pattern in payload from {} proto={}",
-                        pkt.src, pkt.protocol
+                        "Literal JNDI lookup marker in transport payload from {} to {}; vulnerable code and lookup execution are unverified",
+                        pkt.src, pkt.dst
                     ),
                 },
                 None,
@@ -190,6 +192,32 @@ impl SecurityEngine {
                 }
             }
         }
-
     }
+}
+
+fn lookup_payload(pkt: &Packet, reassembled: bool) -> Option<&[u8]> {
+    if reassembled {
+        let transport = pkt.bytes.as_slice();
+        return match pkt.protocol.as_str() {
+            "TCP" => {
+                let header = usize::from(*transport.get(12)? >> 4) * 4;
+                (header >= 20).then_some(())?;
+                transport.get(header..)
+            }
+            "UDP" => transport.get(8..usize::from(u16_be_at(transport, 4))),
+            _ => None,
+        };
+    }
+    if pkt
+        .capture
+        .as_ref()
+        .is_some_and(|metadata| metadata.link_type != 1)
+    {
+        return None;
+    }
+    crate::analysis::stream::tcp_segment_payload(pkt)
+        .map(|(_, payload)| payload)
+        .or_else(|| {
+            crate::analysis::dns_transactions::udp_payload(pkt).map(|(_, _, payload)| payload)
+        })
 }

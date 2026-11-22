@@ -157,6 +157,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check the queried name against approved domains or threat intelligence. Identify the originating process before escalating.",
         ),
         (
+            "IDS", "Log4Shell (CVE-2021-44228)", "log4j.literal_lookup_marker", 2, Heuristic,
+            "Check whether the receiving application uses an affected library. Corroborate with application and outbound connection logs before escalating.",
+        ),
+        (
             "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 4, DirectObservation,
             "Compare the distinct 401 responses with application logs; check expected challenges.",
         ),

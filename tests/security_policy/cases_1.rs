@@ -27,12 +27,7 @@ fn shipped_signature_replays(#[case] signature: &str) {
 #[test]
 fn payload_signatures_are_ascii_case_insensitive() {
     let mut security = SecurityEngine::default();
-    security.update(&packet(
-        "HTTP",
-        8080,
-        "",
-        b"prefix ${JnDi:ldap://example.test/x} suffix".to_vec(),
-    ));
+    security.update(&ipv4_tcp_packet(1, 100, 0x18, b"prefix ${JnDi:ldap://example.test/x} suffix"));
     assert!(
         security
             .ids_alerts

