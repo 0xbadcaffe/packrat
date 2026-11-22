@@ -78,7 +78,7 @@ fn enter_in_dns_transactions_cycles_only_available_exchange_evidence() {
 fn dns_transaction_navigation_recovers_a_frame_from_the_current_archive() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::new_for_test();
-    app.set_packet_archive(crate::storage::packet_archive::ArchiveWorker::open(directory.path()).unwrap()).unwrap();
+    app.set_packet_archive(crate::storage::packet_archive::ArchiveWorker::open(&directory.path().join("archive")).unwrap()).unwrap();
     let query = dns_frame(1, [10, 0, 0, 53], false);
     let reply = dns_frame(2, [10, 0, 0, 53], true);
     app.inject_packet(query.clone());

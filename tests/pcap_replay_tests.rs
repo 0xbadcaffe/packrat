@@ -120,13 +120,14 @@ fn archive_cli_recovers_a_frame_only_from_the_requested_capture() {
 
     let directory = tempfile::tempdir().unwrap();
     let packet = packrat_tui::net::parser::parse_ethernet(&ipv6_tcp_frame(), 17, 1.0);
-    let mut archive = PacketArchive::open(directory.path()).unwrap();
+    let archive_path = directory.path().join("archive");
+    let mut archive = PacketArchive::open(&archive_path).unwrap();
     archive.append_scoped("capture-a", &[packet.clone()]).unwrap();
     drop(archive);
 
     let lookup = |capture: &str| {
         std::process::Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
-            .arg(directory.path())
+            .arg(&archive_path)
             .args(["--capture-frame", capture, "17"])
             .output()
             .unwrap()

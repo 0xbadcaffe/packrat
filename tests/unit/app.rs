@@ -219,8 +219,9 @@ fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     use crate::storage::packet_archive::{ArchiveWorker, PacketArchive};
 
     let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("archive");
     let mut app = App::new_for_test();
-    app.set_packet_archive(ArchiveWorker::open(directory.path()).unwrap()).unwrap();
+    app.set_packet_archive(ArchiveWorker::open(&archive).unwrap()).unwrap();
     let capture_a = app.capture_id.clone().unwrap();
     let mut first = packet(90);
     first.info = "first capture".into();
@@ -247,7 +248,7 @@ fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     let capture_b = app.capture_id.clone().unwrap();
     assert_ne!(capture_a, capture_b);
     assert_eq!(app.alert_evidence_status(&old_alerts[0]), "0/2 verified here; different capture");
-    app.packet_archive = Some(ArchiveWorker::open(directory.path()).unwrap());
+    app.packet_archive = Some(ArchiveWorker::open(&archive).unwrap());
     let mut second = packet(90);
     second.info = "second capture".into();
     app.inject_packet(second);
@@ -257,7 +258,7 @@ fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     assert!(app.status_msg.as_deref().unwrap().contains("2 unavailable"));
 
     app.packet_archive.as_mut().unwrap().finish().unwrap();
-    let mut reader = PacketArchive::open_readonly(directory.path()).unwrap();
+    let mut reader = PacketArchive::open_readonly(&archive).unwrap();
     assert_eq!(reader.packet_for_capture(&capture_a, 1).unwrap().unwrap().info, "first capture");
     assert_eq!(reader.packet_for_capture(&capture_b, 1).unwrap().unwrap().info, "second capture");
 }
@@ -268,7 +269,7 @@ fn background_clear_updates_capture_scope_before_subsequent_findings() {
 
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::new_for_test();
-    app.set_packet_archive(ArchiveWorker::open(directory.path()).unwrap()).unwrap();
+    app.set_packet_archive(ArchiveWorker::open(&directory.path().join("archive")).unwrap()).unwrap();
     let old = app.capture_id.clone();
     app.start_background_analysis().unwrap();
     app.try_clear_packets().unwrap();
@@ -328,13 +329,14 @@ fn capture_keeps_running_after_the_archive_frame_limit() {
     use crate::storage::packet_archive::{ArchiveLimits, ArchiveWorker, PacketArchive};
 
     let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("archive");
     let limits = ArchiveLimits {
         max_frames: 1,
         reserve_free_bytes: 0,
         ..ArchiveLimits::default()
     };
     let mut app = App::new_for_test();
-    app.set_packet_archive(ArchiveWorker::open_with_limits(directory.path(), limits).unwrap())
+    app.set_packet_archive(ArchiveWorker::open_with_limits(&archive, limits).unwrap())
         .unwrap();
     app.capturing = true;
     app.ingest_packet(packet(10));
@@ -345,7 +347,7 @@ fn capture_keeps_running_after_the_archive_frame_limit() {
     app.ingest_packet(packet(11));
     assert!(app.capturing);
     assert_eq!(app.packets.len(), 2);
-    assert_eq!(PacketArchive::open_readonly(directory.path()).unwrap().count().unwrap(), 1);
+    assert_eq!(PacketArchive::open_readonly(&archive).unwrap().count().unwrap(), 1);
 }
 
 #[test]

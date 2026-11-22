@@ -85,7 +85,8 @@ fn archive_round_trip_recovers_uncommitted_tail_and_detects_tampering() {
 #[test]
 fn scoped_archive_recovers_only_the_requested_capture_and_frame() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path();
+    let archive = dir.path().join("archive");
+    let path = archive.as_path();
     let legacy = parse_ethernet(&[1, 1], 7, 1.0);
     let first = parse_ethernet(&[2, 2], 7, 2.0);
     let second = parse_ethernet(&[3, 3], 7, 3.0);
@@ -115,7 +116,8 @@ fn scoped_archive_recovers_only_the_requested_capture_and_frame() {
 #[test]
 fn scoped_lookup_does_not_guess_for_legacy_archives() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path();
+    let archive = dir.path().join("archive");
+    let path = archive.as_path();
     let packet = parse_ethernet(&[1, 2, 3], 7, 1.0);
     let mut writer = PacketArchive::open(path).unwrap();
     writer.append(&[packet.clone()]).unwrap();
@@ -136,13 +138,14 @@ fn scoped_lookup_does_not_guess_for_legacy_archives() {
 #[test]
 fn archive_payload_cap_keeps_committed_evidence_and_never_overwrites() {
     let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("archive");
     let limits = ArchiveLimits {
         max_payload_bytes: 7,
         reserve_free_bytes: 0,
         ..ArchiveLimits::default()
     };
     let frame = |number| parse_ethernet(&[1, 2, 3], number, number as f64);
-    let mut worker = ArchiveWorker::open_with_limits(directory.path(), limits).unwrap();
+    let mut worker = ArchiveWorker::open_with_limits(&archive, limits).unwrap();
     for number in 1..=9 {
         worker.record(&frame(number)).unwrap();
     }
@@ -152,26 +155,70 @@ fn archive_payload_cap_keeps_committed_evidence_and_never_overwrites() {
     assert_eq!(worker.take_pause_notice(), None);
     worker.record(&frame(10)).unwrap();
 
-    let mut worker = ArchiveWorker::open_with_limits(directory.path(), limits).unwrap();
+    let mut worker = ArchiveWorker::open_with_limits(&archive, limits).unwrap();
     worker.record(&frame(11)).unwrap();
     worker.finish().unwrap();
     assert_eq!(worker.pause_reason(), Some("packet-byte limit reached"));
-    let mut archive = PacketArchive::open_readonly(directory.path()).unwrap();
-    assert_eq!(archive.count().unwrap(), 2);
-    assert_eq!(archive.packet(2).unwrap().no, 2);
-    assert_eq!(std::fs::metadata(directory.path().join("packets.bin")).unwrap().len(), 6);
+    let mut reader = PacketArchive::open_readonly(&archive).unwrap();
+    assert_eq!(reader.count().unwrap(), 2);
+    assert_eq!(reader.packet(2).unwrap().no, 2);
+    assert_eq!(std::fs::metadata(archive.join("packets.bin")).unwrap().len(), 6);
 }
 
 #[test]
 fn archive_pauses_before_using_the_free_space_reserve() {
     let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("archive");
     let limits = ArchiveLimits {
         reserve_free_bytes: u64::MAX,
         ..ArchiveLimits::default()
     };
-    let mut worker = ArchiveWorker::open_with_limits(directory.path(), limits).unwrap();
+    let mut worker = ArchiveWorker::open_with_limits(&archive, limits).unwrap();
     worker.record(&parse_ethernet(&[1, 2, 3], 1, 1.0)).unwrap();
     worker.finish().unwrap();
     assert_eq!(worker.pause_reason(), Some("filesystem free-space reserve reached"));
-    assert_eq!(PacketArchive::open_readonly(directory.path()).unwrap().count().unwrap(), 0);
+    assert_eq!(PacketArchive::open_readonly(&archive).unwrap().count().unwrap(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn writable_archives_require_a_private_real_directory() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("archive");
+    std::fs::create_dir(&archive).unwrap();
+    std::fs::set_permissions(&archive, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(PacketArchive::open(&archive).err().unwrap().contains("private"));
+    assert!(std::fs::read_dir(&archive).unwrap().next().is_none());
+    std::fs::set_permissions(&archive, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let redirected = directory.path().join("redirected");
+    symlink(&archive, &redirected).unwrap();
+    assert!(PacketArchive::open(&redirected.join("")).is_err());
+    assert!(std::fs::read_dir(&archive).unwrap().next().is_none());
+    assert!(PacketArchive::open(&archive).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn writable_archives_reject_redirected_or_public_evidence_files() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("archive");
+    drop(PacketArchive::open(&archive).unwrap());
+    let packets = archive.join("packets.bin");
+    std::fs::write(&packets, b"original bytes").unwrap();
+    std::fs::set_permissions(&packets, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(PacketArchive::open(&archive).is_err());
+    assert_eq!(std::fs::read(&packets).unwrap(), b"original bytes");
+    let sidecar = archive.join("index.sqlite-wal");
+    std::fs::set_permissions(&packets, std::fs::Permissions::from_mode(0o600)).unwrap();
+    symlink(&packets, &sidecar).unwrap();
+    assert!(PacketArchive::open(&archive).is_err());
+    std::fs::remove_file(&sidecar).unwrap();
+    let other = directory.path().join("linked-bytes");
+    std::fs::hard_link(&packets, &other).unwrap();
+    assert!(PacketArchive::open(&archive).is_err());
+    assert_eq!(std::fs::read(&other).unwrap(), b"original bytes");
 }

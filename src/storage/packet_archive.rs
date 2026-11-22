@@ -31,14 +31,45 @@ pub struct PacketArchive {
     _writer_guard: Option<File>,
 }
 
+fn validate_archive_entry(path: &Path, metadata: &std::fs::Metadata, directory: bool) -> Result<(), String> {
+    let valid_type = if directory { metadata.is_dir() } else { metadata.is_file() };
+    if !valid_type {
+        return Err(format!("Archive entry must be a real directory or regular file: {}", path.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid has no arguments or caller invariants.
+        let owner = unsafe { libc::geteuid() };
+        if metadata.uid() != owner || metadata.mode() & 0o077 != 0 || (!directory && metadata.nlink() != 1) {
+            return Err(format!(
+                "Archive entry must be private, owned by the archive writer, and not shared by hard links: {}",
+                path.display(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_existing_archive_file(path: &Path) -> Result<(), String> {
+    match path.symlink_metadata() {
+        Ok(metadata) => validate_archive_entry(path, &metadata, false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Stat archive entry {}: {error}", path.display())),
+    }
+}
+
 fn private_file(path: &Path) -> Result<File, String> {
+    check_existing_archive_file(path)?;
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)] {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
-    options.open(path).map_err(|error| error.to_string())
+    let file = options.open(path).map_err(|error| format!("Open archive entry {}: {error}", path.display()))?;
+    validate_archive_entry(path, &file.metadata().map_err(|error| error.to_string())?, false)?;
+    Ok(file)
 }
 
 impl PacketArchive {
@@ -53,18 +84,32 @@ impl PacketArchive {
     }
 
     pub fn open(directory: &Path) -> Result<Self, String> {
+        // Strip trailing separators before testing the directory itself, not its target.
+        let directory = directory.components().collect::<PathBuf>();
         let mut builder = std::fs::DirBuilder::new();
         builder.recursive(true);
         #[cfg(unix)] {
             use std::os::unix::fs::DirBuilderExt;
             builder.mode(0o700);
         }
-        builder.create(directory).map_err(|error| error.to_string())?;
+        builder.create(&directory).map_err(|error| error.to_string())?;
+        let metadata = directory.symlink_metadata().map_err(|error| error.to_string())?;
+        validate_archive_entry(&directory, &metadata, true)?;
+        // SQLite's no-follow flag also covers parent components such as macOS /var.
+        #[cfg(unix)]
+        let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let guard = private_file(&directory.join("writer.lock"))?;
         fs2::FileExt::try_lock_exclusive(&guard).map_err(|error| format!("Archive already has a writer: {error}"))?;
-        drop(private_file(&directory.join("index.sqlite"))?);
-        let db =
-            Connection::open(directory.join("index.sqlite")).map_err(|error| error.to_string())?;
+        for sidecar in ["index.sqlite-wal", "index.sqlite-shm", "index.sqlite-journal"] {
+            check_existing_archive_file(&directory.join(sidecar))?;
+        }
+        let index = directory.join("index.sqlite");
+        drop(private_file(&index)?);
+        let bytes = private_file(&directory.join("packets.bin"))?;
+        let db = Connection::open_with_flags(
+            index,
+            rusqlite::OpenFlags::default() | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        ).map_err(|error| error.to_string())?;
         db.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|error| error.to_string())?;
         db.execute_batch(
@@ -83,7 +128,6 @@ impl PacketArchive {
                 PRIMARY KEY (capture_id, frame_number));",
         )
         .map_err(|error| error.to_string())?;
-        let bytes = private_file(&directory.join("packets.bin"))?;
         let end: i64 = db
             .query_row(
                 "SELECT COALESCE(MAX(byte_offset + byte_length), 0) FROM packets",
