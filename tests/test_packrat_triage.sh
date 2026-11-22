@@ -122,6 +122,10 @@ jq -e '.status == "current" and .age_seconds == 30 and .max_age_seconds == 360
     jq -e '.socket_context_status == "available" and .alerts[0].socket_context.process == "client"
         and .alerts[0].socket_context.alert_last_seen == 1699999999.5
         and (.alerts[0].socket_context | has("private") | not)' <<< "$result" >/dev/null
+    result=$(bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
+    jq -e '.mode == "saved" and .status == "saved" and .health == null
+        and .scope == {session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"}
+        and .alerts[0].socket_context.process == "client"' <<< "$result" >/dev/null
     printf '%s\n' '{malformed' >>"$PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE"
     result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e '.socket_context_status == "unavailable" and (.alerts[0] | has("socket_context") | not)' \
@@ -143,6 +147,9 @@ jq -e '.status == "degraded" and .alerts[0].alert_id == 42' <<< "$result" >/dev/
     result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e '.status == "current" and .evidence_status == {status:"checked",alert_id:42,in_recent_alerts:true,
         frames:[{frame_number:1,status:"truncated"},{frame_number:2,status:"missing"}]}' <<< "$result" >/dev/null
+    result=$(bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
+    jq -e '.status == "saved" and .health == null and .evidence_status.status == "checked"
+        and [.evidence_status.frames[].status] == ["truncated","missing"]' <<< "$result" >/dev/null
     status=0
     result=$(PACKRAT_TEST_EVIDENCE_DRIFT=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
     [[ $status == 2 ]]
@@ -271,4 +278,29 @@ for invalid in 'not JSON' "$sample"$'\n'"$sample" \
     bash "$triage" "$health" "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
     [[ $status == 2 && ! -e $PACKRAT_TEST_CALL ]]
 done
+
+saved() {
+    bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$@"
+}
+result=$(saved "$PACKRAT_TEST_LOG")
+jq -e '.status == "saved" and .health == null and .alerts[0].alert_id == 42
+    and (has("age_seconds") | not)' <<< "$result" >/dev/null
+result=$(PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" saved "$PACKRAT_TEST_LOG" "$previous")
+jq -e '.status == "saved" and .previous_logs == 1 and .health == null' <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_INVALID_RECORDS=1 saved "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 ]]
+jq -e '.status == "saved_log_degraded" and .health == null and .alerts[0].alert_id == 42' \
+    <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_WRONG_ALERT_SCOPE=session_id saved "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 2 ]]
+jq -e '.status == "alert_log_scope_mismatch" and .alerts == null' <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_LOG_RACE=rotate saved "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 ]]
+jq -e '.status == "alert_log_changed" and .alerts == null' <<< "$result" >/dev/null
+status=0
+bash "$triage" --saved 1700000000-432 'legacy-unspecified' "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
+[[ $status == 2 ]]
 printf '%s\n' 'Packrat triage tests passed'

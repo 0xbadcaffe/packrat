@@ -3,8 +3,10 @@ set -euo pipefail
 
 usage() {
     printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
+        '       packrat-triage --saved SESSION_ID CAPTURE_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         'Supply up to eight immutable previous logs, oldest first.' \
         'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
+        '--saved reviews an explicit saved capture without consulting live health.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
@@ -17,10 +19,23 @@ usage() {
 }
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
-if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
+mode=live
+if [[ ${1-} == --saved ]]; then
+    if (( $# < 4 || $# > 12 )) ||
+       [[ ! $2 =~ ^[A-Za-z0-9_-]{1,128}$ || ! $3 =~ ^[0-9a-f]{32}$ ]]; then
+        usage >&2; exit 2
+    fi
+    mode=saved
+    session=$2 capture=$3 alert_log=$4
+    shift 4
+else
+    if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
+    health_file=$1 alert_log=$2
+    shift 2
+fi
 alert_limit=50
 
-previous_logs=("${@:3}")
+previous_logs=("$@")
 previous_args=()
 for log in "${previous_logs[@]}"; do
     if [[ ! -f $log ]]; then
@@ -43,7 +58,8 @@ if [[ -n $socket_file ]]; then
     fi
     socket_status=not_checked
 fi
-if [[ ! -f $1 || ( -n $max_age_override && ! $max_age_override =~ ^[1-9][0-9]{0,5}$ ) ]]; then
+if [[ $mode == live && ( ! -f $health_file ||
+      ( -n $max_age_override && ! $max_age_override =~ ^[1-9][0-9]{0,5}$ ) ) ]]; then
     printf '%s\n' 'Expected a regular health file and a positive PACKRAT_TRIAGE_MAX_AGE.' >&2
     exit 2
 fi
@@ -73,11 +89,6 @@ load_state() {
                              else 360 end)}
     '
 }
-
-if ! state=$(load_state "$1"); then
-    printf '%s\n' 'Could not read a valid Packrat health record.' >&2
-    exit 2
-fi
 
 report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
@@ -177,23 +188,37 @@ check_evidence() {
     ' <<< "$response"
 }
 
-if ! fresh; then
-    report stale_health
-    exit 1
-fi
-if ! jq -e '
-    .health | .capture_active == true and .telemetry_fresh == true
-    and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"))
-    and (.alert_session_id | type == "string" and length <= 128 and test("\\A[0-9]+-[0-9]+\\z"))
-    and ((has("capture_run_id") | not) or
-         (.capture_run_id | type == "string" and test("\\A[0-9a-f]{16}\\z")))
-' <<< "$state" >/dev/null; then
-    report capture_scope_unavailable
-    exit 1
+if [[ $mode == live ]]; then
+    if ! state=$(load_state "$health_file"); then
+        printf '%s\n' 'Could not read a valid Packrat health record.' >&2
+        exit 2
+    fi
+    if ! fresh; then
+        report stale_health
+        exit 1
+    fi
+    if ! jq -e '
+        .health | .capture_active == true and .telemetry_fresh == true
+        and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"))
+        and (.alert_session_id | type == "string" and length <= 128 and test("\\A[0-9]+-[0-9]+\\z"))
+        and ((has("capture_run_id") | not) or
+             (.capture_run_id | type == "string" and test("\\A[0-9a-f]{16}\\z")))
+    ' <<< "$state" >/dev/null; then
+        report capture_scope_unavailable
+        exit 1
+    fi
+    match_log "$alert_log" || exit 1
+    session=$(jq -er '.health.alert_session_id' <<< "$state")
+    capture=$(jq -er '.health.capture_id' <<< "$state")
+    run=$(jq -c '.health.capture_run_id' <<< "$state")
+else
+    state=$(jq -cn --arg session "$session" --arg capture "$capture" '
+        {mode:"saved",health:null,scope:{session_id:$session,capture_id:$capture}}
+    ')
 fi
 
-match_log "$2" || exit 1
-if ! read -r log_identity log_size <<< "$(stat -L --format='%d:%i %s' -- "$2")" ||
+if [[ ! -f $alert_log ]] ||
+   ! read -r log_identity log_size <<< "$(stat -L --format='%d:%i %s' -- "$alert_log")" ||
    [[ -z $log_identity || ! $log_size =~ ^[0-9]+$ ]]; then
     report alert_log_unavailable
     exit 2
@@ -202,12 +227,9 @@ if ! previous_stamps=$(previous_log_stamps); then
     report previous_log_unavailable
     exit 2
 fi
-session=$(jq -er '.health.alert_session_id' <<< "$state")
-capture=$(jq -er '.health.capture_id' <<< "$state")
-run=$(jq -c '.health.capture_run_id' <<< "$state")
 read_status=0
 raw_alerts=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
-    --alerts "$2" --session "$session" --capture-id "$capture" \
+    --alerts "$alert_log" --session "$session" --capture-id "$capture" \
     --limit "$((alert_limit + 1))" --report-integrity "${previous_args[@]}") || read_status=$?
 if (( read_status == 124 )); then
     report alert_log_read_timeout
@@ -249,30 +271,33 @@ fi
 evidence=null
 evidence_failed=false
 if [[ -n $evidence_id ]]; then
-    if ! evidence=$(check_evidence "$2"); then
+    if ! evidence=$(check_evidence "$alert_log"); then
         evidence=$(jq -cn --argjson id "$evidence_id" '{status:"unavailable",alert_id:$id,frames:null}')
     fi
     if ! jq -e '.status == "checked"' <<< "$evidence" >/dev/null; then evidence_failed=true; fi
 fi
-if ! latest=$(load_state "$1"); then
-    report health_recheck_failed
-    exit 2
+if [[ $mode == live ]]; then
+    if ! latest=$(load_state "$health_file"); then
+        report health_recheck_failed
+        exit 2
+    fi
+    state=$latest
+    if ! fresh; then
+        report stale_health
+        exit 1
+    fi
+    if ! jq -e --arg session "$session" --arg capture "$capture" --argjson run "$run" '
+        .health | .capture_active == true and .telemetry_fresh == true
+        and .alert_session_id == $session and .capture_id == $capture
+        and .capture_run_id == $run
+    ' <<< "$state" >/dev/null; then
+        report capture_scope_changed
+        exit 1
+    fi
+    match_log "$alert_log" || exit 1
 fi
-state=$latest
-if ! fresh; then
-    report stale_health
-    exit 1
-fi
-if ! jq -e --arg session "$session" --arg capture "$capture" --argjson run "$run" '
-    .health | .capture_active == true and .telemetry_fresh == true
-    and .alert_session_id == $session and .capture_id == $capture
-    and .capture_run_id == $run
-' <<< "$state" >/dev/null; then
-    report capture_scope_changed
-    exit 1
-fi
-match_log "$2" || exit 1
-if ! read -r latest_identity latest_size <<< "$(stat -L --format='%d:%i %s' -- "$2")" ||
+if [[ ! -f $alert_log ]] ||
+   ! read -r latest_identity latest_size <<< "$(stat -L --format='%d:%i %s' -- "$alert_log")" ||
    [[ $latest_identity != "$log_identity" || ! $latest_size =~ ^[0-9]+$ ]] ||
    (( latest_size < log_size )); then
     report alert_log_changed
@@ -282,11 +307,17 @@ if ! latest_stamps=$(previous_log_stamps) || [[ $latest_stamps != "$previous_sta
     report previous_log_changed
     exit 1
 fi
-if jq -e '.health.issues == []' <<< "$state" >/dev/null &&
+clean_status=current
+degraded_status=degraded
+if [[ $mode == saved ]]; then
+    clean_status=saved
+    degraded_status=saved_log_degraded
+fi
+if { [[ $mode == saved ]] || jq -e '.health.issues == []' <<< "$state" >/dev/null; } &&
    jq -e '.invalid_records == 0 and .oversized_records == 0' <<< "$integrity" >/dev/null; then
-    report current "$alerts" "$evidence" "$integrity"
+    report "$clean_status" "$alerts" "$evidence" "$integrity"
     if "$evidence_failed"; then exit 2; fi
 else
-    report degraded "$alerts" "$evidence" "$integrity"
+    report "$degraded_status" "$alerts" "$evidence" "$integrity"
     exit 1
 fi
