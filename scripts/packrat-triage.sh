@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
     printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
-        'Supply up to eight previous logs, oldest first.' \
+        'Supply up to eight immutable previous logs, oldest first.' \
         'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
@@ -13,13 +13,14 @@ usage() {
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
 if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
 
-previous_logs=()
-for log in "${@:3}"; do
+previous_logs=("${@:3}")
+previous_args=()
+for log in "${previous_logs[@]}"; do
     if [[ ! -f $log ]]; then
         printf 'Previous alert log is not a regular file: %s\n' "$log" >&2
         exit 2
     fi
-    previous_logs+=(--previous-log "$log")
+    previous_args+=(--previous-log "$log")
 done
 
 max_age_override=${PACKRAT_TRIAGE_MAX_AGE:-}
@@ -51,7 +52,7 @@ fi
 
 report() {
     jq -c --arg status "$1" --argjson alerts "${2-null}" \
-        --argjson previous "$((${#previous_logs[@]} / 2))" '
+        --argjson previous "${#previous_logs[@]}" '
         . + {record_type:"capture_triage", status:$status,
              alert_limit:50, previous_logs:$previous, alerts:$alerts}
     ' <<< "$state"
@@ -73,6 +74,15 @@ match_log() {
     fi
 }
 
+previous_log_stamps() {
+    local path stamp
+    for path in "${previous_logs[@]}"; do
+        [[ -f $path ]] || return 1
+        stamp=$(stat -L --format='%d:%i:%s:%y:%z' -- "$path") || return 1
+        printf '%s\n' "$stamp"
+    done
+}
+
 if ! fresh; then
     report stale_health
     exit 1
@@ -92,9 +102,13 @@ if ! read -r log_identity log_size <<< "$(stat -L --format='%d:%i %s' -- "$2")" 
     report alert_log_unavailable
     exit 2
 fi
+if ! previous_stamps=$(previous_log_stamps); then
+    report previous_log_unavailable
+    exit 2
+fi
 session=$(jq -er '.health.alert_session_id' <<< "$state")
 capture=$(jq -er '.health.capture_id' <<< "$state")
-if ! alerts=$(packrat-archive --alerts "$2" --session "$session" --capture-id "$capture" --limit 50 "${previous_logs[@]}" |
+if ! alerts=$(packrat-archive --alerts "$2" --session "$session" --capture-id "$capture" --limit 50 "${previous_args[@]}" |
         jq -cse 'select(length == 1) | .[0] | arrays'); then
     report alert_log_unavailable
     exit 2
@@ -120,6 +134,10 @@ if ! read -r latest_identity latest_size <<< "$(stat -L --format='%d:%i %s' -- "
    [[ $latest_identity != "$log_identity" || ! $latest_size =~ ^[0-9]+$ ]] ||
    (( latest_size < log_size )); then
     report alert_log_changed
+    exit 1
+fi
+if ! latest_stamps=$(previous_log_stamps) || [[ $latest_stamps != "$previous_stamps" ]]; then
+    report previous_log_changed
     exit 1
 fi
 if jq -e '.health.issues == []' <<< "$state" >/dev/null; then

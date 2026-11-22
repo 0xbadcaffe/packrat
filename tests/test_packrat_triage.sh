@@ -29,6 +29,13 @@ packrat-archive() {
         truncate) : >"$PACKRAT_TEST_LOG" ;;
         rotate) mv -- "$PACKRAT_TEST_LOG" "$PACKRAT_TEST_LOG.rotated"; touch -- "$PACKRAT_TEST_LOG" ;;
     esac
+    case ${PACKRAT_TEST_PREVIOUS_RACE:-} in
+        append) printf '%s\n' snapshot >>"$PACKRAT_TEST_PREVIOUS_LOG" ;;
+        rotate)
+            mv -- "$PACKRAT_TEST_PREVIOUS_LOG" "$PACKRAT_TEST_PREVIOUS_LOG.rotated"
+            cp -p -- "$PACKRAT_TEST_PREVIOUS_LOG.rotated" "$PACKRAT_TEST_PREVIOUS_LOG"
+            ;;
+    esac
     printf '%s\n' '[{"alert_id":42,"title":"Scoped alert"}]'
 }
 
@@ -48,6 +55,17 @@ previous="$scratch/older log.jsonl"
 touch -- "$previous"
 result=$(PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" bash "$triage" "$health" "$PACKRAT_TEST_LOG" "$previous")
 jq -e '.status == "current" and .previous_logs == 1 and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
+earliest="$scratch/earliest log.jsonl"
+touch -- "$earliest"
+for change in append rotate; do
+    status=0
+    result=$(PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $earliest --previous-log $previous" \
+        PACKRAT_TEST_PREVIOUS_RACE="$change" PACKRAT_TEST_PREVIOUS_LOG="$previous" \
+        bash "$triage" "$health" "$PACKRAT_TEST_LOG" "$earliest" "$previous") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.status == "previous_log_changed" and .previous_logs == 2 and .alerts == null' \
+        <<< "$result" >/dev/null
+done
 
 check_failure() {
     local expected_rc=$1 expected_status=$2 actual=0 output
