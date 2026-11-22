@@ -51,6 +51,19 @@ pub struct AlertHistoryEntry {
     pub review_limitations: Vec<&'static str>,
 }
 
+#[derive(Default, Serialize)]
+pub struct AlertHistoryIntegrity {
+    pub invalid_records: u64,
+    pub oversized_records: u64,
+    pub stopped_at_limit: bool,
+}
+
+#[derive(Serialize)]
+pub struct AlertHistoryReport {
+    pub alerts: Vec<AlertHistoryEntry>,
+    pub integrity: AlertHistoryIntegrity,
+}
+
 pub fn recent_alerts(
     log: &Path,
     session_filter: Option<&str>,
@@ -67,21 +80,45 @@ pub fn recent_alerts_across_logs(
     capture_filter: Option<&str>,
     limit: usize,
 ) -> Result<Vec<AlertHistoryEntry>> {
+    Ok(recent_alerts_report(previous, active, session_filter, capture_filter, limit)?.alerts)
+}
+
+pub fn recent_alerts_report(
+    previous: &[PathBuf],
+    active: &Path,
+    session_filter: Option<&str>,
+    capture_filter: Option<&str>,
+    limit: usize,
+) -> Result<AlertHistoryReport> {
     ensure!((1..=MAX_HISTORY_LIMIT).contains(&limit), "Alert history limit must be 1..={MAX_HISTORY_LIMIT}");
     let logs = AlertLogs::new(active, previous)?;
     let mut latest = Vec::with_capacity(limit);
+    let mut integrity = AlertHistoryIntegrity::default();
     let mut seen = HashSet::with_capacity(limit);
     let mut line = Vec::new();
     for (path, file) in logs.open_newest()? {
         let mut reader = ReverseAlertLines::new(file)
             .with_context(|| format!("Stat alert log {}", path.display()))?;
-        while reader.next(&mut line).with_context(|| format!("Read alert log {}", path.display()))? {
-            let Some(record) = ExistingAlertRecord::decode(&line) else { continue };
+        loop {
+            let found = reader.next(&mut line)
+                .with_context(|| format!("Read alert log {}", path.display()))?;
+            integrity.oversized_records += std::mem::take(&mut reader.oversized_records);
+            if !found {
+                break;
+            }
+            let Some(record) = ExistingAlertRecord::decode(&line) else {
+                integrity.invalid_records += 1;
+                continue;
+            };
             let alert = record.alert;
             if record.session_id.is_empty() || record.session_id.len() > 128
                 || alert.capture_id.as_ref().is_some_and(|id| id.is_empty() || id.len() > 128)
                 || alert.packet_refs.len() > MAX_ALERT_PACKET_REFS
-                || session_filter.is_some_and(|id| record.session_id != id)
+            {
+                integrity.invalid_records += 1;
+                continue;
+            }
+            if session_filter.is_some_and(|id| record.session_id != id)
                 || capture_filter.is_some_and(|id| alert.capture_id.as_deref() != Some(id))
                 || !seen.insert((record.session_id.clone(), alert.capture_id.clone(), alert.id))
             {
@@ -117,11 +154,12 @@ pub fn recent_alerts_across_logs(
                 review_limitations,
             });
             if latest.len() == limit {
-                return Ok(latest);
+                integrity.stopped_at_limit = true;
+                return Ok(AlertHistoryReport { alerts: latest, integrity });
             }
         }
     }
-    Ok(latest)
+    Ok(AlertHistoryReport { alerts: latest, integrity })
 }
 
 const READ_CHUNK: usize = 64 * 1024;
@@ -132,6 +170,7 @@ pub(super) struct ReverseAlertLines {
     offset: u64,
     end: usize,
     terminated: bool,
+    oversized_records: u64,
 }
 
 impl ReverseAlertLines {
@@ -140,7 +179,8 @@ impl ReverseAlertLines {
         if !metadata.is_file() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Not a regular alert log"));
         }
-        Ok(Self { file, chunk: vec![0; READ_CHUNK], offset: metadata.len(), end: 0, terminated: false })
+        Ok(Self { file, chunk: vec![0; READ_CHUNK], offset: metadata.len(), end: 0,
+            terminated: false, oversized_records: 0 })
     }
 
     pub(super) fn next(&mut self, line: &mut Vec<u8>) -> std::io::Result<bool> {
@@ -149,6 +189,7 @@ impl ReverseAlertLines {
         loop {
             if self.end == 0 {
                 if self.offset == 0 {
+                    self.oversized_records += u64::from(oversized);
                     line.reverse();
                     return Ok(!oversized && !line.is_empty());
                 }
@@ -168,6 +209,7 @@ impl ReverseAlertLines {
             self.end = newline.unwrap_or(0);
             if newline.is_some() {
                 self.terminated = true;
+                self.oversized_records += u64::from(oversized);
                 if !oversized && !line.is_empty() {
                     line.reverse();
                     return Ok(true);

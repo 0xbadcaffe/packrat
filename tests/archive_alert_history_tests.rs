@@ -47,13 +47,42 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     assert_eq!(report[1]["session_id"], "session-b");
     assert_eq!(report[2]["capture_id"], "capture-b");
 
+    let integrity = run(&["--report-integrity", "--session", "session-a"]);
+    assert!(integrity.status.success());
+    let integrity: Value = serde_json::from_slice(&integrity.stdout).unwrap();
+    assert_eq!(integrity["alerts"], json!([report[0], report[2]]));
+    assert_eq!(integrity["integrity"], json!({
+        "invalid_records": 1, "oversized_records": 1, "stopped_at_limit": false
+    }));
+
     let limited = run(&["--session", "session-a", "--limit", "1"]);
     assert!(limited.status.success());
     assert_eq!(serde_json::from_slice::<Vec<Value>>(&limited.stdout).unwrap(), report[..1]);
+    let bounded = run(&["--limit", "1", "--report-integrity"]);
+    assert!(bounded.status.success());
+    let bounded: Value = serde_json::from_slice(&bounded.stdout).unwrap();
+    assert_eq!(bounded["integrity"], json!({
+        "invalid_records": 0, "oversized_records": 0, "stopped_at_limit": true
+    }));
     let scoped = run(&["--capture-id", "capture-b"]);
     assert!(scoped.status.success());
     assert_eq!(serde_json::from_slice::<Vec<Value>>(&scoped.stdout).unwrap(), report[2..]);
     assert!(!run(&["--limit", "513"]).status.success());
+}
+
+#[test]
+fn integrity_reports_oversized_first_record_and_invalid_tail_with_no_alerts() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("alerts.jsonl");
+    std::fs::write(&log, format!("{}\n\n{{partial", "x".repeat(1_048_576))).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--alerts").arg(log).arg("--report-integrity").output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), json!({
+        "alerts": [], "integrity": {
+            "invalid_records": 1, "oversized_records": 1, "stopped_at_limit": false
+        }
+    }));
 }
 
 #[test]

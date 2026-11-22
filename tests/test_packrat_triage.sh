@@ -16,7 +16,7 @@ date() {
     printf '%s\n' 1700000000
 }
 
-packrat-archive() {
+mock_archive() {
     printf '%s\n' called >"$PACKRAT_TEST_CALL"
     if [[ ${2-} == --alert-status ]]; then
         [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 42 --capture-id 00000000000000000000000000000001${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
@@ -29,7 +29,7 @@ packrat-archive() {
              frames:[{frame_number:1,status:"truncated",bytes:[0,1]}, {frame_number:2,status:"missing"}]}'
         return
     fi
-    [[ $* == "--alerts $PACKRAT_TEST_LOG --session 1700000000-432 --capture-id 00000000000000000000000000000001 --limit 51${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
+    [[ $* == "--alerts $PACKRAT_TEST_LOG --session 1700000000-432 --capture-id 00000000000000000000000000000001 --limit 51 --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
     if [[ ${PACKRAT_TEST_SCOPE_RACE:-0} == 1 ]]; then
         jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
@@ -65,6 +65,14 @@ packrat-archive() {
     fi
 }
 
+packrat-archive() {
+    if [[ ${1-} != --alerts ]]; then mock_archive "$@"; return; fi
+    mock_archive "$@" | jq -c --argjson invalid "${PACKRAT_TEST_INVALID_RECORDS:-0}" \
+        --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" '
+        {alerts:.,integrity:{invalid_records:$invalid,oversized_records:$oversized,
+            stopped_at_limit:(length == 51)}}'
+}
+
 timeout() {
     [[ $# -gt 3 && $1 == --kill-after=2s && $2 == "${PACKRAT_TEST_TIMEOUT_SECONDS:-10}s" ]] || return 2
     shift 2
@@ -75,7 +83,7 @@ timeout() {
     "$@"
 }
 
-export -f date packrat-archive timeout
+export -f date mock_archive packrat-archive timeout
 
 sample='{"record_type":"capture_health","timestamp":"2023-11-14T22:12:50Z",
          "capture_active":true,"telemetry_fresh":true,"issues":[],
@@ -86,6 +94,16 @@ result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.status == "current" and .age_seconds == 30 and .max_age_seconds == 360
     and .alerts[0].alert_id == 42 and .has_more_alerts == false and .evidence_status == null' <<< "$result" >/dev/null
 [[ -f $PACKRAT_TEST_CALL ]]
+status=0
+result=$(PACKRAT_TEST_ALERT_COUNT=0 PACKRAT_TEST_INVALID_RECORDS=2 PACKRAT_TEST_OVERSIZED_RECORDS=1 \
+    bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 ]]
+jq -e '.status == "degraded" and .alerts == []
+    and .alert_log_integrity == {invalid_records:2,oversized_records:1,stopped_at_limit:false}' <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_INVALID_RECORDS=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 ]]
+jq -e '.status == "degraded" and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
 
 (
     export PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
@@ -176,6 +194,7 @@ bash "$triage" "$health" "$PACKRAT_TEST_LOG" | jq -e '.status == "current"' >/de
 PACKRAT_TEST_RUN_RACE=1 check_failure 1 capture_scope_changed
 printf '%s\n' "$sample" >"$health"
 PACKRAT_TEST_LOG_ERROR=1 check_failure 2 alert_log_unavailable
+PACKRAT_TEST_INVALID_RECORDS=-1 check_failure 2 alert_log_unavailable
 [[ -e $PACKRAT_TEST_CALL ]]
 for field in session_id capture_id; do
     PACKRAT_TEST_WRONG_ALERT_SCOPE="$field" check_failure 2 alert_log_scope_mismatch

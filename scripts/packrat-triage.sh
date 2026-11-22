@@ -6,6 +6,7 @@ usage() {
         'Supply up to eight immutable previous logs, oldest first.' \
         'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
+        'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
         'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
@@ -68,14 +69,14 @@ if ! state=$(load_state "$1"); then
 fi
 
 report() {
-    printf '%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
+    printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
         --argjson previous "${#previous_logs[@]}" '
         .[1] as $alerts
         | .[2] as $evidence
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
              has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
              alerts:(if $alerts == null then null else $alerts[:$limit] end),
-             evidence_status:$evidence}
+             evidence_status:$evidence, alert_log_integrity:.[3]}
     '
 }
 
@@ -150,7 +151,7 @@ run=$(jq -c '.health.capture_run_id' <<< "$state")
 read_status=0
 raw_alerts=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
     --alerts "$2" --session "$session" --capture-id "$capture" \
-    --limit "$((alert_limit + 1))" "${previous_args[@]}") || read_status=$?
+    --limit "$((alert_limit + 1))" --report-integrity "${previous_args[@]}") || read_status=$?
 if (( read_status == 124 )); then
     report alert_log_read_timeout
     exit 2
@@ -159,10 +160,19 @@ if (( read_status == 137 )); then
     report alert_log_read_interrupted
     exit 2
 fi
-if (( read_status != 0 )) || ! alerts=$(jq -cse 'select(length == 1) | .[0] | arrays' <<< "$raw_alerts"); then
+if (( read_status != 0 )) || ! history=$(jq -cse --argjson limit "$((alert_limit + 1))" '
+    def count: type == "number" and isfinite and floor == . and . >= 0;
+    select(length == 1) | .[0] | objects
+    | select((.alerts | type == "array" and length <= $limit)
+        and (.integrity | type == "object" and (.invalid_records | count)
+            and (.oversized_records | count) and (.stopped_at_limit | type == "boolean"))
+        and (.integrity.stopped_at_limit == ((.alerts | length) == $limit)))
+' <<< "$raw_alerts"); then
     report alert_log_unavailable
     exit 2
 fi
+alerts=$(jq -c '.alerts' <<< "$history")
+integrity=$(jq -c '.integrity | {invalid_records,oversized_records,stopped_at_limit}' <<< "$history")
 if ! jq -e --arg session "$session" --arg capture "$capture" '
     all(.[]; type == "object" and .session_id == $session and .capture_id == $capture)
 ' <<< "$alerts" >/dev/null; then
@@ -203,10 +213,11 @@ if ! latest_stamps=$(previous_log_stamps) || [[ $latest_stamps != "$previous_sta
     report previous_log_changed
     exit 1
 fi
-if jq -e '.health.issues == []' <<< "$state" >/dev/null; then
-    report current "$alerts" "$evidence"
+if jq -e '.health.issues == []' <<< "$state" >/dev/null &&
+   jq -e '.invalid_records == 0 and .oversized_records == 0' <<< "$integrity" >/dev/null; then
+    report current "$alerts" "$evidence" "$integrity"
     if "$evidence_failed"; then exit 2; fi
 else
-    report degraded "$alerts" "$evidence"
+    report degraded "$alerts" "$evidence" "$integrity"
     exit 1
 fi

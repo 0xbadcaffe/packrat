@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT] [--report-integrity]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first. Integrity counts describe only the records examined."
         );
         return Ok(());
     };
@@ -125,12 +125,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
-    use packrat_tui::storage::alert_history::recent_alerts_across_logs;
+    use packrat_tui::storage::alert_history::recent_alerts_report;
 
     let log = args.next().ok_or("--alerts requires an alert log")?;
     let (mut session, mut capture, mut limit) = (None, None, None);
     let mut previous = Vec::new();
+    let mut report_integrity = false;
     while let Some(flag) = args.next() {
+        if flag == "--report-integrity" && !report_integrity {
+            report_integrity = true;
+            continue;
+        }
         let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
             .ok_or_else(|| format!("{flag} requires a value"))?;
         match flag.as_str() {
@@ -142,9 +147,13 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
             _ => return Err(format!("Unknown or repeated alert option: {flag}").into()),
         }
     }
-    let alerts = recent_alerts_across_logs(
+    let report = recent_alerts_report(
         &previous, std::path::Path::new(&log), session.as_deref(), capture.as_deref(), limit.unwrap_or(50),
     )?;
-    println!("{}", serde_json::to_string(&alerts)?);
+    if report_integrity {
+        println!("{}", serde_json::to_string(&report)?);
+    } else {
+        println!("{}", serde_json::to_string(&report.alerts)?);
+    }
     Ok(())
 }
