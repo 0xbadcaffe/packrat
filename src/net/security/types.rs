@@ -82,6 +82,7 @@ pub(super) struct TcpIntegrityState {
     pub(super) from_a: TcpPayloadHistory,
     pub(super) from_b: TcpPayloadHistory,
     pub(super) last_seen: f64,
+    pub(super) last_seen_frame: u64,
     pub(super) opening_sequences: [Option<u32>; 2],
     pub(super) started_at: Option<f64>,
     pub(super) past_opening: bool,

@@ -90,6 +90,30 @@ fn tcp_reset_correlation_ignores_other_vlans_earlier_payload_and_new_connections
 }
 
 #[test]
+fn tcp_reset_correlation_uses_frame_order_when_capture_timestamps_tie() {
+    let packet = |frame, seq, flags, payload: &[u8]| {
+        let mut packet = ipv4_tcp_packet(frame, seq, flags, payload);
+        packet.timestamp = 1.0;
+        packet
+    };
+    let mut engine = SecurityEngine::default();
+    engine.update(&packet(10, 100, 0x04, b""));
+    engine.update(&packet(9, 90, 0x18, b"earlier"));
+    engine.update(&packet(8, 80, 0x04, b""));
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+    let batch = engine.inspect(&packet(11, 101, 0x18, b"later"));
+    let alert = batch.ids.iter().find(|finding| finding.alert.signature == TITLE).unwrap();
+    assert_eq!(alert.related_packets, [10]);
+    assert_eq!(alert.alert.pkt_no, 11);
+
+    let mut engine = SecurityEngine::default();
+    engine.update(&packet(5, 50, 0x18, b"current"));
+    engine.update(&packet(4, 40, 0x04, b""));
+    engine.update(&packet(6, 60, 0x18, b"later"));
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+}
+
+#[test]
 fn tcp_reset_correlation_does_not_use_an_incomplete_ip_datagram() {
     let mut security = SecurityEngine::default();
     let mut partial_reset = ipv4_tcp_packet(1, 100, 0x04, b"");

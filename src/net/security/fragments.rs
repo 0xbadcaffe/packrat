@@ -174,8 +174,13 @@ impl SecurityEngine {
         if state.started_at.is_some_and(|start| pkt.timestamp < start) {
             return segment.payload.is_empty();
         }
-        let in_time_order = pkt.timestamp >= state.last_seen;
-        state.last_seen = state.last_seen.max(pkt.timestamp);
+        let in_time_order = observation_precedes(
+            (state.last_seen, state.last_seen_frame), (pkt.timestamp, pkt.no),
+        );
+        if in_time_order {
+            state.last_seen = pkt.timestamp;
+            state.last_seen_frame = pkt.no;
+        }
 
         let direction = usize::from(!segment.from_a);
         if in_time_order && segment.flags & (SYN | ACK | FIN | RST) == SYN {
@@ -185,6 +190,7 @@ impl SecurityEngine {
                 if state.started_at.is_none() || state.past_opening || opening.is_some() {
                     *state = TcpIntegrityState {
                         last_seen: pkt.timestamp,
+                        last_seen_frame: pkt.no,
                         started_at: Some(pkt.timestamp),
                         ..Default::default()
                     };
@@ -211,6 +217,8 @@ impl SecurityEngine {
             if !state.post_reset_alerted
                 && segment.flags & RST == 0
                 && let Some(reset) = state.reset
+                && reset.packet_no != pkt.no
+                && observation_precedes((reset.timestamp, reset.packet_no), (pkt.timestamp, pkt.no))
                 && (0.0..=TCP_STATE_TTL_SECS).contains(&(pkt.timestamp - reset.timestamp))
                 && !already_seen
             {
