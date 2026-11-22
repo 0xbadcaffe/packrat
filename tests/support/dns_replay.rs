@@ -53,26 +53,73 @@ pub fn write_fixture(path: &Path, scenario: Scenario) {
             dns.extend_from_slice(rdata);
         }
 
-        let mut bytes = vec![0_u8; 42];
-        bytes[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
-        bytes[14] = 0x45;
-        bytes[16..18].copy_from_slice(&((28 + dns.len()) as u16).to_be_bytes());
-        bytes[22] = 64;
-        bytes[23] = 17;
-        let (src, dst, sport, dport): (_, _, u16, u16) = if response {
-            ([10, 0, 0, 53], [10, 0, 0, 5], 53, 40_000)
-        } else {
-            ([10, 0, 0, 5], [10, 0, 0, 53], 40_000, 53)
-        };
-        bytes[26..30].copy_from_slice(&src);
-        bytes[30..34].copy_from_slice(&dst);
-        bytes[34..36].copy_from_slice(&sport.to_be_bytes());
-        bytes[36..38].copy_from_slice(&dport.to_be_bytes());
-        bytes[38..40].copy_from_slice(&((8 + dns.len()) as u16).to_be_bytes());
-        bytes.extend_from_slice(&dns);
         capture
-            .write_packet(&parse_ethernet(&bytes, frame, frame as f64))
+            .write_packet(&udp_frame(frame, &dns, response, 53, 40_000))
             .unwrap();
     }
     capture.flush().unwrap();
+}
+
+pub fn write_parallel_transactions(path: &Path, alternate_replies: bool) {
+    let mut capture = PcapNgWriter::create(path).unwrap();
+    let frames = [
+        (false, 53, 40_000),
+        (false, 53, 40_001),
+        (true, 53, 40_000),
+        (true, 53, 40_001),
+        (true, 54, 40_000),
+        (true, 54, 40_001),
+        (true, 55, 40_000),
+    ];
+    for (index, (response, resolver, port)) in frames.into_iter().enumerate() {
+        let mut dns = vec![
+            0,
+            49,
+            if response { 0x81 } else { 1 },
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        dns.extend_from_slice(b"\x04safe\x07example\0\0\x01\0\x01");
+        let resolver = if alternate_replies { resolver } else { 53 };
+        capture
+            .write_packet(&udp_frame(index as u64 + 1, &dns, response, resolver, port))
+            .unwrap();
+    }
+    capture.flush().unwrap();
+}
+
+fn udp_frame(
+    frame: u64,
+    dns: &[u8],
+    response: bool,
+    resolver: u8,
+    port: u16,
+) -> packrat_tui::net::packet::Packet {
+    let mut bytes = vec![0_u8; 42];
+    bytes[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    bytes[14] = 0x45;
+    bytes[16..18].copy_from_slice(&((28 + dns.len()) as u16).to_be_bytes());
+    bytes[22] = 64;
+    bytes[23] = 17;
+    let client = ([10, 0, 0, 5], port);
+    let server = ([10, 0, 0, resolver], 53_u16);
+    let ((src, sport), (dst, dport)) = if response {
+        (server, client)
+    } else {
+        (client, server)
+    };
+    bytes[26..30].copy_from_slice(&src);
+    bytes[30..34].copy_from_slice(&dst);
+    bytes[34..36].copy_from_slice(&sport.to_be_bytes());
+    bytes[36..38].copy_from_slice(&dport.to_be_bytes());
+    bytes[38..40].copy_from_slice(&((8 + dns.len()) as u16).to_be_bytes());
+    bytes.extend_from_slice(dns);
+    parse_ethernet(&bytes, frame, frame as f64)
 }

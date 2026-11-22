@@ -194,6 +194,40 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn dns_replay_keeps_parallel_queries_and_reply_evidence_separate() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "dns.competing_responders";
+    dns_replay::write_parallel_transactions(&root.join("control.pcapng"), false);
+    dns_replay::write_parallel_transactions(&root.join("parallel.pcapng"), true);
+    let manifest = root.join("parallel.json");
+    let labels = json!({"version":1, "strict":true, "cases":[
+        {"name":"regular duplicate replies", "capture":"control.pcapng",
+         "expect_counts":{(rule):0}, "expect_snapshots":0},
+        {"name":"parallel queries with alternate replies", "capture":"parallel.pcapng",
+         "expect_counts":{(rule):2}, "opening_frames":{(rule):[5,6]}, "expect_snapshots":3}
+    ]});
+    std::fs::write(&manifest, labels.to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+        .arg("--alerts-only").arg(root.join("parallel.pcapng")).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let findings: Vec<_> = String::from_utf8(output.stdout).unwrap().lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|row| row["type"] == "alert")
+        .map(|row| row["alert"].clone()).collect();
+    assert_eq!(findings.len(), 3);
+    assert_ne!(findings[0]["id"], findings[1]["id"]);
+    assert_eq!(findings[0]["id"], findings[2]["id"]);
+    assert_eq!(findings[1]["packet_refs"], json!([2, 4, 6]));
+    assert_eq!(findings[2]["packet_refs"], json!([1, 3, 5, 7]));
+    assert_eq!(findings[2]["hit_count"], 2);
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();
