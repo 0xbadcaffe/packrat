@@ -154,15 +154,19 @@ fn inspect_s7(payload: &[u8]) -> Option<IndustrialFinding> {
 }
 
 fn inspect_bacnet(payload: &[u8]) -> Option<IndustrialFinding> {
-    if payload.len() < 10 || payload[0] != 0x81 || payload[4] != 0x01 {
+    if payload.len() < 11 || payload[..2] != [0x81, 0x0a]
+        || usize::from(read_u16(payload, 2)?) != payload.len() || payload[4] != 0x01
+    {
         return None;
     }
     let npdu_control = payload[5];
-    if npdu_control & 0xa8 != 0 {
+    // Direct application traffic expecting a reply, without routed addresses.
+    if npdu_control & 0xfc != 0x04 {
         return None;
     }
     let apdu = &payload[6..];
-    if apdu[0] >> 4 != 0 || apdu.len() < 4 {
+    // Only an unsegmented confirmed request has its service choice at this offset.
+    if apdu[0] & 0xfd != 0 {
         return None;
     }
     let (operation, critical) = match apdu[3] {

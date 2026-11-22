@@ -50,6 +50,11 @@ fn dnp3_header_fixture(operation: u8) -> [u8; 15] {
     [0x05, 0x64, 8, 0xc4, 1, 0, 2, 0, 0x39, 0x0d, 0xc0, 0xc0, operation, crc_lo, crc_hi]
 }
 
+fn bacnet_header_fixture(service: u8) -> [u8; 11] {
+    // The test fixture has a placeholder byte, not an encoded service argument.
+    [0x81, 0x0a, 0, 11, 1, 0x04, 0, 0, 1, service, 0]
+}
+
 #[test]
 fn identifies_state_changing_modbus_dnp3_s7_and_bacnet_operations() {
     let mut modbus = vec![0_u8; 8];
@@ -63,10 +68,7 @@ fn identifies_state_changing_modbus_dnp3_s7_and_bacnet_operations() {
     s7[7] = 0x32;
     s7[17] = 0x05;
 
-    let mut bacnet = vec![0_u8; 10];
-    bacnet[0] = 0x81;
-    bacnet[4] = 0x01;
-    bacnet[9] = 20;
+    let bacnet = bacnet_header_fixture(20);
 
     let findings = [
         industrial_policy::inspect(&industrial_packet("Modbus", 502, true, &modbus)).unwrap(),
@@ -132,13 +134,10 @@ fn industrial_policy_requires_a_complete_transport_and_matching_wire_port() {
 
 #[test]
 fn industrial_policy_never_reads_trailing_ip_bytes_as_udp_payload() {
-    let mut bacnet = [0_u8; 10];
-    bacnet[0] = 0x81;
-    bacnet[4] = 0x01;
-    bacnet[9] = 15;
+    let bacnet = bacnet_header_fixture(15);
     let mut packet = industrial_packet("BACnet", 47_808, false, &bacnet);
     assert!(industrial_policy::inspect(&packet).is_some());
-    for udp_length in [7_u16, 8, 19] {
+    for udp_length in [7_u16, 8, 20] {
         packet.bytes[38..40].copy_from_slice(&udp_length.to_be_bytes());
         assert!(industrial_policy::inspect(&packet).is_none());
     }
@@ -156,10 +155,29 @@ fn industrial_alert_exposes_a_policy_hint_not_a_claim_of_execution() {
         .find(|alert| alert.title == "Industrial state-changing command").unwrap();
     let provenance = alert.provenance.as_ref().unwrap();
     assert_eq!(provenance.rule_id, "industrial.state_change");
-    assert_eq!(provenance.revision, 6);
+    assert_eq!(provenance.revision, 7);
     assert_eq!(provenance.confidence, packrat_tui::analysis::alert_provenance::EvidenceConfidence::Heuristic);
     assert!(provenance.verification_hint.contains("does not prove a state change"));
     assert_eq!(alert.packet_refs, [1]);
+}
+
+#[test]
+fn bacnet_policy_accepts_only_direct_unsegmented_confirmed_requests() {
+    let inspect = |payload: &[u8]| industrial_policy::inspect(&industrial_packet("BACnet", 47_808, false, payload));
+    let request = bacnet_header_fixture(15);
+    assert_eq!(inspect(&request).unwrap().operation, "WriteProperty");
+    assert!(inspect(&bacnet_header_fixture(12)).is_none());
+    for (offset, value) in [
+        (1, 0), (1, 4), (1, 11), (3, 10), (3, 12), (4, 2),
+        (5, 0x84), (5, 0x24), (5, 0x0c), (6, 0x08), (6, 0x04), (6, 0x20),
+    ] {
+        let mut other = request;
+        other[offset] = value;
+        assert!(inspect(&other).is_none(), "offset {offset}, value {value}");
+    }
+    for end in 0..request.len() {
+        assert!(inspect(&request[..end]).is_none());
+    }
 }
 
 #[test]
