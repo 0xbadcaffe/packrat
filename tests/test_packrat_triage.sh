@@ -24,6 +24,11 @@ packrat-archive() {
         jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
         mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
     fi
+    case ${PACKRAT_TEST_LOG_RACE:-} in
+        append) printf '%s\n' snapshot >>"$PACKRAT_TEST_LOG" ;;
+        truncate) : >"$PACKRAT_TEST_LOG" ;;
+        rotate) mv -- "$PACKRAT_TEST_LOG" "$PACKRAT_TEST_LOG.rotated"; touch -- "$PACKRAT_TEST_LOG" ;;
+    esac
     printf '%s\n' '[{"alert_id":42,"title":"Scoped alert"}]'
 }
 
@@ -72,6 +77,12 @@ PACKRAT_TEST_SCOPE_RACE=1 check_failure 1 capture_scope_changed
 printf '%s\n' "$sample" >"$health"
 PACKRAT_TEST_LOG_ERROR=1 check_failure 2 alert_log_unavailable
 [[ -e $PACKRAT_TEST_CALL ]]
+result=$(PACKRAT_TEST_LOG_RACE=append bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+jq -e '.status == "current" and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
+[[ -s $PACKRAT_TEST_LOG ]]
+PACKRAT_TEST_LOG_RACE=truncate check_failure 1 alert_log_changed
+PACKRAT_TEST_LOG_RACE=rotate check_failure 1 alert_log_changed
+[[ -f $PACKRAT_TEST_LOG.rotated && -f $PACKRAT_TEST_LOG ]]
 jq -c '.issues = ["pcap_buffer_drops"]' <<< "$sample" >"$health"
 status=0
 result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?

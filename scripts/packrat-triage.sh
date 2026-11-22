@@ -79,6 +79,11 @@ if ! jq -e '
 fi
 
 match_log "$2" || exit 1
+if ! read -r log_identity log_size <<< "$(stat -L --format='%d:%i %s' -- "$2")" ||
+   [[ -z $log_identity || ! $log_size =~ ^[0-9]+$ ]]; then
+    report alert_log_unavailable
+    exit 2
+fi
 session=$(jq -er '.health.alert_session_id' <<< "$state")
 capture=$(jq -er '.health.capture_id' <<< "$state")
 if ! alerts=$(packrat-archive --alerts "$2" --session "$session" --capture-id "$capture" --limit 50 "${previous_logs[@]}" |
@@ -103,6 +108,12 @@ if ! jq -e --arg session "$session" --arg capture "$capture" '
     exit 1
 fi
 match_log "$2" || exit 1
+if ! read -r latest_identity latest_size <<< "$(stat -L --format='%d:%i %s' -- "$2")" ||
+   [[ $latest_identity != "$log_identity" || ! $latest_size =~ ^[0-9]+$ ]] ||
+   (( latest_size < log_size )); then
+    report alert_log_changed
+    exit 1
+fi
 if jq -e '.health.issues == []' <<< "$state" >/dev/null; then
     report current "$alerts"
 else
