@@ -1,4 +1,5 @@
 use packrat_tui::analysis::ipv6_fragments::{Ipv6FragmentOutcome, Ipv6FragmentReassembler};
+use packrat_tui::engine::AnalysisCore;
 use packrat_tui::net::packet::{CaptureMetadata, Packet};
 use packrat_tui::net::security::SecurityEngine;
 
@@ -49,6 +50,7 @@ fn reassembles_ipv6_fragments_arriving_out_of_order() {
             assert_eq!(datagram.key.next_header, 6);
             assert_eq!(datagram.payload, b"abcdefghijklmnopqrstuvwx");
             assert_eq!(datagram.fragment_count, 2);
+            assert_eq!(datagram.frame_numbers, [1, 2]);
         }
         outcome => panic!("unexpected outcome: {outcome:?}"),
     }
@@ -182,4 +184,32 @@ fn ipv6_fragment_cannot_extend_past_the_final_length() {
     }));
     let first = fragment_packet(3, 16, 0, true, b"abcdefgh");
     assert!(matches!(reassembler.ingest(&first), Ipv6FragmentOutcome::Ignored));
+}
+
+#[test]
+fn reassembled_ids_alert_opens_all_contributing_frames() {
+    let mut core = AnalysisCore::default();
+    for (id, frame_base) in [(21, 10), (22, 20)] {
+        core.analyze(&fragment_packet(frame_base, id, 24, false, b"ript>"));
+        core.analyze(&fragment_packet(frame_base + 1, id, 0, true, b"abcdefghijklmnopqrstu<sc"));
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == "XSS Probe").collect();
+    assert_eq!(alerts.len(), 2);
+    for (alert, frames) in alerts.into_iter().zip([[10, 11], [20, 21]]) {
+        assert_eq!(alert.packet_refs, frames);
+        assert_eq!(alert.hit_count, 1);
+        assert!(alert.detail.contains("IPv6 reassembly of 2 captured frames"));
+    }
+}
+
+#[test]
+fn completing_fragment_does_not_repeat_the_reassembled_signature() {
+    let mut security = SecurityEngine::default();
+    security.update(&fragment_packet(1, 23, 0, true, b"abcdefghijklmnopqrstuvwx"));
+    let result = security.inspect(&fragment_packet(2, 23, 24, false, b"<script>"));
+    let matched: Vec<_> = result.ids.iter().filter(|finding| finding.alert.signature == "XSS Probe").collect();
+    assert_eq!(matched.len(), 1);
+    assert_eq!(matched[0].alert.pkt_no, 2);
+    assert_eq!(matched[0].related_packets, [1]);
+    assert_eq!(security.ids_alerts.iter().filter(|alert| alert.signature == "XSS Probe").count(), 1);
 }

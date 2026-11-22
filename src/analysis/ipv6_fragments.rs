@@ -22,6 +22,7 @@ pub struct ReassembledIpv6Payload {
     pub key: Ipv6FragmentKey,
     pub payload: Vec<u8>,
     pub fragment_count: usize,
+    pub frame_numbers: Vec<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +86,7 @@ impl Ipv6FragmentReassembler {
             return Ipv6FragmentOutcome::Complete {
                 datagram: ReassembledIpv6Payload {
                     key: fragment.key, payload: fragment.data.to_vec(), fragment_count: 1,
+                    frame_numbers: vec![packet.no],
                 },
             };
         }
@@ -163,9 +165,11 @@ impl Ipv6FragmentReassembler {
             return Ipv6FragmentOutcome::Pending { fragment_count };
         };
         let key = Ipv6FragmentKey { next_header, ..fragment.key };
+        let mut frame_numbers: Vec<_> = state.fragments.iter().map(|fragment| fragment.frame).collect();
+        frame_numbers.sort_unstable();
         self.datagrams.remove(&scope);
         Ipv6FragmentOutcome::Complete {
-            datagram: ReassembledIpv6Payload { key, payload, fragment_count },
+            datagram: ReassembledIpv6Payload { key, payload, fragment_count, frame_numbers },
         }
     }
 

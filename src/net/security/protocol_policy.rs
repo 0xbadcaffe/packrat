@@ -125,7 +125,7 @@ impl SecurityEngine {
                     outer_vlan_id: pkt.outer_vlan_id,
                     bytes: datagram.payload,
                 };
-                self.check_ids(&synthetic);
+                self.check_reassembled_ids(pkt, &synthetic, &datagram.frame_numbers, datagram.key.identification);
             }
         }
     }
