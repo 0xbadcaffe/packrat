@@ -11,6 +11,7 @@ installed="$scratch/packrat"
 installed_analyzer="$scratch/packrat-analyze"
 analyzer_candidate="$scratch/candidate"
 fail_replace=false
+fail_cleanup=false
 sudo() {
     [[ $1 == -n ]] || return 1
     shift
@@ -23,7 +24,8 @@ sudo() {
             fi
             ;;
         mv) "$fail_replace" && return 1; command "$@" ;;
-        mktemp|cmp|rm) command "$@" ;;
+        rm) if "$fail_cleanup" && [[ ${*: -1} == */packrat-analyze.next ]]; then return 1; fi; command "$@" ;;
+        mktemp|cmp) command "$@" ;;
         *) return 1 ;;
     esac
 }
@@ -44,6 +46,7 @@ cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
 fail_replace=true
 if promote_analyzer; then exit 1; fi
 cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
+cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
 fail_replace=false
 printf '%s\n' '#!/usr/bin/env bash' 'echo independent-update' >"$installed_analyzer"
 if promote_analyzer; then exit 1; fi
@@ -52,7 +55,19 @@ update_analyzer_only >"$scratch/result"
 grep -Fq 'Analyzer updated; capture unchanged' "$scratch/result"
 cmp -s -- "$analyzer_candidate" "$installed_analyzer"
 cmp -s -- "$installed" "$backup_dir/packrat"
+cmp -s -- "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl"
 [[ $("$backup_dir/packrat-analyze") == independent-update ]]
+[[ ! -e $backup_dir/packrat-analyze.next ]]
 update_analyzer_only >"$scratch/result"
 grep -Fq 'Candidate is already installed; capture unchanged' "$scratch/result"
+
+printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-analyze another candidate"' >"$analyzer_candidate"
+create_rollout_backup
+stage_analyzer_update
+fail_cleanup=true
+promote_analyzer 2>"$scratch/warning"
+grep -Fq 'Staged analyzer cleanup failed' "$scratch/warning"
+cmp -s -- "$analyzer_candidate" "$installed_analyzer"
+cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
+[[ $("$backup_dir/packrat-analyze") == 'Usage: packrat-analyze new' ]]
 printf '%s\n' 'Packrat paired rollout tests passed'

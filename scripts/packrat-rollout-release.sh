@@ -72,6 +72,9 @@ promote_analyzer() {
     # Refuse to overwrite an independent update after we made the rollback copy.
     sudo -n cmp -s -- "$backup_dir/packrat-analyze" "$installed_analyzer" &&
         replace_installed "$backup_dir/packrat-analyze.next" "$installed_analyzer" || return 1
+    # Cleanup after promotion must not trigger a capture rollback.
+    sudo -n rm -f -- "$backup_dir/packrat-analyze.next" ||
+        error "Staged analyzer cleanup failed; inspect $backup_dir/packrat-analyze.next"
     printf 'Analyzer rollback binary: %s/packrat-analyze\n' "$backup_dir"
 }
 
