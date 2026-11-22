@@ -32,7 +32,9 @@ mock_archive() {
              frames:[{frame_number:1,status:"truncated",bytes:[0,1]}, {frame_number:2,status:"missing"}]}'
         return
     fi
-    [[ $* == "--alerts $PACKRAT_TEST_LOG --session 1700000000-432 --capture-id 00000000000000000000000000000001 --limit 51 --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
+    local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' limit=51
+    if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope='' limit=512; fi
+    [[ $* == "--alerts $PACKRAT_TEST_LOG$scope --limit $limit --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
     if [[ ${PACKRAT_TEST_SCOPE_RACE:-0} == 1 ]]; then
         jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
@@ -60,6 +62,14 @@ mock_archive() {
             [range($count; 0; -1) | {alert_id:(. + $offset),session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"}
                 + (if $large == "1" then {detail: ("\ud83d\udd0d" * 512), title: ("\ud83d\udd0d" * 160)}
                    else {} end)]'
+    elif [[ $limit == 512 ]]; then
+        jq -cn '
+            {session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
+             alert_id:1,first_seen:10,last_seen:20,severity:"HIGH",detail:"not in index"} as $base
+            | [$base, ($base + {alert_id:2,first_seen:12,last_seen:22,severity:"LOW"}),
+               ($base + {session_id:"1700000000-123",last_seen:30,severity:"CRITICAL"}),
+               ($base + {capture_id:null}), ($base + {capture_id:"legacy"})]
+        '
     else
         jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" '
             {alert_id:42,title:"Scoped alert",session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
@@ -75,9 +85,9 @@ mock_archive() {
 packrat-archive() {
     if [[ ${1-} != --alerts ]]; then mock_archive "$@"; return; fi
     mock_archive "$@" | jq -c --argjson invalid "${PACKRAT_TEST_INVALID_RECORDS:-0}" \
-        --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" '
+        --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" --arg index "${PACKRAT_TEST_INDEX:-0}" '
         {alerts:.,integrity:{invalid_records:$invalid,oversized_records:$oversized,
-            stopped_at_limit:(length == 51)}}'
+            stopped_at_limit:(length == (if $index == "1" then 512 else 51 end))}}'
 }
 
 timeout() {
@@ -303,4 +313,26 @@ jq -e '.status == "alert_log_changed" and .alerts == null' <<< "$result" >/dev/n
 status=0
 bash "$triage" --saved 1700000000-432 'legacy-unspecified' "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
+
+list_saved() {
+    PACKRAT_TEST_INDEX=1 bash "$triage" --list-saved "$@"
+}
+result=$(list_saved "$PACKRAT_TEST_LOG")
+jq -e '.record_type == "saved_capture_index" and .status == "saved"
+    and .sampled_alerts == 5 and .sampled_unscoped_alerts == 2
+    and .alert_sample_limit == 512 and .alert_log_integrity.stopped_at_limit == false
+    and (.captures | map(.session_id)) == ["1700000000-123","1700000000-432"]
+    and (.captures | map(.sampled_alerts)) == [1,2]
+    and (.captures | map(.sampled_high_or_critical)) == [1,1]
+    and .captures[1].first_seen == 10 and .captures[1].last_seen == 22
+    and (tostring | contains("not in index") | not)' <<< "$result" >/dev/null
+result=$(PACKRAT_TEST_ALERT_COUNT=512 list_saved "$PACKRAT_TEST_LOG")
+jq -e '.status == "saved" and .sampled_alerts == 512 and .alert_log_integrity.stopped_at_limit
+    and .captures[0].last_seen == null' <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_INVALID_RECORDS=1 PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" \
+    list_saved "$PACKRAT_TEST_LOG" "$previous") || status=$?
+[[ $status == 1 ]]
+jq -e '.status == "saved_log_degraded" and .previous_logs == 1 and (.captures | length) == 2' \
+    <<< "$result" >/dev/null
 printf '%s\n' 'Packrat triage tests passed'

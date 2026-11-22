@@ -4,9 +4,11 @@ set -euo pipefail
 usage() {
     printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --saved SESSION_ID CAPTURE_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
+        '       packrat-triage --list-saved ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         'Supply up to eight immutable previous logs, oldest first.' \
         'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
         '--saved reviews an explicit saved capture without consulting live health.' \
+        '--list-saved groups the latest 512 distinct saved alerts by session and capture; counts cover only that sample.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
@@ -28,12 +30,19 @@ if [[ ${1-} == --saved ]]; then
     mode=saved
     session=$2 capture=$3 alert_log=$4
     shift 4
+elif [[ ${1-} == --list-saved ]]; then
+    if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
+    mode=list_saved
+    alert_log=$2
+    shift 2
 else
     if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
     health_file=$1 alert_log=$2
     shift 2
 fi
 alert_limit=50
+query_limit=$((alert_limit + 1))
+if [[ $mode == list_saved ]]; then query_limit=512; fi
 
 previous_logs=("$@")
 previous_args=()
@@ -50,6 +59,7 @@ read_timeout=${PACKRAT_TRIAGE_READ_TIMEOUT:-10}
 archive=${PACKRAT_TRIAGE_ARCHIVE:-}
 evidence_id=${PACKRAT_TRIAGE_EVIDENCE_ALERT_ID:-}
 socket_file=${PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE:-}
+if [[ $mode == list_saved ]]; then archive='' evidence_id='' socket_file=''; fi
 socket_status=not_configured
 if [[ -n $socket_file ]]; then
     if [[ $socket_file != /* || $socket_file == */ || $socket_file == *[[:cntrl:]]* ]]; then
@@ -100,6 +110,33 @@ report() {
              alerts:(if $alerts == null then null else $alerts[:$limit] end),
              evidence_status:$evidence, alert_log_integrity:.[3], socket_context_status:$socket}
     '
+}
+
+report_saved_index() {
+    jq -c --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" '
+        def scoped:
+            (.session_id | type == "string" and test("\\A[A-Za-z0-9_-]{1,128}\\z"))
+            and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
+        def seen:
+            numbers | select(isfinite and . > 0);
+        .integrity as $integrity
+        | (.alerts | map(select(scoped))) as $scoped
+        | {
+            record_type:"saved_capture_index",
+            status:(if $integrity.invalid_records == 0 and $integrity.oversized_records == 0 then "saved" else "saved_log_degraded" end),
+            previous_logs:$previous,
+            alert_sample_limit:$limit,
+            sampled_alerts:(.alerts | length),
+            sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
+            alert_log_integrity:$integrity,
+            captures:($scoped | group_by([.session_id, .capture_id]) | map({
+                session_id:.[0].session_id, capture_id:.[0].capture_id, sampled_alerts:length,
+                sampled_high_or_critical:map(select(.severity == "HIGH" or .severity == "CRITICAL")) | length,
+                first_seen:([.[].first_seen | seen] | min),
+                last_seen:([.[].last_seen | seen] | max)
+            }) | sort_by([-(.last_seen // 0), .session_id, .capture_id]))
+          }
+    ' <<< "$history"
 }
 
 with_socket_context() {
@@ -188,6 +225,7 @@ check_evidence() {
     ' <<< "$response"
 }
 
+scope_args=()
 if [[ $mode == live ]]; then
     if ! state=$(load_state "$health_file"); then
         printf '%s\n' 'Could not read a valid Packrat health record.' >&2
@@ -211,11 +249,14 @@ if [[ $mode == live ]]; then
     session=$(jq -er '.health.alert_session_id' <<< "$state")
     capture=$(jq -er '.health.capture_id' <<< "$state")
     run=$(jq -c '.health.capture_run_id' <<< "$state")
-else
+elif [[ $mode == saved ]]; then
     state=$(jq -cn --arg session "$session" --arg capture "$capture" '
         {mode:"saved",health:null,scope:{session_id:$session,capture_id:$capture}}
     ')
+else
+    state='{"mode":"list_saved","health":null}'
 fi
+if [[ $mode != list_saved ]]; then scope_args=(--session "$session" --capture-id "$capture"); fi
 
 if [[ ! -f $alert_log ]] ||
    ! read -r log_identity log_size <<< "$(stat -L --format='%d:%i %s' -- "$alert_log")" ||
@@ -229,8 +270,8 @@ if ! previous_stamps=$(previous_log_stamps); then
 fi
 read_status=0
 raw_alerts=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
-    --alerts "$alert_log" --session "$session" --capture-id "$capture" \
-    --limit "$((alert_limit + 1))" --report-integrity "${previous_args[@]}") || read_status=$?
+    --alerts "$alert_log" "${scope_args[@]}" \
+    --limit "$query_limit" --report-integrity "${previous_args[@]}") || read_status=$?
 if (( read_status == 124 )); then
     report alert_log_read_timeout
     exit 2
@@ -239,10 +280,10 @@ if (( read_status == 137 )); then
     report alert_log_read_interrupted
     exit 2
 fi
-if (( read_status != 0 )) || ! history=$(jq -cse --argjson limit "$((alert_limit + 1))" '
+if (( read_status != 0 )) || ! history=$(jq -cse --argjson limit "$query_limit" '
     def count: type == "number" and isfinite and floor == . and . >= 0;
     select(length == 1) | .[0] | objects
-    | select((.alerts | type == "array" and length <= $limit)
+    | select((.alerts | type == "array" and length <= $limit and all(.[]; type == "object"))
         and (.integrity | type == "object" and (.invalid_records | count)
             and (.oversized_records | count) and (.stopped_at_limit | type == "boolean"))
         and (.integrity.stopped_at_limit == ((.alerts | length) == $limit)))
@@ -252,7 +293,7 @@ if (( read_status != 0 )) || ! history=$(jq -cse --argjson limit "$((alert_limit
 fi
 alerts=$(jq -c '.alerts' <<< "$history")
 integrity=$(jq -c '.integrity | {invalid_records,oversized_records,stopped_at_limit}' <<< "$history")
-if ! jq -e --arg session "$session" --arg capture "$capture" '
+if [[ $mode != list_saved ]] && ! jq -e --arg session "$session" --arg capture "$capture" '
     all(.[]; type == "object" and .session_id == $session and .capture_id == $capture)
 ' <<< "$alerts" >/dev/null; then
     report alert_log_scope_mismatch
@@ -306,6 +347,11 @@ fi
 if ! latest_stamps=$(previous_log_stamps) || [[ $latest_stamps != "$previous_stamps" ]]; then
     report previous_log_changed
     exit 1
+fi
+if [[ $mode == list_saved ]]; then
+    index=$(report_saved_index)
+    printf '%s\n' "$index"
+    if jq -e '.status == "saved"' <<< "$index" >/dev/null; then exit 0; else exit 1; fi
 fi
 clean_status=current
 degraded_status=degraded
