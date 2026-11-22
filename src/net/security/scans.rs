@@ -25,8 +25,8 @@ impl SecurityEngine {
                         flags: segment.flags,
                         sequence: segment.sequence,
                         acknowledgement: segment.acknowledgement,
-                        source_port: source.1,
-                        destination_port: destination.1,
+                        source_port: source.port(),
+                        destination_port: destination.port(),
                         complete: segment.complete,
                     })
                 }

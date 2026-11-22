@@ -50,8 +50,8 @@ pub(super) struct Ipv4Fragment<'a> {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct TcpFlowKey {
-    pub(super) endpoint_a: ([u8; 4], u16),
-    pub(super) endpoint_b: ([u8; 4], u16),
+    pub(super) endpoint_a: std::net::SocketAddr,
+    pub(super) endpoint_b: std::net::SocketAddr,
 }
 
 #[derive(Debug, Clone, Copy)]

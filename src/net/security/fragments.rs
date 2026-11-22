@@ -111,7 +111,7 @@ impl SecurityEngine {
         if !pkt.timestamp.is_finite() {
             return;
         }
-        let segment = match parse_ipv4_tcp_frame(&pkt.bytes) {
+        let segment = match parse_ipv4_tcp_frame(&pkt.bytes).or_else(|| parse_ipv6_tcp_frame(&pkt.bytes)) {
             Some(TcpFrame::Segment(segment)) => segment,
             Some(TcpFrame::Malformed(reason)) => {
                 self.push_ids(IdsAlert {
@@ -228,8 +228,8 @@ impl SecurityEngine {
                     signature: "TCP payload after reset",
                     severity: Severity::Medium,
                     detail: format!(
-                        "TCP {}:{} to {}:{}: payload seq {} followed reset frame #{} ({} direction, seq {}); reset acceptance and on-wire ordering unverified",
-                        std::net::Ipv4Addr::from(src.0), src.1, std::net::Ipv4Addr::from(dst.0), dst.1,
+                        "TCP {} to {}: payload seq {} followed reset frame #{} ({} direction, seq {}); reset acceptance and on-wire ordering unverified",
+                        src, dst,
                         segment.sequence, reset.packet_no, direction, reset.sequence,
                     ),
                 },

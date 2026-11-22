@@ -80,6 +80,22 @@ pub(super) fn ipv6_probe(raw: &[u8]) -> Option<Ipv6Probe> {
     }
 }
 
+pub(super) fn parse_ipv6_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
+    let packet = parse_ipv6_inspection(raw)?;
+    if packet.next_header != 6 || packet.fragmented || !packet.complete || packet.extension_count > 32
+        || packet.transport.is_empty()
+    {
+        return None;
+    }
+    Some(parse_tcp_transport(
+        packet.transport,
+        packet.transport.len(),
+        Ipv6Addr::from(packet.source).into(),
+        Ipv6Addr::from(packet.destination).into(),
+        true,
+    ))
+}
+
 pub(super) fn is_ipv6_link_local(address: &[u8; 16]) -> bool {
     address[0] == 0xfe && address[1] & 0xc0 == 0x80
 }

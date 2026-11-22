@@ -8,6 +8,7 @@ use crate::analysis::ipv6_fragments::{Ipv6FragmentOutcome, Ipv6FragmentReassembl
 use crate::net::inspector::shannon_entropy;
 use crate::net::packet::Packet;
 use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 // ─── Byte helpers ─────────────────────────────────────────────────────────────
 
@@ -123,12 +124,14 @@ mod protocol_policy;
 mod scans;
 mod signatures;
 mod smb_wire;
+mod tcp_wire;
 mod tracking_helpers;
 mod types;
 mod vulnerabilities;
 use http_policy::*;
 use ipv4_wire::*;
 use ipv6_wire::*;
+use tcp_wire::parse_tcp_transport;
 use tracking_helpers::*;
 use types::*;
 pub use types::{

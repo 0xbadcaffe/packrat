@@ -38,7 +38,7 @@ fn syn_spike_evidence_excludes_retransmissions_and_other_vlan_scopes() {
     assert!(core.incidents.incidents.is_empty());
 }
 
-fn ipv6_frame(target: u16, next_header: u8, payload: &[u8]) -> Vec<u8> {
+pub(super) fn ipv6_frame(target: u16, next_header: u8, payload: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0; 54];
     bytes[12..14].copy_from_slice(&0x86dd_u16.to_be_bytes());
     bytes[14] = 0x60;

@@ -92,55 +92,15 @@ pub(super) fn parse_ipv4_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
     }
 
     let total_len = usize::from(u16::from_be_bytes([raw[ip_offset + 2], raw[ip_offset + 3]]));
-    if total_len < ip_header_len + 20 {
-        return Some(TcpFrame::Malformed(
-            "IPv4 payload is shorter than a minimum TCP header",
-        ));
-    }
-    let tcp_offset = ip_offset + ip_header_len;
-    if raw.len() < tcp_offset + 20 {
-        return Some(TcpFrame::Malformed("captured TCP header is truncated"));
-    }
-
-    let tcp_header_len = usize::from(raw[tcp_offset + 12] >> 4) * 4;
-    if tcp_header_len < 20 {
-        return Some(TcpFrame::Malformed(
-            "TCP data offset is smaller than 20 bytes",
-        ));
-    }
-    if total_len < ip_header_len + tcp_header_len {
-        return Some(TcpFrame::Malformed(
-            "TCP data offset exceeds the IPv4 payload length",
-        ));
-    }
-
     let src: [u8; 4] = raw[ip_offset + 12..ip_offset + 16].try_into().ok()?;
     let dst: [u8; 4] = raw[ip_offset + 16..ip_offset + 20].try_into().ok()?;
-    let src_port = u16::from_be_bytes([raw[tcp_offset], raw[tcp_offset + 1]]);
-    let dst_port = u16::from_be_bytes([raw[tcp_offset + 2], raw[tcp_offset + 3]]);
-    let src_endpoint = (src, src_port);
-    let dst_endpoint = (dst, dst_port);
-    let (endpoint_a, endpoint_b, from_a) = if src_endpoint <= dst_endpoint {
-        (src_endpoint, dst_endpoint, true)
-    } else {
-        (dst_endpoint, src_endpoint, false)
-    };
-    let sequence = u32::from_be_bytes(raw[tcp_offset + 4..tcp_offset + 8].try_into().ok()?);
-    let packet_end = (ip_offset + total_len).min(raw.len());
-    let payload_start = (tcp_offset + tcp_header_len).min(packet_end);
-
-    Some(TcpFrame::Segment(TcpSegment {
-        key: TcpFlowKey {
-            endpoint_a,
-            endpoint_b,
-        },
-        from_a,
-        sequence,
-        acknowledgement: u32::from_be_bytes(raw[tcp_offset + 8..tcp_offset + 12].try_into().ok()?),
-        flags: raw[tcp_offset + 13],
-        complete: fragment_field & 0x2000 == 0 && total_len <= raw.len() - ip_offset,
-        payload: &raw[payload_start..packet_end],
-    }))
+    Some(parse_tcp_transport(
+        &raw[ip_offset + ip_header_len..],
+        total_len.saturating_sub(ip_header_len),
+        Ipv4Addr::from(src).into(),
+        Ipv4Addr::from(dst).into(),
+        fragment_field & 0x2000 == 0,
+    ))
 }
 
 pub(super) fn is_empty_ipv4_udp_probe(raw: &[u8]) -> bool {

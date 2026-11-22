@@ -1,7 +1,16 @@
 use super::{SecurityEngine, ipv4_tcp_packet};
 use packrat_tui::engine::AnalysisCore;
+use packrat_tui::net::{packet::Packet, parser::parse_ethernet};
 
 const TITLE: &str = "TCP payload after reset";
+
+fn ipv6_tcp_packet(no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
+    let tcp = ipv4_tcp_packet(no, sequence, flags, payload);
+    let mut options_and_tcp = vec![6, 0, 0, 0, 0, 0, 0, 0];
+    options_and_tcp.extend_from_slice(&tcp.bytes[34..]);
+    let frame = super::cases_3::ipv6_frame(1, 60, &options_and_tcp);
+    parse_ethernet(&frame, no, no as f64)
+}
 
 #[test]
 fn detects_tcp_payload_continuing_after_reset() {
@@ -99,4 +108,37 @@ fn tcp_integrity_preserves_recent_evidence_after_the_first_128_segments() {
     let finding = findings.ids.iter().find(|finding| finding.alert.signature == "Conflicting TCP retransmission").unwrap();
     assert_eq!(finding.related_packets, [130]);
     assert_eq!(finding.alert.pkt_no, 271);
+}
+
+#[test]
+fn ipv6_tcp_integrity_links_reset_and_conflict_evidence() {
+    let mut core = AnalysisCore::default();
+    core.analyze(&ipv6_tcp_packet(1, 100, 0x18, b"original"));
+    core.analyze(&ipv6_tcp_packet(2, 200, 0x04, b""));
+    core.analyze(&ipv6_tcp_packet(3, 100, 0x18, b"original"));
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+    core.analyze(&ipv6_tcp_packet(4, 102, 0x18, b"changed"));
+    let resets = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(resets.packet_refs, [2, 4]);
+    assert!(resets.detail.contains("[2001:db8::1]:50000"));
+    let conflict = core.alert_center.items.iter().find(|alert| alert.title == "Conflicting TCP retransmission").unwrap();
+    assert_eq!(conflict.packet_refs, [1, 4]);
+    assert_eq!(conflict.provenance.as_ref().unwrap().revision, 4);
+}
+
+#[test]
+fn ipv6_tcp_integrity_ignores_incomplete_or_fragmented_resets() {
+    for fragmented in [false, true] {
+        let mut engine = SecurityEngine::default();
+        let mut reset = ipv6_tcp_packet(1, 100, 0x04, b"");
+        if fragmented {
+            reset.bytes[20] = 44;
+            reset.bytes[57] = 1;
+        } else {
+            reset.bytes.pop();
+        }
+        engine.update(&reset);
+        let result = engine.inspect(&ipv6_tcp_packet(2, 101, 0x18, b"ordinary"));
+        assert!(result.ids.iter().all(|finding| finding.alert.signature != TITLE));
+    }
 }
