@@ -161,7 +161,10 @@ impl SecurityEngine {
         let scope = service_scope(pkt);
         let key = (scope, target);
         let previous = self.ndp_bindings.get(&key).copied();
-        if previous.is_some_and(|entry| entry.timestamp > pkt.timestamp || entry.frame == pkt.no) {
+        if previous.is_some_and(|entry| {
+            entry.frame == pkt.no
+                || !observation_precedes((entry.timestamp, entry.frame), (pkt.timestamp, pkt.no))
+        }) {
             return;
         }
         if previous.is_none() && self.ndp_bindings.len() >= MAX_CONTROL_PLANE_IDENTITIES {
@@ -216,7 +219,12 @@ impl SecurityEngine {
         let key = LldpKey { scope, source: advertisement.source, destination: advertisement.destination,
             port: advertisement.port.to_vec() };
         let existing = self.lldp_chassis.get(&key);
-        if existing.is_some_and(|previous| now < previous.seen_at || pkt.no == previous.frame) { return; }
+        if existing.is_some_and(|previous| {
+            previous.frame == pkt.no
+                || !observation_precedes((previous.seen_at, previous.frame), (now, pkt.no))
+        }) {
+            return;
+        }
         if advertisement.ttl == 0 {
             if existing.is_some_and(|previous| previous.chassis == advertisement.chassis) {
                 self.lldp_chassis.remove(&key);

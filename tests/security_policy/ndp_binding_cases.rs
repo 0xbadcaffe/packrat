@@ -64,6 +64,7 @@ fn ndp_binding_changes_keep_scoped_recent_valid_claims_and_both_frames() {
 
     core.analyze(&make(8, 8.0, 10, 8, 255, |_| {}));
     core.analyze(&make(9, 0.5, 10, 9, 255, |_| {}));
+    core.analyze(&make(6, 8.0, 10, 6, 255, |_| {}));
     core.analyze(&make(10, 309.0, 10, 10, 255, |_| {}));
     let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == TITLE).collect();
     assert_eq!(alerts.len(), 1);
@@ -74,4 +75,20 @@ fn ndp_binding_changes_keep_scoped_recent_valid_claims_and_both_frames() {
     assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "ipv6.ndp_binding_change");
     assert!(alert.detail.contains("2001:db8::5"));
     assert!(alert.detail.contains("endpoint cache change was not verified"));
+}
+
+#[test]
+fn ndp_binding_changes_accept_later_frames_at_the_same_time() {
+    let target = "2001:db8::5".parse::<Ipv6Addr>().unwrap().octets();
+    let mut core = AnalysisCore::default();
+    for (no, host) in [(1, 1), (2, 2), (1, 3), (3, 4)] {
+        let mac = [2, 1, 2, 3, 4, host];
+        let mut packet = ipv6_control_packet(no, mac, target, 255, &neighbor_advertisement(target, mac));
+        packet.timestamp = 1.0;
+        core.analyze(&packet);
+    }
+    let alert = core.alert_center.items.iter()
+        .find(|alert| alert.title == "IPv6 neighbor binding changed").unwrap();
+    assert_eq!(alert.hit_count, 2);
+    assert_eq!(alert.packet_refs, [1, 2, 3]);
 }

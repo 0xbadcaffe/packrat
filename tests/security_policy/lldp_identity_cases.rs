@@ -44,3 +44,23 @@ fn lldp_identity_changes_require_active_matching_port_and_scope() {
     assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "lldp.chassis_identity_change");
     assert!(alert.detail.contains("physical identity unverified"));
 }
+
+#[test]
+fn stale_lldp_shutdown_cannot_remove_a_newer_same_time_identity() {
+    let mac = [2, 1, 2, 3, 4, 5];
+    let mut core = AnalysisCore::default();
+    let mut shutdown = lldp_packet(1, mac, b"a");
+    shutdown.bytes[24..26].fill(0);
+    let mut first = lldp_packet(2, mac, b"a");
+    let mut replacement = lldp_packet(3, mac, b"b");
+    first.timestamp = 1.0;
+    shutdown.timestamp = 1.0;
+    replacement.timestamp = 1.0;
+    core.analyze(&first);
+    core.analyze(&shutdown);
+    assert!(core.alert_center.items.is_empty());
+    core.analyze(&replacement);
+    let alert = core.alert_center.items.iter()
+        .find(|alert| alert.title == "LLDP chassis identity changed").unwrap();
+    assert_eq!(alert.packet_refs, [2, 3]);
+}

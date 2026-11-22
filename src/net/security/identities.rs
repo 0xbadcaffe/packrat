@@ -7,8 +7,7 @@ const ARP_SOURCE_MISMATCH: &str = "ARP reply sender differs from Ethernet source
 
 impl ArpObservation {
     fn precedes(self, other: Self) -> bool {
-        self.timestamp < other.timestamp
-            || (self.timestamp == other.timestamp && self.frame < other.frame)
+        observation_precedes((self.timestamp, self.frame), (other.timestamp, other.frame))
     }
 }
 

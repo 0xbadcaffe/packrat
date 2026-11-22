@@ -133,7 +133,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the retained queries with expected DNS clients and resolver logs; investigate the originating process before concluding that data was transferred.",
         ),
         (
-            "IDS", "IPv6 neighbor binding changed", "ipv6.ndp_binding_change", 1, Correlated,
+            "IDS", "IPv6 neighbor binding changed", "ipv6.ndp_binding_change", 2, Correlated,
             "Compare both advertisements with the authorized address assignments and endpoint neighbor tables; distinguish failover from spoofing.",
         ),
         (
@@ -141,7 +141,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the BPDU with switch topology and maintenance logs; the indication does not prove a forwarding change.",
         ),
         (
-            "IDS", "LLDP chassis identity changed", "lldp.chassis_identity_change", 1, Correlated,
+            "IDS", "LLDP chassis identity changed", "lldp.chassis_identity_change", 2, Correlated,
             "Compare both advertisements with the switch-port inventory and maintenance records before attributing the change.",
         ),
         (

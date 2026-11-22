@@ -1,6 +1,11 @@
 use super::*;
 use std::{collections::VecDeque, ops::Range};
 
+// Callers validate timestamps. Frame order breaks ties in coarse capture clocks.
+pub(super) fn observation_precedes(old: (f64, u64), new: (f64, u64)) -> bool {
+    old < new
+}
+
 pub(super) struct TcpOverlap {
     pub(super) previous_frame: u64,
     pub(super) compared_bytes: usize,
