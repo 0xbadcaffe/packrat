@@ -63,8 +63,8 @@ impl AnalysisCore {
             std::collections::HashMap::new()
         };
         self.streams.ingest(pkt);
-        let spanning_modbus = self.streams.spanning_modbus(pkt);
-        let findings = self.security.inspect_with_spanning_modbus(pkt, spanning_modbus);
+        let modbus = self.streams.observe_modbus(pkt);
+        let findings = self.security.inspect_with_modbus(pkt, modbus);
         for finding in &findings.ids {
             let alert = &finding.alert;
             self.operator_graph.on_ids_alert(

@@ -9,6 +9,11 @@ pub struct IndustrialFinding {
     pub critical: bool,
 }
 
+pub(crate) enum ModbusObservation {
+    Unanchored,
+    Anchored(Option<(IndustrialFinding, Vec<u64>)>),
+}
+
 impl IndustrialFinding {
     pub fn detail(&self, packet: &Packet) -> String {
         format!("{} {} from {} to {}", self.protocol, self.operation, packet.src, packet.dst)

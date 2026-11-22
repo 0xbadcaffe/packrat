@@ -189,39 +189,46 @@ impl StreamAssembler {
         self.streams.get(id)
     }
 
-    pub(crate) fn spanning_modbus(
+    pub(crate) fn observe_modbus(
         &mut self, pkt: &Packet,
-    ) -> Option<(crate::analysis::industrial_policy::IndustrialFinding, Vec<u64>)> {
-        use crate::analysis::industrial_policy::modbus_message;
+    ) -> crate::analysis::industrial_policy::ModbusObservation {
+        use crate::analysis::industrial_policy::{ModbusObservation::*, modbus_message};
         if pkt.dst_port != Some(502) {
-            return None;
+            return Unanchored;
         }
-        let (source_port, destination_port) = tcp_port_pair(pkt)?;
+        let Some((source_port, destination_port)) = tcp_port_pair(pkt) else {
+            return Unanchored;
+        };
         if destination_port != 502 || source_port == 502 {
-            return None;
+            return Unanchored;
         }
-        let stream = self.streams.get_mut(&StreamKey::from_packet(pkt)?.id())?;
-        if stream.midstream || stream.epoch_ambiguous || stream.reset || stream.truncated
-            || stream.dropped_segments > 0 || stream.provenance_truncated
-        {
-            return None;
-        }
+        let Some(stream) = StreamKey::from_packet(pkt).and_then(|key| self.streams.get_mut(&key.id())) else {
+            return Unanchored;
+        };
         let from_a = format!("{}:{source_port}", pkt.src) == stream.key.ep_a;
         let (syn, data) = if from_a {
             (stream.client_initial_syn, &stream.client_data)
         } else {
             (stream.server_initial_syn, &stream.server_data)
         };
-        syn?;
+        if syn.is_none() || stream.midstream {
+            return Unanchored;
+        }
+        if stream.epoch_ambiguous || stream.reset || stream.truncated
+            || stream.dropped_segments > 0 || stream.provenance_truncated
+        {
+            return Anchored(None);
+        }
         let mut result = None;
         while let Some(start) = stream.modbus_offset {
-            match modbus_message(data.get(start..)?) {
+            let Some(remaining) = data.get(start..) else { break; };
+            match modbus_message(remaining) {
                 Ok(Some((length, finding))) => {
                     let end = start + length;
                     stream.modbus_offset = Some(end);
                     if let Some(finding) = finding.filter(|_| result.is_none()) {
                         let frames = stream.packet_numbers(from_a, start, end);
-                        if frames.len() > 1 {
+                        if !frames.is_empty() {
                             result = Some((finding, frames));
                         }
                     }
@@ -230,7 +237,7 @@ impl StreamAssembler {
                 Err(()) => stream.modbus_offset = None,
             }
         }
-        result
+        Anchored(result)
     }
 
     pub fn all(&self) -> Vec<&ReassembledStream> {

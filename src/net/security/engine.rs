@@ -105,6 +105,10 @@ impl SecurityEngine {
 
     /// Process a single packet through all detection engines.
     pub fn update(&mut self, pkt: &Packet) {
+        self.update_with_modbus(pkt, industrial_policy::ModbusObservation::Unanchored);
+    }
+
+    fn update_with_modbus(&mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation) {
         self.findings = DetectionBatch::default();
         self.check_ipv4_fragments(pkt);
         let no_new_tcp_payload = self.check_tcp_integrity(pkt);
@@ -116,7 +120,7 @@ impl SecurityEngine {
         self.check_dhcp_integrity(pkt);
         self.check_ipv6_fragment_reassembly(pkt);
         self.check_http_request_smuggling(pkt);
-        self.check_industrial_policy(pkt);
+        self.check_industrial_policy(pkt, modbus);
         self.check_dns_transaction_integrity(pkt);
         self.check_ids(pkt);
         self.check_arp(pkt);
@@ -129,17 +133,13 @@ impl SecurityEngine {
     }
 
     pub fn inspect(&mut self, pkt: &Packet) -> DetectionBatch {
-        self.inspect_with_spanning_modbus(pkt, None)
+        self.inspect_with_modbus(pkt, industrial_policy::ModbusObservation::Unanchored)
     }
 
-    pub(crate) fn inspect_with_spanning_modbus(
-        &mut self, pkt: &Packet,
-        spanning: Option<(industrial_policy::IndustrialFinding, Vec<u64>)>,
+    pub(crate) fn inspect_with_modbus(
+        &mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation,
     ) -> DetectionBatch {
-        self.update(pkt);
-        if let Some((finding, frames)) = spanning {
-            self.record_industrial_finding(pkt, finding, frames);
-        }
+        self.update_with_modbus(pkt, modbus);
         std::mem::take(&mut self.findings)
     }
 

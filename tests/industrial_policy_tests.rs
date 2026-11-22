@@ -148,7 +148,7 @@ fn industrial_alert_exposes_a_policy_hint_not_a_claim_of_execution() {
         .find(|alert| alert.title == "Industrial state-changing command").unwrap();
     let provenance = alert.provenance.as_ref().unwrap();
     assert_eq!(provenance.rule_id, "industrial.state_change");
-    assert_eq!(provenance.revision, 3);
+    assert_eq!(provenance.revision, 4);
     assert_eq!(provenance.confidence, packrat_tui::analysis::alert_provenance::EvidenceConfidence::Heuristic);
     assert!(provenance.verification_hint.contains("does not prove a state change"));
     assert_eq!(alert.packet_refs, [1]);
@@ -228,4 +228,34 @@ fn modbus_split_evidence_uses_the_shared_tcp_stream_without_duplicate_alerts() {
     unrelated.vlan_id = Some(10);
     scoped.analyze(&unrelated);
     assert!(scoped.alert_center.items.iter().find(rule).is_none());
+}
+
+#[test]
+fn anchored_modbus_does_not_reinterpret_a_continuation_or_retransmission() {
+    use packrat_tui::engine::AnalysisCore;
+    let segment = |number: u64, sequence: u32, flags: u8, payload: &[u8]| {
+        let mut packet = industrial_packet("Modbus", 502, true, payload);
+        packet.no = number;
+        packet.timestamp = number as f64;
+        packet.bytes[38..42].copy_from_slice(&sequence.to_be_bytes());
+        packet.bytes[47] = flags;
+        packet
+    };
+    let write_like = [0, 2, 0, 0, 0, 2, 1, 6];
+    let read_prefix = [0, 1, 0, 0, 0, 10, 1, 3];
+    let rule = |item: &&packrat_tui::analysis::alert_center::AlertItem| {
+        item.title == "Industrial state-changing command"
+    };
+
+    let mut core = AnalysisCore::default();
+    core.analyze(&segment(1, 100, 0x02, &[]));
+    core.analyze(&segment(2, 101, 0x18, &read_prefix));
+    core.analyze(&segment(3, 109, 0x18, &write_like));
+    assert!(core.alert_center.items.iter().find(rule).is_none());
+
+    core.analyze(&segment(4, 117, 0x18, &write_like));
+    core.analyze(&segment(5, 117, 0x18, &write_like));
+    let alert = core.alert_center.items.iter().find(rule).unwrap();
+    assert_eq!(alert.packet_refs, [4]);
+    assert_eq!(alert.hit_count, 1);
 }

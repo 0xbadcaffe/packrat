@@ -189,11 +189,16 @@ impl SecurityEngine {
         }
     }
 
-    pub(super) fn check_industrial_policy(&mut self, pkt: &Packet) {
-        let Some(finding) = industrial_policy::inspect(pkt) else {
+    pub(super) fn check_industrial_policy(&mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation) {
+        let finding = match modbus {
+            industrial_policy::ModbusObservation::Anchored(finding) => finding,
+            industrial_policy::ModbusObservation::Unanchored =>
+                industrial_policy::inspect(pkt).map(|finding| (finding, Vec::new())),
+        };
+        let Some((finding, frames)) = finding else {
             return;
         };
-        self.record_industrial_finding(pkt, finding, Vec::new());
+        self.record_industrial_finding(pkt, finding, frames);
     }
 
     pub(super) fn record_industrial_finding(
