@@ -42,11 +42,15 @@ packrat-archive() {
     esac
     if [[ -n ${PACKRAT_TEST_ALERT_COUNT:-} ]]; then
         jq -cn --argjson count "$PACKRAT_TEST_ALERT_COUNT" --arg large "${PACKRAT_TEST_LARGE_ALERTS:-0}" '
-            [range($count; 0; -1) | {alert_id:.}
+            [range($count; 0; -1) | {alert_id:.,session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"}
                 + (if $large == "1" then {detail: ("\ud83d\udd0d" * 512), title: ("\ud83d\udd0d" * 160)}
                    else {} end)]'
     else
-        printf '%s\n' '[{"alert_id":42,"title":"Scoped alert"}]'
+        jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" '
+            {alert_id:42,title:"Scoped alert",session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"} as $valid
+            | [$valid] + (if $mismatch == "" then [] else
+                [($valid | .alert_id = 43 | .[$mismatch] = "other")]
+              end)'
     fi
 }
 
@@ -144,6 +148,9 @@ PACKRAT_TEST_RUN_RACE=1 check_failure 1 capture_scope_changed
 printf '%s\n' "$sample" >"$health"
 PACKRAT_TEST_LOG_ERROR=1 check_failure 2 alert_log_unavailable
 [[ -e $PACKRAT_TEST_CALL ]]
+for field in session_id capture_id; do
+    PACKRAT_TEST_WRONG_ALERT_SCOPE="$field" check_failure 2 alert_log_scope_mismatch
+done
 PACKRAT_TRIAGE_READ_TIMEOUT=3 PACKRAT_TEST_TIMEOUT_SECONDS=3 PACKRAT_TEST_TIMEOUT_STATUS=124 \
     check_failure 2 alert_log_read_timeout
 PACKRAT_TEST_TIMEOUT_STATUS=137 check_failure 2 alert_log_read_interrupted

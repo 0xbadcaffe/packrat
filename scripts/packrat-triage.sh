@@ -137,6 +137,12 @@ if (( read_status != 0 )) || ! alerts=$(jq -cse 'select(length == 1) | .[0] | ar
     report alert_log_unavailable
     exit 2
 fi
+if ! jq -e --arg session "$session" --arg capture "$capture" '
+    all(.[]; type == "object" and .session_id == $session and .capture_id == $capture)
+' <<< "$alerts" >/dev/null; then
+    report alert_log_scope_mismatch
+    exit 2
+fi
 if ! latest=$(load_state "$1"); then
     report health_recheck_failed
     exit 2
