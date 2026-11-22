@@ -12,6 +12,7 @@ use crate::app::{AppView as App, InvestigationItem, InvestigationView};
 use crate::model::evidence::{EvidenceRef, PacketRef};
 use crate::net::flow::FlowKey;
 use crate::net::packet::Packet;
+use crate::storage::alert_evidence::{FrameStatus, frame_status};
 use crate::ui::helpers::truncate;
 use crate::ui::theme::*;
 
@@ -210,6 +211,20 @@ fn draw_artifact_context(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
+    let status = frame_status(packet);
+    let length = match (status, packet.capture.as_ref()) {
+        (FrameStatus::Complete, Some(meta)) => format!("Length: {} bytes", meta.wire_length),
+        (FrameStatus::Truncated, Some(meta)) => format!(
+            "Truncated: {} of {} bytes captured", meta.captured_length, meta.wire_length,
+        ),
+        (FrameStatus::Unreadable, _) => "Invalid capture lengths".into(),
+        _ => format!("Length: {} bytes retained; wire length unknown", packet.bytes.len()),
+    };
+    let length_style = if status == FrameStatus::Complete {
+        Style::default()
+    } else {
+        Style::default().fg(C_YELLOW())
+    };
     let lines = vec![
         Line::from(vec![Span::styled(
             format!("Frame #{}", packet.no),
@@ -227,7 +242,7 @@ fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
             packet.dst,
             packet.dst_port.map(|p| format!(":{p}")).unwrap_or_default()
         )),
-        Line::from(format!("Length: {} bytes", packet.length)),
+        Line::from(Span::styled(length, length_style)),
         Line::from(format!(
             "VLAN: {}",
             packet

@@ -256,17 +256,18 @@ impl App {
                 local
             };
             packet.and_then(|packet| {
-                if frame_status(&packet) == FrameStatus::Unreadable {
+                let status = frame_status(&packet);
+                if status == FrameStatus::Unreadable {
                     invalid_lengths += 1;
                     None
                 } else {
-                    Some((packet, from_archive))
+                    Some((packet, from_archive, status))
                 }
             })
         };
         let mut trigger = packet_refs.binary_search(&alert.packet_no).ok()
             .and_then(|_| resolve_frame(self, alert.packet_no));
-        if let Some((packet, _)) = &trigger {
+        if let Some((packet, _, _)) = &trigger {
             // Reserve bytes before processing older evidence; add the tray item in order below.
             let _ = self.worklist.retain_packet(packet);
         }
@@ -274,6 +275,8 @@ impl App {
         let mut unavailable = 0;
         let mut at_capacity = 0;
         let mut archived = 0;
+        let mut truncated = 0;
+        let mut unknown_lengths = 0;
         let mut retained = Vec::with_capacity(packet_refs.len());
         for packet_no in packet_refs {
             let frame = if packet_no == alert.packet_no {
@@ -281,7 +284,7 @@ impl App {
             } else {
                 resolve_frame(self, packet_no)
             };
-            let Some((packet, from_archive)) = frame else {
+            let Some((packet, from_archive, status)) = frame else {
                 unavailable += 1;
                 continue;
             };
@@ -290,6 +293,8 @@ impl App {
                     self.project_dirty |= added;
                     retained.push(packet.no);
                     archived += usize::from(from_archive);
+                    truncated += usize::from(status == FrameStatus::Truncated);
+                    unknown_lengths += usize::from(status == FrameStatus::LengthUnknown);
                 }
                 Err(_) => {
                     unavailable += 1;
@@ -314,8 +319,11 @@ impl App {
             });
         self.investigation_view = InvestigationView::Summary;
         self.navigate_to(Tab::Investigate);
+        let quality: String = [(truncated, "truncated"), (unknown_lengths, "capture lengths unknown")]
+            .into_iter().filter(|&(count, _)| count > 0)
+            .map(|(count, label)| format!("{count} {label}; ")).collect();
         self.set_status(format!(
-            "Alert #{}: opened {} matching packets ({} archived); {} unavailable{}{}{}",
+            "Alert #{}: {quality}opened {} matching packets ({} archived); {} unavailable{}{}{}",
             alert.id,
             retained.len(),
             archived,

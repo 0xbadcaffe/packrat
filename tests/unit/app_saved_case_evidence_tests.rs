@@ -1,6 +1,80 @@
 use super::*;
 use crate::model::project::ProjectState;
 
+#[test]
+fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
+    use crate::net::packet::CaptureMetadata;
+    use crate::storage::packet_archive::{ArchiveWorker, PacketArchive};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("archive");
+    let mut app = App::new_for_test();
+    app.set_packet_archive(ArchiveWorker::open(&archive).unwrap()).unwrap();
+    let capture_a = app.capture_id.clone().unwrap();
+    let mut first = packet(90);
+    first.info = "first capture".into();
+    first.capture = Some(CaptureMetadata {
+        timestamp: None,
+        captured_length: first.bytes.len() as u32,
+        wire_length: 60,
+        link_type: 1,
+        interface_id: 0,
+        section_id: 0,
+        interface_name: None,
+        comments: Vec::new(),
+    });
+    app.inject_packet(first);
+    app.inject_packet(packet(90));
+    assert_eq!(app.packets.iter().map(|packet| packet.no).collect::<Vec<_>>(), [1, 2]);
+    {
+        let mut core = app.core.edit();
+        core.alert_center.record(1, "IDS", "HIGH", "Evidence", "first capture");
+        core.alert_center.record(2, "IDS", "HIGH", "Evidence", "first capture");
+        assert_eq!(core.alert_center.items[0].capture_id.as_deref(), Some(capture_a.as_ref()));
+    }
+    let old_alerts = app.core.edit().alert_center.items.clone();
+    app.packets.clear();
+    assert_eq!(app.alert_evidence_status(&old_alerts[0]), "0/2 retained; 2 unchecked in archive");
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.worklist.packet_nos(), [1, 2]);
+    assert_eq!(app.worklist.retained_packet(1).unwrap().info, "first capture");
+    assert_eq!(
+        app.alert_evidence_status(&old_alerts[0]),
+        "2/2 retained; 1 truncated; 1 capture lengths unknown"
+    );
+    let status = app.status_msg.as_deref().unwrap();
+    assert!(status.contains("2 archived"));
+    assert!(status.contains("1 truncated; 1 capture lengths unknown"));
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    let mut render = |app: &App| {
+        terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+        terminal.backend().to_string()
+    };
+    assert!(render(&app).contains("Length: 4 bytes retained; wire length unknown"));
+    app.worklist.add_packet(1);
+    assert!(render(&app).contains("Truncated: 4 of 60 bytes captured"));
+
+    app.try_clear_packets().unwrap();
+    let capture_b = app.capture_id.clone().unwrap();
+    assert_ne!(capture_a, capture_b);
+    assert_eq!(app.alert_evidence_status(&old_alerts[0]), "0/2 verified here; different capture");
+    app.packet_archive = Some(ArchiveWorker::open(&archive).unwrap());
+    let mut second = packet(90);
+    second.info = "second capture".into();
+    app.inject_packet(second);
+    app.core.edit().alert_center.restore(old_alerts, AutomationMode::Off);
+    assert!(app.investigate_selected_alert());
+    assert!(app.worklist.packet_nos().is_empty());
+    assert!(app.status_msg.as_deref().unwrap().contains("2 unavailable"));
+
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+    let mut reader = PacketArchive::open_readonly(&archive).unwrap();
+    assert_eq!(reader.packet_for_capture(&capture_a, 1).unwrap().unwrap().info, "first capture");
+    assert_eq!(reader.packet_for_capture(&capture_b, 1).unwrap().unwrap().info, "second capture");
+}
+
 fn scoped_case() -> (String, ProjectState) {
     let mut source = App::new_for_test();
     let scope = App::new_capture_id();

@@ -215,55 +215,6 @@ fn unscoped_alert_does_not_open_overlapping_live_or_pinned_frames() {
 }
 
 #[test]
-fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
-    use crate::storage::packet_archive::{ArchiveWorker, PacketArchive};
-
-    let directory = tempfile::tempdir().unwrap();
-    let archive = directory.path().join("archive");
-    let mut app = App::new_for_test();
-    app.set_packet_archive(ArchiveWorker::open(&archive).unwrap()).unwrap();
-    let capture_a = app.capture_id.clone().unwrap();
-    let mut first = packet(90);
-    first.info = "first capture".into();
-    app.inject_packet(first);
-    app.inject_packet(packet(90));
-    assert_eq!(app.packets.iter().map(|packet| packet.no).collect::<Vec<_>>(), [1, 2]);
-    {
-        let mut core = app.core.edit();
-        core.alert_center.record(1, "IDS", "HIGH", "Evidence", "first capture");
-        core.alert_center.record(2, "IDS", "HIGH", "Evidence", "first capture");
-        assert_eq!(core.alert_center.items[0].capture_id.as_deref(), Some(capture_a.as_ref()));
-    }
-    let old_alerts = app.core.edit().alert_center.items.clone();
-    app.packets.clear();
-    assert_eq!(app.alert_evidence_status(&old_alerts[0]), "0/2 retained; 2 unchecked in archive");
-    app.packet_archive.as_mut().unwrap().finish().unwrap();
-    assert!(app.investigate_selected_alert());
-    assert_eq!(app.worklist.packet_nos(), [1, 2]);
-    assert_eq!(app.worklist.retained_packet(1).unwrap().info, "first capture");
-    assert_eq!(app.alert_evidence_status(&old_alerts[0]), "2/2 retained; 2 capture lengths unknown");
-    assert!(app.status_msg.as_deref().unwrap().contains("2 archived"));
-
-    app.try_clear_packets().unwrap();
-    let capture_b = app.capture_id.clone().unwrap();
-    assert_ne!(capture_a, capture_b);
-    assert_eq!(app.alert_evidence_status(&old_alerts[0]), "0/2 verified here; different capture");
-    app.packet_archive = Some(ArchiveWorker::open(&archive).unwrap());
-    let mut second = packet(90);
-    second.info = "second capture".into();
-    app.inject_packet(second);
-    app.core.edit().alert_center.restore(old_alerts, AutomationMode::Off);
-    assert!(app.investigate_selected_alert());
-    assert!(app.worklist.packet_nos().is_empty());
-    assert!(app.status_msg.as_deref().unwrap().contains("2 unavailable"));
-
-    app.packet_archive.as_mut().unwrap().finish().unwrap();
-    let mut reader = PacketArchive::open_readonly(&archive).unwrap();
-    assert_eq!(reader.packet_for_capture(&capture_a, 1).unwrap().unwrap().info, "first capture");
-    assert_eq!(reader.packet_for_capture(&capture_b, 1).unwrap().unwrap().info, "second capture");
-}
-
-#[test]
 fn background_clear_updates_capture_scope_before_subsequent_findings() {
     use crate::storage::packet_archive::ArchiveWorker;
 
