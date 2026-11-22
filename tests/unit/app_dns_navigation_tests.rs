@@ -73,3 +73,38 @@ fn dns_transaction_navigation_recovers_a_frame_from_the_current_archive() {
     assert_eq!(app.worklist.retained_packet(2).unwrap().bytes, reply.bytes);
     assert!(app.packets.is_empty());
 }
+
+#[test]
+fn dns_transaction_view_and_navigation_do_not_cross_from_saved_to_live_evidence() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Investigate;
+    app.investigation_view = InvestigationView::Transactions;
+    app.restored_project_max_frame = 2;
+    let query = dns_frame(1, [10, 0, 0, 53], false);
+    let saved_reply = dns_frame(2, [10, 0, 0, 53], true);
+    let live_reply = dns_frame(3, [10, 0, 0, 54], true);
+    for packet in [&query, &saved_reply, &live_reply] {
+        app.core.edit().analyze(packet);
+        app.worklist.pin_packet(packet).unwrap();
+    }
+    app.worklist.restored_packet_scopes.insert(1, "historical-capture".into());
+    app.worklist.restored_packet_scopes.insert(2, "historical-capture".into());
+    let mixed = app.query_core(|core| core.security.dns_exchange_for_packet(&query))
+        .unwrap().unwrap();
+    assert_eq!(mixed.replies.len(), 2);
+    assert!(app.scope_dns_exchange(3, mixed.clone()).is_none());
+    let scoped = app.scope_dns_exchange(1, mixed.clone()).unwrap();
+    assert_eq!(scoped.replies.iter().map(|reply| reply.packet).collect::<Vec<_>>(), [2]);
+
+    advance(&mut app);
+    assert_eq!(app.worklist.active_packet_no(), Some(3));
+    assert!(app.status_msg.as_deref().unwrap().contains("No retained DNS exchange"));
+    app.worklist.pin_packet(&query).unwrap();
+    advance(&mut app);
+    assert_eq!(app.worklist.active_packet_no(), Some(2));
+    advance(&mut app);
+    assert_eq!(app.worklist.active_packet_no(), Some(1));
+
+    app.worklist.restored_packet_scopes.insert(2, "different-capture".into());
+    assert!(app.scope_dns_exchange(1, mixed).unwrap().replies.is_empty());
+}

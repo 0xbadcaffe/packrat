@@ -1,7 +1,9 @@
 use super::*;
 
 pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
-    let lines = match app.core.security.dns_exchange_for_packet(packet) {
+    let exchange = app.core.security.dns_exchange_for_packet(packet)
+        .and_then(|exchange| app.scope_dns_exchange(packet.no, exchange));
+    let lines = match exchange {
         Some(exchange) => {
             let mut lines = vec![
                 Line::styled(format!("Transaction 0x{:04x}", exchange.transaction_id), heading()),

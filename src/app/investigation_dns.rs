@@ -1,6 +1,36 @@
 use super::*;
+use crate::analysis::dns_transactions::DnsExchangeEvidence;
+
+#[derive(PartialEq, Eq)]
+enum DnsFrameOrigin<'a> {
+    Current,
+    Saved(Option<&'a str>),
+}
 
 impl App {
+    fn dns_frame_origin(&self, frame: u64) -> DnsFrameOrigin<'_> {
+        if let Some(scope) = self.worklist.restored_packet_scopes.get(&frame) {
+            DnsFrameOrigin::Saved(Some(scope))
+        } else if frame <= self.restored_project_max_frame {
+            DnsFrameOrigin::Saved(None)
+        } else {
+            DnsFrameOrigin::Current
+        }
+    }
+
+    pub(crate) fn scope_dns_exchange(
+        &self,
+        frame: u64,
+        mut exchange: DnsExchangeEvidence,
+    ) -> Option<DnsExchangeEvidence> {
+        let origin = self.dns_frame_origin(frame);
+        if self.dns_frame_origin(exchange.query_packet) != origin {
+            return None;
+        }
+        exchange.replies.retain(|reply| self.dns_frame_origin(reply.packet) == origin);
+        Some(exchange)
+    }
+
     pub(crate) fn next_dns_evidence_frame(&mut self) {
         let Some(packet) = self.active_investigation_packet() else { return };
         if !packet.protocol.eq_ignore_ascii_case("DNS")
@@ -9,7 +39,10 @@ impl App {
             return;
         }
         let current = packet.no;
-        let exchange = self.query_core(|core| core.security.dns_exchange_for_packet(packet));
+        let exchange = self.query_core(|core| {
+            let exchange = core.security.dns_exchange_for_packet(packet)?;
+            self.scope_dns_exchange(current, exchange)
+        });
         let Some(Some(exchange)) = exchange else {
             self.set_status("No retained DNS exchange for this frame");
             return;
@@ -23,7 +56,7 @@ impl App {
         for offset in 1..frames.len() {
             let frame = frames[(index + offset) % frames.len()];
             let mut packet = self.packet_by_no(frame).cloned();
-            if packet.is_none()
+            if packet.is_none() && self.dns_frame_origin(frame) == DnsFrameOrigin::Current
                 && let Some(scope) = self.capture_id.as_deref()
             {
                 if !attempted_archive {
