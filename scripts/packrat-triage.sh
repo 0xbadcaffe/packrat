@@ -8,6 +8,7 @@ usage() {
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
+        'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
 }
 
@@ -26,8 +27,13 @@ for log in "${previous_logs[@]}"; do
 done
 
 max_age_override=${PACKRAT_TRIAGE_MAX_AGE:-}
+read_timeout=${PACKRAT_TRIAGE_READ_TIMEOUT:-10}
 if [[ ! -f $1 || ( -n $max_age_override && ! $max_age_override =~ ^[1-9][0-9]{0,5}$ ) ]]; then
     printf '%s\n' 'Expected a regular health file and a positive PACKRAT_TRIAGE_MAX_AGE.' >&2
+    exit 2
+fi
+if [[ ! $read_timeout =~ ^[1-9][0-9]{0,3}$ ]]; then
+    printf '%s\n' 'PACKRAT_TRIAGE_READ_TIMEOUT must be between 1 and 9999 seconds.' >&2
     exit 2
 fi
 
@@ -112,9 +118,19 @@ if ! previous_stamps=$(previous_log_stamps); then
 fi
 session=$(jq -er '.health.alert_session_id' <<< "$state")
 capture=$(jq -er '.health.capture_id' <<< "$state")
-if ! alerts=$(packrat-archive --alerts "$2" --session "$session" --capture-id "$capture" \
-        --limit "$((alert_limit + 1))" "${previous_args[@]}" |
-        jq -cse 'select(length == 1) | .[0] | arrays'); then
+read_status=0
+raw_alerts=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
+    --alerts "$2" --session "$session" --capture-id "$capture" \
+    --limit "$((alert_limit + 1))" "${previous_args[@]}") || read_status=$?
+if (( read_status == 124 )); then
+    report alert_log_read_timeout
+    exit 2
+fi
+if (( read_status == 137 )); then
+    report alert_log_read_interrupted
+    exit 2
+fi
+if (( read_status != 0 )) || ! alerts=$(jq -cse 'select(length == 1) | .[0] | arrays' <<< "$raw_alerts"); then
     report alert_log_unavailable
     exit 2
 fi

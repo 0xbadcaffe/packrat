@@ -9,7 +9,7 @@ health="$scratch/latest.json"
 export PACKRAT_TEST_LOG="$scratch/alerts.jsonl" PACKRAT_TEST_CALL="$scratch/archive-called"
 export PACKRAT_TEST_STATE="$health"
 touch -- "$PACKRAT_TEST_LOG" "$scratch/other.jsonl"
-unset PACKRAT_TRIAGE_MAX_AGE
+unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT
 
 date() {
     [[ $* == '-u +%s' ]] || return 2
@@ -46,7 +46,17 @@ packrat-archive() {
     fi
 }
 
-export -f date packrat-archive
+timeout() {
+    [[ $# -gt 3 && $1 == --kill-after=2s && $2 == "${PACKRAT_TEST_TIMEOUT_SECONDS:-10}s" ]] || return 2
+    shift 2
+    if [[ -n ${PACKRAT_TEST_TIMEOUT_STATUS:-} ]]; then
+        printf '%s\n' '[{"alert_id":999}]'
+        return "$PACKRAT_TEST_TIMEOUT_STATUS"
+    fi
+    "$@"
+}
+
+export -f date packrat-archive timeout
 
 sample='{"record_type":"capture_health","timestamp":"2023-11-14T22:12:50Z",
          "capture_active":true,"telemetry_fresh":true,"issues":[],
@@ -123,6 +133,12 @@ PACKRAT_TEST_SCOPE_RACE=1 check_failure 1 capture_scope_changed
 printf '%s\n' "$sample" >"$health"
 PACKRAT_TEST_LOG_ERROR=1 check_failure 2 alert_log_unavailable
 [[ -e $PACKRAT_TEST_CALL ]]
+PACKRAT_TRIAGE_READ_TIMEOUT=3 PACKRAT_TEST_TIMEOUT_SECONDS=3 PACKRAT_TEST_TIMEOUT_STATUS=124 \
+    check_failure 2 alert_log_read_timeout
+PACKRAT_TEST_TIMEOUT_STATUS=137 check_failure 2 alert_log_read_interrupted
+status=0
+PACKRAT_TRIAGE_READ_TIMEOUT=0 bash "$triage" "$health" "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
+[[ $status == 2 ]]
 result=$(PACKRAT_TEST_LOG_RACE=append bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.status == "current" and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
 [[ -s $PACKRAT_TEST_LOG ]]
