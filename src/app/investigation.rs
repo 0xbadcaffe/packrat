@@ -190,6 +190,8 @@ impl App {
     }
 
     pub(super) fn investigate_alert(&mut self, target: Option<&AlertSearchRef>) -> bool {
+        use crate::storage::alert_evidence::{FrameStatus, frame_status};
+
         if !self.analysis_generation_ready() {
             self.set_status("Analysis busy; retry alert investigation");
             return false;
@@ -225,6 +227,7 @@ impl App {
         let scope_mismatch = evidence_scope.local_mismatch();
         let mut reader = None;
         let mut archive_error = false;
+        let mut invalid_lengths = 0;
         let mut resolve_frame = |app: &Self, packet_no| {
             let saved = app.saved_alert_pin(&alert, packet_no);
             let local = saved.or_else(|| {
@@ -252,7 +255,14 @@ impl App {
             } else {
                 local
             };
-            packet.map(|packet| (packet, from_archive))
+            packet.and_then(|packet| {
+                if frame_status(&packet) == FrameStatus::Unreadable {
+                    invalid_lengths += 1;
+                    None
+                } else {
+                    Some((packet, from_archive))
+                }
+            })
         };
         let mut trigger = packet_refs.binary_search(&alert.packet_no).ok()
             .and_then(|_| resolve_frame(self, alert.packet_no));
@@ -305,12 +315,13 @@ impl App {
         self.investigation_view = InvestigationView::Summary;
         self.navigate_to(Tab::Investigate);
         self.set_status(format!(
-            "Alert #{}: opened {} matching packets ({} archived); {} unavailable{}{}",
+            "Alert #{}: opened {} matching packets ({} archived); {} unavailable{}{}{}",
             alert.id,
             retained.len(),
             archived,
             unavailable,
             if at_capacity > 0 { format!(" ({at_capacity} hit the tray limit)") } else { String::new() },
+            if invalid_lengths > 0 { format!(" ({invalid_lengths} invalid capture lengths)") } else { String::new() },
             scope_mismatch.map(|reason| if retained.is_empty() { reason } else { "saved case" })
                 .or(archive_error.then_some("archive read failed"))
                 .map_or_else(String::new, |reason| format!(" ({reason})"))

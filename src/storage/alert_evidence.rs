@@ -42,7 +42,7 @@ pub struct FrameAvailability {
     pub status: FrameStatus,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameStatus {
     Complete,
@@ -244,7 +244,7 @@ fn project_pins<'a>(project: &'a ProjectState, capture_id: &str, frames: &[u64])
     pins
 }
 
-fn frame_status(packet: &Packet) -> FrameStatus {
+pub(crate) fn frame_status(packet: &Packet) -> FrameStatus {
     match packet.capture.as_ref() {
         Some(metadata) if metadata.captured_length as usize != packet.bytes.len()
             || metadata.wire_length < metadata.captured_length => FrameStatus::Unreadable,

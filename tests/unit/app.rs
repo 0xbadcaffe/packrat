@@ -187,7 +187,7 @@ fn alert_evidence_preview_distinguishes_truncated_pins_and_missing_frames() {
     core.alert_center.record(10, "IDS", "HIGH", "Evidence", "mixed capture");
     let alert = &mut core.alert_center.items[0];
     alert.packet_refs = vec![10, 10, 20, 30];
-    assert_eq!(app.alert_evidence_status(alert), "2/3 retained; 1 truncated; 1 unavailable; capture ID not recorded");
+    assert_eq!(app.alert_evidence_status(alert), "2/3 retained; 1 truncated; 1 capture lengths unknown; 1 unavailable; capture ID not recorded");
 }
 
 #[test]
@@ -241,7 +241,7 @@ fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     assert!(app.investigate_selected_alert());
     assert_eq!(app.worklist.packet_nos(), [1, 2]);
     assert_eq!(app.worklist.retained_packet(1).unwrap().info, "first capture");
-    assert_eq!(app.alert_evidence_status(&old_alerts[0]), "2/2 retained");
+    assert_eq!(app.alert_evidence_status(&old_alerts[0]), "2/2 retained; 2 capture lengths unknown");
     assert!(app.status_msg.as_deref().unwrap().contains("2 archived"));
 
     app.try_clear_packets().unwrap();

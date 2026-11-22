@@ -36,7 +36,7 @@ fn restored_alert_opens_only_verified_pins_and_preserves_scope_on_resave() {
     let alert = restored.core.edit().alert_center.items[0].clone();
     assert_eq!(
         restored.alert_evidence_status(&alert),
-        "1/2 retained in saved case; 1 unavailable"
+        "1/2 retained in saved case; 1 capture lengths unknown; 1 unavailable"
     );
     restored.inject_packet(packet(2));
     assert_eq!(restored.packets.back().unwrap().no, 3);
@@ -89,4 +89,35 @@ fn invalid_pin_scope_metadata_is_rejected() {
     state.pinned_packet_scopes.insert(2, scope);
     let mut restored = App::new_for_test();
     assert!(restored.apply_project_state(state).is_err());
+}
+
+#[test]
+fn alert_investigation_skips_invalid_capture_lengths_without_hiding_other_frames() {
+    let mut app = App::new_for_test();
+    let mut invalid = packet(10);
+    invalid.capture = Some(crate::net::packet::CaptureMetadata {
+        timestamp: None,
+        captured_length: 3,
+        wire_length: 60,
+        link_type: 1,
+        interface_id: 0,
+        section_id: 0,
+        interface_name: None,
+        comments: Vec::new(),
+    });
+    app.packets.extend([invalid, packet(20)]);
+    let alert = {
+        let mut core = app.core.edit();
+        core.alert_center.record(10, "IDS", "HIGH", "Mixed lengths", "test");
+        core.alert_center.items[0].packet_refs = vec![10, 20];
+        core.alert_center.items[0].clone()
+    };
+    assert_eq!(
+        app.alert_evidence_status(&alert),
+        "1/2 retained; 1 capture lengths unknown; 1 invalid capture lengths; capture ID not recorded"
+    );
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.worklist.packet_nos(), [20]);
+    assert_eq!(app.worklist.active_packet_no(), Some(20));
+    assert!(app.status_msg.as_deref().unwrap().contains("1 unavailable (1 invalid capture lengths)"));
 }

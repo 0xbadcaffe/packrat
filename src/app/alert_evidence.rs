@@ -1,5 +1,6 @@
 use super::*;
 use crate::analysis::alert_center::AlertItem;
+use crate::storage::alert_evidence::{FrameStatus, frame_status};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum AlertEvidenceScope {
@@ -76,24 +77,23 @@ impl App {
             return "No packet references".into();
         }
         let scope = self.alert_evidence_scope(alert);
-        let truncated = |packet: &Packet| packet.capture.as_ref().is_some_and(|meta| meta.truncated());
-        let mut slots: Vec<Option<bool>> = frames.iter().map(|&frame| {
+        let mut slots: Vec<FrameStatus> = frames.iter().map(|&frame| {
             self.saved_alert_pin(alert, frame)
                 .or_else(|| {
                     self.frame_may_be_local(scope, frame)
                         .then(|| self.worklist.retained_packet(frame)).flatten()
                 })
-                .map(truncated)
+                .map_or(FrameStatus::Missing, frame_status)
         }).collect();
-        let mut unresolved = slots.iter().filter(|slot| slot.is_none()).count();
+        let mut unresolved = slots.iter().filter(|&&slot| slot == FrameStatus::Missing).count();
         // One pass through the live buffer, with pinned bytes taking precedence.
         if unresolved > 0 && scope.local_mismatch().is_none() {
             for packet in &self.packets {
                 if let Ok(index) = frames.binary_search(&packet.no)
-                    && slots[index].is_none()
+                    && slots[index] == FrameStatus::Missing
                     && self.frame_may_be_local(scope, packet.no)
                 {
-                    slots[index] = Some(truncated(packet));
+                    slots[index] = frame_status(packet);
                     unresolved -= 1;
                     if unresolved == 0 {
                         break;
@@ -101,17 +101,22 @@ impl App {
                 }
             }
         }
-        let retained = frames.len() - unresolved;
-        if retained == 0 && let Some(reason) = scope.local_mismatch() {
+        let invalid = slots.iter().filter(|&&slot| slot == FrameStatus::Unreadable).count();
+        let retained = frames.len() - unresolved - invalid;
+        if retained == 0 && invalid == 0 && let Some(reason) = scope.local_mismatch() {
             return format!("0/{} verified here; {reason}", frames.len());
         }
-        let truncated = slots.iter().filter(|slot| **slot == Some(true)).count();
         let mut status = format!("{retained}/{} retained", frames.len());
         if scope == AlertEvidenceScope::DifferentCapture {
             status.push_str(" in saved case");
         }
-        if truncated > 0 {
-            status.push_str(&format!("; {truncated} truncated"));
+        for (kind, label) in [
+            (FrameStatus::Truncated, "truncated"),
+            (FrameStatus::LengthUnknown, "capture lengths unknown"),
+            (FrameStatus::Unreadable, "invalid capture lengths"),
+        ] {
+            let count = slots.iter().filter(|&&slot| slot == kind).count();
+            if count > 0 { status.push_str(&format!("; {count} {label}")); }
         }
         if unresolved > 0 {
             if scope == AlertEvidenceScope::CurrentCapture && self.packet_archive.is_some() {
