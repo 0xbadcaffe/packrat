@@ -60,6 +60,8 @@ source "$root/scripts/packrat-rollout.sh"
     sample='{"status":"ok","telemetry_fresh":true,"capture_active":true,"alert_saving":true,"pcap_buffer_drops":0,"archive_paused":true}'
     if health_ready; then exit 1; fi
     sample=$(jq -c '.archive_paused = false' <<< "$sample")
+    if health_ready; then exit 1; fi
+    sample=$(jq -c '.archive_enabled = true' <<< "$sample")
     health_ready
 
     if read_launch_profile "${profile[@]}" --archive relative; then exit 1; fi

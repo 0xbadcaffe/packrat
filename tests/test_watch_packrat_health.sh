@@ -5,7 +5,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 watch="$root/scripts/watch-packrat-health.sh"
 
 export PACKRAT_HEALTH_PORT=9477 PACKRAT_ALERT_SESSION=packrat-alerts PACKRAT_MIN_FREE_MIB=512 PACKRAT_ALERT_PIPELINE=0
-unset PACKRAT_ALERT_LOG
+unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
@@ -51,6 +51,7 @@ bash -n "$watch"
 bash "$watch" --once | jq -e '
     .record_type == "capture_health" and .issues == []
     and .pcap_buffer_drops == 0 and .alert_watcher_alive == true and .alert_watcher_pipeline_alive == null
+    and .archive_enabled == null
 ' >/dev/null
 
 pipeline=$'91 2 Ss bash\n92 91 S sudo\n93 92 S sudo\n94 93 S tail'
@@ -67,6 +68,25 @@ for parser in '95 2 S jq' '95 91 Z jq' '95 91 T jq'; do
     jq -e '.issues == ["alert_watcher_pipeline_inactive"] and .alert_watcher_alive == false
         and .alert_watcher_pipeline_alive == false' <<< "$output" >/dev/null
 done
+
+archive_samples=$(jq -c '
+    [. + {archive_enabled:false,archive_paused:false},
+     . + {archive_enabled:true,archive_paused:false},
+     . + {archive_enabled:true,archive_paused:true},
+     . + {archive_enabled:true},
+     . + {archive_enabled:"true",archive_paused:false}]
+' <<< "$PACKRAT_FAKE_HEALTH")
+PACKRAT_REQUIRE_ARCHIVE=1 PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$archive_samples" bash "$watch" | jq -se '
+    map(.issues) == [["archive_disabled"], [], ["archive_paused"], ["archive_status_unavailable"], ["archive_status_unavailable"]]
+    and map(.archive_enabled) == [false,true,true,true,null]
+' >/dev/null
+PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$archive_samples" bash "$watch" | jq -se '
+    map(.issues) == [[], [], ["archive_paused"], [], []]
+    and map(.archive_enabled) == [false,true,true,true,null]
+' >/dev/null
+status=0
+PACKRAT_REQUIRE_ARCHIVE=true bash "$watch" --once >/dev/null 2>&1 || status=$?
+[[ $status == 2 ]]
 
 log='/var/lib/packrat lab/alerts.jsonl'
 export PACKRAT_FAKE_PROCESSES="$pipeline"$'\n95 91 S jq'

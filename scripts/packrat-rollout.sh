@@ -55,7 +55,7 @@ health_ready() {
         jq -e --arg archive "$archive_path" '
             .status == "ok" and .telemetry_fresh and .capture_active and .alert_saving
             and (.alert_save_failed | not) and (.pcap_buffer_drops != null)
-            and ($archive == "" or .archive_paused == false)' >/dev/null
+            and ($archive == "" or (.archive_enabled == true and .archive_paused == false))' >/dev/null
 }
 
 capture_file_open() {
