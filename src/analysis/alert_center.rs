@@ -83,7 +83,7 @@ impl std::fmt::Display for AlertSeverityFilter {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AlertItem {
     pub id: u64,
     pub packet_no: u64,

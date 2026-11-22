@@ -16,7 +16,7 @@ use super::alert_history::{AlertLogs, ReverseAlertLines};
 use super::alert_jsonl::ExistingAlertRecord;
 
 mod verify;
-pub use verify::{VerifiedEvidence, verify_alert_evidence};
+pub use verify::{VerifiedEvidence, verify_alert_evidence, verify_logged_alert_evidence};
 
 const MANIFEST: &str = "manifest.json";
 const PCAP: &str = "evidence.pcapng";

@@ -4,6 +4,8 @@ use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read, path::Path};
 
 use super::{AlertItem, MANIFEST, MAX_ALERT_PACKET_REFS, PCAP, scoped_frames};
+use crate::storage::alert_history::{AlertLogs, ReverseAlertLines};
+use crate::storage::alert_jsonl::ExistingAlertRecord;
 
 const MAX_MANIFEST_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_CAPTURE_BYTES: u64 = (MAX_ALERT_PACKET_REFS as u64 + 3) * 2 * 1024 * 1024;
@@ -34,9 +36,20 @@ pub struct VerifiedEvidence {
     pub recovered_frames: usize,
     pub missing_frames: usize,
     pub capture_sha256_verified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alert_snapshot_matches_log: Option<bool>,
 }
 
 pub fn verify_alert_evidence(directory: &Path) -> Result<VerifiedEvidence> {
+    verify(directory, None)
+}
+
+/// Check bundle integrity and require the exported alert snapshot in the supplied logs.
+pub fn verify_logged_alert_evidence(directory: &Path, logs: AlertLogs<'_>) -> Result<VerifiedEvidence> {
+    verify(directory, Some(logs))
+}
+
+fn verify(directory: &Path, logs: Option<AlertLogs<'_>>) -> Result<VerifiedEvidence> {
     let (file, _) = open_regular(&directory.join(MANIFEST), MAX_MANIFEST_BYTES)?;
     let mut bytes = Vec::new();
     file.take(MAX_MANIFEST_BYTES + 1).read_to_end(&mut bytes)?;
@@ -71,6 +84,12 @@ pub fn verify_alert_evidence(directory: &Path) -> Result<VerifiedEvidence> {
         }
         None
     };
+    let alert_snapshot_matches_log = if let Some(logs) = logs {
+        ensure!(contains_snapshot(logs, &manifest)?, "No matching evidence alert snapshot in the supplied logs");
+        Some(true)
+    } else {
+        None
+    };
     Ok(VerifiedEvidence {
         session_id: manifest.session_id,
         capture_id: manifest.capture_id,
@@ -78,7 +97,25 @@ pub fn verify_alert_evidence(directory: &Path) -> Result<VerifiedEvidence> {
         recovered_frames: recovered.len(),
         missing_frames: missing.len(),
         capture_sha256_verified: verified_hash,
+        alert_snapshot_matches_log,
     })
+}
+
+fn contains_snapshot(logs: AlertLogs<'_>, manifest: &Manifest) -> Result<bool> {
+    let mut line = Vec::new();
+    for (path, file) in logs.open_newest()? {
+        let mut reader = ReverseAlertLines::new(file)
+            .with_context(|| format!("Stat alert log {}", path.display()))?;
+        while reader.next(&mut line).with_context(|| format!("Read alert log {}", path.display()))? {
+            if let Some(record) = ExistingAlertRecord::decode(&line)
+                && record.session_id == manifest.session_id
+                && record.alert == manifest.alert
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn strict_order(frames: &[u64]) -> bool {

@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT] [--report-integrity]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --project-alert-evidence PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID OUTPUT_DIR [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first. Integrity counts describe only the records examined."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT] [--report-integrity]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --project-alert-evidence PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID OUTPUT_DIR [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR [--alert-log ALERT_LOG [--previous-log PATH]...]\nList previous alert logs oldest first. Log matching corroborates the alert snapshot, not the origin of the packet bytes. Integrity counts describe only the records examined."
         );
         return Ok(());
     };
@@ -20,13 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return project_alert(args, path == "--project-alert-evidence");
     }
     if path == "--verify-evidence" {
-        let directory = args.next().ok_or("--verify-evidence requires an evidence directory")?;
-        if args.next().is_some() {
-            return Err("Unexpected argument after evidence directory".into());
-        }
-        let summary = packrat_tui::storage::alert_evidence::verify_alert_evidence(std::path::Path::new(&directory))?;
-        println!("{}", serde_json::to_string(&summary)?);
-        return Ok(());
+        return verify_evidence(args);
     }
     let action = args.next();
     if action.as_deref() == Some("--import") {
@@ -124,6 +118,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         None => println!("{} packets", archive.count()?),
     }
+    Ok(())
+}
+
+fn verify_evidence(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
+    use packrat_tui::storage::alert_evidence::{verify_alert_evidence, verify_logged_alert_evidence};
+    use std::path::Path;
+
+    let directory = args.next().ok_or("--verify-evidence requires an evidence directory")?;
+    let mut log = None;
+    let mut previous = Vec::new();
+    while let Some(flag) = args.next() {
+        let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        match flag.as_str() {
+            "--alert-log" if log.is_none() => log = Some(value),
+            "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(PathBuf::from(value)),
+            _ => return Err(format!("Unexpected or repeated evidence option: {flag}").into()),
+        }
+    }
+    let directory = Path::new(&directory);
+    let summary = match log {
+        Some(log) => verify_logged_alert_evidence(directory, AlertLogs::new(Path::new(&log), &previous)?)?,
+        None if previous.is_empty() => verify_alert_evidence(directory)?,
+        None => return Err("--previous-log requires --alert-log when verifying evidence".into()),
+    };
+    println!("{}", serde_json::to_string(&summary)?);
     Ok(())
 }
 

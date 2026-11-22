@@ -91,6 +91,35 @@ fn project_alert_status_checks_only_unique_scoped_pins_against_the_log() {
     assert_eq!(verified.capture_sha256_verified, Some(true));
     assert!(!export("capture-a").status.success());
     assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest);
+    let mut updated = view["alert"].clone();
+    updated["detail"] = json!("newer observation");
+    updated["hit_count"] = json!(2);
+    std::fs::write(&log, json!({
+        "schema_version":1, "record_type":"alert", "session_id":"s", "alert":updated
+    }).to_string()).unwrap();
+    let verify_logged = |include_previous| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_packrat-archive"));
+        command.arg("--verify-evidence").arg(&output).arg("--alert-log").arg(&log);
+        if include_previous {
+            command.arg("--previous-log").arg(&previous);
+        }
+        command.output().unwrap()
+    };
+    assert!(!verify_logged(false).status.success());
+    let report = verify_logged(true);
+    assert!(report.status.success(), "{}", String::from_utf8_lossy(&report.stderr));
+    let report: Value = serde_json::from_slice(&report.stdout).unwrap();
+    assert_eq!(report["alert_snapshot_matches_log"], true);
+    assert_eq!(report["capture_sha256_verified"], true);
+
+    let mut changed = view;
+    changed["alert"]["detail"] = json!("unlogged detail");
+    std::fs::write(&manifest_path, changed.to_string()).unwrap();
+    assert!(packrat_tui::storage::alert_evidence::verify_alert_evidence(&output).is_ok());
+    let mismatch = verify_logged(true);
+    assert!(!mismatch.status.success());
+    assert!(String::from_utf8_lossy(&mismatch.stderr).contains("No matching evidence alert snapshot"));
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
