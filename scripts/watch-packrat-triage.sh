@@ -214,8 +214,8 @@ trap 'if [[ -n $temp ]]; then rm -f -- "$temp"; fi' EXIT
 trap 'if [[ -n $timer ]]; then kill "$timer" 2>/dev/null || :; wait "$timer" 2>/dev/null || :; fi; exit 0' HUP INT TERM
 previous=''
 prior=null
-if ! "$once" && [[ -f $state && -O $state ]]; then
-    # A restart can recover only a recent, bounded snapshot from this watcher.
+if [[ -f $state && -O $state ]]; then
+    # Any refresh can recover only a recent, bounded snapshot from this watcher.
     prior=$(head -c 65537 -- "$state" |
         jq -Rces "$snapshot_validation"'
             select(utf8bytelength <= 65536) | fromjson | objects

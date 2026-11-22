@@ -133,6 +133,7 @@ await_packets() {
     done
     return 1
 }
+state="$scratch/events-latest.json"
 live current 30 '[]' >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/events" &
 watch_pid=$!
@@ -273,4 +274,17 @@ jq -se 'length==3 and .[0].highest_observed_alert_id==13 and (.[0].alert_sample_
     and (.[2].alert_sample_gap | not) and .[2].alert_changes==null' \
     "$scratch/recovered" >/dev/null
 jq -e '.status=="current" and .alert_sample_gap==false and (has("last_observed") | not)' "$state" >/dev/null
+
+state="$scratch/one-shot.json"
+live current 70 '[]' "$medium" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+live current 71 '[]' "$bulk" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '.alert_sample_gap and .highest_observed_alert_id==65' "$state" >/dev/null
+bash "$watch" --once "$state" -- printf '%s\n' 'invalid triage output' >/dev/null
+jq -e '.status=="triage_unavailable" and .last_observed.alert_sample_gap
+    and .last_observed.highest_observed_alert_id==65' "$state" >/dev/null
+live current 72 '[]' "$medium" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '.status=="current" and .alert_sample_gap and .highest_observed_alert_id==65' "$state" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'
