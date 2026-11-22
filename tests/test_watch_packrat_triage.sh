@@ -26,7 +26,8 @@ live() {
     jq -cn --arg status "$1" --argjson packets "$2" --argjson queue "$3" --argjson alerts "${4-[]}" '{
         record_type:"capture_triage", status:$status,
         health:{capture_id:"a", alert_session_id:"1-2", capture_interface:"wlan1", issues:[],
-            packets_total:$packets, pcap_buffer_drops:0, alert_saving:true},
+            packets_total:$packets, pcap_buffer_drops:0, alert_saving:true, capture_truncated_frames:0,
+            capture_link_type:1, capture_link_decodable:true, disk_free_mib:2048},
         live_packet_archive:"enabled", open_priority_alerts_in_sample:($queue | length),
         priority_sample_at_limit:false, has_more_alerts:($alerts | length > 50),
         alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_limit:false,detail:"private context"},
@@ -43,6 +44,7 @@ cmp -s "$state" "$scratch/output"
 check_status "$state" current 0
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
+    and .link_type==1 and .link_decodable and .truncated_frames==0 and .disk_free_mib==2048
     and .review_queue[0].packet_evidence_status=="partial"
     and .evidence_check=={alert_id:9,status:"checked"}
     and .recent_alerts==[{alert_id:9,severity:"MEDIUM",rule_id:"test.medium",disposition:"New",hit_count:1,packet_evidence_status:"partial"}]
@@ -106,7 +108,7 @@ watch_pid=$!
 await_packets 30
 check_status "$state" current 0
 if bash "$watch" --once "$state" -- true >/dev/null 2>&1; then exit 1; fi
-live current 31 '[]' >"$report.next"
+live current 31 '[]' | jq '.health.disk_free_mib=2047' >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 31
 live current 32 '[]' "$medium" >"$report.next"
@@ -129,15 +131,22 @@ live degraded 37 "$queue" "$medium" |
 mv -- "$report.next" "$report"
 await_packets 37
 check_status "$state" triage_unhealthy 1
+jq '.health.packets_total=38 | .health.capture_truncated_frames=3' "$report" >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 38
+jq '.health.packets_total=39 | .health.archive_pause_reason="disk_reserve" | .live_packet_archive="paused"' "$report" >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 39
 for _ in {1..80}; do
-    if jq -se 'length == 6' "$scratch/events" >/dev/null 2>&1; then break; fi
+    if jq -se 'length == 8' "$scratch/events" >/dev/null 2>&1; then break; fi
     sleep 0.1
 done
 kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
-jq -se 'map(.packets)==[30,32,34,35,36,37] and .[1].recent_alerts[0].alert_id==9
+jq -se 'map(.packets)==[30,32,34,35,36,37,38,39] and .[1].recent_alerts[0].alert_id==9
     and .[2].recent_alerts[0].hit_count==2 and .[3].review_queue[0].alert_id==7
     and .[4].buffer_drops==1 and .[5].alert_log_integrity=={
-        invalid_records:2,oversized_records:0,stopped_at_limit:false,stopped_at_scan_budget:true}' "$scratch/events" >/dev/null
+        invalid_records:2,oversized_records:0,stopped_at_limit:false,stopped_at_scan_budget:true}
+    and .[6].truncated_frames==3 and .[7].archive_pause_reason=="disk_reserve"' "$scratch/events" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'

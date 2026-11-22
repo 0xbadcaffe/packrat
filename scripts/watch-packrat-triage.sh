@@ -95,9 +95,14 @@ sanitize() {
         | {
             status, capture_id:(.health.capture_id | token), session_id:(.health.alert_session_id | token),
             interface:(.health.capture_interface | token),
+            link_type:(.health.capture_link_type | counter),
+            link_decodable:(.health.capture_link_decodable | flag),
             issues:(.health.issues | if type == "array" then .[:64] | map(token | select(. != null)) | unique else null end),
             packets:(.health.packets_total | counter), buffer_drops:(.health.pcap_buffer_drops | counter),
+            truncated_frames:(.health.capture_truncated_frames | counter),
             alert_saving:(.health.alert_saving | flag), archive:(.live_packet_archive | token),
+            archive_pause_reason:(.health.archive_pause_reason | token),
+            disk_free_mib:(.health.disk_free_mib | counter),
             alert_log_integrity:(.alert_log_integrity | if type == "object" then {
                 invalid_records:(.invalid_records | counter),
                 oversized_records:(.oversized_records | counter),
@@ -149,7 +154,7 @@ while :; do
     printf '%s\n' "$snapshot" >"$temp"
     mv -fT -- "$temp" "$state"
     temp=''
-    key=$(jq -c 'del(.updated_at, .packets)' <<< "$snapshot")
+    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib)' <<< "$snapshot")
     if [[ $key != "$previous" ]]; then
         printf '%s\n' "$snapshot"
         previous=$key
