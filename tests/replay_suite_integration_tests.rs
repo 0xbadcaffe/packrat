@@ -142,11 +142,14 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         "version": 1, "strict": true,
         "cases": [
             {"name": "same answer, different TTL and case", "capture": "equivalent.pcapng",
+             "expect_snapshots": 0,
              "expect_counts": {"dns.changed_answers": 0, "dns.changed_wire_reply": 0}},
             {"name": "answer content changed", "capture": "answer.pcapng",
+             "expect_snapshots": 1,
              "expect_counts": {"dns.changed_answers": 1, "dns.changed_wire_reply": 0},
              "opening_frames": {"dns.changed_answers": [4]}},
             {"name": "unsupported record changed", "capture": "wire.pcapng",
+             "expect_snapshots": 1,
              "expect_counts": {"dns.changed_answers": 0, "dns.changed_wire_reply": 1},
              "opening_frames": {"dns.changed_wire_reply": [4]}}
         ]
@@ -157,6 +160,9 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["passed"], 3);
     assert_eq!(report["cases"][0]["summary"]["alerts_opened"], 0);
+    assert_eq!(report["cases"][1]["summary"]["packets"], 5);
+    assert_eq!(report["cases"][1]["snapshot_check"], json!({"expected":1,"observed":1}));
+    assert_eq!(report["cases"][2]["snapshot_check"], json!({"expected":1,"observed":1}));
     let comparison = run_suite_with_baseline(&manifest, Some(env!("CARGO_BIN_EXE_packrat-analyze")));
     assert!(comparison.status.success(), "{}", String::from_utf8_lossy(&comparison.stdout));
     let report: Value = serde_json::from_slice(&comparison.stdout).unwrap();

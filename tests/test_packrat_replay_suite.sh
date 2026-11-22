@@ -36,8 +36,9 @@ packrat-analyze() {
     esac
     printf '%s\n' '{"type":"alert","payload":"not in the suite report"}'
     jq -cn --arg verdict "$verdict" --argjson opened "$opened" --argjson rules "$rules" \
+        --argjson snapshots "${PACKRAT_TEST_SNAPSHOTS:-null}" \
         --argjson checks "$checks" --argjson frames "$frames" '
-        {type:"summary",packets:20,alerts_opened:$opened,rule_counts:$rules,
+        {type:"summary",packets:20,alerts_opened:$opened,alert_snapshots:$snapshots,rule_counts:$rules,
             alert_expectations:{verdict:$verdict,checks:$checks,frame_checks:$frames}}
     '
     [[ $verdict == passed ]]
@@ -107,6 +108,18 @@ status=0
 PACKRAT_REPLAY_BASELINE_ANALYZER=/missing/baseline bash "$suite" "$manifest" >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
 
+jq -c '.cases = [(.cases[0] | .expect_snapshots = 0)]' <<< "$sample" >"$manifest"
+PACKRAT_TEST_SNAPSHOTS=0 bash "$suite" "$manifest" | jq -e '.passed == 1' >/dev/null
+for snapshots in 1 null; do
+    status=0
+    result=$(PACKRAT_TEST_SNAPSHOTS="$snapshots" bash "$suite" "$manifest") || status=$?
+    [[ $status == 1 ]]
+    jq -e --argjson observed "$snapshots" '
+        .cases[0].snapshot_check == {expected:0,observed:$observed}
+        and (if $observed == null then .inconclusive == 1 else .failed == 1 end)
+    ' <<< "$result" >/dev/null
+done
+
 jq -c '.cases = [{name:"counts",capture:"counts.pcap",
                    expect_counts:{"scan.horizontal":0,"scan.vertical":2}}]' <<< "$sample" >"$manifest"
 status=0
@@ -132,6 +145,7 @@ result=$(bash "$suite" "$manifest") || status=$?
 jq -e '.strict == true and .passed == 1 and .failed == 2 and .inconclusive == 0' <<< "$result" >/dev/null
 
 for invalid in '.version = 2' 'del(.cases[0].expect_counts)' '.strict = "true"' \
+    '.cases[0].expect_snapshots = false' '.cases[0].expect_snapshots = -1' \
     '.cases[1].opening_frames["scan.horizontal"] = [12,12]' \
     '.cases[1].name = .cases[0].name'; do
     jq -c "$invalid" <<< "$sample" >"$manifest"

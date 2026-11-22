@@ -6,6 +6,7 @@ usage() {
         'Replay up to 32 labeled captures. Relative capture paths are relative to the manifest.' \
         'Example: {"version":1,"cases":[{"name":"baseline","capture":"baseline.pcapng","expect_counts":{"scan.horizontal":0}}]}' \
         'Use opening_frames to label exact frames, for example {"scan.horizontal":[12]}.' \
+        'Use expect_snapshots to also check the total number of openings and updates in a case.' \
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
         'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.' \
         'Set PACKRAT_REPLAY_BASELINE_ANALYZER to an older analyzer command or executable path to compare results.'
@@ -31,6 +32,7 @@ if ! validated=$(head -c 65537 -- "$1" | jq -Rces '
     def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
     def valid_case:
         type == "object" and (.name | text(128)) and (.capture | text(1024))
+        and ((has("expect_snapshots") | not) or (.expect_snapshots | count))
         and ((.expect_counts // {}) | type == "object" and rules and all(.[]; count))
         and ((.opening_frames // {}) | type == "object" and rules and all(.[]; type == "array"
              and length > 0 and all(.[]; count and . > 0) and (unique | length) == length))
@@ -66,8 +68,13 @@ replay_case() {
         (if ($result.rule_counts | type) == "object" and ($result.alerts_opened | type) == "number"
             and $result.alerts_opened >= $registered then $result.alerts_opened - $registered else null end) as $unregistered |
         ($result.alert_expectations.verdict) as $evaluation |
+        (if $label | has("expect_snapshots") then
+            {expected:$label.expect_snapshots, observed:$result.alert_snapshots}
+         else null end) as $snapshot_check |
         (if $evaluation == "failed" then "failed"
          elif $evaluation != "passed" or $status != 0 or ($strict and $unregistered == null) then "inconclusive"
+         elif $snapshot_check != null and ($snapshot_check.observed | type) != "number" then "inconclusive"
+         elif $snapshot_check != null and $snapshot_check.expected != $snapshot_check.observed then "failed"
          elif $strict and (($unlisted | length) > 0 or $unregistered > 0) then "failed"
          else "passed" end) as $verdict |
         ($result.alert_expectations.frame_checks // []) as $frames |
@@ -75,6 +82,7 @@ replay_case() {
             map(select(.rule_id as $id | all($frames[]; .rule_id != $id)))) as $counts |
         {name:$name, verdict:$verdict,
          unlisted_rule_counts:$unlisted, unregistered_alerts:$unregistered, summary:$result,
+         snapshot_check:$snapshot_check,
          score:(if $verdict == "inconclusive" then null else {
              missed_opening_frames: ([$frames[].missing_frames | length] | add // 0),
              unexpected_openings: ([$frames[].unexpected_openings] | add // 0),

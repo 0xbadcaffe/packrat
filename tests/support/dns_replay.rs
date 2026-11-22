@@ -14,7 +14,7 @@ pub fn write_fixture(path: &Path, scenario: Scenario) {
         _ => 1,
     };
     let mut capture = PcapNgWriter::create(path).unwrap();
-    for frame in 1..=4 {
+    for frame in 1..=5 {
         let response = frame != 1;
         let equivalent_variation = frame == 3 && rr_type == 1;
         let mut dns = vec![
@@ -38,7 +38,7 @@ pub fn write_fixture(path: &Path, scenario: Scenario) {
         });
         dns.extend_from_slice(&[0, 1, 0, 1]);
         if response {
-            let changed = frame == 4 && !matches!(scenario, Scenario::Equivalent);
+            let changed = frame >= 4 && !matches!(scenario, Scenario::Equivalent);
             let value = if changed { 2 } else { 1 };
             let address = [192, 0, 2, value];
             let opaque = [value];
