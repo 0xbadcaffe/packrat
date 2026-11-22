@@ -77,6 +77,32 @@ fn alert_id_reused_across_capture_scopes_is_not_resolved_implicitly() {
 }
 
 #[test]
+fn evidence_lookup_prefers_the_latest_snapshot_but_checks_older_scopes_for_ambiguity() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("alerts.jsonl");
+    let older = temp.path().join("alerts.jsonl.1");
+    let mut previous = File::create(&older).unwrap();
+    let original = snapshot(Some("capture-a"));
+    append_record(&mut previous, &original);
+    append_record(&mut previous, &snapshot(Some("capture-b")));
+    let mut current = File::create(&log).unwrap();
+    append_record(&mut current, &original);
+    let mut latest = original;
+    latest.packet_refs.push(9);
+    append_record(&mut current, &latest);
+    current.write_all(b"{torn").unwrap();
+    drop((current, previous));
+
+    let previous = [older];
+    let logs = || AlertLogs::new(&log, &previous).unwrap();
+    let item = latest_alert_in_logs(logs(), "session", 1, Some("capture-a")).unwrap();
+    assert_eq!(item.packet_refs, [1, 9]);
+    assert_eq!(latest_alert_in_logs(logs(), "session", 1, Some("capture-b")).unwrap().packet_refs, [1]);
+    assert!(latest_alert_in_logs(logs(), "session", 1, None).unwrap_err()
+        .to_string().contains("ambiguous across captures"));
+}
+
+#[test]
 fn evidence_verification_accepts_an_all_missing_manifest_without_claiming_a_digest() {
     let temp = tempfile::tempdir().unwrap();
     let log = temp.path().join("alerts.jsonl");

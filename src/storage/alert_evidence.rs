@@ -4,14 +4,14 @@ use anyhow::{Context, Result, anyhow, ensure};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs::{DirBuilder, File, OpenOptions};
-use std::io::{BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 
 use crate::analysis::alert_center::{AlertItem, MAX_ALERT_PACKET_REFS};
 use crate::export::pcapng::PcapNgWriter;
 use crate::storage::packet_archive::{PacketArchive, valid_capture_id};
-use super::alert_history::AlertLogs;
-use super::alert_jsonl::{ExistingAlertRecord, next_alert_line};
+use super::alert_history::{AlertLogs, ReverseAlertLines};
+use super::alert_jsonl::ExistingAlertRecord;
 
 mod verify;
 pub use verify::{VerifiedEvidence, verify_alert_evidence};
@@ -240,18 +240,22 @@ fn latest_alert(log: &Path, session_id: &str, alert_id: u64, capture_filter: Opt
 fn latest_alert_in_logs(logs: AlertLogs<'_>, session_id: &str, alert_id: u64, capture_filter: Option<&str>) -> Result<AlertItem> {
     let mut line = Vec::new();
     let mut selected: Option<AlertItem> = None;
-    for log in logs.paths() {
-        let mut reader = BufReader::new(File::open(log).with_context(|| format!("Open alert log {}", log.display()))?);
-        while next_alert_line(&mut reader, &mut line)? {
+    for (path, file) in logs.open_newest()? {
+        let mut reader = ReverseAlertLines::new(file)
+            .with_context(|| format!("Stat alert log {}", path.display()))?;
+        while reader.next(&mut line).with_context(|| format!("Read alert log {}", path.display()))? {
             let Some(row) = ExistingAlertRecord::decode(&line) else { continue };
             if row.session_id == session_id && row.alert.id == alert_id
                 && capture_filter.is_none_or(|scope| row.alert.capture_id.as_deref() == Some(scope))
             {
+                if capture_filter.is_some() {
+                    return Ok(row.alert);
+                }
                 ensure!(
                     selected.as_ref().is_none_or(|item| item.capture_id == row.alert.capture_id),
                     "Alert ID is ambiguous across captures in the specified session; specify --capture-id"
                 );
-                selected = Some(row.alert);
+                selected.get_or_insert(row.alert);
             }
         }
     }

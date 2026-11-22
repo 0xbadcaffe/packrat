@@ -22,8 +22,12 @@ impl<'a> AlertLogs<'a> {
         Ok(Self { active, previous })
     }
 
-    pub(crate) fn paths(&self) -> impl Iterator<Item = &'a Path> {
-        self.previous.iter().map(PathBuf::as_path).chain(std::iter::once(self.active))
+    pub(super) fn open_newest(&self) -> Result<Vec<(&'a Path, File)>> {
+        std::iter::once(self.active).chain(self.previous.iter().rev().map(PathBuf::as_path))
+            .map(|path| {
+                File::open(path).map(|file| (path, file))
+                    .with_context(|| format!("Open alert log {}", path.display()))
+            }).collect()
     }
 }
 
@@ -65,14 +69,10 @@ pub fn recent_alerts_across_logs(
 ) -> Result<Vec<AlertHistoryEntry>> {
     ensure!((1..=MAX_HISTORY_LIMIT).contains(&limit), "Alert history limit must be 1..={MAX_HISTORY_LIMIT}");
     let logs = AlertLogs::new(active, previous)?;
-    let files = logs.paths().map(|path| {
-        File::open(path).map(|file| (path, file))
-            .with_context(|| format!("Open alert log {}", path.display()))
-    }).collect::<Result<Vec<_>>>()?;
     let mut latest = Vec::with_capacity(limit);
     let mut seen = HashSet::with_capacity(limit);
     let mut line = Vec::new();
-    for (path, file) in files.into_iter().rev() {
+    for (path, file) in logs.open_newest()? {
         let mut reader = ReverseAlertLines::new(file)
             .with_context(|| format!("Stat alert log {}", path.display()))?;
         while reader.next(&mut line).with_context(|| format!("Read alert log {}", path.display()))? {
@@ -126,7 +126,7 @@ pub fn recent_alerts_across_logs(
 
 const READ_CHUNK: usize = 64 * 1024;
 
-struct ReverseAlertLines {
+pub(super) struct ReverseAlertLines {
     file: File,
     chunk: Vec<u8>,
     offset: u64,
@@ -135,7 +135,7 @@ struct ReverseAlertLines {
 }
 
 impl ReverseAlertLines {
-    fn new(file: File) -> std::io::Result<Self> {
+    pub(super) fn new(file: File) -> std::io::Result<Self> {
         let metadata = file.metadata()?;
         if !metadata.is_file() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Not a regular alert log"));
@@ -143,7 +143,7 @@ impl ReverseAlertLines {
         Ok(Self { file, chunk: vec![0; READ_CHUNK], offset: metadata.len(), end: 0, terminated: false })
     }
 
-    fn next(&mut self, line: &mut Vec<u8>) -> std::io::Result<bool> {
+    pub(super) fn next(&mut self, line: &mut Vec<u8>) -> std::io::Result<bool> {
         line.clear();
         let mut oversized = false;
         loop {
