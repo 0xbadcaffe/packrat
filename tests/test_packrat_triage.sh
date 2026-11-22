@@ -10,7 +10,7 @@ export PACKRAT_TEST_LOG="$scratch/alerts.jsonl" PACKRAT_TEST_CALL="$scratch/arch
 export PACKRAT_TEST_STATE="$health"
 touch -- "$PACKRAT_TEST_LOG" "$scratch/other.jsonl"
 unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT PACKRAT_TRIAGE_ARCHIVE PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
-unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE
+unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE PACKRAT_TRIAGE_AUTO_EVIDENCE
 unset PACKRAT_TRIAGE_PROJECT
 
 date() {
@@ -87,15 +87,21 @@ mock_archive() {
                ($base + {capture_id:null}), ($base + {capture_id:"legacy"})]
         '
     else
-        jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" \
+        jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" --arg queue "${PACKRAT_TEST_AUTO_QUEUE:-}" \
             --argjson refs "${PACKRAT_TEST_FRAME_COUNT:-2}" '
             {alert_id:42,title:"Scoped alert",session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
              evidence_frame_count:$refs,evidence_frame_set_sha256:("0"*64),
              last_seen:1700000000,
              flow:{transport:"tcp",source:"192.0.2.1:4321",destination:"192.0.2.2:443"}} as $valid
-            | [$valid] + (if $mismatch == "" then [] else
+            | if $queue == "yes" then [
+                  ($valid + {alert_id:46,severity:"CRITICAL",disposition:"Benign"}),
+                  ($valid + {alert_id:45,severity:"CRITICAL",disposition:"New",evidence_frame_count:0}),
+                  ($valid + {alert_id:44,severity:"HIGH",disposition:"New"}),
+                  ($valid + {severity:"CRITICAL",disposition:"Reviewing"}),
+                  ($valid + {alert_id:41,severity:"CRITICAL",disposition:"New"})
+              ] else [$valid] + (if $mismatch == "" then [] else
                 [($valid | .alert_id = 43 | .[$mismatch] = "other")]
-              end)'
+              end) end'
     fi
 }
 
@@ -236,6 +242,25 @@ printf '%s\n' "$sample" >"$health"
     [[ $status == 2 ]]
 )
 unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
+(
+    run_auto() {
+        PACKRAT_TRIAGE_AUTO_EVIDENCE=1 PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" \
+            bash "$triage" "$health" "$PACKRAT_TEST_LOG"
+    }
+    jq -c '.archive_enabled = true | .archive_paused = false' <<< "$sample" >"$health"
+    result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
+    jq -e '.evidence_selection == "automatic" and .evidence_status.alert_id == 42
+        and [.alerts[].packet_evidence_status] == ["not_checked","no_references","not_checked","partial","not_checked"]' \
+        <<< "$result" >/dev/null
+    result=$(PACKRAT_TEST_ALERT_COUNT=0 run_auto)
+    jq -e '.evidence_selection == "automatic" and .evidence_status == null and .alerts == []' <<< "$result" >/dev/null
+    printf '%s\n' "$sample" >"$health"
+    result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
+    jq -e '.evidence_selection == "automatic" and .evidence_status == null' <<< "$result" >/dev/null
+    status=0
+    PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42 run_auto >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
+)
 for count in 0 50 51; do
     result=$(PACKRAT_TEST_ALERT_COUNT=$count bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e --argjson count "$count" '
