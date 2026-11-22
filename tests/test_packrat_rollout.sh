@@ -421,7 +421,8 @@ alert_watcher_ready() {
     if [[ $scenario == last_moment_alert ]]; then printf '%s\n' late >>"$data_dir/alerts.jsonl"; fi
     [[ $scenario != watcher_lost_before_cutover ]]
 }
-await_primary_watcher() { [[ $scenario != watcher_lost_after_cutover ]]; }
+await_primary_watcher() { [[ $scenario != watcher_lost_after_cutover && ( $scenario != analyzer_watcher_fail || $main_starts != 1 ) ]]; }
+promote_analyzer() { if [[ $scenario == analyzer_* ]]; then trace+=("analyzer"); [[ $scenario == analyzer_success ]]; fi; }
 stage_alert_log_size() {
     case $scenario in
         staged_finding) printf '%s\n' 512 ;;
@@ -438,10 +439,10 @@ run_scenario() {
     local main_starts=0
     local primary_cutover=true
     local primary_stamp=original
-    local archive_path='' archive_flag=--archive enable_alert_evidence=false
+    local archive_path='' archive_flag=--archive enable_alert_evidence=false analyzer_candidate=''
     local -a archive_limits=()
     if [[ $scenario == evidence_* ]]; then enable_alert_evidence=true; fi
-    if [[ $scenario == primary_missing ]]; then primary_stamp=unavailable; fi
+    if [[ $scenario == primary_missing ]]; then primary_stamp=unavailable; elif [[ $scenario == analyzer_* ]]; then analyzer_candidate=/candidate-analyzer; fi
     rollout >/dev/null 2>&1 || actual=$?
     [[ $actual == "$expected" ]]
     if [[ "${trace[*]}" != "$*" ]]; then
@@ -492,5 +493,7 @@ run_scenario evidence_health_fail 1 backup start:packrat-stage:/candidate eviden
 rc=0
 bash "$root/scripts/packrat-rollout.sh" --deploy /missing 'invalid/interface' >/dev/null 2>&1 || rc=$?
 [[ $rc == 2 ]]
+# shellcheck source=tests/support/rollout_release_cases.bash
+source "$root/tests/support/rollout_release_cases.bash"
 test_backup_copies
 printf '%s\n' 'Packrat rollout tests passed'

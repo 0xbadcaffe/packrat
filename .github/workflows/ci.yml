@@ -55,8 +55,9 @@ jobs:
       - name: Test supervised capture rollout
         if: runner.os == 'Linux'
         run: |
-          shellcheck -x scripts/packrat-rollout.sh tests/test_packrat_rollout.sh
+          shellcheck -x scripts/packrat-rollout.sh tests/test_packrat_rollout.sh tests/test_packrat_rollout_release.sh
           bash tests/test_packrat_rollout.sh
+          bash tests/test_packrat_rollout_release.sh
 
       - name: cargo check
         run: cargo check --locked

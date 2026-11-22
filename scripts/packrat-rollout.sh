@@ -5,6 +5,8 @@ set -uo pipefail
 rollout_script=$(realpath -- "${BASH_SOURCE[0]}") || exit 1
 # shellcheck source=scripts/packrat-rollout-profile.sh
 source "${rollout_script%/*}/packrat-rollout-profile.sh" || exit 1
+# shellcheck source=scripts/packrat-rollout-release.sh
+source "${rollout_script%/*}/packrat-rollout-release.sh" || exit 1
 
 installed=/usr/local/bin/packrat
 data_dir=/root/.local/share/packrat
@@ -220,50 +222,6 @@ preflight() {
     fi
 }
 
-backup_space_ready() {
-    local destination="$data_dir/backups" free_kib sizes reserve=$backup_reserve_mib
-    sudo -n test -d "$destination" || destination=$data_dir
-    free_kib=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 { print $4 }') || return 1
-    sizes=$(sudo -n stat --format='%s' -- "$installed" "$data_dir/alerts.jsonl") || return 1
-    [[ $free_kib =~ ^[0-9]{1,15}$ && $backup_reserve_mib =~ ^[1-9][0-9]{0,5}$ ]] || return 1
-    if "$enable_alert_evidence"; then reserve=$((reserve + 2 * evidence_max_mib)); fi
-    awk -v free="$free_kib" -v reserve="$reserve" '
-        /^[0-9]+$/ && length($0) <= 15 { size_kib += int(($0 + 1023) / 1024); sizes++ }
-        END { exit !(NR == 2 && sizes == 2 && free >= reserve * 1024 + size_kib) }
-    ' <<< "$sizes"
-}
-
-create_rollout_backup() {
-    sudo -n install -d -o root -g root -m 0700 "$data_dir/backups" || return 1
-    backup_dir=$(sudo -n mktemp -d "$data_dir/backups/rollout.XXXXXXXX") || return 1
-    sudo -n install -o root -g root -m 0700 "$installed" "$backup_dir/packrat" || return 1
-    sudo -n install -o root -g root -m 0600 "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl" || return 1
-    if ! sudo -n cmp -s -- "$installed" "$backup_dir/packrat" ||
-       ! sudo -n cmp -s -- "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl"; then
-        error "Rollback backup did not match its source; inspect $backup_dir"
-        return 1
-    fi
-}
-
-prepare_backup_and_stage() {
-    create_rollout_backup || return 1
-    stage_binary=$(sudo -n mktemp /usr/local/bin/.packrat-stage.XXXXXXXX) || return 1
-    sudo -n install -o root -g root -m 0755 "$candidate" "$stage_binary" || return 1
-    cmp -s "$candidate" "$stage_binary"
-}
-
-replace_installed() {
-    local source=$1 replacement
-    replacement=$(sudo -n mktemp /usr/local/bin/.packrat-install.XXXXXXXX) || return 1
-    if sudo -n install -o root -g root -m 0755 "$source" "$replacement" &&
-       sudo -n cmp -s "$source" "$replacement" &&
-       sudo -n mv -T "$replacement" "$installed"; then
-        return 0
-    fi
-    sudo -n rm -f -- "$replacement"
-    return 1
-}
-
 launch_capture() {
     local session=$1 executable=$2 archive
     local -a archive_args=("${vlan_policy_args[@]}")
@@ -429,12 +387,18 @@ rollout() {
     fi
     if replace_installed "$stage_binary" && start_capture "$main_session" "$installed"; then
         if ! await_primary_watcher; then
-            error "Replacement is live but alert monitoring could not be verified; staging capture left running"
-            return 1
+            if [[ -z $analyzer_candidate ]]; then
+                error "Replacement is live but alert monitoring could not be verified; staging capture left running"
+                return 1
+            fi
+            error "Replacement alert monitoring could not be verified; analyzer not promoted"
+        elif promote_analyzer; then
+            retire_bridge || { error "Replacement is live; inspect the staging session"; return 1; }
+            printf '%s\n' 'Rollout verified'
+            return 0
+        else
+            error "Analyzer installation failed; the previous analyzer was not replaced"
         fi
-        retire_bridge || { error "Replacement is live; inspect the staging session"; return 1; }
-        printf '%s\n' 'Rollout verified'
-        return 0
     fi
     error "Replacement failed health checks; attempting rollback"
     archive_path=$original_archive_path archive_flag=$original_archive_flag
@@ -460,6 +424,7 @@ main() {
         error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE [--enable-alert-evidence]'
         error 'The opt-in enables a new private archive for HIGH/CRITICAL evidence only (64 MiB packet bytes, 8192 frames).'
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
+        error 'Set PACKRAT_ROLLOUT_ANALYZER to stage and promote a matching packrat-analyze binary.'
         error 'Set PACKRAT_ROLLOUT_TRIAGE_STATE to require fresh triage for the same capture.'
         error 'PACKRAT_ROLLOUT_TRIAGE_CHECK overrides the triage watcher executable.'
         error 'The health watcher must run with PACKRAT_ALERT_VERIFY_OPEN=1 and verify the current alert log.'
@@ -475,6 +440,7 @@ main() {
         exec 9>"$HOME/.cache/packrat-rollout.lock" || return 1
         flock -n 9 || { error "Another rollout is in progress"; return 1; }
     fi
+    analyzer_candidate_ready || { error "Analyzer candidate or installed rollback binary is not usable"; return 1; }
     preflight || return 1
     if ! backup_space_ready; then
         error "Insufficient or unverified free space for the alert log and rollback backup; current capture not stopped"
@@ -483,7 +449,7 @@ main() {
     if [[ $mode == --check ]]; then
         printf 'Preflight passed for %s; no changes made\n' "$interface"
     elif ! "$enable_alert_evidence" && cmp -s "$candidate" "$installed"; then
-        printf '%s\n' 'Candidate is already installed; capture unchanged'
+        update_analyzer_only
     else
         rollout
     fi
