@@ -17,6 +17,7 @@ stage_health_addr=127.0.0.1:9478
 health_state=${PACKRAT_ROLLOUT_HEALTH_STATE:-"$HOME/.cache/packrat-health/latest.json"}
 triage_state=${PACKRAT_ROLLOUT_TRIAGE_STATE:-}
 triage_check=${PACKRAT_ROLLOUT_TRIAGE_CHECK:-"$HOME/.local/bin/packrat-watch-triage"}
+triage_journal_required=${PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL:-0}
 backup_reserve_mib=${PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB:-512}
 backup_dir=
 stage_binary=
@@ -140,8 +141,11 @@ primary_capture_stamp() {
 triage_watcher_ready() {
     [[ -n $triage_state ]] || return 0
     timeout 5s "$triage_check" --check "$triage_state" |
-        jq -e --argjson scope "$1" '.status == "current" and
-            .capture_id == $scope.capture_id and .session_id == $scope.alert_session_id' >/dev/null
+        jq -e --argjson scope "$1" --argjson require_journal "$triage_journal_required" '
+            .status == "current" and .capture_id == $scope.capture_id and
+            .session_id == $scope.alert_session_id and
+            ($require_journal == 0 or (.journal_status == "current" and .journal_pending_events == 0))
+        ' >/dev/null
 }
 
 alert_watcher_ready() {
@@ -427,11 +431,16 @@ main() {
         error 'Set PACKRAT_ROLLOUT_ANALYZER to stage and promote a matching packrat-analyze binary.'
         error 'Set PACKRAT_ROLLOUT_TRIAGE_STATE to require fresh triage for the same capture.'
         error 'PACKRAT_ROLLOUT_TRIAGE_CHECK overrides the triage watcher executable.'
+        error 'PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL=1 requires healthy journal writes and no backlog.'
         error 'The health watcher must run with PACKRAT_ALERT_VERIFY_OPEN=1 and verify the current alert log.'
         error 'PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB sets free space to leave after backing up (default: 512).'
         return 2
     fi
     mode=$1 candidate=$2 interface=$3
+    if [[ ! $triage_journal_required =~ ^[01]$ || ( $triage_journal_required == 1 && -z $triage_state ) ]]; then
+        error 'Journal verification requires PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL=0 or 1, and a triage state when enabled.'
+        return 2
+    fi
     if [[ ${4-} == --enable-alert-evidence ]]; then enable_alert_evidence=true; fi
     [[ $interface =~ ^[A-Za-z0-9_.-]+$ ]] || { error "Invalid interface name"; return 2; }
     candidate=$(realpath -- "$candidate") || return 2

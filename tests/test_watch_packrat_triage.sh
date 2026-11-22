@@ -96,6 +96,17 @@ jq -e '.archive_rule_ids==null and .archive_near_limit and .archive_usage.frames
     triage_watcher_ready "$scope"
     triage_state=$state
     triage_watcher_ready "$scope"
+    triage_journal_required=1
+    if triage_watcher_ready "$scope"; then exit 1; fi
+    triage_state="$scratch/journal-ready.json"
+    jq '.journal_status="current" | .journal_pending_events=0' "$state" >"$triage_state"
+    triage_watcher_ready "$scope"
+    jq '.journal_status="write_failed" | .journal_pending_events=1' "$state" >"$triage_state"
+    if triage_watcher_ready "$scope"; then exit 1; fi
+    jq '.journal_status="current" | .journal_pending_events=1' "$state" >"$triage_state"
+    if triage_watcher_ready "$scope"; then exit 1; fi
+    triage_journal_required=0
+    triage_state=$state
     if triage_watcher_ready '{"capture_id":"old","alert_session_id":"1-2"}'; then exit 1; fi
     if triage_watcher_ready '{"capture_id":"a","alert_session_id":"other"}'; then exit 1; fi
     triage_state="$scratch/stale.json"
