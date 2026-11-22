@@ -168,7 +168,9 @@ jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_ale
     and .[9].highest_observed_alert_id==9 and .[10].alert_changes.newly_observed==[]
     and .[11].highest_observed_alert_id==12 and .[11].alert_changes==null' "$scratch/events" >/dev/null
 
-live current 60 '[]' >"$report"
+jq '.updated_at=(now - 360 | todateiso8601) | .capture_id="a" | .highest_observed_alert_id=99' "$state" >"$scratch/stale.next"
+mv -- "$scratch/stale.next" "$state"
+live current 60 '[]' "$medium" >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=10 bash "$watch" --supervise "$state" -- cat -- "$report" >"$scratch/supervised" 2>"$scratch/retry" &
 watch_pid=$!
 await_packets 60
@@ -176,15 +178,23 @@ child=$(pgrep -P "$watch_pid" -x bash)
 status=0
 bash "$watch" --supervise "$state" -- true >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
-live current 61 '[]' >"$report.next"
+live current 61 '[]' "$(jq -c '.[0].hit_count=3 | . + [.[0] + {alert_id:12}]' <<<"$medium")" >"$report.next"
 mv -- "$report.next" "$report"
 kill -KILL "$child"
 await_packets 61
 replacement=$(pgrep -P "$watch_pid" -x bash)
 [[ $replacement != "$child" ]]
+for _ in {1..80}; do
+    if jq -se 'length == 2' "$scratch/supervised" >/dev/null 2>&1; then break; fi
+    sleep 0.1
+done
 kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
 if kill -0 "$replacement" 2>/dev/null; then exit 1; fi
 grep -Fq 'retrying in 2 seconds' "$scratch/retry"
+jq -se 'length == 2 and .[0].alert_changes==null and .[0].highest_observed_alert_id==9
+    and .[1].highest_observed_alert_id==12 and .[1].alert_changes.newly_observed==[12]
+    and .[1].alert_changes.updated==[{alert_id:9,fields:["hit_count"]}]' "$scratch/supervised" >/dev/null
+jq -e '.highest_observed_alert_id==12 and (has("alert_changes") | not)' "$state" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'

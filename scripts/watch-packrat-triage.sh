@@ -176,21 +176,29 @@ timer=''
 trap 'if [[ -n $temp ]]; then rm -f -- "$temp"; fi' EXIT
 trap 'if [[ -n $timer ]]; then kill "$timer" 2>/dev/null || :; wait "$timer" 2>/dev/null || :; fi; exit 0' HUP INT TERM
 previous=''
-high_alert=0
+prior=null
+if ! "$once" && [[ -f $state && -O $state ]]; then
+    # A restart can recover only a recent, bounded snapshot from this watcher.
+    prior=$(head -c 65537 -- "$state" |
+        jq -Rces '
+            select(utf8bytelength <= 65536) | fromjson | objects
+            | select(.record_type == "capture_triage_watch"
+                and (.status == "current" or .status == "degraded")
+                and (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .)
+                and (.recent_alerts | type == "array" and length <= 50 and all(.[]; type == "object"
+                    and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
+            | (now - (.updated_at | fromdateiso8601) | floor) as $age
+            | select($age >= -5 and $age <= .max_age_seconds)
+            | {status,capture_id,session_id,recent_alerts,highest_observed_alert_id:(
+                .highest_observed_alert_id | if type == "number" and . >= 0 and . <= 9007199254740991
+                    and floor == . then . else null end)}
+        ' 2>/dev/null) || prior=null
+fi
 while :; do
     # Poll commands and the timer must not hold the writer lock after a crash.
     snapshot=$(exec {lock_fd}>&-; read_status "$@")
     # Allow the poll interval, the next triage deadline, and timeout cleanup/scheduling.
-    snapshot=$(jq -c --argjson max_age "$((interval + deadline + 7))" \
-        '. + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age}' <<< "$snapshot")
-    temp=$(mktemp -- "$directory/.packrat-triage.XXXXXXXX")
-    printf '%s\n' "$snapshot" >"$temp"
-    mv -fT -- "$temp" "$state"
-    temp=''
-    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib)' <<< "$snapshot")
-    if [[ $key != "$previous" ]]; then
-        if "$once"; then printf '%s\n' "$snapshot"; break; fi
-        event=$(jq -c --argjson prior "${previous:-null}" --argjson high "$high_alert" '
+    event=$(jq -c --argjson prior "$prior" --argjson max_age "$((interval + deadline + 7))" '
             def observed:
                 (.status == "current" or .status == "degraded") and
                 .capture_id != null and .session_id != null and (.recent_alerts | type == "array");
@@ -198,7 +206,9 @@ while :; do
             | (($prior | observed) and observed and
                $prior.capture_id == .capture_id and $prior.session_id == .session_id) as $comparable
             | ([.recent_alerts[]?.alert_id] | max // 0) as $seen
-            | . + {highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
+            | ([$prior.highest_observed_alert_id, ($prior.recent_alerts | map(.alert_id)? | max)] | max // 0) as $high
+            | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
+                highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
                 alert_changes: if $comparable then
                     ($prior.recent_alerts | INDEX(.alert_id | tostring)) as $before
                     | {
@@ -213,10 +223,18 @@ while :; do
                         ]
                     }
                 else null end}' <<< "$snapshot")
+    snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")
+    temp=$(mktemp -- "$directory/.packrat-triage.XXXXXXXX")
+    printf '%s\n' "$snapshot" >"$temp"
+    mv -fT -- "$temp" "$state"
+    temp=''
+    if "$once"; then printf '%s\n' "$snapshot"; break; fi
+    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .highest_observed_alert_id)' <<< "$snapshot")
+    if [[ $key != "$previous" ]]; then
         printf '%s\n' "$event"
-        high_alert=$(jq -r '.highest_observed_alert_id' <<< "$event")
         previous=$key
     fi
+    prior=$snapshot
     sleep "$interval" {lock_fd}>&- &
     timer=$!
     wait "$timer"
