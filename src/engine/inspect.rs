@@ -30,9 +30,11 @@ impl AnalysisCore {
 
         // Security analysis. Critical built-in signatures open an incident for
         // explicit operator review; lower severities remain in the Security tab.
-        self.streams.ingest(pkt);
+        let segmented_tls = self.streams.ingest_observing_tls(pkt);
         let modbus = self.streams.observe_modbus(pkt);
-        let findings = self.security.inspect_with_modbus(pkt, modbus);
+        let findings = self.security.inspect_with_context(
+            pkt, modbus, segmented_tls.as_ref().map(|(selection, _)| *selection),
+        );
         for finding in &findings.ids {
             let alert = &finding.alert;
             self.operator_graph.on_ids_alert(
@@ -134,13 +136,14 @@ impl AnalysisCore {
             );
         }
         for weakness in &findings.tls {
+            let frames = segmented_tls.as_ref().map_or(&[][..], |(_, frames)| frames.as_slice());
             let scope = (
                 pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
                 pkt.outer_vlan_id,
                 pkt.vlan_id,
             );
             self.alert_center.record_with_context(
-                (weakness.pkt_no, &[], AlertFlow::from_packet(pkt)),
+                (weakness.pkt_no, frames, AlertFlow::from_packet(pkt)),
                 pkt.timestamp,
                 "TLS",
                 "MEDIUM",

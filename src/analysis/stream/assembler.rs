@@ -14,17 +14,18 @@ pub struct StreamAssembler {
 
 impl StreamAssembler {
     pub fn ingest(&mut self, pkt: &Packet) {
-        let key = match StreamKey::from_packet(pkt) {
-            Some(k) => k,
-            None => return,
-        };
+        self.ingest_inner(pkt, false);
+    }
+
+    pub(crate) fn ingest_observing_tls(&mut self, pkt: &Packet) -> Option<((u16, u16), Vec<u64>)> {
+        self.ingest_inner(pkt, true)
+    }
+
+    fn ingest_inner(&mut self, pkt: &Packet, observe_tls: bool) -> Option<((u16, u16), Vec<u64>)> {
+        let key = StreamKey::from_packet(pkt)?;
         let raw = &pkt.bytes;
-        let Some(view) = tcp_view(pkt) else {
-            return;
-        };
-        let Some(tcp_header) = raw.get(view.header..view.payload) else {
-            return;
-        };
+        let view = tcp_view(pkt)?;
+        let tcp_header = raw.get(view.header..view.payload)?;
         let id = key.id();
 
         // Evict oldest stream if at cap
@@ -85,16 +86,16 @@ impl StreamAssembler {
             initial_syn.get_or_insert(tcp_seq);
         }
         if stream.epoch_ambiguous || stream.reset {
-            return;
+            return None;
         }
 
         if is_rst {
             stream.closed = true;
             stream.reset = true;
-            return;
+            return None;
         }
         if (from_client && stream.client_finished) || (!from_client && stream.server_finished) {
-            return;
+            return None;
         }
 
         // ── Sequence-number–aware assembly ─────────────────────────────────
@@ -138,10 +139,10 @@ impl StreamAssembler {
                     stream.server_fin_packet = Some(pkt.no);
                 }
             }
-            return;
+            return None;
         }
         if payload.is_empty() && !is_fin {
-            return;
+            return None;
         }
 
         let segment = PendingTcpSegment {
@@ -155,11 +156,15 @@ impl StreamAssembler {
             if !buffer_pending(pending, segment) {
                 stream.dropped_segments += 1;
             }
-            return;
+            return None;
         }
 
-        let progress = consume_contiguous(data, next_seq_slot, pending, segment);
+        let checked = &mut stream.tls_prefix_checked[usize::from(from_client)];
+        let track_tls_prefix = observe_tls && !*checked && data.first().is_none_or(|&kind| kind == 0x16);
+        let progress = consume_contiguous(data, next_seq_slot, pending, segment, track_tls_prefix);
+        *checked |= progress.prefix_conflict;
         stream.truncated |= progress.discarded_bytes > 0;
+        let added_bytes = !progress.segments.is_empty();
         for emitted in progress.segments {
             if stream.segments.len() >= MAX_SEGMENT_METADATA {
                 stream.provenance_truncated = true;
@@ -182,6 +187,11 @@ impl StreamAssembler {
                 stream.server_finished = true;
                 stream.server_fin_packet = progress.fin_packet_no;
             }
+        }
+        if observe_tls && added_bytes {
+            observe_segmented_tls(stream, from_client, pkt.no)
+        } else {
+            None
         }
     }
 
@@ -261,4 +271,38 @@ impl StreamAssembler {
         self.streams.clear();
         self.evicted_streams = 0;
     }
+}
+
+fn observe_segmented_tls(
+    stream: &mut ReassembledStream, from_a: bool, frame: u64,
+) -> Option<((u16, u16), Vec<u64>)> {
+    if stream.midstream || stream.truncated || stream.dropped_segments > 0 || stream.provenance_truncated {
+        return None;
+    }
+    let checked = &mut stream.tls_prefix_checked[usize::from(from_a)];
+    if *checked {
+        return None;
+    }
+    let data = if from_a {
+        stream.client_initial_syn?;
+        &stream.client_data
+    } else {
+        stream.server_initial_syn?;
+        &stream.server_data
+    };
+    if data.first() != Some(&0x16) {
+        *checked = true;
+        return None;
+    }
+    let length = 5 + usize::from(u16::from_be_bytes(data.get(3..5)?.try_into().ok()?));
+    if length > MAX_TLS_RECORD_BYTES {
+        *checked = true;
+        return None;
+    }
+    let record = data.get(..length)?;
+    *checked = true;
+    let selection = crate::analysis::encrypted_insight::parse_anchored_server_hello(record)?;
+    let frames = stream.packet_numbers(from_a, 0, length);
+    (2..=crate::analysis::alert_center::MAX_ALERT_PACKET_REFS).contains(&frames.len()).then_some(())?;
+    frames.contains(&frame).then_some((selection, frames))
 }

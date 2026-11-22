@@ -107,10 +107,10 @@ impl SecurityEngine {
 
     /// Process a single packet through all detection engines.
     pub fn update(&mut self, pkt: &Packet) {
-        self.update_with_modbus(pkt, industrial_policy::ModbusObservation::Unanchored);
+        self.update_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None);
     }
 
-    fn update_with_modbus(&mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation) {
+    fn update_with_context(&mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation, tls: Option<(u16, u16)>) {
         self.findings = DetectionBatch::default();
         self.check_ipv4_fragments(pkt);
         let no_new_tcp_payload = self.check_tcp_integrity(pkt);
@@ -131,18 +131,18 @@ impl SecurityEngine {
         self.check_ftp_control(pkt);
         self.check_brute_force(pkt);
         self.check_http(pkt);
-        self.check_tls(pkt);
+        self.check_tls(pkt, tls);
         self.check_dns_tunnel(pkt);
     }
 
     pub fn inspect(&mut self, pkt: &Packet) -> DetectionBatch {
-        self.inspect_with_modbus(pkt, industrial_policy::ModbusObservation::Unanchored)
+        self.inspect_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None)
     }
 
-    pub(crate) fn inspect_with_modbus(
-        &mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation,
+    pub(crate) fn inspect_with_context(
+        &mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation, tls: Option<(u16, u16)>,
     ) -> DetectionBatch {
-        self.update_with_modbus(pkt, modbus);
+        self.update_with_context(pkt, modbus, tls);
         std::mem::take(&mut self.findings)
     }
 

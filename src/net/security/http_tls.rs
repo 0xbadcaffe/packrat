@@ -35,15 +35,16 @@ impl SecurityEngine {
         self.tls_weaknesses.push(w);
     }
 
-    pub(super) fn check_tls(&mut self, pkt: &Packet) {
+    pub(super) fn check_tls(&mut self, pkt: &Packet, reassembled: Option<(u16, u16)>) {
         if pkt.src_port.is_none() || pkt.dst_port.is_none() {
             return;
         }
-        let Some((version, cipher)) = crate::analysis::stream::tcp_segment_payload(pkt)
-            .and_then(|(_, payload)| crate::analysis::encrypted_insight::parse_anchored_server_hello(payload))
+        let Some((version, cipher)) = reassembled.or_else(|| crate::analysis::stream::tcp_segment_payload(pkt)
+            .and_then(|(_, payload)| crate::analysis::encrypted_insight::parse_anchored_server_hello(payload)))
         else {
             return;
         };
+        let message = if reassembled.is_some() { "reassembled ServerHello" } else { "ServerHello" };
         let legacy = match version {
             0x0300 => Some("SSL 3.0 selected"),
             0x0301 => Some("TLS 1.0 selected"),
@@ -56,7 +57,7 @@ impl SecurityEngine {
                 src_ip: pkt.src.clone(),
                 dst_ip: pkt.dst.clone(),
                 kind,
-                detail: format!("{}: {kind} in ServerHello; handshake completion unverified", pkt.src),
+                detail: format!("{}: {kind} in {message}; handshake completion unverified", pkt.src),
             });
         }
         if version <= 0x0303 && is_rc4_suite(cipher) {
@@ -65,7 +66,7 @@ impl SecurityEngine {
                 src_ip: pkt.src.clone(),
                 dst_ip: pkt.dst.clone(),
                 kind: "RC4 selected",
-                detail: format!("{} selected RC4 cipher 0x{cipher:04x} in ServerHello; handshake completion unverified", pkt.src),
+                detail: format!("{} selected RC4 cipher 0x{cipher:04x} in {message}; handshake completion unverified", pkt.src),
             });
         }
     }

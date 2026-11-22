@@ -121,3 +121,52 @@ fn tls_selection_on_alternate_ports_requires_a_framed_tcp_server_hello() {
         assert!(scoped.iter().all(|alert| alert.packet_refs == [frame]));
     }
 }
+
+fn tls_segment(no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
+    let mut wire = tls_packet(no, 8443, 50000, payload).bytes;
+    wire[38..42].copy_from_slice(&sequence.to_be_bytes());
+    wire[47] = flags;
+    parse_ethernet(&wire, no, no as f64)
+}
+
+#[test]
+fn segmented_tls_selection_uses_the_gap_fill_and_original_evidence() {
+    let mut core = AnalysisCore::default();
+    let hello = server_hello(0x0302, 0xc011, &[]);
+    core.analyze(&tls_segment(1, 100, 0x12, &[]));
+    core.analyze(&tls_segment(2, 101, 0x18, &hello[..7]));
+    core.analyze(&tls_segment(3, 120, 0x18, &hello[19..]));
+    core.analyze(&tls_segment(4, 120, 0x18, &hello[19..]));
+    assert!(core.alert_center.items.iter().all(|alert| alert.source != "TLS"));
+
+    core.analyze(&tls_segment(5, 108, 0x18, &hello[7..19]));
+    core.analyze(&tls_segment(6, 108, 0x18, &hello[7..19]));
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "TLS").collect();
+    assert_eq!(alerts.len(), 2);
+    for alert in alerts {
+        assert_eq!(alert.packet_no, 5);
+        assert_eq!(alert.packet_refs, [2, 3, 5]);
+        assert_eq!(alert.hit_count, 1);
+        assert_eq!(alert.flow.unwrap().source.port(), 8443);
+        assert!(alert.detail.contains("reassembled ServerHello"));
+    }
+}
+
+#[test]
+fn segmented_tls_selection_rejects_unanchored_or_conflicting_prefixes() {
+    let hello = server_hello(0x0302, 0xc011, &[]);
+    for anchored in [false, true] {
+        let mut core = AnalysisCore::default();
+        if anchored {
+            core.analyze(&tls_segment(1, 100, 0x12, &[]));
+        }
+        core.analyze(&tls_segment(2, 101, 0x18, &hello[..19]));
+        if anchored {
+            let mut conflicting = hello[7..12].to_vec();
+            conflicting[0] ^= 1;
+            core.analyze(&tls_segment(3, 108, 0x18, &conflicting));
+        }
+        core.analyze(&tls_segment(4, 120, 0x18, &hello[19..]));
+        assert!(core.alert_center.items.iter().all(|alert| alert.source != "TLS"));
+    }
+}

@@ -1,6 +1,7 @@
 const MAX_STREAM_BYTES: usize = 1_000_000;
 const MAX_PENDING_SEGMENTS: usize = 1_024;
 const MAX_PENDING_BYTES: usize = 2_000_000;
+pub(super) const MAX_TLS_RECORD_BYTES: usize = 16_389;
 
 #[derive(Debug, Clone)]
 pub(super) struct PendingTcpSegment {
@@ -17,6 +18,7 @@ pub(super) struct AssemblyProgress {
     pub fin_consumed: bool,
     pub fin_packet_no: Option<u64>,
     pub discarded_bytes: usize,
+    pub prefix_conflict: bool,
 }
 
 #[derive(Debug)]
@@ -57,8 +59,12 @@ pub(super) fn consume_contiguous(
     next_sequence: &mut Option<u32>,
     pending: &mut Vec<PendingTcpSegment>,
     first: PendingTcpSegment,
+    track_tls_prefix: bool,
 ) -> AssemblyProgress {
     let mut progress = AssemblyProgress::default();
+    if track_tls_prefix {
+        progress.prefix_conflict = conflicts_with_prefix(data, *next_sequence, &first);
+    }
     progress.fin_consumed = consume_one(data, next_sequence, first, &mut progress);
 
     loop {
@@ -71,6 +77,9 @@ pub(super) fn consume_contiguous(
         };
         pending.retain(|segment| {
             let payload_end = segment.sequence.wrapping_add(segment.payload.len() as u32);
+            if track_tls_prefix && !progress.prefix_conflict {
+                progress.prefix_conflict = conflicts_with_prefix(data, Some(expected), segment);
+            }
             sequence_delta(payload_end, expected) > 0 || (segment.fin && payload_end == expected)
         });
         let Some(index) = pending.iter().position(|segment| {
@@ -85,6 +94,15 @@ pub(super) fn consume_contiguous(
         progress.fin_consumed |= consume_one(data, next_sequence, segment, &mut progress);
     }
     progress
+}
+
+fn conflicts_with_prefix(data: &[u8], expected: Option<u32>, segment: &PendingTcpSegment) -> bool {
+    let Some(expected) = expected else { return false };
+    let behind = sequence_delta(expected, segment.sequence).max(0) as usize;
+    let Some(offset) = data.len().checked_sub(behind) else { return false };
+    let end = data.len().min(MAX_TLS_RECORD_BYTES);
+    let count = behind.min(segment.payload.len()).min(end.saturating_sub(offset));
+    count > 0 && data[offset..offset + count] != segment.payload[..count]
 }
 
 pub(super) fn consume_one(

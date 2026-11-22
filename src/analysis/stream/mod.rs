@@ -175,6 +175,7 @@ pub struct ReassembledStream {
     client_initial_syn: Option<u32>,
     server_initial_syn: Option<u32>,
     modbus_offset: Option<usize>,
+    tls_prefix_checked: [bool; 2],
 }
 
 impl ReassembledStream {
