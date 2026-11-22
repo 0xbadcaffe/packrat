@@ -55,6 +55,23 @@ check_status "$scratch/future.json" snapshot_future 1
 jq '.updated_at="invalid"' "$state" >"$scratch/invalid.json"
 check_status "$scratch/invalid.json" snapshot_invalid 2
 
+(
+    # shellcheck source=scripts/packrat-rollout.sh
+    source "$root/scripts/packrat-rollout.sh"
+    scope='{"capture_id":"a","alert_session_id":"1-2"}'
+    triage_check=$watch
+    triage_state=
+    triage_watcher_ready "$scope"
+    triage_state=$state
+    triage_watcher_ready "$scope"
+    if triage_watcher_ready '{"capture_id":"old","alert_session_id":"1-2"}'; then exit 1; fi
+    if triage_watcher_ready '{"capture_id":"a","alert_session_id":"other"}'; then exit 1; fi
+    triage_state="$scratch/stale.json"
+    if triage_watcher_ready "$scope"; then exit 1; fi
+    triage_state="$scratch/missing.json"
+    if triage_watcher_ready "$scope"; then exit 1; fi
+)
+
 many=$(jq -cn '[range(1; 52) | {alert_id:.,severity:"LOW",rule_id:"bad token",disposition:"unknown"}]')
 live current 12 '[]' "$many" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null

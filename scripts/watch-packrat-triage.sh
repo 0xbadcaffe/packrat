@@ -46,6 +46,7 @@ check_snapshot() {
        ! raw=$(head -c 131073 -- "$state" 2>/dev/null) ||
        (( ${#raw} > 131072 )) ||
        ! result=$(jq -cse '
+        def scope_id: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
         select(length == 1) | .[0] | objects
         | select(.record_type == "capture_triage_watch" and
             (.status | type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z")) and
@@ -55,7 +56,8 @@ check_snapshot() {
                    elif $age > .max_age_seconds then "snapshot_stale"
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
-           triage_status:.status, age_seconds:$age, max_age_seconds}' <<< "$raw" 2>/dev/null); then
+           triage_status:.status, age_seconds:$age, max_age_seconds,
+           capture_id:(.capture_id | scope_id), session_id:(.session_id | scope_id)}' <<< "$raw" 2>/dev/null); then
         printf '%s\n' '{"status":"snapshot_invalid"}'
         return 2
     fi

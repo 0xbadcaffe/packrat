@@ -13,6 +13,8 @@ bridge_session=packrat-stage
 health_addr=127.0.0.1:9477
 stage_health_addr=127.0.0.1:9478
 health_state=${PACKRAT_ROLLOUT_HEALTH_STATE:-"$HOME/.cache/packrat-health/latest.json"}
+triage_state=${PACKRAT_ROLLOUT_TRIAGE_STATE:-}
+triage_check=${PACKRAT_ROLLOUT_TRIAGE_CHECK:-"$HOME/.local/bin/packrat-watch-triage"}
 backup_reserve_mib=${PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB:-512}
 backup_dir=
 stage_binary=
@@ -133,6 +135,13 @@ primary_capture_stamp() {
         '
 }
 
+triage_watcher_ready() {
+    [[ -n $triage_state ]] || return 0
+    timeout 5s "$triage_check" --check "$triage_state" |
+        jq -e --argjson scope "$1" '.status == "current" and
+            .capture_id == $scope.capture_id and .session_id == $scope.alert_session_id' >/dev/null
+}
+
 alert_watcher_ready() {
     local capture_stamp=$1 identity latest_identity
     [[ -f $health_state ]] || return 1
@@ -164,12 +173,14 @@ alert_watcher_ready() {
         ' >/dev/null 2>&1; then
         return 1
     fi
-    latest_identity=$(primary_alert_log_identity) && [[ $latest_identity == "$identity" ]]
+    latest_identity=$(primary_alert_log_identity) && [[ $latest_identity == "$identity" ]] &&
+        triage_watcher_ready "$capture_stamp"
 }
 
 await_primary_watcher() {
-    local stamp attempt
-    for attempt in {1..30}; do
+    local stamp attempt limit=30
+    if [[ -n $triage_state ]]; then limit=90; fi
+    for ((attempt=0; attempt<limit; attempt++)); do
         if stamp=$(primary_capture_stamp) && alert_watcher_ready "$stamp"; then return 0; fi
         sleep 1
     done
@@ -204,7 +215,7 @@ preflight() {
     primary_alert_log_stamp >/dev/null || { error "Primary alert log is not a private, root-owned regular file with one link"; return 1; }
     local stamp
     if ! stamp=$(primary_capture_stamp) || ! alert_watcher_ready "$stamp"; then
-        error "Cannot verify the primary alert watcher or private alert log; check $health_state"
+        error "Cannot verify primary alert monitoring; check $health_state and any configured triage state"
         return 1
     fi
 }
@@ -385,7 +396,7 @@ rollout() {
         return 1
     fi
     if ! alert_watcher_ready "$primary_now"; then
-        error "Could not verify the primary alert watcher; current capture not stopped"
+        error "Could not verify primary alert monitoring; current capture not stopped"
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi
@@ -418,7 +429,7 @@ rollout() {
     fi
     if replace_installed "$stage_binary" && start_capture "$main_session" "$installed"; then
         if ! await_primary_watcher; then
-            error "Replacement is live but its alert watcher could not be verified; staging capture left running"
+            error "Replacement is live but alert monitoring could not be verified; staging capture left running"
             return 1
         fi
         retire_bridge || { error "Replacement is live; inspect the staging session"; return 1; }
@@ -434,7 +445,7 @@ rollout() {
         if await_primary_watcher; then
             retire_bridge || error "Rollback is live; inspect the staging session"
         else
-            error "Rollback is live but its alert watcher could not be verified; staging capture left running"
+            error "Rollback is live but alert monitoring could not be verified; staging capture left running"
         fi
         error "Previous capture restored; rollout failed"
     else
@@ -449,6 +460,8 @@ main() {
         error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE [--enable-alert-evidence]'
         error 'The opt-in enables a new private archive for HIGH/CRITICAL evidence only (64 MiB packet bytes, 8192 frames).'
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
+        error 'Set PACKRAT_ROLLOUT_TRIAGE_STATE to require fresh triage for the same capture.'
+        error 'PACKRAT_ROLLOUT_TRIAGE_CHECK overrides the triage watcher executable.'
         error 'The health watcher must run with PACKRAT_ALERT_VERIFY_OPEN=1 and verify the current alert log.'
         error 'PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB sets free space to leave after backing up (default: 512).'
         return 2
