@@ -117,7 +117,8 @@ await_packets 32
 live current 33 '[]' "$medium" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 33
-live current 34 '[]' "$(jq -c '.[0].hit_count=2' <<<"$medium")" >"$report.next"
+medium=$(jq -c '.[0].hit_count=2' <<<"$medium")
+live current 34 '[]' "$medium" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 34
 live degraded 35 "$queue" "$medium" >"$report.next"
@@ -137,16 +138,33 @@ await_packets 38
 jq '.health.packets_total=39 | .health.archive_pause_reason="disk_reserve" | .live_packet_archive="paused"' "$report" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 39
+jq '.health.packets_total=40 | .alerts[0].disposition="Reviewing" | .alerts[0].packet_evidence_status="complete"' "$report" >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 40
+jq '.health.packets_total=41 | .alerts[0].alert_id=2' "$report" >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 41
+jq '.health.packets_total=42 | .alerts[0].alert_id=9' "$report" >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 42
+jq '.health.packets_total=43 | .health.capture_id="b" | .alerts[0].alert_id=12' "$report" >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 43
 for _ in {1..80}; do
-    if jq -se 'length == 8' "$scratch/events" >/dev/null 2>&1; then break; fi
+    if jq -se 'length == 12' "$scratch/events" >/dev/null 2>&1; then break; fi
     sleep 0.1
 done
 kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
-jq -se 'map(.packets)==[30,32,34,35,36,37,38,39] and .[1].recent_alerts[0].alert_id==9
+jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_alerts[0].alert_id==9
     and .[2].recent_alerts[0].hit_count==2 and .[3].review_queue[0].alert_id==7
     and .[4].buffer_drops==1 and .[5].alert_log_integrity=={
         invalid_records:2,oversized_records:0,stopped_at_limit:false,stopped_at_scan_budget:true}
-    and .[6].truncated_frames==3 and .[7].archive_pause_reason=="disk_reserve"' "$scratch/events" >/dev/null
+    and .[6].truncated_frames==3 and .[7].archive_pause_reason=="disk_reserve"
+    and .[0].alert_changes==null and .[1].alert_changes.newly_observed==[9]
+    and .[2].alert_changes.updated==[{alert_id:9,fields:["hit_count"]}]
+    and .[8].alert_changes.updated==[{alert_id:9,fields:["disposition","packet_evidence_status"]}]
+    and .[9].highest_observed_alert_id==9 and .[10].alert_changes.newly_observed==[]
+    and .[11].highest_observed_alert_id==12 and .[11].alert_changes==null' "$scratch/events" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'

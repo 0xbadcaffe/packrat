@@ -8,7 +8,7 @@ usage() {
         '       watch-packrat-triage.sh --check STATE.json' \
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
-        'Refreshes the sanitized state every poll; prints changes to health, the review queue, or recent alerts.' \
+        'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
 }
@@ -145,6 +145,7 @@ temp=''
 trap 'if [[ -n $temp ]]; then rm -f -- "$temp"; fi' EXIT
 trap 'exit 0' INT TERM
 previous=''
+high_alert=0
 while :; do
     snapshot=$(read_status "$@")
     # Allow the poll interval, the next triage deadline, and timeout cleanup/scheduling.
@@ -156,9 +157,33 @@ while :; do
     temp=''
     key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib)' <<< "$snapshot")
     if [[ $key != "$previous" ]]; then
-        printf '%s\n' "$snapshot"
+        if "$once"; then printf '%s\n' "$snapshot"; break; fi
+        event=$(jq -c --argjson prior "${previous:-null}" --argjson high "$high_alert" '
+            def observed:
+                (.status == "current" or .status == "degraded") and
+                .capture_id != null and .session_id != null and (.recent_alerts | type == "array");
+            . as $now
+            | (($prior | observed) and observed and
+               $prior.capture_id == .capture_id and $prior.session_id == .session_id) as $comparable
+            | ([.recent_alerts[]?.alert_id] | max // 0) as $seen
+            | . + {highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
+                alert_changes: if $comparable then
+                    ($prior.recent_alerts | INDEX(.alert_id | tostring)) as $before
+                    | {
+                        newly_observed: [.recent_alerts[] | select(.alert_id > $high) | .alert_id],
+                        updated: [
+                            $now.recent_alerts[] as $item
+                            | $before[$item.alert_id | tostring] as $old | select($old != null)
+                            | {alert_id:$item.alert_id, fields:[
+                                ("hit_count", "severity", "disposition", "packet_evidence_status") as $field
+                                | select($old[$field] != $item[$field]) | $field]}
+                            | select(.fields | length > 0)
+                        ]
+                    }
+                else null end}' <<< "$snapshot")
+        printf '%s\n' "$event"
+        high_alert=$(jq -r '.highest_observed_alert_id' <<< "$event")
         previous=$key
     fi
-    "$once" && break
     sleep "$interval"
 done
