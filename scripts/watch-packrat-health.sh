@@ -7,7 +7,9 @@ usage() {
         'PACKRAT_HEALTH_HEARTBEAT (300 seconds between unchanged reports; 0 disables),' \
         'PACKRAT_HEALTH_STATE_FILE (optional absolute path refreshed every poll),' \
         'PACKRAT_EXPECT_INTERFACE (optional expected live capture interface),' \
-        'PACKRAT_ALERT_SESSION (optional tmux session), PACKRAT_DISK_PATH (/),' \
+        'PACKRAT_ALERT_SESSION (optional tmux session),' \
+        'PACKRAT_DISK_PATH (defaults to the alert log directory, or / without a log path),' \
+        'PACKRAT_DISK_SUDO (1 retries an inaccessible disk path with noninteractive sudo),' \
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
         'PACKRAT_ALERT_LOG (optional absolute alert path; requires pipeline checking),' \
         'PACKRAT_REQUIRE_ARCHIVE (1 reports missing or inactive packet archiving),' \
@@ -32,7 +34,8 @@ alert_session=${PACKRAT_ALERT_SESSION:-}
 alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
 alert_log=${PACKRAT_ALERT_LOG:-}
 require_archive=${PACKRAT_REQUIRE_ARCHIVE:-0}
-disk_path=${PACKRAT_DISK_PATH:-/}
+disk_path=${PACKRAT_DISK_PATH:-}
+disk_sudo=${PACKRAT_DISK_SUDO:-0}
 min_free=${PACKRAT_MIN_FREE_MIB:-512}
 if [[ ! $port =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )) ||
    [[ ! $interval =~ ^[1-9][0-9]{0,5}$ ]] ||
@@ -75,6 +78,23 @@ if [[ -n $alert_log && ( $alert_log != /* || $alert_pipeline != 1 ) ]]; then
     printf '%s\n' 'PACKRAT_ALERT_LOG requires an absolute path and PACKRAT_ALERT_PIPELINE=1.' >&2
     exit 2
 fi
+if [[ -z $disk_path ]]; then
+    disk_path=${alert_log%/*}
+    disk_path=${disk_path:-/}
+fi
+if [[ $disk_path != /* || $disk_path == *[[:cntrl:]]* || ( $disk_sudo != 0 && $disk_sudo != 1 ) ]]; then
+    printf '%s\n' 'PACKRAT_DISK_PATH must be absolute and PACKRAT_DISK_SUDO must be 0 or 1.' >&2
+    exit 2
+fi
+
+disk_free_kib() {
+    local output
+    if ! output=$(LC_ALL=C df -Pk -- "$disk_path" 2>/dev/null); then
+        [[ $disk_sudo == 1 ]] || return 1
+        output=$(LC_ALL=C sudo -n -- df -Pk -- "$disk_path" 2>/dev/null) || return 1
+    fi
+    awk 'NR == 2 { print $4 }' <<< "$output"
+}
 
 alert_pipeline_tails() {
     local pane=$1
@@ -139,13 +159,13 @@ read_health() {
             fi
         fi
     fi
-    free_kib=$(LC_ALL=C df -Pk -- "$disk_path" 2>/dev/null | awk 'NR == 2 { print $4 }') || free_kib=
+    free_kib=$(disk_free_kib) || free_kib=
     if [[ $free_kib =~ ^[0-9]{1,15}$ ]]; then
         disk=$((10#$free_kib / 1024))
     fi
     printf '%s\n' "$sample" | jq -Rcse \
         --argjson watcher "$watcher" --argjson pipeline "$pipeline" --argjson source "$source" \
-        --arg alert_log "$alert_log" --arg expected_interface "$expected_interface" \
+        --arg alert_log "$alert_log" --arg expected_interface "$expected_interface" --arg disk_path "$disk_path" \
         --argjson disk "$disk" --argjson min_free "$min_free" --argjson require_archive "$require_archive" \
         --argjson baseline "$baseline" '
         (try fromjson catch null) as $health |
@@ -186,6 +206,7 @@ read_health() {
             alert_watcher_log: (if $alert_log == "" then null else $alert_log end),
             archive_enabled: $archive_enabled,
             archive_paused: ($archive_paused // false),
+            disk_path: $disk_path,
             disk_free_mib: $disk,
             issues: [
                 if $h.status != "ok" then "health_unreachable"

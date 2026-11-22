@@ -7,6 +7,7 @@ watch="$root/scripts/watch-packrat-health.sh"
 export PACKRAT_HEALTH_PORT=9477 PACKRAT_ALERT_SESSION=packrat-alerts PACKRAT_MIN_FREE_MIB=512 PACKRAT_ALERT_PIPELINE=0
 unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE PACKRAT_HEALTH_INTERVAL PACKRAT_HEALTH_HEARTBEAT PACKRAT_HEALTH_STATE_FILE
 unset PACKRAT_EXPECT_INTERFACE
+unset PACKRAT_DISK_PATH PACKRAT_DISK_SUDO
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
@@ -36,8 +37,16 @@ cat() {
 }
 
 df() {
+    [[ $* == "-Pk -- ${PACKRAT_FAKE_DISK_PATH:-/}" ]] || return 1
+    [[ ${PACKRAT_TEST_DISK_PROTECTED:-0} == 0 ]] || return 1
     printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
     printf '/dev/fake 2000000 100000 %s 5%% /\n' "$PACKRAT_FAKE_DISK"
+}
+
+sudo() {
+    [[ $* == "-n -- df -Pk -- $PACKRAT_FAKE_DISK_PATH" ]] || return 1
+    shift 3
+    PACKRAT_TEST_DISK_PROTECTED=0 df "$@"
 }
 
 sleep() {
@@ -47,13 +56,14 @@ sleep() {
     if (( PACKRAT_TEST_STEP == ${PACKRAT_FAKE_STEPS:-4} )); then exit 0; fi
 }
 
-export -f curl tmux ps cat df sleep
+export -f curl tmux ps cat df sudo sleep
 bash -n "$watch"
 
 bash "$watch" --once | jq -e '
     .record_type == "capture_health" and .event == "sample" and .issues == []
     and .pcap_buffer_drops == 0 and .alert_watcher_alive == true and .alert_watcher_pipeline_alive == null
     and .archive_enabled == null and .alert_watcher_log == null and .poll_interval_seconds == 15
+    and .disk_path == "/"
 ' >/dev/null
 
 pipeline=$'91 2 Ss bash\n92 91 S sudo\n93 92 S sudo\n94 93 S tail'
@@ -105,11 +115,24 @@ PACKRAT_EXPECT_INTERFACE=wlan1 PACKRAT_FAKE_STEPS=4 PACKRAT_FAKE_SAMPLES="$inter
 
 log='/var/lib/packrat lab/alerts.jsonl'
 export PACKRAT_FAKE_PROCESSES="$pipeline"$'\n95 91 S jq'
+export PACKRAT_FAKE_DISK_PATH=${log%/*}
 PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
     PACKRAT_FAKE_TAIL_SOURCE="$log" bash "$watch" --once | jq -e --arg log "$log" '
     .issues == [] and .alert_watcher_alive and .alert_watcher_pipeline_alive and .alert_watcher_source_matches
-    and .alert_watcher_log == $log
+    and .alert_watcher_log == $log and .disk_path == "/var/lib/packrat lab"
 ' >/dev/null
+
+status=0
+output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
+    PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_TEST_DISK_PROTECTED=1 bash "$watch" --once) || status=$?
+[[ $status == 1 ]]
+jq -e '.issues == ["disk_space_unknown"] and .disk_free_mib == null' <<< "$output" >/dev/null
+PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
+    PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_TEST_DISK_PROTECTED=1 PACKRAT_DISK_SUDO=1 \
+    bash "$watch" --once | jq -e '.issues == [] and .disk_free_mib == 1024' >/dev/null
+PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
+    PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_DISK_PATH=/mount PACKRAT_FAKE_DISK_PATH=/mount \
+    bash "$watch" --once | jq -e '.issues == [] and .disk_path == "/mount"' >/dev/null
 
 for mode in wrong_log descriptor missing_args; do
     source=$log
@@ -126,6 +149,7 @@ for mode in wrong_log descriptor missing_args; do
     jq -e '.issues == ["alert_watcher_source_unverified"] and .alert_watcher_pipeline_alive
         and .alert_watcher_alive == false and .alert_watcher_source_matches == false' <<< "$output" >/dev/null
 done
+unset PACKRAT_FAKE_DISK_PATH
 
 status=0
 PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG=alerts.jsonl bash "$watch" --once >/dev/null 2>&1 || status=$?
