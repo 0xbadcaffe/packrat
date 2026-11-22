@@ -6,7 +6,7 @@ watch="$root/scripts/watch-packrat-health.sh"
 
 export PACKRAT_HEALTH_PORT=9477 PACKRAT_ALERT_SESSION=packrat-alerts PACKRAT_MIN_FREE_MIB=512 PACKRAT_ALERT_PIPELINE=0
 unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE PACKRAT_HEALTH_INTERVAL PACKRAT_HEALTH_HEARTBEAT PACKRAT_HEALTH_STATE_FILE
-unset PACKRAT_EXPECT_INTERFACE
+unset PACKRAT_EXPECT_INTERFACE PACKRAT_EXPECT_TRAFFIC_SECS
 unset PACKRAT_DISK_PATH PACKRAT_DISK_SUDO PACKRAT_ALERT_VERIFY_OPEN
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
@@ -97,6 +97,7 @@ bash "$watch" --once | jq -e '
     and .archive_enabled == null and .alert_watcher_log == null and .poll_interval_seconds == 15
     and .disk_path == "/"
     and .packets_total == null and .packets_since_last_poll == null
+    and .expect_traffic_seconds == 0 and .packets_without_progress_seconds == null
 ' >/dev/null
 
 pipeline=$'91 2 Ss bash\n92 91 S sudo\n93 92 S sudo\n94 93 S tail'
@@ -337,5 +338,31 @@ PACKRAT_FAKE_STEPS=9 PACKRAT_HEALTH_HEARTBEAT=1 PACKRAT_FAKE_SAMPLES="$packet_sa
     and .[5].issues == ["health_unreachable"]
     and all(.[] | select(.event == "heartbeat"); .issues == ["pcap_buffer_drops"])
 ' >/dev/null
+
+traffic_samples=$(jq -cn --argjson scopes "$scopes" '
+    ($scopes[0] | .pcap_buffer_drops = 0 | .packets_total = 10) as $first
+    | ($first | .capture_id = $scopes[2].capture_id) as $second
+    | [$first,$first,$first,$first,($first | .packets_total = 11),$first,
+       $second,($second | del(.packets_total)),$second,$second,$second,null,$second]
+')
+PACKRAT_FAKE_STEPS=13 PACKRAT_HEALTH_INTERVAL=10 PACKRAT_HEALTH_HEARTBEAT=0 \
+    PACKRAT_EXPECT_TRAFFIC_SECS=20 PACKRAT_FAKE_SAMPLES="$traffic_samples" bash "$watch" | jq -se '
+    map(.issues) == [[],["capture_no_packet_progress"],[],["capture_packet_counter_regressed"],
+        [],["capture_packet_counter_unavailable"],[],["capture_no_packet_progress"],["health_unreachable"],[]]
+    and .[1].packets_without_progress_seconds >= 20 and .[1].packets_since_last_poll == 0
+    and .[2].packets_without_progress_seconds == 0 and .[2].packets_since_last_poll == 1
+    and .[3].packets_since_last_poll == null and .[4].packets_without_progress_seconds == null
+    and .[6].packets_without_progress_seconds == null and .[9].packets_without_progress_seconds == null
+    and all(.[]; .expect_traffic_seconds == 20)
+' >/dev/null
+PACKRAT_FAKE_STEPS=6 PACKRAT_HEALTH_INTERVAL=10 PACKRAT_HEALTH_HEARTBEAT=0 \
+    PACKRAT_FAKE_SAMPLES="$traffic_samples" bash "$watch" | jq -se '
+    length == 1 and .[0].issues == [] and .[0].expect_traffic_seconds == 0
+' >/dev/null
+for invalid in -1 08 1000000; do
+    status=0
+    PACKRAT_EXPECT_TRAFFIC_SECS="$invalid" bash "$watch" --once >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
+done
 
 printf '%s\n' 'Packrat health watcher tests passed'

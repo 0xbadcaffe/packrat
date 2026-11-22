@@ -7,6 +7,7 @@ usage() {
         'PACKRAT_HEALTH_HEARTBEAT (300 seconds between unchanged reports; 0 disables),' \
         'PACKRAT_HEALTH_STATE_FILE (optional absolute path refreshed every poll),' \
         'PACKRAT_EXPECT_INTERFACE (optional expected live capture interface),' \
+        'PACKRAT_EXPECT_TRAFFIC_SECS (warn after this long without packet counter progress; 0 disables),' \
         'PACKRAT_ALERT_SESSION (optional tmux session),' \
         'PACKRAT_DISK_PATH (defaults to the alert log directory, or / without a log path),' \
         'PACKRAT_DISK_SUDO (1 retries an inaccessible disk path with noninteractive sudo),' \
@@ -31,6 +32,7 @@ interval=${PACKRAT_HEALTH_INTERVAL:-15}
 heartbeat=${PACKRAT_HEALTH_HEARTBEAT:-300}
 state_file=${PACKRAT_HEALTH_STATE_FILE:-}
 expected_interface=${PACKRAT_EXPECT_INTERFACE:-}
+expect_traffic=${PACKRAT_EXPECT_TRAFFIC_SECS:-0}
 alert_session=${PACKRAT_ALERT_SESSION:-}
 alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
 alert_log=${PACKRAT_ALERT_LOG:-}
@@ -52,6 +54,10 @@ if [[ -n $state_file && ( $state_file != /* || $state_file == */ ) ]]; then
 fi
 if [[ ${#expected_interface} -gt 256 || $expected_interface == *[[:cntrl:]]* ]]; then
     printf '%s\n' 'Invalid PACKRAT_EXPECT_INTERFACE value.' >&2
+    exit 2
+fi
+if [[ ! $expect_traffic =~ ^(0|[1-9][0-9]{0,5})$ ]]; then
+    printf '%s\n' 'PACKRAT_EXPECT_TRAFFIC_SECS must be between 0 and 999999.' >&2
     exit 2
 fi
 for dependency in curl jq df; do
@@ -205,7 +211,7 @@ read_health() {
         --arg alert_log "$alert_log" --arg expected_interface "$expected_interface" --arg disk_path "$disk_path" \
         --argjson verify_open "$alert_verify_open" \
         --argjson disk "$disk" --argjson min_free "$min_free" --argjson require_archive "$require_archive" \
-        --argjson baseline "$baseline" '
+        --argjson baseline "$baseline" --argjson clock "$SECONDS" --argjson expect_traffic "$expect_traffic" '
         (try fromjson catch null) as $health |
         (if ($health|type) == "object" then $health else {} end) as $h |
         ($h.capture_run_id | if type == "string" and test("^[0-9a-f]{16}$") then . else null end) as $run |
@@ -222,6 +228,12 @@ read_health() {
            and (.capacity | type == "number") and .capacity > 0 and .depth >= 0 and .depth <= .capacity
            then . else null end) as $queue |
         ($h.status == "ok" and $h.telemetry_fresh == true and $h.capture_active == true) as $usable |
+        ($usable and $run != null and $capture != null and $packets != null) as $has_counter |
+        ($has_counter and $baseline.packets.run == $run and $baseline.packets.capture == $capture) as $same_counter |
+        (if $same_counter and $packets == $baseline.packets.total
+         then ($baseline.packets.last_progress // $clock) else $clock end) as $last_progress |
+        (if $same_counter and $packets >= $baseline.packets.total
+         then ([0, $clock - $last_progress] | max) else null end) as $no_progress |
         ($h.archive_enabled | if type == "boolean" then . else null end) as $archive_enabled |
         ($h.archive_paused | if type == "boolean" then . else null end) as $archive_paused |
         {
@@ -234,11 +246,11 @@ read_health() {
             telemetry_fresh: ($h.telemetry_fresh // false),
             packets_total: (if $usable then $packets else null end),
             packets_since_last_poll: (
-                if $usable and $run != null and $capture != null and $packets != null
-                   and $baseline.packets.run == $run and $baseline.packets.capture == $capture
-                   and $packets >= $baseline.packets.total
+                if $same_counter and $packets >= $baseline.packets.total
                 then $packets - $baseline.packets.total else null end
             ),
+            packets_without_progress_seconds: $no_progress,
+            expect_traffic_seconds: $expect_traffic,
             pcap_buffer_drops: $drops,
             capture_queue: $queue,
             pcap_buffer_drops_delta: (
@@ -264,6 +276,12 @@ read_health() {
                     (if $usable and $expected_interface != "" then
                         if $interface == null then "capture_interface_unavailable"
                         elif $interface != $expected_interface then "capture_interface_mismatch"
+                        else empty end
+                     else empty end),
+                    (if $usable and $expect_traffic > 0 then
+                        if $has_counter | not then "capture_packet_counter_unavailable"
+                        elif $same_counter and $packets < $baseline.packets.total then "capture_packet_counter_regressed"
+                        elif $no_progress != null and $no_progress >= $expect_traffic then "capture_no_packet_progress"
                         else empty end
                      else empty end),
                     (if $h.alert_save_failed == true then "alert_save_failed"
@@ -293,8 +311,9 @@ read_health() {
                     else $baseline.drops end
                 ),
                 packets: (
-                    if $usable and $run != null and $capture != null and $packets != null
-                    then {run:$run,capture:$capture,total:$packets} else null end
+                    if $has_counter
+                    then {run:$run,capture:$capture,total:$packets,last_progress:$last_progress}
+                    else null end
                 )
             }
         }'
