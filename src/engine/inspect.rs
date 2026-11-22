@@ -59,6 +59,7 @@ impl AnalysisCore {
                 "Periodic fixed-size traffic" | "TCP payload after reset" | "Conflicting TCP retransmission"
                 | "Industrial state-changing command" | "Critical industrial control command"
                 | "Cleartext HTTP Basic authorization"
+                | "Anonymous FTP login accepted"
             ) {
                 AlertFlow::from_packet(pkt)
             } else {

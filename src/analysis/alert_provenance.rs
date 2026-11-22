@@ -141,6 +141,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify where TLS terminates, review who could read the captured traffic, and rotate exposed credentials as appropriate.",
         ),
         (
+            "IDS", "Anonymous FTP login accepted", "ftp.anonymous_login_accepted", 1, Correlated,
+            "Verify the anonymous FTP policy and review server logs for file listings, reads, or writes.",
+        ),
+        (
             "TLS", "SSL 3.0 selected", "tls.ssl30_selected", 1, DirectObservation,
             "Verify the server's minimum protocol version and identify the client or intermediary requiring SSL 3.0.",
         ),

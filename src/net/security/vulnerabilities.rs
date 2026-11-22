@@ -31,19 +31,6 @@ impl SecurityEngine {
             }
         }
 
-        // Anonymous FTP
-        if dst_port == 21 || src_port == 21 {
-            let payload = Self::ascii_payload(bytes, 54);
-            let lower = payload.to_lowercase();
-            if lower.contains("user anonymous") || lower.contains("user ftp") {
-                self.push_vuln(VulnHit {
-                    pkt_no: pkt.no,
-                    kind: "Anonymous FTP Login",
-                    detail: format!("FTP anonymous login attempt from {}", pkt.src),
-                });
-            }
-        }
-
     }
 
     // ─── Repeated Service Observations ────────────────────────────────────────

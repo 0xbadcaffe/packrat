@@ -286,3 +286,5 @@ mod smb_anonymous_cases;
 mod tls_selection_cases;
 #[path = "security_policy/http_exposure_cases.rs"]
 mod http_exposure_cases;
+#[path = "security_policy/ftp_control_cases.rs"]
+mod ftp_control_cases;

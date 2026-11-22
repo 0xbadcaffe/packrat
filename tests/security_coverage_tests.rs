@@ -9,6 +9,10 @@ struct CoverageGroup {
 
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
+        signatures: &["Anonymous FTP login accepted"],
+        positive_test: "ftp_anonymous_login_requires_scoped_success",
+    },
+    CoverageGroup {
         signatures: &["Cleartext HTTP Basic authorization"],
         positive_test: "basic_authorization_requires_a_wire_request_and_redacts_credentials",
     },
@@ -214,6 +218,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy/smb_anonymous_cases.rs"),
     include_str!("security_policy/tls_selection_cases.rs"),
     include_str!("security_policy/http_exposure_cases.rs"),
+    include_str!("security_policy/ftp_control_cases.rs"),
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("arp_binding_tests.rs"),
     include_str!("dns_transaction_tests.rs"),

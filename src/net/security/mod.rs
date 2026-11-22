@@ -89,6 +89,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "IPv6 fragment reassembly rejected",
     "HTTP request smuggling ambiguity",
     "Cleartext HTTP Basic authorization",
+    "Anonymous FTP login accepted",
     "Critical industrial control command",
     "Industrial state-changing command",
     "DNS reply without observed query",
@@ -123,6 +124,7 @@ mod engine;
 mod findings;
 pub use findings::{ArpFinding, DetectionBatch, IdsFinding};
 mod fragments;
+mod ftp_control;
 mod http_policy;
 mod http_tls;
 mod identities;
@@ -175,6 +177,7 @@ pub struct SecurityEngine {
     beacon_flows: HashMap<BehaviorFlowKey, BeaconState>,
     exfil_flows: HashMap<ExfilKey, ExfilState>,
     admin_fanout: admin_fanout::AdminFanout,
+    ftp_control: ftp_control::FtpControl,
     ntlm_fanout: HashMap<(String, ServiceScope), NtlmFanoutState>,
     dhcp_scopes: HashMap<ServiceScope, DhcpScopeState>,
     ipv6_fragments: Ipv6FragmentReassembler,

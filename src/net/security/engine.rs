@@ -30,6 +30,7 @@ impl SecurityEngine {
             beacon_flows: HashMap::new(),
             exfil_flows: HashMap::new(),
             admin_fanout: Default::default(),
+            ftp_control: Default::default(),
             ntlm_fanout: HashMap::new(),
             dhcp_scopes: HashMap::new(),
             ipv6_fragments: Ipv6FragmentReassembler::default(),
@@ -64,6 +65,7 @@ impl SecurityEngine {
         self.beacon_flows.clear();
         self.exfil_flows.clear();
         self.admin_fanout.clear();
+        self.ftp_control.clear();
         self.ntlm_fanout.clear();
         self.dhcp_scopes.clear();
         self.ipv6_fragments.clear();
@@ -126,6 +128,7 @@ impl SecurityEngine {
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
         self.check_vuln(pkt);
+        self.check_ftp_control(pkt);
         self.check_brute_force(pkt);
         self.check_http(pkt);
         self.check_tls(pkt);
