@@ -2,10 +2,30 @@
 
 #[path = "support/http.rs"]
 mod support;
+#[path = "support/dns_replay.rs"]
+mod dns_replay;
 
 use packrat_tui::export::pcapng::PcapNgWriter;
 use serde_json::{Value, json};
-use std::{path::Path, process::Command};
+use std::{path::Path, process::{Command, Output}};
+
+fn run_suite(manifest: &Path) -> Output {
+    let analyzer = Path::new(env!("CARGO_BIN_EXE_packrat-analyze"));
+    let existing_path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(
+        std::iter::once(analyzer.parent().unwrap().to_path_buf())
+            .chain(std::env::split_paths(&existing_path)),
+    )
+    .unwrap();
+    let suite = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/packrat-replay-suite.sh");
+    Command::new("bash")
+        .arg(suite)
+        .arg(manifest)
+        .current_dir("/")
+        .env("PATH", path)
+        .output()
+        .unwrap()
+}
 
 fn write_fixture(path: &Path, distinct_responses: bool) {
     let mut capture = PcapNgWriter::create(path).unwrap();
@@ -47,23 +67,7 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
             }
         ]
     });
-    let analyzer = Path::new(env!("CARGO_BIN_EXE_packrat-analyze"));
-    let existing_path = std::env::var_os("PATH").unwrap_or_default();
-    let path = std::env::join_paths(
-        std::iter::once(analyzer.parent().unwrap().to_path_buf())
-            .chain(std::env::split_paths(&existing_path)),
-    )
-    .unwrap();
-    let suite = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/packrat-replay-suite.sh");
-    let run = || {
-        Command::new("bash")
-            .arg(&suite)
-            .arg(&manifest)
-            .current_dir("/")
-            .env("PATH", &path)
-            .output()
-            .unwrap()
-    };
+    let run = || run_suite(&manifest);
 
     std::fs::write(&manifest, serde_json::to_vec(&labels).unwrap()).unwrap();
     let passing = run();
@@ -108,4 +112,54 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
         json!({"http.unauthorized_burst": 1})
     );
     assert_eq!(report["cases"][1]["verdict"], "failed");
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_data() {
+    use dns_replay::Scenario;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    dns_replay::write_fixture(&root.join("equivalent.pcapng"), Scenario::Equivalent);
+    dns_replay::write_fixture(&root.join("answer.pcapng"), Scenario::ChangedAnswer);
+    dns_replay::write_fixture(&root.join("wire.pcapng"), Scenario::ChangedWire);
+    let manifest = root.join("dns.json");
+    let labels = json!({
+        "version": 1, "strict": true,
+        "cases": [
+            {"name": "same answer, different TTL and case", "capture": "equivalent.pcapng",
+             "expect_counts": {"dns.changed_answers": 0, "dns.changed_wire_reply": 0}},
+            {"name": "answer content changed", "capture": "answer.pcapng",
+             "expect_counts": {"dns.changed_answers": 1, "dns.changed_wire_reply": 0},
+             "opening_frames": {"dns.changed_answers": [4]}},
+            {"name": "unsupported record changed", "capture": "wire.pcapng",
+             "expect_counts": {"dns.changed_answers": 0, "dns.changed_wire_reply": 1},
+             "opening_frames": {"dns.changed_wire_reply": [4]}}
+        ]
+    });
+    std::fs::write(&manifest, labels.to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], 3);
+    assert_eq!(report["cases"][0]["summary"]["alerts_opened"], 0);
+
+    for (capture, rule, severity, confidence) in [
+        ("answer.pcapng", "dns.changed_answers", "MEDIUM", "correlated"),
+        ("wire.pcapng", "dns.changed_wire_reply", "LOW", "heuristic"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+            .arg("--alerts-only").arg(root.join(capture)).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let alerts: Vec<Value> = String::from_utf8(output.stdout).unwrap().lines()
+            .map(|row| serde_json::from_str::<Value>(row).unwrap())
+            .filter(|row| row["type"] == "alert").collect();
+        assert_eq!(alerts.len(), 1);
+        let alert = &alerts[0]["alert"];
+        assert_eq!(alert["provenance"]["rule_id"], rule);
+        assert_eq!(alert["provenance"]["confidence"], confidence);
+        assert_eq!(alert["severity"], severity);
+        assert_eq!(alert["packet_refs"], json!([1, 2, 4]));
+    }
 }
