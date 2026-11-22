@@ -80,31 +80,36 @@ impl App {
 
     /// Save the current project to `path`.  Marks the workspace clean.
     pub fn save_project(&mut self, path: &str, name: &str, mode: ProjectSaveMode) {
-        let state = match self.snapshot_project(name, mode.clone()) {
-            Ok(state) => state,
-            Err(error) => {
-                self.set_status(error);
-                return;
-            }
-        };
-        let p = std::path::Path::new(path);
-        match project_store::save(&state, p) {
-            Ok(()) => {
-                let _ = project_store::add_to_recent(
-                    name,
-                    p,
-                    state.metadata.description.as_deref(),
-                    mode,
-                );
-                self.current_project_name = Some(name.to_string());
-                self.current_project_path = Some(path.to_string());
-                self.project_dirty = false;
-                self.set_status(format!("Project saved: {name}"));
-            }
-            Err(e) => {
-                self.set_status(format!("Save failed: {e}"));
-            }
+        if let Err(error) = self.persist_project(path, name, mode, |state, path| {
+            project_store::save(state, path)
+        }) {
+            self.set_status(error);
         }
+    }
+
+    pub(crate) fn create_project(&mut self, path: &str, name: &str, mode: ProjectSaveMode) {
+        match self.persist_project(path, name, mode, project_store::create) {
+            Ok(()) => self.project_manager_open = false,
+            Err(error) => self.project_manager.status = Some(error),
+        }
+    }
+
+    fn persist_project(
+        &mut self,
+        path: &str,
+        name: &str,
+        mode: ProjectSaveMode,
+        write: impl FnOnce(&crate::model::project::ProjectState, &std::path::Path) -> anyhow::Result<()>,
+    ) -> Result<(), String> {
+        let state = self.snapshot_project(name, mode.clone())?;
+        let p = std::path::Path::new(path);
+        write(&state, p).map_err(|error| format!("Save failed: {error}"))?;
+        let _ = project_store::add_to_recent(name, p, state.metadata.description.as_deref(), mode);
+        self.current_project_name = Some(name.to_string());
+        self.current_project_path = Some(path.to_string());
+        self.project_dirty = false;
+        self.set_status(format!("Project saved: {name}"));
+        Ok(())
     }
 
     /// Load a project from `path`, restoring notebook, tags, filter, host tags.

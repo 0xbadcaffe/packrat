@@ -72,11 +72,6 @@ pub(super) fn handle_project_manager(app: &mut App, key: KeyEvent) {
                 }
                 _ => {}
             }
-            // Auto-fill path from name if path is empty
-            if pm.new_path.is_empty() && !pm.new_name.is_empty() {
-                let default = project_store::default_project_path(&pm.new_name);
-                pm.new_path = default.to_string_lossy().to_string();
-            }
             return;
         }
 
@@ -95,6 +90,14 @@ pub(super) fn handle_project_manager(app: &mut App, key: KeyEvent) {
                     }
                 };
             }
+            KeyCode::BackTab => {
+                pm.active_field = match pm.active_field {
+                    PmField::Name => PmField::Name,
+                    PmField::Desc => PmField::Name,
+                    PmField::Path => PmField::Desc,
+                    PmField::Mode => PmField::Path,
+                };
+            }
             KeyCode::Enter | KeyCode::Char('e') => {
                 if pm.active_field == PmField::Mode {
                     // Execute create
@@ -103,16 +106,8 @@ pub(super) fn handle_project_manager(app: &mut App, key: KeyEvent) {
                     } else {
                         let name = pm.new_name.clone();
                         let mode = pm.new_mode.clone();
-                        let path = if pm.new_path.is_empty() {
-                            project_store::default_project_path(&name)
-                                .to_string_lossy()
-                                .to_string()
-                        } else {
-                            pm.new_path.clone()
-                        };
-                        // close manager then save
-                        app.project_manager_open = false;
-                        app.save_project(&path, &name, mode);
+                        let path = pm.effective_new_path();
+                        app.create_project(&path, &name, mode);
                     }
                 } else {
                     pm.editing = true;

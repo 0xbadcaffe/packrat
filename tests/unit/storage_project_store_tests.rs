@@ -15,6 +15,19 @@ fn atomic_case_replacement_is_private_and_round_trips() {
 }
 
 #[test]
+fn creation_does_not_replace_an_existing_case() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("case.json");
+    let first = ProjectState::new("first", ProjectSaveMode::Lightweight);
+    let second = ProjectState::new("second", ProjectSaveMode::Portable);
+    create(&first, &path).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    assert!(create(&second, &path).unwrap_err().to_string().contains("already exists"));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn failed_serialization_and_size_limits_leave_previous_case_intact() {
     struct Fails;
     impl serde::Serialize for Fails {
@@ -29,9 +42,9 @@ fn failed_serialization_and_size_limits_leave_previous_case_intact() {
     let path = directory.path().join("case.json");
     save(&ProjectState::new("keep", ProjectSaveMode::Lightweight), &path).unwrap();
     let original = std::fs::read(&path).unwrap();
-    assert!(atomic_json_write(&Fails, &path, MAX_PROJECT_BYTES).is_err());
+    assert!(atomic_json_write(&Fails, &path, MAX_PROJECT_BYTES, true).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), original);
-    assert!(atomic_json_write(&vec![0; 100], &path, 10).is_err());
+    assert!(atomic_json_write(&vec![0; 100], &path, 10, true).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), original);
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
 }

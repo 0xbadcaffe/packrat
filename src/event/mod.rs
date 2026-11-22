@@ -2,7 +2,6 @@ use crate::app::GraphUiModeState;
 use crate::app::{App, InvestigationView, ObjectsSubTab, SecuritySubTab};
 use crate::model::project::ProjectSaveMode;
 use crate::scan::{ScanField, ScanMode};
-use crate::storage::project_store;
 use crate::tabs::{Tab, Workspace};
 use crate::ui::autopsy_overlay::AutopsyPane;
 use crate::ui::project_manager::{PmField, PmTab};

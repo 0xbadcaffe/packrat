@@ -71,6 +71,16 @@ impl ProjectManagerState {
     pub fn is_text_editing(&self) -> bool {
         self.editing || self.open_editing
     }
+
+    pub(crate) fn effective_new_path(&self) -> String {
+        if self.new_path.is_empty() && !self.new_name.is_empty() {
+            crate::storage::project_store::default_project_path(&self.new_name)
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            self.new_path.clone()
+        }
+    }
 }
 
 // ─── Draw ────────────────────────────────────────────────────────────────────
@@ -259,7 +269,9 @@ fn draw_new(f: &mut Frame, app: &App, area: Rect) {
 
     draw_field(f, " Name ", &pm.new_name, name_active && pm.editing, name_active, fields[0]);
     draw_field(f, " Description ", &pm.new_desc, desc_active && pm.editing, desc_active, fields[1]);
-    draw_field(f, " Path ", &pm.new_path, path_active && pm.editing, path_active, fields[2]);
+    let path_editing = path_active && pm.editing;
+    let path = if path_editing { pm.new_path.clone() } else { pm.effective_new_path() };
+    draw_field(f, " Path ", &path, path_editing, path_active, fields[2]);
 
     // Mode selector
     let mode_color = if mode_active { C_CYAN() } else { C_FG2() };

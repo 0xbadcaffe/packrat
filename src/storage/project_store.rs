@@ -10,7 +10,9 @@ use crate::model::project::{ProjectSaveMode, ProjectState, RecentProject, SCHEMA
 
 const MAX_PROJECT_BYTES: u64 = 512 * 1024 * 1024;
 
-fn atomic_json_write(value: &impl serde::Serialize, path: &Path, max_bytes: u64) -> Result<()> {
+fn atomic_json_write(
+    value: &impl serde::Serialize, path: &Path, max_bytes: u64, replace: bool,
+) -> Result<()> {
     let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)
@@ -23,7 +25,17 @@ fn atomic_json_write(value: &impl serde::Serialize, path: &Path, max_bytes: u64)
     }
     anyhow::ensure!(pending.as_file().metadata()?.len() <= max_bytes, "Project exceeds size limit");
     pending.as_file().sync_all()?;
-    pending.persist(path).with_context(|| format!("cannot replace project: {}", path.display()))?;
+    if replace {
+        pending.persist(path).with_context(|| format!("cannot replace project: {}", path.display()))?;
+    } else {
+        pending.persist_noclobber(path).map_err(|error| {
+            if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+                anyhow::anyhow!("Project already exists; choose an unused path")
+            } else {
+                anyhow::Error::new(error).context(format!("cannot create project: {}", path.display()))
+            }
+        })?;
+    }
     #[cfg(unix)]
     std::fs::File::open(parent)?.sync_all()?;
     Ok(())
@@ -32,7 +44,12 @@ fn atomic_json_write(value: &impl serde::Serialize, path: &Path, max_bytes: u64)
 /// Save a project to `path` as pretty-printed JSON.
 pub fn save(state: &ProjectState, path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
-    atomic_json_write(state, path, MAX_PROJECT_BYTES)
+    atomic_json_write(state, path, MAX_PROJECT_BYTES, true)
+}
+
+/// Create a new project without replacing an existing case.
+pub fn create(state: &ProjectState, path: &Path) -> Result<()> {
+    atomic_json_write(state, path, MAX_PROJECT_BYTES, false)
 }
 
 /// Load a project from `path`.  Performs lightweight schema migration.
@@ -88,7 +105,7 @@ pub fn add_to_recent(
     list.truncate(20);
 
     if let Some(p) = recent_path() {
-        atomic_json_write(&list, &p, MAX_PROJECT_BYTES)?;
+        atomic_json_write(&list, &p, MAX_PROJECT_BYTES, true)?;
     }
     Ok(())
 }

@@ -172,6 +172,45 @@ async fn project_manager_esc_closes() {
     assert!(!app.project_manager_open);
 }
 
+#[test]
+fn new_project_previews_the_full_name_and_keeps_an_existing_case() {
+    use packrat_tui::ui::project_manager::{PmField, PmTab};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let mut app = App::new_for_test();
+    let send = |app: &mut App, code| event::handle(app, key(code));
+    send(&mut app, KeyCode::Char('P'));
+    send(&mut app, KeyCode::Tab);
+    send(&mut app, KeyCode::Enter);
+    for ch in "periodic alert".chars() {
+        send(&mut app, KeyCode::Char(ch));
+    }
+    send(&mut app, KeyCode::Enter);
+    assert!(app.project_manager.new_path.is_empty());
+    let mut terminal = Terminal::new(TestBackend::new(180, 40)).unwrap();
+    terminal.draw(|frame| packrat_tui::ui::draw(frame, &app)).unwrap();
+    assert!(terminal.backend().to_string().contains("periodic_alert.packrat.json"));
+
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("previous.json");
+    std::fs::write(&path, b"previous evidence").unwrap();
+    send(&mut app, KeyCode::Tab);
+    send(&mut app, KeyCode::Tab);
+    send(&mut app, KeyCode::Enter);
+    for ch in path.to_string_lossy().chars() {
+        send(&mut app, KeyCode::Char(ch));
+    }
+    send(&mut app, KeyCode::Enter);
+    send(&mut app, KeyCode::Tab);
+    send(&mut app, KeyCode::Enter);
+    assert!(app.project_manager_open);
+    assert_eq!(app.project_manager.tab, PmTab::New);
+    assert!(app.project_manager.status.as_deref().unwrap().contains("already exists"));
+    assert_eq!(std::fs::read(path).unwrap(), b"previous evidence");
+    send(&mut app, KeyCode::BackTab);
+    assert_eq!(app.project_manager.active_field, PmField::Path);
+}
+
 #[tokio::test]
 async fn help_key_opens_help() {
     let mut app = App::new_for_test();
