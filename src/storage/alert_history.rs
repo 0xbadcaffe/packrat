@@ -44,6 +44,7 @@ pub struct AlertHistoryEntry {
     pub revision: Option<u16>,
     pub confidence: Option<EvidenceConfidence>,
     pub verify: Option<String>,
+    pub review_limitations: Vec<&'static str>,
 }
 
 pub fn recent_alerts(
@@ -87,6 +88,16 @@ pub fn recent_alerts_across_logs(
                 continue;
             }
             let evidence_frame_count = alert.evidence_frame_numbers().len();
+            let mut review_limitations = Vec::new();
+            if alert.capture_id.is_none() {
+                review_limitations.push("capture_scope_not_recorded");
+            }
+            if alert.provenance.is_none() {
+                review_limitations.push("rule_provenance_not_recorded");
+            }
+            if evidence_frame_count == 0 {
+                review_limitations.push("no_packet_references");
+            }
             latest.push(AlertHistoryEntry {
                 session_id: record.session_id,
                 capture_id: alert.capture_id,
@@ -103,6 +114,7 @@ pub fn recent_alerts_across_logs(
                 revision: alert.provenance.as_ref().map(|rule| rule.revision),
                 confidence: alert.provenance.as_ref().map(|rule| rule.confidence),
                 verify: alert.provenance.as_ref().map(|rule| limited(&rule.verification_hint, 240)),
+                review_limitations,
             });
             if latest.len() == limit {
                 return Ok(latest);

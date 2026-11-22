@@ -41,6 +41,7 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     assert_eq!(report[0]["evidence_frame_count"], 2);
     assert_eq!(report[0]["hit_count"], 2);
     assert_eq!(report[0]["rule_id"], "scan.horizontal");
+    assert_eq!(report[0]["review_limitations"], json!([]));
     assert!(report[0].get("packet_refs").is_none());
     assert!(report[0].get("bytes").is_none());
     assert_eq!(report[1]["session_id"], "session-b");
@@ -53,6 +54,31 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     assert!(scoped.status.success());
     assert_eq!(serde_json::from_slice::<Vec<Value>>(&scoped.stdout).unwrap(), report[2..]);
     assert!(!run(&["--limit", "513"]).status.success());
+}
+
+#[test]
+fn legacy_history_marks_unverified_scope_without_inheriting_modern_rule_provenance() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("alerts.jsonl");
+    let mut alerts = AlertCenter::default();
+    alerts.record(0, "IDS", "CRITICAL", "Conflicting DNS responses", "legacy finding");
+    let mut alert = serde_json::to_value(&alerts.items[0]).unwrap();
+    alert.as_object_mut().unwrap().remove("provenance");
+    let record = json!({
+        "schema_version":1, "record_type":"alert", "session_id":"legacy", "alert":alert
+    });
+    std::fs::write(&log, format!("{record}\n")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--alerts").arg(log).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report[0]["severity"], "CRITICAL");
+    assert_eq!(report[0]["rule_id"], Value::Null);
+    assert_eq!(report[0]["verify"], Value::Null);
+    assert_eq!(report[0]["review_limitations"], json!([
+        "capture_scope_not_recorded", "rule_provenance_not_recorded", "no_packet_references"
+    ]));
 }
 
 #[test]
