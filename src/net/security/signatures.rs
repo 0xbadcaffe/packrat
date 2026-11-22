@@ -107,9 +107,9 @@ impl SecurityEngine {
             );
         }
 
+        let signature_payload = signature_payload(pkt, reassembled);
         // ── Log4Shell ───────────────────────────────────────────────────────
-        if lookup_payload(pkt, reassembled)
-            .is_some_and(|payload| Self::contains_str_ci(payload, b"${jndi:"))
+        if signature_payload.is_some_and(|payload| Self::contains_str_ci(payload, b"${jndi:"))
         {
             emit(
                 IdsAlert {
@@ -125,14 +125,16 @@ impl SecurityEngine {
             );
         }
 
-        // ── Shellcode NOP sled ───────────────────────────────────────────────
-        if Self::nop_sled_16(bytes) {
+        if signature_payload.is_some_and(Self::nop_sled_16) {
             emit(
                 IdsAlert {
                     pkt_no: pkt.no,
-                    signature: "Shellcode NOP sled",
-                    severity: Severity::High,
-                    detail: format!("16+ consecutive 0x90 bytes from {}", pkt.src),
+                    signature: "Repeated NOP-like byte pattern",
+                    severity: Severity::Low,
+                    detail: format!(
+                        "Transport payload from {} to {} contained at least 16 consecutive 0x90 bytes; executable content and execution are unverified",
+                        pkt.src, pkt.dst,
+                    ),
                 },
                 None,
             );
@@ -233,7 +235,7 @@ impl SecurityEngine {
     }
 }
 
-fn lookup_payload(pkt: &Packet, reassembled: bool) -> Option<&[u8]> {
+fn signature_payload(pkt: &Packet, reassembled: bool) -> Option<&[u8]> {
     if reassembled {
         let transport = pkt.bytes.as_slice();
         return match pkt.protocol.as_str() {

@@ -33,7 +33,7 @@ fn fixture(name: &str) -> Packet {
         "Log4Shell (CVE-2021-44228)" => {
             ipv4_tcp_packet(1, 100, 0x18, b"${jndi:ldap://example.test/x}")
         }
-        "Shellcode NOP sled" => packet("TCP", 4444, "", vec![0x90; 20]),
+        "Repeated NOP-like byte pattern" => ipv4_tcp_packet(1, 100, 0x18, &[0x90; 20]),
         "Directory Traversal" => packet("HTTP", 80, "", b"../../../../../../etc/passwd".to_vec()),
         "SQL Injection Probe" => {
             packet("HTTP", 80, "", b"UNION SELECT password FROM users".to_vec())
@@ -300,3 +300,5 @@ mod lldp_identity_cases;
 mod stp_indication_cases;
 #[path = "security_policy/ndp_hop_limit_cases.rs"]
 mod ndp_hop_limit_cases;
+#[path = "security_policy/payload_byte_run_cases.rs"]
+mod payload_byte_run_cases;

@@ -110,7 +110,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "TLS 1.1 selected",
     "RC4 selected",
     "Log4Shell (CVE-2021-44228)",
-    "Shellcode NOP sled",
+    "Repeated NOP-like byte pattern",
     "NBNS WPAD address reply",
     "Directory Traversal",
     "SQL Injection Probe",

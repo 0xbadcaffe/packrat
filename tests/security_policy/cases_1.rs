@@ -2,7 +2,7 @@ use super::*;
 
 #[rstest]
 #[case("Log4Shell (CVE-2021-44228)")]
-#[case("Shellcode NOP sled")]
+#[case("Repeated NOP-like byte pattern")]
 #[case("Directory Traversal")]
 #[case("SQL Injection Probe")]
 #[case("XSS Probe")]

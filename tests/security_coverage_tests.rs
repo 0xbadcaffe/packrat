@@ -210,7 +210,7 @@ const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
         signatures: &[
             "Log4Shell (CVE-2021-44228)",
-            "Shellcode NOP sled",
+            "Repeated NOP-like byte pattern",
             "Directory Traversal",
             "SQL Injection Probe",
             "XSS Probe",

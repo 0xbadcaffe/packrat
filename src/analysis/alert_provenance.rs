@@ -45,6 +45,10 @@ pub(super) const RULES: &[RuleDefinition] = {
     use EvidenceConfidence::{Correlated, DirectObservation, Heuristic};
     &[
         (
+            "IDS", "Repeated NOP-like byte pattern", "payload.nop_like_byte_run", 1, Heuristic,
+            "Inspect the retained transport payload and expected application format; a repeated byte alone does not identify executable content.",
+        ),
+        (
             "ARP", "ARP binding changed", "arp.reply_binding_change", 2, Correlated,
             "Compare both ARP replies with DHCP leases, failover events, and the affected host's neighbor table.",
         ),

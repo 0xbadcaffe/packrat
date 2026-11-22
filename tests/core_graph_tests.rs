@@ -73,10 +73,10 @@ fn detection_correlation_continues_after_alert_retention_rollover() {
         core.analyze(&packets::tcp(no, 100, 0x18, &[0x90; 16]));
     }
     assert_eq!(core.security.ids_alerts.len(), 1000);
-    let sled_alerts = core.operator_graph.all_nodes().filter(|node| {
-        matches!(&node.data, GraphNodeData::Alert(alert) if alert.signature == "Shellcode NOP sled")
+    let pattern_alerts = core.operator_graph.all_nodes().filter(|node| {
+        matches!(&node.data, GraphNodeData::Alert(alert) if alert.signature == "Repeated NOP-like byte pattern")
     }).count();
-    assert_eq!(sled_alerts, 1002);
+    assert_eq!(pattern_alerts, 1002);
     assert!(
         core.operator_graph
             .all_nodes()
