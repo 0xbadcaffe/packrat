@@ -3,6 +3,51 @@ use packrat_tui::engine::AnalysisCore;
 use packrat_tui::net::packet::CaptureMetadata;
 
 const BURST: &str = "DHCP client identity burst";
+const SERVER_CHANGE: &str = "DHCP server identity changed";
+
+fn server_reply(frame: u64, kind: u8, observed_mac: u8, server: Option<u8>, timestamp: f64) -> Packet {
+    let mut packet = dhcp_packet(frame, kind, [2, 0, 0, 0, 0, observed_mac], [2; 6],
+        server.map(|last_octet| [10, 0, 0, last_octet]));
+    packet.timestamp = timestamp;
+    packet
+}
+
+#[test]
+fn dhcp_server_change_retains_both_replies_and_uses_advertised_identifier() {
+    let mut core = AnalysisCore::default();
+    core.analyze(&server_reply(1, 2, 1, Some(1), 1.0));
+    core.analyze(&server_reply(2, 2, 2, Some(1), 2.0));
+    core.analyze(&server_reply(3, 5, 3, None, 3.0));
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != SERVER_CHANGE));
+
+    core.analyze(&server_reply(4, 2, 2, Some(2), 4.0));
+    core.analyze(&server_reply(5, 5, 5, Some(2), 5.0));
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == SERVER_CHANGE).collect();
+    assert_eq!(alerts.len(), 1);
+    let alert = alerts[0];
+    assert_eq!(alert.packet_refs, [2, 4]);
+    assert_eq!(alert.severity, "MEDIUM");
+    assert!(alert.detail.contains("10.0.0.2") && alert.detail.contains("10.0.0.1"));
+    assert!(alert.detail.contains("Authorization is unknown"));
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "dhcp.new_server_identifier");
+}
+
+#[test]
+fn dhcp_server_comparison_ignores_old_and_other_vlan_observations() {
+    let mut engine = SecurityEngine::default();
+    engine.update(&server_reply(1, 2, 1, Some(1), 1.0));
+    let mut other = server_reply(2, 2, 2, Some(2), 2.0);
+    other.outer_vlan_id = Some(100);
+    engine.update(&other);
+    engine.update(&server_reply(3, 2, 3, Some(3), 3602.0));
+    engine.update(&server_reply(4, 2, 4, Some(4), 2.0));
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != SERVER_CHANGE));
+
+    let result = engine.inspect(&server_reply(5, 5, 5, Some(4), 3603.0));
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == SERVER_CHANGE).unwrap();
+    assert_eq!(finding.related_packets, [3]);
+    assert!(finding.alert.detail.contains("DHCP ACK"));
+}
 
 fn discovery(frame: u64, identity: u8, timestamp: f64) -> Packet {
     let mac = [2, 0, 0, 0, 0, identity];

@@ -232,7 +232,8 @@ pub(super) struct NtlmFanoutState {
 
 #[derive(Debug, Default)]
 pub(super) struct DhcpScopeState {
-    pub(super) servers: HashSet<Vec<u8>>,
+    pub(super) servers: std::collections::BTreeMap<std::net::Ipv4Addr, (f64, u64)>,
+    pub(super) server_high_water: f64,
     pub(super) clients: std::collections::BTreeMap<Vec<u8>, (f64, u64)>,
     pub(super) last_seen: f64,
     pub(super) client_high_water: f64,
@@ -242,7 +243,7 @@ pub(super) struct DhcpScopeState {
 pub(super) struct DhcpMessage {
     pub(super) message_type: u8,
     pub(super) client_identity: Vec<u8>,
-    pub(super) server_identity: Vec<u8>,
+    pub(super) server_identifier: Option<std::net::Ipv4Addr>,
 }
 
 #[derive(Debug, Default)]

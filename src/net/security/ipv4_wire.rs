@@ -203,7 +203,9 @@ pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
         let value = options.get(cursor..cursor + length)?;
         match option {
             53 if length == 1 && message_type.is_none() => message_type = Some(value[0]),
-            54 if length == 4 && server_identifier.is_none() => server_identifier = Some(value.to_vec()),
+            54 if length == 4 && server_identifier.is_none() => {
+                server_identifier = Some(std::net::Ipv4Addr::from(<[u8; 4]>::try_from(value).ok()?));
+            }
             53 | 54 => return None,
             61 if !value.is_empty() => client_identifier = Some(value.to_vec()),
             _ => {}
@@ -221,14 +223,9 @@ pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
     }
     let client_identity =
         client_identifier.unwrap_or_else(|| payload[28..28 + hardware_len].to_vec());
-    let mut server_identity =
-        server_identifier.unwrap_or_else(|| raw[ip_offset + 12..ip_offset + 16].to_vec());
-    if let Some(source_mac) = ethernet_source_mac(raw) {
-        server_identity.extend_from_slice(&source_mac);
-    }
     Some(DhcpMessage {
         message_type,
         client_identity,
-        server_identity,
+        server_identifier,
     })
 }

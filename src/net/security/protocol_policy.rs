@@ -1,8 +1,10 @@
 use super::*;
 
 const DHCP_CLIENT_WINDOW_SECS: f64 = 10.0;
+const DHCP_SERVER_WINDOW_SECS: f64 = 3600.0;
 const MAX_DHCP_SCOPES: usize = 128;
 const MAX_DHCP_CLIENTS: usize = 128;
+const MAX_DHCP_SERVERS: usize = 32;
 
 impl SecurityEngine {
     // ─── DHCP Authority and Starvation ──────────────────────────────────────
@@ -28,55 +30,40 @@ impl SecurityEngine {
         }
         let state = self.dhcp_scopes.entry(scope).or_default();
         state.last_seen = state.last_seen.max(pkt.timestamp);
-        let mut alerts = Vec::new();
-
-        if matches!(message.message_type, 2 | 5) && !message.server_identity.is_empty() {
-            if !state.servers.is_empty() && !state.servers.contains(&message.server_identity) {
-                alerts.push((
-                    "DHCP server identity changed",
-                    Severity::High,
-                    format!(
-                        "A new DHCP OFFER/ACK authority appeared on VLAN {} from {}",
-                        pkt.vlan_id
-                            .map(|id| id.to_string())
-                            .unwrap_or_else(|| "untagged".into()),
-                        pkt.src
-                    ),
-                ));
+        if matches!(message.message_type, 2 | 5) {
+            if let Some(server) = message.server_identifier
+                && let Some((previous, frame)) = observe_dhcp_server(state, server, pkt)
+            {
+                let kind = if message.message_type == 2 { "OFFER" } else { "ACK" };
+                let scope_name = dhcp_scope_name(scope);
+                self.push_ids_finding(IdsFinding {
+                    alert: IdsAlert {
+                        pkt_no: pkt.no,
+                        signature: "DHCP server identity changed",
+                        severity: Severity::Medium,
+                        detail: format!(
+                            "DHCP {kind} advertised server identifier {server} on {scope_name}; previously observed {previous} within one hour. Authorization is unknown."
+                        ),
+                    },
+                    related_packets: vec![frame],
+                    correlation_key: Some(format!("dhcp-server:{scope:?}:{server}")),
+                });
             }
-            if state.servers.len() < 32 {
-                state.servers.insert(message.server_identity);
-            }
-        }
-
-        let burst = if message.message_type == 1 && !message.client_identity.is_empty() {
-            dhcp_client_burst(state, message.client_identity, pkt)
-        } else {
-            None
-        };
-
-        if let Some((count, related_packets)) = burst {
-            let (interface, outer_vlan, vlan) = scope;
+        } else if !message.client_identity.is_empty()
+            && let Some((count, related_packets)) = dhcp_client_burst(state, message.client_identity, pkt)
+        {
+            let scope_name = dhcp_scope_name(scope);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
                     signature: "DHCP client identity burst",
                     severity: Severity::Medium,
                     detail: format!(
-                        "{count} distinct DHCPDISCOVER identities in 10 seconds +                         (section/interface {interface:?}, outer VLAN {outer_vlan:?}, VLAN {vlan:?}); +                         lease exhaustion was not observed"
+                        "{count} distinct DHCPDISCOVER identities in 10 seconds on {scope_name}; lease exhaustion was not observed"
                     ),
                 },
                 related_packets,
                 correlation_key: Some(format!("dhcp-discover:{scope:?}")),
-            });
-        }
-
-        for (signature, severity, detail) in alerts {
-            self.push_ids(IdsAlert {
-                pkt_no: pkt.no,
-                signature,
-                severity,
-                detail,
             });
         }
     }
@@ -279,6 +266,46 @@ impl SecurityEngine {
             });
         }
     }
+}
+
+fn dhcp_scope_name(scope: ServiceScope) -> String {
+    let (interface, outer_vlan, vlan) = scope;
+    let interface = interface.map_or_else(
+        || "unknown capture interface".to_owned(),
+        |(section, id)| format!("capture section {section}, interface {id}"),
+    );
+    match (outer_vlan, vlan) {
+        (Some(outer), Some(inner)) => format!("{interface}, VLAN {outer}/{inner}"),
+        (_, Some(vlan)) | (Some(vlan), _) => format!("{interface}, VLAN {vlan}"),
+        _ => format!("{interface}, untagged"),
+    }
+}
+
+fn observe_dhcp_server(
+    state: &mut DhcpScopeState,
+    server: std::net::Ipv4Addr,
+    pkt: &Packet,
+) -> Option<(std::net::Ipv4Addr, u64)> {
+    if server.is_unspecified() || server.is_broadcast() || server.is_multicast()
+        || pkt.timestamp < state.server_high_water
+    {
+        return None;
+    }
+    state.server_high_water = pkt.timestamp;
+    let cutoff = pkt.timestamp - DHCP_SERVER_WINDOW_SECS;
+    state.servers.retain(|_, (timestamp, _)| *timestamp >= cutoff);
+    if let Some(observation) = state.servers.get_mut(&server) {
+        *observation = (pkt.timestamp, pkt.no);
+        return None;
+    }
+    if state.servers.len() >= MAX_DHCP_SERVERS {
+        return None;
+    }
+    let previous = state.servers.iter()
+        .max_by(|(_, (a, _)), (_, (b, _))| a.total_cmp(b))
+        .map(|(&id, &(_, frame))| (id, frame));
+    state.servers.insert(server, (pkt.timestamp, pkt.no));
+    previous
 }
 
 fn dhcp_client_burst(state: &mut DhcpScopeState, identity: Vec<u8>, pkt: &Packet) -> Option<(usize, Vec<u64>)> {
