@@ -67,6 +67,62 @@ fn discovery(frame: u64, identity: u8, timestamp: f64) -> Packet {
     packet
 }
 
+fn append_options(packet: &mut Packet, options: &[u8]) {
+    let raw = &mut packet.bytes;
+    assert_eq!(raw.pop(), Some(255));
+    raw.extend_from_slice(options);
+    raw.push(255);
+    let ip_len = (raw.len() - 14) as u16;
+    let udp_len = ip_len - 20;
+    raw[16..18].copy_from_slice(&ip_len.to_be_bytes());
+    raw[38..40].copy_from_slice(&udp_len.to_be_bytes());
+}
+
+#[test]
+fn dhcp_server_comparison_recovers_a_split_server_identifier() {
+    let mut engine = SecurityEngine::default();
+    engine.update(&server_reply(1, 2, 1, Some(1), 1.0));
+    let mut reply = server_reply(2, 2, 2, None, 2.0);
+    append_options(&mut reply, &[52, 1, 1, 54, 2, 10, 0]);
+    reply.bytes[150..155].copy_from_slice(&[54, 2, 0, 2, 255]);
+    let result = engine.inspect(&reply);
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == SERVER_CHANGE).unwrap();
+    assert_eq!(finding.related_packets, [1]);
+    assert!(finding.alert.detail.contains("advertised server identifier 10.0.0.2"));
+}
+
+#[test]
+fn dhcp_identity_burst_deduplicates_different_encodings_of_the_same_client() {
+    let mut engine = SecurityEngine::default();
+    for identity in 0..62 {
+        engine.update(&discovery(u64::from(identity) + 1, identity, 1.0));
+    }
+    let mut plain = discovery(63, 62, 1.0);
+    append_options(&mut plain, &[61, 3, 0, b'x', b'y']);
+    engine.update(&plain);
+
+    let mut split = discovery(64, 63, 1.0);
+    append_options(&mut split, &[61, 2, 0, b'x', 61, 1, b'y']);
+    engine.update(&split);
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != BURST));
+
+    let mut overloaded = discovery(65, 64, 1.0);
+    append_options(&mut overloaded, &[52, 1, 3, 61, 1, 0]);
+    let file = 42 + 108;
+    let sname = 42 + 44;
+    overloaded.bytes[file..file + 4].copy_from_slice(&[61, 1, b'x', 255]);
+    overloaded.bytes[sname..sname + 4].copy_from_slice(&[61, 1, b'y', 255]);
+    engine.update(&overloaded);
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != BURST));
+
+    let result = engine.inspect(&discovery(66, 65, 2.0));
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == BURST).unwrap();
+    assert!(finding.related_packets.contains(&63));
+    assert!(finding.related_packets.contains(&66));
+    assert!(!finding.related_packets.contains(&64));
+    assert!(!finding.related_packets.contains(&65));
+}
+
 #[test]
 fn dhcp_identity_burst_keeps_one_frame_per_identity_and_explains_uncertainty() {
     let mut core = AnalysisCore::default();
@@ -84,7 +140,7 @@ fn dhcp_identity_burst_keeps_one_frame_per_identity_and_explains_uncertainty() {
     assert_eq!(alerts[0].packet_refs, std::iter::once(1).chain(81..=143).collect::<Vec<_>>());
     let rule = alerts[0].provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "dhcp.discover_identity_burst");
-    assert_eq!(rule.revision, 2);
+    assert_eq!(rule.revision, 3);
 }
 
 #[rstest]
@@ -142,6 +198,8 @@ fn dhcp_burst_uses_capture_window_and_rearms_after_distinct_clients_expire() {
 #[case("hardware length")]
 #[case("missing end option")]
 #[case("duplicate message type")]
+#[case("short client identifier")]
+#[case("invalid overloaded options")]
 fn dhcp_identity_burst_ignores_incomplete_or_inconsistent_observations(#[case] defect: &str) {
     const IP: usize = 14;
     const UDP: usize = IP + 20;
@@ -177,6 +235,8 @@ fn dhcp_identity_burst_ignores_incomplete_or_inconsistent_observations(#[case] d
             raw[IP + 2..IP + 4].copy_from_slice(&ip_len.to_be_bytes());
             raw[UDP + 4..UDP + 6].copy_from_slice(&udp_len.to_be_bytes());
         }
+        "short client identifier" => append_options(&mut candidate, &[61, 1, 0]),
+        "invalid overloaded options" => append_options(&mut candidate, &[52, 1, 1]),
         _ => unreachable!(),
     }
     engine.update(&candidate);

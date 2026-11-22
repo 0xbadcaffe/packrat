@@ -142,35 +142,17 @@ pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
         return None;
     }
 
-    let mut message_type = None;
-    let mut client_identifier = None;
-    let mut server_identifier = None;
-    let mut cursor = 0;
-    loop {
-        let option = *options.get(cursor)?;
-        cursor += 1;
-        if option == 0 {
-            continue;
-        }
-        if option == 255 {
-            break;
-        }
-        let length = usize::from(*options.get(cursor)?);
-        cursor += 1;
-        let value = options.get(cursor..cursor + length)?;
-        match option {
-            53 if length == 1 && message_type.is_none() => message_type = Some(value[0]),
-            54 if length == 4 && server_identifier.is_none() => {
-                server_identifier = Some(std::net::Ipv4Addr::from(<[u8; 4]>::try_from(value).ok()?));
-            }
-            53 | 54 => return None,
-            61 if !value.is_empty() => client_identifier = Some(value.to_vec()),
-            _ => {}
-        }
-        cursor += length;
+    let mut decoded = DhcpOptions::default();
+    decoded.read(options, true)?;
+    let overload = decoded.overload.unwrap_or(0);
+    // RFC 3396 orders the options field before file and then sname.
+    if overload & 1 != 0 {
+        decoded.read(&payload[108..236], false)?;
     }
-
-    let message_type = message_type?;
+    if overload & 2 != 0 {
+        decoded.read(&payload[44..108], false)?;
+    }
+    let message_type = decoded.message_type?;
     if !matches!((direction, message_type), (1, 1) | (2, 2 | 5)) {
         return None;
     }
@@ -178,11 +160,61 @@ pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
     if hardware_len > 16 {
         return None;
     }
-    let client_identity =
-        client_identifier.unwrap_or_else(|| payload[28..28 + hardware_len].to_vec());
+    let client_identity = match decoded.client_identifier {
+        Some(client) if client.len() >= 2 => client,
+        Some(_) => return None,
+        None => payload[28..28 + hardware_len].to_vec(),
+    };
+    let server_identifier = match decoded.server_identifier {
+        Some(server) => Some(Ipv4Addr::from(<[u8; 4]>::try_from(server).ok()?)),
+        None => None,
+    };
     Some(DhcpMessage {
         message_type,
         client_identity,
         server_identifier,
     })
+}
+
+#[derive(Default)]
+struct DhcpOptions {
+    overload: Option<u8>,
+    message_type: Option<u8>,
+    server_identifier: Option<Vec<u8>>,
+    client_identifier: Option<Vec<u8>>,
+}
+
+impl DhcpOptions {
+    fn read(&mut self, mut options: &[u8], primary: bool) -> Option<()> {
+        loop {
+            let (&code, rest) = options.split_first()?;
+            options = rest;
+            match code {
+                0 => continue,
+                255 => return Some(()),
+                _ => {}
+            }
+            let (&length, rest) = options.split_first()?;
+            let (value, remainder) = rest.split_at_checked(usize::from(length))?;
+            options = remainder;
+            match (code, value) {
+                (52, [mode @ 1..=3]) if primary && self.overload.is_none() => self.overload = Some(*mode),
+                (53, [message]) if self.message_type.is_none() => self.message_type = Some(*message),
+                (52 | 53, _) => return None,
+                (54 | 61, _) => {
+                    let (target, limit) = if code == 54 {
+                        (&mut self.server_identifier, 4)
+                    } else {
+                        (&mut self.client_identifier, 1024)
+                    };
+                    let target = target.get_or_insert_with(Vec::new);
+                    if target.len() + value.len() > limit {
+                        return None;
+                    }
+                    target.extend_from_slice(value);
+                }
+                _ => {}
+            }
+        }
+    }
 }
