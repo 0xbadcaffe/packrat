@@ -54,3 +54,40 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     assert_eq!(serde_json::from_slice::<Vec<Value>>(&scoped.stdout).unwrap(), report[2..]);
     assert!(!run(&["--limit", "513"]).status.success());
 }
+
+#[test]
+fn previous_alert_logs_keep_findings_and_use_the_newest_snapshot_across_segments() {
+    let directory = tempfile::tempdir().unwrap();
+    let earlier = directory.path().join("alerts.jsonl.2");
+    let later = directory.path().join("alerts.jsonl.1");
+    let active = directory.path().join("alerts.jsonl");
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "MEDIUM", "Retained finding", "first snapshot");
+    center.record(2, "IDS", "MEDIUM", "Older finding", "not in the active log");
+    let mut first = center.items[0].clone();
+    let mut old = center.items[1].clone();
+    first.capture_id = Some("capture-a".into());
+    old.capture_id = first.capture_id.clone();
+    let row = |alert| json!({
+        "schema_version":1, "record_type":"alert", "session_id":"session-a", "alert":alert
+    });
+    std::fs::write(&earlier, format!("{}\n{}\n", row(first.clone()), row(old.clone()))).unwrap();
+    old.capture_id = Some("other-capture".into());
+    std::fs::write(&later, format!("{}\n", row(old))).unwrap();
+    first.disposition = AlertDisposition::Benign;
+    std::fs::write(&active, format!("{}\n", row(first))).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--alerts").arg(active)
+        .arg("--previous-log").arg(earlier)
+        .arg("--previous-log").arg(later)
+        .args(["--session", "session-a", "--capture-id", "capture-a"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report.len(), 2);
+    assert_eq!(report[0]["alert_id"], 1);
+    assert_eq!(report[0]["disposition"], "Benign");
+    assert_eq!(report[1]["alert_id"], 2);
+    assert_eq!(report[1]["capture_id"], "capture-a");
+}

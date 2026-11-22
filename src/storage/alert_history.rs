@@ -9,6 +9,7 @@ use crate::analysis::alert_provenance::EvidenceConfidence;
 use super::alert_jsonl::{ExistingAlertRecord, next_alert_line};
 
 pub const MAX_HISTORY_LIMIT: usize = 512;
+pub const MAX_PREVIOUS_LOGS: usize = 8;
 
 #[derive(Serialize)]
 pub struct AlertHistoryEntry {
@@ -35,10 +36,36 @@ pub fn recent_alerts(
     capture_filter: Option<&str>,
     limit: usize,
 ) -> Result<Vec<AlertHistoryEntry>> {
+    recent_alerts_across_logs(&[] as &[&Path], log, session_filter, capture_filter, limit)
+}
+
+pub fn recent_alerts_across_logs(
+    previous: &[impl AsRef<Path>],
+    active: &Path,
+    session_filter: Option<&str>,
+    capture_filter: Option<&str>,
+    limit: usize,
+) -> Result<Vec<AlertHistoryEntry>> {
     ensure!((1..=MAX_HISTORY_LIMIT).contains(&limit), "Alert history limit must be 1..={MAX_HISTORY_LIMIT}");
-    let mut reader = BufReader::new(File::open(log).context("Open saved alert log")?);
-    let mut line = Vec::new();
+    ensure!(previous.len() <= MAX_PREVIOUS_LOGS, "Too many previous alert logs");
     let mut latest = VecDeque::<AlertHistoryEntry>::with_capacity(limit);
+    for log in previous.iter().map(AsRef::as_ref).chain(std::iter::once(active)) {
+        append_history(log, session_filter, capture_filter, limit, &mut latest)
+            .with_context(|| format!("Read alert log {}", log.display()))?;
+    }
+    // Deliver most recently appended snapshots first, including review updates.
+    Ok(latest.into_iter().rev().collect())
+}
+
+fn append_history(
+    log: &Path,
+    session_filter: Option<&str>,
+    capture_filter: Option<&str>,
+    limit: usize,
+    latest: &mut VecDeque<AlertHistoryEntry>,
+) -> Result<()> {
+    let mut reader = BufReader::new(File::open(log)?);
+    let mut line = Vec::new();
     while next_alert_line(&mut reader, &mut line).context("Read saved alert log")? {
         let Some(record) = ExistingAlertRecord::decode(&line) else { continue };
         let alert = record.alert;
@@ -77,8 +104,7 @@ pub fn recent_alerts(
             verify: alert.provenance.as_ref().map(|rule| limited(&rule.verification_hint, 240)),
         });
     }
-    // Deliver most recently appended snapshots first, including review updates.
-    Ok(latest.into_iter().rev().collect())
+    Ok(())
 }
 
 fn limited(value: &str, chars: usize) -> String {

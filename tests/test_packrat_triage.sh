@@ -18,7 +18,7 @@ date() {
 
 packrat-archive() {
     printf '%s\n' called >"$PACKRAT_TEST_CALL"
-    [[ $* == "--alerts $PACKRAT_TEST_LOG --session 1700000000-432 --capture-id 00000000000000000000000000000001 --limit 50" ]] || return 2
+    [[ $* == "--alerts $PACKRAT_TEST_LOG --session 1700000000-432 --capture-id 00000000000000000000000000000001 --limit 50${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
     if [[ ${PACKRAT_TEST_SCOPE_RACE:-0} == 1 ]]; then
         jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
@@ -37,6 +37,11 @@ printf '%s\n' "$sample" >"$health"
 result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.status == "current" and .age_seconds == 30 and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
 [[ -f $PACKRAT_TEST_CALL ]]
+
+previous="$scratch/older log.jsonl"
+touch -- "$previous"
+result=$(PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" bash "$triage" "$health" "$PACKRAT_TEST_LOG" "$previous")
+jq -e '.status == "current" and .previous_logs == 1 and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
 
 check_failure() {
     local expected_rc=$1 expected_status=$2 actual=0 output

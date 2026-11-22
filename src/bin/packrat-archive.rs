@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID]\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID]\n       packrat-archive --verify-evidence EVIDENCE_DIR"
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID]\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID]\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first."
         );
         return Ok(());
     };
@@ -119,8 +119,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
+    use packrat_tui::storage::alert_history::{MAX_PREVIOUS_LOGS, recent_alerts_across_logs};
+
     let log = args.next().ok_or("--alerts requires an alert log")?;
     let (mut session, mut capture, mut limit) = (None, None, None);
+    let mut previous = Vec::new();
     while let Some(flag) = args.next() {
         let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
             .ok_or_else(|| format!("{flag} requires a value"))?;
@@ -128,11 +131,13 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
             "--session" if session.is_none() => session = Some(value),
             "--capture-id" if capture.is_none() => capture = Some(value),
             "--limit" if limit.is_none() => limit = Some(value.parse()?),
+            "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(value),
+            "--previous-log" => return Err("Too many previous alert logs".into()),
             _ => return Err(format!("Unknown or repeated alert option: {flag}").into()),
         }
     }
-    let alerts = packrat_tui::storage::alert_history::recent_alerts(
-        std::path::Path::new(&log), session.as_deref(), capture.as_deref(), limit.unwrap_or(50),
+    let alerts = recent_alerts_across_logs(
+        &previous, std::path::Path::new(&log), session.as_deref(), capture.as_deref(), limit.unwrap_or(50),
     )?;
     println!("{}", serde_json::to_string(&alerts)?);
     Ok(())

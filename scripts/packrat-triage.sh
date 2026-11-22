@@ -2,14 +2,24 @@
 set -euo pipefail
 
 usage() {
-    printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl' \
+    printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
+        'Supply up to eight previous logs, oldest first.' \
         'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'PACKRAT_TRIAGE_MAX_AGE sets the maximum health record age in seconds (default: 360).'
 }
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
-if (( $# != 2 )); then usage >&2; exit 2; fi
+if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
+
+previous_logs=()
+for log in "${@:3}"; do
+    if [[ ! -f $log ]]; then
+        printf 'Previous alert log is not a regular file: %s\n' "$log" >&2
+        exit 2
+    fi
+    previous_logs+=(--previous-log "$log")
+done
 
 max_age=${PACKRAT_TRIAGE_MAX_AGE:-360}
 if [[ ! $max_age =~ ^[1-9][0-9]{0,5}$ || ! -f $1 ]]; then
@@ -32,9 +42,10 @@ if ! state=$(load_state "$1"); then
 fi
 
 report() {
-    jq -c --arg status "$1" --argjson max_age "$max_age" --argjson alerts "${2-null}" '
+    jq -c --arg status "$1" --argjson max_age "$max_age" --argjson alerts "${2-null}" \
+        --argjson previous "$((${#previous_logs[@]} / 2))" '
         . + {record_type:"capture_triage", status:$status, max_age_seconds:$max_age,
-             alert_limit:50, alerts:$alerts}
+             alert_limit:50, previous_logs:$previous, alerts:$alerts}
     ' <<< "$state"
 }
 
@@ -70,7 +81,7 @@ fi
 match_log "$2" || exit 1
 session=$(jq -er '.health.alert_session_id' <<< "$state")
 capture=$(jq -er '.health.capture_id' <<< "$state")
-if ! alerts=$(packrat-archive --alerts "$2" --session "$session" --capture-id "$capture" --limit 50 |
+if ! alerts=$(packrat-archive --alerts "$2" --session "$session" --capture-id "$capture" --limit 50 "${previous_logs[@]}" |
         jq -cse 'select(length == 1) | .[0] | arrays'); then
     report alert_log_unavailable
     exit 2
