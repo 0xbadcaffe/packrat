@@ -99,7 +99,7 @@ pub(super) struct ScanProbe {
 pub(super) struct ScanSourceKey {
     pub(super) address: String,
     pub(super) transport: &'static str,
-    pub(super) vlan: (Option<u16>, Option<u16>),
+    pub(super) scope: ServiceScope,
 }
 
 #[derive(Debug, Default)]
@@ -122,7 +122,7 @@ pub(super) struct SynFloodState {
 pub(super) struct SynTargetKey {
     pub(super) address: String,
     pub(super) port: u16,
-    pub(super) vlan: (Option<u16>, Option<u16>),
+    pub(super) scope: ServiceScope,
 }
 
 #[derive(Debug)]

@@ -83,3 +83,60 @@ fn syn_rule_records_renewed_spikes_but_not_sustained_or_retransmitted_syns() {
     assert_eq!(renewed.alert.pkt_no, 370);
     assert_eq!(renewed.related_packets, std::iter::once(151).chain(272..370).collect::<Vec<_>>());
 }
+
+#[test]
+fn scan_and_syn_findings_never_join_evidence_across_capture_interfaces_or_sections() {
+    use crate::net::packet::CaptureMetadata;
+
+    for (mode, threshold) in [
+        ("horizontal", SCAN_UNIQUE_THRESHOLD),
+        ("vertical", SCAN_UNIQUE_THRESHOLD),
+        ("echo", SCAN_UNIQUE_THRESHOLD),
+        ("syn", SYN_FLOOD_THRESHOLD),
+    ] {
+        let mut engine = SecurityEngine::default();
+        let mut packet = parse_ethernet(&[], 1, 1.0);
+        packet.src = "192.0.2.1".into();
+        let half = threshold as u64 / 2;
+        let mut observe = |engine: &mut SecurityEngine, section_id, interface_id| {
+            packet.capture = Some(CaptureMetadata {
+                timestamp: None,
+                captured_length: 60,
+                wire_length: 60,
+                link_type: 1,
+                interface_id,
+                section_id,
+                interface_name: None,
+                comments: Vec::new(),
+            });
+            for _ in 0..half {
+                let frame = packet.no;
+                packet.dst = match mode {
+                    "horizontal" | "echo" => format!("198.51.100.{frame}"),
+                    _ => "198.51.100.1".into(),
+                };
+                match mode {
+                    "horizontal" => engine.record_scan_probe(&packet, 443, "TCP"),
+                    "vertical" => engine.record_scan_probe(&packet, frame as u16, "TCP"),
+                    "echo" => engine.record_echo_request(&packet, "ICMP"),
+                    _ => engine.record_syn_arrival(&packet, 443, 40_000, frame as u32),
+                }
+                packet.no += 1;
+            }
+        };
+        observe(&mut engine, 0, 0);
+        observe(&mut engine, 0, 1);
+        observe(&mut engine, 1, 0);
+        assert!(engine.findings.ids.is_empty(), "{mode}");
+        observe(&mut engine, 0, 0);
+        observe(&mut engine, 0, 1);
+        let findings = &engine.findings.ids;
+        assert_eq!(findings.len(), 2, "{mode}");
+        assert_ne!(findings[0].correlation_key, findings[1].correlation_key, "{mode}");
+        assert_eq!(findings[0].alert.pkt_no, 4 * half);
+        assert_eq!(findings[0].related_packets, (1..=half).chain(3 * half + 1..4 * half).collect::<Vec<_>>());
+        assert_eq!(findings[1].alert.pkt_no, 5 * half);
+        assert_eq!(findings[1].related_packets, (half + 1..=2 * half)
+            .chain(4 * half + 1..5 * half).collect::<Vec<_>>());
+    }
+}

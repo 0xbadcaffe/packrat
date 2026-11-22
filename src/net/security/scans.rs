@@ -183,10 +183,11 @@ impl SecurityEngine {
         source_port: u16,
         sequence: u32,
     ) {
+        let scope = service_scope(pkt);
         let key = SynTargetKey {
             address: pkt.dst.clone(),
             port,
-            vlan: (pkt.outer_vlan_id, pkt.vlan_id),
+            scope,
         };
         if !self.syn_flood_targets.contains_key(&key) {
             evict_oldest_syn_target(&mut self.syn_flood_targets);
@@ -238,7 +239,7 @@ impl SecurityEngine {
                     ),
                 },
                 related_packets,
-                correlation_key: Some(format!("{:?}:[{}]:{port}", (pkt.outer_vlan_id, pkt.vlan_id), pkt.dst)),
+                correlation_key: Some(format!("{scope:?}:[{}]:{port}", pkt.dst)),
             });
         }
     }
@@ -294,7 +295,7 @@ fn scan_key(pkt: &Packet, transport: &'static str) -> ScanSourceKey {
     ScanSourceKey {
         address: pkt.src.clone(),
         transport,
-        vlan: (pkt.outer_vlan_id, pkt.vlan_id),
+        scope: service_scope(pkt),
     }
 }
 
@@ -318,7 +319,7 @@ fn scan_finding<'a>(
     IdsFinding {
         alert: IdsAlert { pkt_no: pkt.no, signature, severity: Severity::High, detail },
         related_packets: probes.map(|probe| probe.packet_no).filter(|&no| no != pkt.no).collect(),
-        correlation_key: Some(format!("{}:{:?}:{}:{target}", key.transport, key.vlan, key.address)),
+        correlation_key: Some(format!("{}:{:?}:{}:{target}", key.transport, key.scope, key.address)),
     }
 }
 
