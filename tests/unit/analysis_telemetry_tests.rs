@@ -42,6 +42,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert!(health()["alert_session_id"].is_null());
     assert!(health()["pcap_buffer_drops"].is_null());
     assert!(health()["capture_truncated_frames"].is_null());
+    assert!(health()["archive_pause_reason"].is_null());
 
     hub.publish(TelemetrySnapshot {
         capturing: true,
@@ -54,6 +55,9 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
         pcap_buffer_drops: Some(9),
         capture_truncated_frames: Some(2),
         alert_save_failed: true,
+        archive_enabled: true,
+        archive_paused: true,
+        archive_pause_reason: Some("disk_reserve"),
         ..Default::default()
     });
     assert_eq!(health()["telemetry_fresh"], true);
@@ -69,6 +73,8 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert_eq!(health()["capture_truncated_frames"], 2);
     assert_eq!(health()["alert_saving"], false);
     assert_eq!(health()["alert_save_failed"], true);
+    assert_eq!(health()["archive_paused"], true);
+    assert_eq!(health()["archive_pause_reason"], "disk_reserve");
 
     hub.inner.write().unwrap().updated_at = Instant::now().checked_sub(Duration::from_secs(6));
     assert_eq!(health()["telemetry_fresh"], false);

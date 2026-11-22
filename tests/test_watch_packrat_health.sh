@@ -161,6 +161,18 @@ PACKRAT_REQUIRE_ARCHIVE=alert-evidence PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES
     and all(.[]; .archive_requirement == "alert_evidence_only")
 ' >/dev/null
 
+pause_samples=$(jq -c '
+    [. + {archive_enabled:true,archive_paused:true,archive_pause_reason:"frame_limit"},
+     . + {archive_enabled:true,archive_paused:true,archive_pause_reason:"write_failed"},
+     . + {archive_enabled:true,archive_paused:true,archive_pause_reason:"private error path"},
+     . + {archive_enabled:true,archive_paused:true,archive_pause_reason:["frame_limit"],archive_alert_evidence_only:true},
+     . + {archive_enabled:true,archive_paused:false,archive_pause_reason:"byte_limit"}]
+' <<< "$PACKRAT_FAKE_HEALTH")
+PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$pause_samples" bash "$watch" | jq -se '
+    map(.archive_pause_reason) == ["frame_limit","write_failed",null,null,null]
+    and (tostring | contains("private error path") | not)
+' >/dev/null
+
 interface_samples=$(jq -c '
     [. + {capture_interface:"wlan1"},
      . + {capture_interface:"eth0"},

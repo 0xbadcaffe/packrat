@@ -151,6 +151,7 @@ fn archive_payload_cap_keeps_committed_evidence_and_never_overwrites() {
     }
     worker.finish().unwrap();
     assert_eq!(worker.pause_reason(), Some("packet-byte limit reached"));
+    assert_eq!(worker.pause_code(), Some("byte_limit"));
     assert_eq!(worker.take_pause_notice(), worker.pause_reason());
     assert_eq!(worker.take_pause_notice(), None);
     worker.record(&frame(10)).unwrap();
@@ -177,6 +178,7 @@ fn archive_pauses_before_using_the_free_space_reserve() {
     worker.record(&parse_ethernet(&[1, 2, 3], 1, 1.0)).unwrap();
     worker.finish().unwrap();
     assert_eq!(worker.pause_reason(), Some("filesystem free-space reserve reached"));
+    assert_eq!(worker.pause_code(), Some("disk_reserve"));
     assert_eq!(PacketArchive::open_readonly(&archive).unwrap().count().unwrap(), 0);
 }
 
@@ -201,10 +203,22 @@ fn alert_archive_deduplicates_queued_and_committed_frames_without_crossing_captu
     writer.record_scoped(&scope_b, &frame_b).unwrap();
     writer.finish().unwrap();
     assert_eq!(writer.pause_reason(), Some("frame limit reached"));
+    assert_eq!(writer.pause_code(), Some("frame_limit"));
     let mut reader = PacketArchive::open_readonly(&path).unwrap();
     assert_eq!(reader.count().unwrap(), 2);
     assert_eq!(reader.packet_for_capture(&scope_a, 1).unwrap().unwrap().bytes, frame_a.bytes);
     assert_eq!(reader.packet_for_capture(&scope_b, 1).unwrap().unwrap().bytes, frame_b.bytes);
+}
+
+#[test]
+fn archive_worker_failure_sets_a_stable_pause_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("evidence");
+    let mut worker = ArchiveWorker::open_alert_evidence(&path, ArchiveLimits::default()).unwrap();
+    worker.record(&parse_ethernet(&[1, 2, 3], 1, 1.0)).unwrap();
+    assert!(worker.finish().unwrap_err().contains("requires capture scope"));
+    assert_eq!(worker.pause_reason(), Some("archive write failed"));
+    assert_eq!(worker.pause_code(), Some("write_failed"));
 }
 
 #[test]

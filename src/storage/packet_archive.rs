@@ -12,23 +12,8 @@ use std::sync::{Arc, OnceLock};
 mod policy;
 #[path = "packet_archive_reader.rs"]
 mod reader;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ArchiveLimits {
-    pub max_payload_bytes: u64,
-    pub max_frames: u64,
-    pub reserve_free_bytes: u64,
-}
-
-impl Default for ArchiveLimits {
-    fn default() -> Self {
-        Self {
-            max_payload_bytes: 256 * 1024 * 1024,
-            max_frames: 100_000,
-            reserve_free_bytes: 512 * 1024 * 1024,
-        }
-    }
-}
+pub use policy::ArchiveLimits;
+pub(crate) use policy::ArchivePause;
 
 pub struct PacketArchive {
     db: Connection,
@@ -301,7 +286,7 @@ pub struct ArchiveWorker {
     directory: PathBuf,
     sender: Option<std::sync::mpsc::SyncSender<ArchiveRecord>>,
     worker: Option<std::thread::JoinHandle<Result<(), String>>>,
-    pause_reason: Arc<OnceLock<&'static str>>,
+    pause_reason: Arc<OnceLock<ArchivePause>>,
     pause_reported: bool,
     alert_evidence_only: bool,
 }
@@ -359,12 +344,12 @@ impl ArchiveWorker {
                 for record in &batch {
                     let next = pending_bytes.saturating_add(record.packet.bytes.len() as u64);
                     if frames.saturating_add(allowed as u64) >= limits.max_frames {
-                        reason = Some("frame limit reached");
+                        reason = Some(ArchivePause::FrameLimit);
                     } else if bytes.saturating_add(next) > limits.max_payload_bytes {
-                        reason = Some("packet-byte limit reached");
+                        reason = Some(ArchivePause::ByteLimit);
                     // Leave headroom for SQLite index pages and the WAL.
                     } else if next.saturating_add((allowed as u64 + 1) * 64 * 1024) > writable {
-                        reason = Some("filesystem free-space reserve reached");
+                        reason = Some(ArchivePause::DiskReserve);
                     }
                     if reason.is_some() {
                         break;
@@ -383,9 +368,9 @@ impl ArchiveWorker {
                 }
                 let reason = reason.or_else(|| {
                     if frames >= limits.max_frames {
-                        Some("frame limit reached")
+                        Some(ArchivePause::FrameLimit)
                     } else if bytes >= limits.max_payload_bytes {
-                        Some("packet-byte limit reached")
+                        Some(ArchivePause::ByteLimit)
                     } else {
                         None
                     }
@@ -411,12 +396,16 @@ impl ArchiveWorker {
         self.alert_evidence_only
     }
 
-    pub(crate) fn pause(&self, reason: &'static str) {
+    pub(crate) fn pause(&self, reason: ArchivePause) {
         let _ = self.pause_reason.set(reason);
     }
 
     pub fn pause_reason(&self) -> Option<&'static str> {
-        self.pause_reason.get().copied()
+        self.pause_reason.get().map(|reason| reason.details().1)
+    }
+
+    pub(crate) fn pause_code(&self) -> Option<&'static str> {
+        self.pause_reason.get().map(|reason| reason.details().0)
     }
 
     pub(crate) fn take_pause_notice(&mut self) -> Option<&'static str> {
@@ -476,12 +465,16 @@ impl ArchiveWorker {
 
     pub fn finish(&mut self) -> Result<(), String> {
         self.sender.take();
-        match self.worker.take() {
+        let result = match self.worker.take() {
             Some(worker) => worker
                 .join()
-                .map_err(|_| "Packet archive worker panicked".to_string())?,
+                .unwrap_or_else(|_| Err("Packet archive worker panicked".into())),
             None => Ok(()),
+        };
+        if result.is_err() {
+            self.pause(ArchivePause::WriteFailed);
         }
+        result
     }
 }
 

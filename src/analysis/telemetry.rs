@@ -47,6 +47,7 @@ pub struct TelemetrySnapshot {
     pub alert_save_failed: bool,
     pub archive_enabled: bool,
     pub archive_paused: bool,
+    pub archive_pause_reason: Option<&'static str>,
     pub archive_alert_evidence_only: bool,
     pub latency_p95_ms: f64,
     pub enriched_addresses: usize,
@@ -195,6 +196,7 @@ impl TelemetryHub {
             "alert_save_failed": snapshot.alert_save_failed,
             "archive_enabled": snapshot.archive_enabled,
             "archive_paused": snapshot.archive_paused,
+            "archive_pause_reason": snapshot.archive_pause_reason,
             "archive_alert_evidence_only": snapshot.archive_alert_evidence_only,
         });
         format!("{body}\n")

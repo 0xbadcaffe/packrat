@@ -40,7 +40,7 @@ impl App {
         let trigger = frames.binary_search(&trigger).ok().map(|_| trigger);
         for frame in trigger.into_iter().chain(others) {
             if let Err(error) = queue(frame) {
-                archive.pause("alert evidence queue unavailable");
+                archive.pause(crate::storage::packet_archive::ArchivePause::QueueUnavailable);
                 self.set_status(format!("Alert packet archive paused: {error}; capture continues"));
                 break;
             }

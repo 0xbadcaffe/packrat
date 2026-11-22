@@ -29,11 +29,12 @@ impl App {
                 self.save_preferences();
             }
         }
+        let mut archive_failed = false;
         if let Some(archive) = self.packet_archive.as_mut()
             && let Some(error) = archive.poll_error()
         {
+            archive_failed = true;
             if archive.alert_evidence_only() {
-                archive.pause("alert evidence archive write failed");
                 self.set_status(format!("Alert packet archive write failed: {error}; capture continues"));
             } else {
                 self.abort_capture();
@@ -45,6 +46,7 @@ impl App {
             .packet_archive
             .as_mut()
             .and_then(|archive| archive.take_pause_notice())
+            && !archive_failed
         {
             self.set_status(format!("Archive paused: {reason}; capture and analysis are unaffected"));
         }
@@ -157,6 +159,7 @@ impl App {
             self.telemetry.publish_capture_queue(queue);
             return;
         };
+        let archive_pause_reason = self.packet_archive.as_ref().and_then(|archive| archive.pause_code());
         self.telemetry.publish(TelemetrySnapshot {
             packets_total: self.packet_counter,
             bytes_total: self.total_bytes,
@@ -189,7 +192,8 @@ impl App {
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),
             alert_save_failed: self.alert_save_error_reported.is_some() || core.alert_save_error.is_some(),
             archive_enabled: self.packet_archive.is_some(),
-            archive_paused: self.packet_archive.as_ref().and_then(|archive| archive.pause_reason()).is_some(),
+            archive_paused: archive_pause_reason.is_some(),
+            archive_pause_reason,
             archive_alert_evidence_only: self.packet_archive.as_ref().is_some_and(|archive| archive.alert_evidence_only()),
             latency_p95_ms: self.wire_pulse.p95_ms().unwrap_or(0.0),
             enriched_addresses: self.net_registry.observed.len(),

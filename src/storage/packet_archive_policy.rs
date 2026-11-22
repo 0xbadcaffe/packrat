@@ -4,6 +4,44 @@ use rusqlite::{Connection, OptionalExtension, params};
 const FULL: &str = "all_packets";
 const ALERT_ONLY: &str = "alert_evidence";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArchiveLimits {
+    pub max_payload_bytes: u64,
+    pub max_frames: u64,
+    pub reserve_free_bytes: u64,
+}
+
+impl Default for ArchiveLimits {
+    fn default() -> Self {
+        Self {
+            max_payload_bytes: 256 * 1024 * 1024,
+            max_frames: 100_000,
+            reserve_free_bytes: 512 * 1024 * 1024,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ArchivePause {
+    FrameLimit,
+    ByteLimit,
+    DiskReserve,
+    QueueUnavailable,
+    WriteFailed,
+}
+
+impl ArchivePause {
+    pub(super) fn details(self) -> (&'static str, &'static str) {
+        match self {
+            Self::FrameLimit => ("frame_limit", "frame limit reached"),
+            Self::ByteLimit => ("byte_limit", "packet-byte limit reached"),
+            Self::DiskReserve => ("disk_reserve", "filesystem free-space reserve reached"),
+            Self::QueueUnavailable => ("queue_unavailable", "alert evidence queue unavailable"),
+            Self::WriteFailed => ("write_failed", "archive write failed"),
+        }
+    }
+}
+
 pub(super) fn bind(connection: &mut Connection, alert_only: bool, has_bytes: bool) -> Result<(), String> {
     let transaction = connection.transaction().map_err(|error| error.to_string())?;
     transaction.execute_batch(

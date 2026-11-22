@@ -314,6 +314,10 @@ read_health() {
          then ([0, $clock - $last_progress] | max) else null end) as $no_progress |
         ($h.archive_enabled | if type == "boolean" then . else null end) as $archive_enabled |
         ($h.archive_paused | if type == "boolean" then . else null end) as $archive_paused |
+        (if $archive_paused == true then
+            [$h.archive_pause_reason | strings | select(. as $reason |
+                ["frame_limit","byte_limit","disk_reserve","queue_unavailable","write_failed"] | index($reason) != null
+            )][0] else null end) as $pause_reason |
         ($h.archive_alert_evidence_only | if type == "boolean" then . else null end) as $evidence_only |
         {
             capture_active: ($h.capture_active // false),
@@ -348,6 +352,7 @@ read_health() {
             alert_log_identity: (if $verify_open == 1 and $source == true then $identity else null end),
             archive_enabled: $archive_enabled,
             archive_paused: $archive_paused,
+            archive_pause_reason: $pause_reason,
             archive_alert_evidence_only: $evidence_only,
             archive_requirement: (if $require_archive == "1" then "active"
                                   elif $require_archive == "alert-evidence" then "alert_evidence_only"
@@ -435,7 +440,7 @@ while :; do
         state=$(jq -cn --argjson baseline "$baseline" '
             {issues:["monitor_input_error"],next_baseline:{drops:$baseline.drops,truncated:$baseline.truncated,packets:null}}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled, .archive_paused, .archive_alert_evidence_only]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled, .archive_paused, .archive_pause_reason, .archive_alert_evidence_only]' <<< "$state") || exit 2
     event=
     if "$once"; then
         event=sample
