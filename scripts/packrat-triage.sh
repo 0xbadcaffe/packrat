@@ -13,6 +13,7 @@ usage() {
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
         '--list-saved groups the latest 512 distinct saved alerts by session and capture; counts cover only that sample.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
+        'review_queue lists up to five open CRITICAL or HIGH alerts from the displayed sample, with evidence next steps.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'Strict watcher mode rejects a live log whose file identity has not been verified by the watcher.' \
@@ -161,13 +162,29 @@ report() {
             elif .health.archive_paused == true then "paused"
             elif .health.archive_enabled == true and .health.archive_paused == false then "enabled"
             else "unknown" end;
+        def evidence_step:
+            if . == "complete" then "inspect_retained_frames"
+            elif . == "partial" then "inspect_retained_and_recover_missing_frames"
+            elif . == "unavailable" then "locate_original_capture"
+            elif . == "no_references" then "corroborate_with_host_or_service_logs"
+            elif . == "check_failed" or . == "changed_during_review" then "retry_evidence_check"
+            else "verify_frame_availability" end;
         .[1] as $alerts
         | .[2] as $evidence
+        | (if $alerts == null then null else $alerts[:$limit] |
+            map(. + {packet_evidence_status:packet_evidence($evidence)}) end) as $sample
+        | (if $sample == null then null else [
+            ("CRITICAL", "HIGH") as $severity | $sample[]
+            | select(.severity == $severity and (.disposition == "New" or .disposition == "Reviewing"))
+            | {alert_id,title,rule_id,severity,confidence,verify,packet_evidence_status,
+               next_evidence_step:(.packet_evidence_status | evidence_step)}
+          ] end) as $review
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
              live_packet_archive:(.[0] | live_archive),
              has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
-             alerts:(if $alerts == null then null else $alerts[:$limit]
-                | map(. + {packet_evidence_status:packet_evidence($evidence)}) end),
+             alerts:$sample,
+             open_priority_alerts_in_sample:(if $review == null then null else $review | length end),
+             review_queue:(if $review == null then null else $review[:5] end),
              evidence_selection:$selection, evidence_status:$evidence,
              alert_log_integrity:.[3], socket_context_status:$socket}
     '

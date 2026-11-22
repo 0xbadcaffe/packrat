@@ -74,8 +74,9 @@ mock_archive() {
     esac
     if [[ -n ${PACKRAT_TEST_ALERT_COUNT:-} ]]; then
         jq -cn --argjson count "$PACKRAT_TEST_ALERT_COUNT" --arg large "${PACKRAT_TEST_LARGE_ALERTS:-0}" \
-            --argjson offset "${PACKRAT_TEST_ALERT_OFFSET:-0}" '
+            --argjson offset "${PACKRAT_TEST_ALERT_OFFSET:-0}" --arg priority "${PACKRAT_TEST_OPEN_PRIORITY:-0}" '
             [range($count; 0; -1) | {alert_id:(. + $offset),session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"}
+                + (if $priority == "1" then {severity:"HIGH",disposition:"New"} else {} end)
                 + (if $large == "1" then {detail: ("\ud83d\udd0d" * 512), title: ("\ud83d\udd0d" * 160)}
                    else {} end)]'
     elif [[ $limit == 512 ]]; then
@@ -250,10 +251,14 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
     jq -c '.archive_enabled = true | .archive_paused = false' <<< "$sample" >"$health"
     result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
     jq -e '.evidence_selection == "automatic" and .evidence_status.alert_id == 42
-        and [.alerts[].packet_evidence_status] == ["not_checked","no_references","not_checked","partial","not_checked"]' \
+        and [.alerts[].packet_evidence_status] == ["not_checked","no_references","not_checked","partial","not_checked"]
+        and .open_priority_alerts_in_sample == 4 and [.review_queue[].alert_id] == [45,42,41,44]
+        and [.review_queue[].next_evidence_step] == ["corroborate_with_host_or_service_logs",
+            "inspect_retained_and_recover_missing_frames","verify_frame_availability","verify_frame_availability"]' \
         <<< "$result" >/dev/null
     result=$(PACKRAT_TEST_ALERT_COUNT=0 run_auto)
-    jq -e '.evidence_selection == "automatic" and .evidence_status == null and .alerts == []' <<< "$result" >/dev/null
+    jq -e '.evidence_selection == "automatic" and .evidence_status == null and .alerts == []
+        and .open_priority_alerts_in_sample == 0 and .review_queue == []' <<< "$result" >/dev/null
     jq -c '.archive_enabled = true | .archive_paused = null' <<< "$sample" >"$health"
     result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
     jq -e '.live_packet_archive == "unknown" and .evidence_status == null' <<< "$result" >/dev/null
@@ -274,6 +279,9 @@ done
 result=$(PACKRAT_TEST_ALERT_COUNT=51 PACKRAT_TEST_LARGE_ALERTS=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.has_more_alerts and (.alerts | length) == 50 and all(.alerts[]; (.detail | length) == 512)' \
     <<< "$result" >/dev/null
+result=$(PACKRAT_TEST_ALERT_COUNT=51 PACKRAT_TEST_OPEN_PRIORITY=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+jq -e '.has_more_alerts and .open_priority_alerts_in_sample == 50
+    and [.review_queue[].alert_id] == [51,50,49,48,47]' <<< "$result" >/dev/null
 
 previous="$scratch/older log.jsonl"
 touch -- "$previous"
@@ -295,7 +303,8 @@ check_failure() {
     local expected_rc=$1 expected_status=$2 actual=0 output
     output=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG") || actual=$?
     [[ $actual == "$expected_rc" ]]
-    jq -e --arg status "$expected_status" '.status == $status and .alerts == null and .has_more_alerts == null' \
+    jq -e --arg status "$expected_status" '.status == $status and .alerts == null and .has_more_alerts == null
+        and .review_queue == null and .open_priority_alerts_in_sample == null' \
         <<< "$output" >/dev/null
 }
 
