@@ -132,8 +132,10 @@ fn arp_source_mismatch_is_distinct_from_binding_changes_and_vrrp() {
     assert!(core.incidents.incidents.is_empty());
 }
 
-#[test]
-fn alternating_arp_claims_require_three_scoped_ordered_frames() {
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn alternating_arp_claims_require_three_scoped_ordered_frames(#[case] tied_time: bool) {
     let by_rule = |core: &AnalysisCore| {
         core.alert_center.items.iter().position(|alert| {
             alert.provenance.as_ref().is_some_and(|rule| rule.rule_id == "arp.alternating_claims")
@@ -143,7 +145,7 @@ fn alternating_arp_claims_require_three_scoped_ordered_frames() {
         [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (3, 3.0, 10, 2)], // One change.
         [(1, 1.0, 10, 1), (2, 2.0, 20, 2), (3, 3.0, 10, 1)], // Different VLAN.
         [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (3, 1.5, 10, 1)], // Reordered.
-        [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (3, 2.0, 10, 1)], // Tied timestamp.
+        [(1, 1.0, 10, 1), (3, 1.0, 10, 2), (2, 1.0, 10, 1)], // Reordered at the same time.
         [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (1, 3.0, 10, 1)], // Duplicate frame identity.
         [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (3, 32.0, 10, 1)], // Too far apart.
     ] {
@@ -156,7 +158,7 @@ fn alternating_arp_claims_require_three_scoped_ordered_frames() {
 
     let mut core = AnalysisCore::default();
     for (no, host) in [(1, 1), (2, 2), (3, 1)] {
-        core.analyze(&reply(no, no as f64, 10, host));
+        core.analyze(&reply(no, if tied_time { 1.0 } else { no as f64 }, 10, host));
     }
     let index = by_rule(&core).unwrap();
     let alert = &core.alert_center.items[index];

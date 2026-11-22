@@ -5,6 +5,13 @@ const ARP_COMPARISON_WINDOW_SECS: f64 = 300.0;
 const ARP_ALTERNATION_WINDOW_SECS: f64 = 30.0;
 const ARP_SOURCE_MISMATCH: &str = "ARP reply sender differs from Ethernet source";
 
+impl ArpObservation {
+    fn precedes(self, other: Self) -> bool {
+        self.timestamp < other.timestamp
+            || (self.timestamp == other.timestamp && self.frame < other.frame)
+    }
+}
+
 fn arp_claim_sender(raw: &[u8]) -> Option<(Ipv4Addr, [u8; 6], bool)> {
     let (offset, 0x0806) = ethernet_network_header(raw)? else { return None };
     let arp = raw.get(offset..offset + 28)?;
@@ -60,7 +67,8 @@ impl SecurityEngine {
         }
         let key = (scope, ip);
         let known = self.ip_to_mac.get(&key).copied();
-        if known.is_some_and(|entry| entry.latest.timestamp > pkt.timestamp) {
+        let latest = ArpObservation { mac, timestamp: pkt.timestamp, frame: pkt.no, announcement };
+        if known.is_some_and(|entry| !entry.latest.precedes(latest)) {
             return;
         }
         if known.is_none() && self.ip_to_mac.len() >= MAX_CONTROL_PLANE_IDENTITIES
@@ -70,7 +78,6 @@ impl SecurityEngine {
         {
             self.ip_to_mac.remove(&oldest);
         }
-        let latest = ArpObservation { mac, timestamp: pkt.timestamp, frame: pkt.no, announcement };
         let previous_owner = known.and_then(|entry| {
             if entry.latest.mac == mac { entry.previous_owner } else { Some(entry.latest) }
         });
@@ -83,7 +90,7 @@ impl SecurityEngine {
             let known = history.latest;
             if let Some(first) = history.previous_owner
                 && first.mac == mac
-                && first.timestamp < known.timestamp && known.timestamp < pkt.timestamp
+                && first.precedes(known) && known.precedes(latest)
                 && pkt.timestamp - first.timestamp <= ARP_ALTERNATION_WINDOW_SECS
                 && first.frame != known.frame && first.frame != pkt.no && known.frame != pkt.no
             {
@@ -96,7 +103,7 @@ impl SecurityEngine {
                         signature: "Alternating ARP claims",
                         severity: Severity::Medium,
                         detail: format!(
-                            "ARP claims for {ip} alternated {returning}, {other}, {returning} within 30 seconds; failover, duplicate addressing, and spoofing are possible"
+                            "ARP claims for {ip} alternated {returning}, {other}, {returning} within 30 seconds in capture order; failover, duplicate addressing, and spoofing are possible"
                         ),
                     },
                     related_packets: vec![first.frame, known.frame],

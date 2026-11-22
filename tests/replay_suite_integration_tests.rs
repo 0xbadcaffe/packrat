@@ -415,7 +415,7 @@ fn arp_replay_scores_distinct_claim_patterns_and_capture_scopes() {
             "expect_counts":{(mismatch):1}, "expect_snapshots":1, "opening_frames":{(mismatch):[1]},
             "opening_evidence":[{"rule_id":mismatch,"opening_frame":1,"frames":[1]}],
         })),
-        ("alternating", &[(0, 10, 1), (0, 10, 2), (0, 10, 1), (0, 10, 2)][..], "", json!({
+        ("alternating", &[(0, 10, 1), (0, 10, 2), (0, 10, 1), (0, 10, 2)][..], "tied-time", json!({
             "expect_counts":{(binding):1,(alternation):1}, "expect_snapshots":5,
             "opening_frames":{(binding):[2],(alternation):[3]},
             "opening_evidence":[{"rule_id":binding,"opening_frame":2,"frames":[1,2]},
@@ -432,9 +432,9 @@ fn arp_replay_scores_distinct_claim_patterns_and_capture_scopes() {
                 "mismatch" => packet.bytes[11] = 0x25,
                 _ => {}
             }
-            let length = packet.bytes.len() as u32;
+            let (length, ticks) = (packet.bytes.len() as u32, if wire_change == "tied-time" { 1 } else { frame });
             packet.capture = Some(CaptureMetadata {
-                timestamp: Some(CaptureTimestamp { ticks: frame, resolution: TimestampResolution::Decimal(0), offset_seconds: 0 }),
+                timestamp: Some(CaptureTimestamp { ticks, resolution: TimestampResolution::Decimal(0), offset_seconds: 0 }),
                 captured_length: length, wire_length: length, link_type: 1,
                 section_id: 0, interface_id, interface_name: None, comments: Vec::new(),
             });
