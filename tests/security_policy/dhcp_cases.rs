@@ -74,3 +74,61 @@ fn dhcp_burst_uses_capture_window_and_rearms_after_distinct_clients_expire() {
         }
     }
 }
+
+#[rstest]
+#[case("ipv4 total length")]
+#[case("capture truncation")]
+#[case("udp length")]
+#[case("fragment offset")]
+#[case("more fragments")]
+#[case("bootp operation")]
+#[case("udp direction")]
+#[case("hardware length")]
+#[case("missing end option")]
+#[case("duplicate message type")]
+fn dhcp_identity_burst_ignores_incomplete_or_inconsistent_observations(#[case] defect: &str) {
+    const IP: usize = 14;
+    const UDP: usize = IP + 20;
+    const BOOTP: usize = UDP + 8;
+    let mut engine = SecurityEngine::default();
+    for identity in 0..63 {
+        engine.update(&discovery(u64::from(identity) + 1, identity, 1.0));
+    }
+    let mut candidate = discovery(64, 63, 2.0);
+    let raw = &mut candidate.bytes;
+    match defect {
+        "ipv4 total length" => raw[IP + 2..IP + 4].copy_from_slice(&28_u16.to_be_bytes()),
+        "capture truncation" => { raw.pop(); }
+        "udp length" => {
+            let length = u16::from_be_bytes(raw[UDP + 4..UDP + 6].try_into().unwrap());
+            raw[UDP + 4..UDP + 6].copy_from_slice(&(length + 1).to_be_bytes());
+        }
+        "fragment offset" => raw[IP + 7] = 1,
+        "more fragments" => raw[IP + 6] = 0x20,
+        "bootp operation" => raw[BOOTP] = 2,
+        "udp direction" => {
+            raw[UDP + 1] = 67;
+            raw[UDP + 3] = 68;
+            raw[BOOTP] = 2;
+        }
+        "hardware length" => raw[BOOTP + 2] = 17,
+        "missing end option" => *raw.last_mut().unwrap() = 0,
+        "duplicate message type" => {
+            raw.pop();
+            raw.extend_from_slice(&[53, 1, 1, 255]);
+            let ip_len = (raw.len() - IP) as u16;
+            let udp_len = (raw.len() - UDP) as u16;
+            raw[IP + 2..IP + 4].copy_from_slice(&ip_len.to_be_bytes());
+            raw[UDP + 4..UDP + 6].copy_from_slice(&udp_len.to_be_bytes());
+        }
+        _ => unreachable!(),
+    }
+    engine.update(&candidate);
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != BURST), "{defect}");
+    let mut valid = discovery(65, 63, 2.0);
+    valid.bytes.extend_from_slice(&[0; 4]); // Link-layer trailer outside the IP datagram.
+    let result = engine.inspect(&valid);
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == BURST).unwrap();
+    assert!(finding.related_packets.contains(&65));
+    assert!(!finding.related_packets.contains(&64));
+}

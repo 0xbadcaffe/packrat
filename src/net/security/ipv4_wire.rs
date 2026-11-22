@@ -166,35 +166,31 @@ pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
         return None;
     }
     let ip_header_len = usize::from(raw[ip_offset] & 0x0f) * 4;
-    let udp_offset = ip_offset.checked_add(ip_header_len)?;
-    if ip_header_len < 20 || raw.len() < udp_offset + 8 {
+    let total_len = usize::from(u16_be_at(raw, ip_offset + 2));
+    let fragment = u16_be_at(raw, ip_offset + 6);
+    if ip_header_len < 20 || fragment & 0x3fff != 0 {
         return None;
     }
-    let source_port = u16::from_be_bytes([raw[udp_offset], raw[udp_offset + 1]]);
-    let destination_port = u16::from_be_bytes([raw[udp_offset + 2], raw[udp_offset + 3]]);
-    if !matches!((source_port, destination_port), (67, 68) | (68, 67)) {
-        return None;
-    }
-    let udp_len = usize::from(u16::from_be_bytes([
-        raw[udp_offset + 4],
-        raw[udp_offset + 5],
-    ]));
-    let payload_start = udp_offset + 8;
-    let payload_end = (udp_offset + udp_len).min(raw.len());
-    if payload_end < payload_start + 240 {
-        return None;
-    }
-    let payload = &raw[payload_start..payload_end];
-    if payload[236..240] != [99, 130, 83, 99] {
+    let ip = raw.get(ip_offset..ip_offset.checked_add(total_len)?)?;
+    let udp = ip.get(ip_header_len..)?;
+    let direction = match (u16_be_at(udp, 0), u16_be_at(udp, 2)) {
+        (68, 67) => 1, // BOOTREQUEST
+        (67, 68) => 2, // BOOTREPLY
+        _ => return None,
+    };
+    let udp_len = usize::from(u16_be_at(udp, 4));
+    let payload = udp.get(8..udp_len)?;
+    let options = payload.get(240..)?;
+    if payload[0] != direction || payload[236..240] != [99, 130, 83, 99] {
         return None;
     }
 
     let mut message_type = None;
     let mut client_identifier = None;
     let mut server_identifier = None;
-    let mut cursor = 240usize;
-    while cursor < payload.len() {
-        let option = payload[cursor];
+    let mut cursor = 0;
+    loop {
+        let option = *options.get(cursor)?;
         cursor += 1;
         if option == 0 {
             continue;
@@ -202,19 +198,27 @@ pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
         if option == 255 {
             break;
         }
-        let length = usize::from(*payload.get(cursor)?);
+        let length = usize::from(*options.get(cursor)?);
         cursor += 1;
-        let value = payload.get(cursor..cursor + length)?;
+        let value = options.get(cursor..cursor + length)?;
         match option {
-            53 if length == 1 => message_type = Some(value[0]),
-            54 if length == 4 => server_identifier = Some(value.to_vec()),
+            53 if length == 1 && message_type.is_none() => message_type = Some(value[0]),
+            54 if length == 4 && server_identifier.is_none() => server_identifier = Some(value.to_vec()),
+            53 | 54 => return None,
             61 if !value.is_empty() => client_identifier = Some(value.to_vec()),
             _ => {}
         }
         cursor += length;
     }
 
-    let hardware_len = usize::from(payload[2]).min(16);
+    let message_type = message_type?;
+    if !matches!((direction, message_type), (1, 1) | (2, 2 | 5)) {
+        return None;
+    }
+    let hardware_len = usize::from(payload[2]);
+    if hardware_len > 16 {
+        return None;
+    }
     let client_identity =
         client_identifier.unwrap_or_else(|| payload[28..28 + hardware_len].to_vec());
     let mut server_identity =
@@ -223,7 +227,7 @@ pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
         server_identity.extend_from_slice(&source_mac);
     }
     Some(DhcpMessage {
-        message_type: message_type?,
+        message_type,
         client_identity,
         server_identity,
     })
