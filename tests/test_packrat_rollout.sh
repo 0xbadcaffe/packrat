@@ -102,6 +102,28 @@ trap 'rm -rf -- "$scratch"' EXIT
 data_dir=$scratch
 
 (
+    health_state="$scratch/health.json"
+    date() { printf '%s\n' 1700000000; }
+    scope='{"pid":"42","capture_id":"00000000000000000000000000000002",
+        "capture_run_id":"0000000000000001","alert_session_id":"1700000000-42"}'
+    sample=$(jq -c --arg log "$data_dir/alerts.jsonl" '
+        del(.pid) + {record_type:"capture_health",timestamp:"2023-11-14T22:13:10Z",
+            poll_interval_seconds:15,capture_active:true,telemetry_fresh:true,
+            alert_watcher_alive:true,alert_watcher_pipeline_alive:true,
+            alert_watcher_source_matches:true,alert_watcher_log:$log}
+    ' <<< "$scope")
+    printf '%s\n' "$sample" >"$health_state"
+    alert_watcher_ready "$scope"
+    for update in '.alert_watcher_pipeline_alive = false' '.alert_watcher_source_matches = false' \
+        '.alert_watcher_log += ".old"' '.capture_id = "00000000000000000000000000000003"' \
+        '.alert_session_id = "1700000000-43"' '.timestamp = "2023-11-14T22:12:29Z"' \
+        'del(.poll_interval_seconds)'; do
+        jq -c "$update" <<< "$sample" >"$health_state"
+        if alert_watcher_ready "$scope"; then exit 1; fi
+    done
+)
+
+(
     interface=wlan1
     tick=0
     phase=recover
@@ -215,6 +237,8 @@ replace_installed() {
 }
 
 retire_bridge() { trace+=("retire-stage"); }
+alert_watcher_ready() { [[ $scenario != watcher_lost_before_cutover ]]; }
+await_primary_watcher() { [[ $scenario != watcher_lost_after_cutover ]]; }
 
 run_scenario() {
     scenario=$1
@@ -242,9 +266,12 @@ mv -- "$data_dir/alerts.saved" "$data_dir/alerts.jsonl"
 run_scenario primary_missing 1
 run_scenario primary_changed 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario primary_disappears 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario watcher_lost_before_cutover 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario cannot_stop 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat
 run_scenario success 0 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat retire-stage
+run_scenario watcher_lost_after_cutover 1 backup start:packrat-stage:/candidate \
+    stop:packrat:/usr/local/bin/packrat install:/candidate start:packrat:/usr/local/bin/packrat
 run_scenario install_fail 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate stop:packrat:/usr/local/bin/packrat install:/backup/packrat \
     start:packrat:/usr/local/bin/packrat allow-existing-drops retire-stage

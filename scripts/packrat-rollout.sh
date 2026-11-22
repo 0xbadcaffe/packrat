@@ -8,6 +8,7 @@ main_session=packrat
 bridge_session=packrat-stage
 health_addr=127.0.0.1:9477
 stage_health_addr=127.0.0.1:9478
+health_state=${PACKRAT_ROLLOUT_HEALTH_STATE:-"$HOME/.cache/packrat-health/latest.json"}
 backup_dir=
 stage_binary=
 archive_path=
@@ -96,6 +97,43 @@ primary_capture_stamp() {
         '
 }
 
+alert_watcher_ready() {
+    local capture_stamp=$1
+    [[ -f $health_state ]] || return 1
+    head -c 65537 -- "$health_state" |
+        jq -Rse --argjson scope "$capture_stamp" --arg log "$data_dir/alerts.jsonl" \
+            --argjson now "$(date -u +%s)" '
+            select(utf8bytelength <= 65536) | fromjson | objects
+            | . as $sample
+            | (.timestamp | fromdateiso8601) as $observed
+            | (.poll_interval_seconds | select(
+                type == "number" and floor == . and . >= 1 and . <= 999999
+              )) as $interval
+            | $sample.record_type == "capture_health"
+              and $now >= $observed and $now - $observed <= $interval * 3 + 5
+              and $sample.capture_active == true and $sample.telemetry_fresh == true
+              and ($scope.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"))
+              and ($scope.capture_run_id | type == "string" and test("\\A[0-9a-f]{16}\\z"))
+              and ($scope.alert_session_id | type == "string" and test("\\A[0-9]+-[0-9]+\\z"))
+              and $sample.capture_id == $scope.capture_id
+              and $sample.capture_run_id == $scope.capture_run_id
+              and $sample.alert_session_id == $scope.alert_session_id
+              and $sample.alert_watcher_alive == true
+              and $sample.alert_watcher_pipeline_alive == true
+              and $sample.alert_watcher_source_matches == true
+              and $sample.alert_watcher_log == $log
+        ' >/dev/null 2>&1
+}
+
+await_primary_watcher() {
+    local stamp attempt
+    for attempt in {1..30}; do
+        if stamp=$(primary_capture_stamp) && alert_watcher_ready "$stamp"; then return 0; fi
+        sleep 1
+    done
+    return 1
+}
+
 read_launch_profile() {
     local flag value path='' max_mib='' max_frames=''
     local -a limits=()
@@ -170,7 +208,12 @@ preflight() {
     candidate_supports_profile || { error "Candidate does not support the current capture options"; return 1; }
     health_ready || { error "Current capture telemetry or alert logging is unhealthy"; return 1; }
     capture_storage_ready "$pid" "$main_session" &&
-        sudo -n test -f "$data_dir/alerts.jsonl"
+        sudo -n test -f "$data_dir/alerts.jsonl" || return 1
+    local stamp
+    if ! stamp=$(primary_capture_stamp) || ! alert_watcher_ready "$stamp"; then
+        error "Cannot verify the primary alert watcher; check $health_state"
+        return 1
+    fi
 }
 
 candidate_supports_profile() {
@@ -329,11 +372,20 @@ rollout() {
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi
+    if ! alert_watcher_ready "$primary_now"; then
+        error "Could not verify the primary alert watcher; current capture not stopped"
+        retire_bridge || error "Inspect $bridge_session before retrying"
+        return 1
+    fi
     if ! stop_capture "$main_session" "$installed" "$primary_pid"; then
         error "Could not stop the current capture; verified staging capture left running"
         return 1
     fi
     if replace_installed "$stage_binary" && start_capture "$main_session" "$installed"; then
+        if ! await_primary_watcher; then
+            error "Replacement is live but its alert watcher could not be verified; staging capture left running"
+            return 1
+        fi
         retire_bridge || { error "Replacement is live; inspect the staging session"; return 1; }
         printf '%s\n' 'Rollout verified'
         return 0
@@ -342,7 +394,11 @@ rollout() {
     if stop_capture "$main_session" "$installed" &&
        replace_installed "$backup_dir/packrat" &&
        start_capture "$main_session" "$installed" false; then
-        retire_bridge || error "Rollback is live; inspect the staging session"
+        if await_primary_watcher; then
+            retire_bridge || error "Rollback is live; inspect the staging session"
+        else
+            error "Rollback is live but its alert watcher could not be verified; staging capture left running"
+        fi
         error "Previous capture restored; rollout failed"
     else
         error "Rollback could not be verified; staging capture left running"
@@ -353,6 +409,7 @@ rollout() {
 main() {
     if (( $# != 3 )) || [[ $1 != --check && $1 != --deploy ]]; then
         error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE'
+        error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
         return 2
     fi
     mode=$1 candidate=$2 interface=$3
