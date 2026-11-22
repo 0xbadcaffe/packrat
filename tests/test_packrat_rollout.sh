@@ -156,24 +156,34 @@ test_evidence_profile_opt_in 2>"$scratch/profile-errors"
 (
     health_state="$scratch/health.json"
     date() { printf '%s\n' 1700000000; }
+    touch "$data_dir/alerts.jsonl"
+    primary_alert_log_identity() { stat -Lc '%d:%i' "$data_dir/alerts.jsonl"; }
     scope='{"pid":"42","capture_id":"00000000000000000000000000000002",
         "capture_run_id":"0000000000000001","alert_session_id":"1700000000-42"}'
-    sample=$(jq -c --arg log "$data_dir/alerts.jsonl" '
+    sample=$(jq -c --arg log "$data_dir/alerts.jsonl" --arg identity "$(primary_alert_log_identity)" '
         del(.pid) + {record_type:"capture_health",timestamp:"2023-11-14T22:13:10Z",
             poll_interval_seconds:15,capture_active:true,telemetry_fresh:true,
             alert_watcher_alive:true,alert_watcher_pipeline_alive:true,
-            alert_watcher_source_matches:true,alert_watcher_log:$log,alert_log_storage:"private"}
+            alert_watcher_source_matches:true,alert_watcher_open_log_required:true,alert_log_identity:$identity,
+            alert_watcher_log:$log,alert_log_storage:"private"}
     ' <<< "$scope")
     printf '%s\n' "$sample" >"$health_state"
     alert_watcher_ready "$scope"
     for update in '.alert_watcher_pipeline_alive = false' '.alert_watcher_source_matches = false' \
         '.alert_watcher_log += ".old"' '.capture_id = "00000000000000000000000000000003"' \
         '.alert_session_id = "1700000000-43"' '.timestamp = "2023-11-14T22:12:29Z"' \
-        'del(.poll_interval_seconds)' 'del(.alert_log_storage)' \
+        'del(.poll_interval_seconds)' 'del(.alert_log_storage)' 'del(.alert_log_identity)' \
+        '.alert_watcher_open_log_required = false' '.alert_log_identity = "0:0"' \
         '.alert_log_storage = "unsafe"' '.alert_log_storage = "unavailable"'; do
         jq -c "$update" <<< "$sample" >"$health_state"
         if alert_watcher_ready "$scope"; then exit 1; fi
     done
+    printf '%s\n' "$sample" >"$health_state"
+    mv -- "$data_dir/alerts.jsonl" "$data_dir/alerts.previous"
+    touch "$data_dir/alerts.jsonl"
+    if alert_watcher_ready "$scope"; then exit 1; fi
+    jq -c --arg id "$(primary_alert_log_identity)" '.alert_log_identity = $id' <<< "$sample" >"$health_state"
+    alert_watcher_ready "$scope"
 )
 
 (
@@ -404,7 +414,10 @@ replace_installed() {
 }
 
 retire_bridge() { trace+=("retire-stage"); }
-alert_watcher_ready() { [[ $scenario != watcher_lost_before_cutover ]]; }
+alert_watcher_ready() {
+    if [[ $scenario == last_moment_alert ]]; then printf '%s\n' late >>"$data_dir/alerts.jsonl"; fi
+    [[ $scenario != watcher_lost_before_cutover ]]
+}
 await_primary_watcher() { [[ $scenario != watcher_lost_after_cutover ]]; }
 stage_alert_log_size() {
     case $scenario in
@@ -446,6 +459,7 @@ run_scenario primary_missing 1
 run_scenario primary_changed 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario primary_disappears 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario watcher_lost_before_cutover 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario last_moment_alert 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario staged_finding 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario staged_log_missing 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario cannot_stop 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat

@@ -119,6 +119,7 @@ private_alert_log_stat() {
     printf '%s\n' "${BASH_REMATCH[2]}"
 }
 primary_alert_log_stamp() { private_alert_log_stat "$data_dir/alerts.jsonl" '%d:%i:%s:%y:%z'; }
+primary_alert_log_identity() { private_alert_log_stat "$data_dir/alerts.jsonl" '%d:%i'; }
 stage_alert_log_size() { private_alert_log_stat "$(alert_log_for_session "$bridge_session")" '%s'; }
 
 primary_capture_stamp() {
@@ -133,10 +134,11 @@ primary_capture_stamp() {
 }
 
 alert_watcher_ready() {
-    local capture_stamp=$1
+    local capture_stamp=$1 identity latest_identity
     [[ -f $health_state ]] || return 1
-    head -c 65537 -- "$health_state" |
-        jq -Rse --argjson scope "$capture_stamp" --arg log "$data_dir/alerts.jsonl" \
+    identity=$(primary_alert_log_identity) && [[ $identity =~ ^[0-9]{1,20}:[0-9]{1,20}$ ]] || return 1
+    if ! head -c 65537 -- "$health_state" |
+        jq -Rse --argjson scope "$capture_stamp" --arg log "$data_dir/alerts.jsonl" --arg identity "$identity" \
             --argjson now "$(date -u +%s)" '
             select(utf8bytelength <= 65536) | fromjson | objects
             | . as $sample
@@ -156,8 +158,13 @@ alert_watcher_ready() {
               and $sample.alert_watcher_alive == true
               and $sample.alert_watcher_pipeline_alive == true
               and $sample.alert_watcher_source_matches == true
+              and $sample.alert_watcher_open_log_required == true
+              and $sample.alert_log_identity == $identity
               and $sample.alert_watcher_log == $log and $sample.alert_log_storage == "private"
-        ' >/dev/null 2>&1
+        ' >/dev/null 2>&1; then
+        return 1
+    fi
+    latest_identity=$(primary_alert_log_identity) && [[ $latest_identity == "$identity" ]]
 }
 
 await_primary_watcher() {
@@ -397,6 +404,14 @@ rollout() {
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi
+    if ! alert_log_now=$(primary_alert_log_stamp) || [[ $alert_log_now != "$alert_log_before" ]]; then
+        error "Primary alert log changed during the final cutover checks; current capture not stopped"
+        if "$enable_alert_evidence"; then
+            sudo -n rmdir -- "$archive_path" || error "Inspect the reserved archive before retrying"
+        fi
+        retire_bridge || error "Inspect $bridge_session before retrying"
+        return 1
+    fi
     if ! stop_capture "$main_session" "$installed" "$primary_pid"; then
         error "Could not stop the current capture; verified staging capture left running"
         return 1
@@ -434,6 +449,7 @@ main() {
         error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE [--enable-alert-evidence]'
         error 'The opt-in enables a new private archive for HIGH/CRITICAL evidence only (64 MiB packet bytes, 8192 frames).'
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
+        error 'The health watcher must run with PACKRAT_ALERT_VERIFY_OPEN=1 and verify the current alert log.'
         error 'PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB sets free space to leave after backing up (default: 512).'
         return 2
     fi
