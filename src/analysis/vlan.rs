@@ -1,7 +1,7 @@
 //! VLAN intelligence engine — per-VLAN stats, host inventory, and attack detection.
 //!
 //! Detects:
-//!   • Double-tagging / VLAN-hopping (QinQ frames from non-trunk context)
+//!   • Stacked VLAN tags observed on the wire
 //!   • Native VLAN 1 usage (industry best-practice violation)
 //!   • DTP negotiation observations
 //!   • MAC appearing on multiple VLANs (potential VLAN-hopping or misconfiguration)
@@ -16,6 +16,20 @@ mod dtp;
 // ─── DTP detection ────────────────────────────────────────────────────────────
 // DTP frames are sent to the Cisco multicast MAC 01:00:0c:cc:cc:cc
 const DTP_DST_MAC: [u8; 6] = [0x01, 0x00, 0x0c, 0xcc, 0xcc, 0xcc];
+
+fn two_vlan_tags(raw: &[u8]) -> Option<[(u16, u16); 2]> {
+    let field = |offset| Some(u16::from_be_bytes(raw.get(offset..offset + 2)?.try_into().ok()?));
+    let is_tag = |kind| matches!(kind, 0x8100 | 0x88a8);
+    let outer = field(12)?;
+    if !is_tag(outer) {
+        return None;
+    }
+    let inner = field(16)?;
+    if !is_tag(inner) || is_tag(field(20)?) {
+        return None;
+    }
+    Some([(outer, field(14)? & 0x0fff), (inner, field(18)? & 0x0fff)])
+}
 
 // ─── Data types ───────────────────────────────────────────────────────────────
 
@@ -158,16 +172,20 @@ impl VlanIntel {
             );
         }
 
-        // ── QinQ / double-tagging detection ──────────────────────────────────
-        if let (Some(outer), Some(inner)) = (pkt.outer_vlan_id, pkt.vlan_id) {
-            self.raise(
-                AlertSeverity::Critical,
-                "VLAN-Hop",
-                format!("QinQ double-tag: outer={} inner={} src={} — possible VLAN-hopping attack",
-                    outer, inner, pkt.src),
-                pkt.no, pkt.timestamp,
-                format!("QINQ:{}:{}", outer, inner),
-            );
+        if let Some([(outer_type, outer), (inner_type, inner)]) = two_vlan_tags(&pkt.bytes) {
+            let scope = pkt.capture.as_ref().map(|meta| (meta.section_id, meta.interface_id));
+            let key = format!("tag_stack:{scope:?}:{outer_type:04x}:{outer}:{inner_type:04x}:{inner}");
+            if self.allow_alert(key.clone(), pkt.no) {
+                let location = scope.map_or_else(|| "unknown capture interface".to_owned(),
+                    |(section, interface)| format!("capture section {section}, interface {interface}"));
+                self.alerts.push(VlanAlert {
+                    severity: AlertSeverity::Info,
+                    category: "Stacked VLAN tags".into(),
+                    detail: format!("Observed outer VLAN {outer} (0x{outer_type:04x}) and inner VLAN {inner} (0x{inner_type:04x}) at {location}; port policy and forwarding are unverified"),
+                    pkt_no: pkt.no, timestamp: pkt.timestamp, related_packet: None,
+                    correlation_key: Some(key),
+                });
+            }
         }
 
         // ── Per-VLAN accounting ───────────────────────────────────────────────
@@ -234,11 +252,9 @@ impl VlanIntel {
     fn raise(&mut self, severity: AlertSeverity, category: &str, detail: String,
              pkt_no: u64, ts: f64, dedup_key: String)
     {
-        let last = self.dedup.entry(dedup_key).or_insert(0);
-        if *last != 0 && pkt_no.saturating_sub(*last) < 1000 {
+        if !self.allow_alert(dedup_key, pkt_no) {
             return;
         }
-        *last = pkt_no;
         self.alerts.push(VlanAlert {
             severity,
             category: category.to_string(),
@@ -248,6 +264,15 @@ impl VlanIntel {
             related_packet: None,
             correlation_key: None,
         });
+    }
+
+    fn allow_alert(&mut self, key: String, pkt_no: u64) -> bool {
+        let last = self.dedup.entry(key).or_insert(0);
+        if *last != 0 && pkt_no.saturating_sub(*last) < 1000 {
+            return false;
+        }
+        *last = pkt_no;
+        true
     }
 
     pub fn clear(&mut self) {

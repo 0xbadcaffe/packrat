@@ -65,6 +65,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether dynamic trunk negotiation is expected on this switch port. Confirm trunk state with switch logs before escalating.",
         ),
         (
+            "VLAN", "Stacked VLAN tags", "vlan.tag_stack_observed", 1, DirectObservation,
+            "Check both tags against the capture interface's trunk or provider tunnel policy. Tag stacking alone does not prove cross-VLAN forwarding.",
+        ),
+        (
             "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 6, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),

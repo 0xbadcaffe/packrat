@@ -59,6 +59,7 @@ fn vlan_replay_detects_double_tag_native_pcp_and_dtp() {
         Some(20),
     );
     qinq.outer_vlan_id = Some(100);
+    qinq.bytes.splice(12..12, [0x88, 0xa8, 0, 100, 0x81, 0, 0, 20]);
     intel.ingest(&qinq);
 
     let native = ethernet_packet(
@@ -85,7 +86,7 @@ fn vlan_replay_detects_double_tag_native_pcp_and_dtp() {
         intel
             .alerts
             .iter()
-            .any(|alert| alert.category == "VLAN-Hop" && alert.severity == AlertSeverity::Critical)
+            .any(|alert| alert.category == "Stacked VLAN tags" && alert.severity == AlertSeverity::Info)
     );
     assert!(
         intel

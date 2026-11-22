@@ -10,6 +10,8 @@ mod transfer_replay;
 mod arp;
 #[path = "replay_suite/dtp.rs"]
 mod dtp_replay;
+#[path = "replay_suite/vlan_tags.rs"]
+mod vlan_tags;
 
 use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};

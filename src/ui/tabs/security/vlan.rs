@@ -103,7 +103,6 @@ pub(super) fn draw_vlan_intel(f: &mut Frame, app: &App, area: Rect) {
                 AlertSeverity::Info => C_FG2(),
             };
             let cat_color = match a.category.as_str() {
-                "VLAN-Hop" => C_RED(),
                 "MAC-VLAN-Cross" => C_ORANGE(),
                 "PCP-Abuse" => C_YELLOW(),
                 "Native-VLAN" => C_CYAN(),
