@@ -18,7 +18,7 @@ date() {
 
 packrat-archive() {
     printf '%s\n' called >"$PACKRAT_TEST_CALL"
-    [[ $* == "--alerts $PACKRAT_TEST_LOG --session 1700000000-432 --capture-id 00000000000000000000000000000001 --limit 50${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
+    [[ $* == "--alerts $PACKRAT_TEST_LOG --session 1700000000-432 --capture-id 00000000000000000000000000000001 --limit 51${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
     if [[ ${PACKRAT_TEST_SCOPE_RACE:-0} == 1 ]]; then
         jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
@@ -36,7 +36,14 @@ packrat-archive() {
             cp -p -- "$PACKRAT_TEST_PREVIOUS_LOG.rotated" "$PACKRAT_TEST_PREVIOUS_LOG"
             ;;
     esac
-    printf '%s\n' '[{"alert_id":42,"title":"Scoped alert"}]'
+    if [[ -n ${PACKRAT_TEST_ALERT_COUNT:-} ]]; then
+        jq -cn --argjson count "$PACKRAT_TEST_ALERT_COUNT" --arg large "${PACKRAT_TEST_LARGE_ALERTS:-0}" '
+            [range($count; 0; -1) | {alert_id:.}
+                + (if $large == "1" then {detail: ("\ud83d\udd0d" * 512), title: ("\ud83d\udd0d" * 160)}
+                   else {} end)]'
+    else
+        printf '%s\n' '[{"alert_id":42,"title":"Scoped alert"}]'
+    fi
 }
 
 export -f date packrat-archive
@@ -48,8 +55,18 @@ sample=$(jq -c --arg log "$PACKRAT_TEST_LOG" '.alert_watcher_log = $log' <<< "$s
 printf '%s\n' "$sample" >"$health"
 result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.status == "current" and .age_seconds == 30 and .max_age_seconds == 360
-    and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
+    and .alerts[0].alert_id == 42 and .has_more_alerts == false' <<< "$result" >/dev/null
 [[ -f $PACKRAT_TEST_CALL ]]
+for count in 0 50 51; do
+    result=$(PACKRAT_TEST_ALERT_COUNT=$count bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+    jq -e --argjson count "$count" '
+        .status == "current" and .alert_limit == 50 and .has_more_alerts == ($count > 50)
+        and ([.alerts[].alert_id] == [range($count; ([$count - 50, 0] | max); -1)])
+    ' <<< "$result" >/dev/null
+done
+result=$(PACKRAT_TEST_ALERT_COUNT=51 PACKRAT_TEST_LARGE_ALERTS=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+jq -e '.has_more_alerts and (.alerts | length) == 50 and all(.alerts[]; (.detail | length) == 512)' \
+    <<< "$result" >/dev/null
 
 previous="$scratch/older log.jsonl"
 touch -- "$previous"
@@ -71,7 +88,8 @@ check_failure() {
     local expected_rc=$1 expected_status=$2 actual=0 output
     output=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG") || actual=$?
     [[ $actual == "$expected_rc" ]]
-    jq -e --arg status "$expected_status" '.status == $status and .alerts == null' <<< "$output" >/dev/null
+    jq -e --arg status "$expected_status" '.status == $status and .alerts == null and .has_more_alerts == null' \
+        <<< "$output" >/dev/null
 }
 
 rm -- "$PACKRAT_TEST_CALL"

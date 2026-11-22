@@ -5,6 +5,7 @@ usage() {
     printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         'Supply up to eight immutable previous logs, oldest first.' \
         'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
+        'has_more_alerts indicates that older matching alerts were omitted.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
@@ -12,6 +13,7 @@ usage() {
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
 if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
+alert_limit=50
 
 previous_logs=("${@:3}")
 previous_args=()
@@ -51,11 +53,13 @@ if ! state=$(load_state "$1"); then
 fi
 
 report() {
-    jq -c --arg status "$1" --argjson alerts "${2-null}" \
+    printf '%s\n%s\n' "$state" "${2-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
         --argjson previous "${#previous_logs[@]}" '
-        . + {record_type:"capture_triage", status:$status,
-             alert_limit:50, previous_logs:$previous, alerts:$alerts}
-    ' <<< "$state"
+        .[1] as $alerts
+        | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
+             has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
+             alerts:(if $alerts == null then null else $alerts[:$limit] end)}
+    '
 }
 
 fresh() {
@@ -108,7 +112,8 @@ if ! previous_stamps=$(previous_log_stamps); then
 fi
 session=$(jq -er '.health.alert_session_id' <<< "$state")
 capture=$(jq -er '.health.capture_id' <<< "$state")
-if ! alerts=$(packrat-archive --alerts "$2" --session "$session" --capture-id "$capture" --limit 50 "${previous_args[@]}" |
+if ! alerts=$(packrat-archive --alerts "$2" --session "$session" --capture-id "$capture" \
+        --limit "$((alert_limit + 1))" "${previous_args[@]}" |
         jq -cse 'select(length == 1) | .[0] | arrays'); then
     report alert_log_unavailable
     exit 2
