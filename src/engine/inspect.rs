@@ -203,14 +203,14 @@ impl AnalysisCore {
         let vlan_before = self.vlan_intel.alerts.len();
         self.vlan_intel.ingest(pkt);
         for alert in &self.vlan_intel.alerts[vlan_before..] {
-            self.alert_center.record_correlated(
-                alert.pkt_no,
+            self.alert_center.record_correlated_with_evidence(
+                (alert.pkt_no, alert.related_packet.as_slice()),
                 pkt.timestamp,
                 "VLAN",
                 alert.severity.to_string(),
                 &alert.category,
                 &alert.detail,
-                format!("{}>{}", pkt.src, pkt.dst),
+                alert.correlation_key.clone().unwrap_or_else(|| format!("{}>{}", pkt.src, pkt.dst)),
             );
         }
 

@@ -58,30 +58,58 @@ pub struct VlanAlert {
     pub detail:    String,
     pub pkt_no:    u64,
     pub timestamp: f64,
+    pub(crate) related_packet: Option<u64>,
+    pub(crate) correlation_key: Option<String>,
 }
 
 // ─── MAC → VLAN mapping ───────────────────────────────────────────────────────
 
-/// Tracks which VLANs each MAC address has been seen on.
+const MAC_VLAN_WINDOW_SECS: f64 = 300.0;
+const MAX_TRACKED_MACS: usize = 4096;
+type VlanCaptureScope = (Option<(u32, u32)>, Option<u16>);
+
+#[derive(Debug, Clone, Copy)]
+struct MacVlanSighting {
+    vlan: u16,
+    frame: u64,
+    timestamp: f64,
+    reported: bool,
+}
+
 #[derive(Debug, Default)]
 struct MacVlanMap {
-    // mac_hex → set of vlan_ids
-    inner: HashMap<String, HashSet<u16>>,
+    inner: HashMap<(VlanCaptureScope, [u8; 6]), MacVlanSighting>,
+    last_prune: Option<f64>,
 }
 
 impl MacVlanMap {
-    /// Record that `mac` was seen on `vlan_id`.  Returns true if this is the
-    /// first time this MAC was seen on a *new* VLAN (i.e. it was already known
-    /// on at least one other VLAN).
-    fn record(&mut self, mac: &str, vlan_id: u16) -> bool {
-        let entry = self.inner.entry(mac.to_string()).or_default();
-        let was_multi = entry.len() > 1;
-        entry.insert(vlan_id);
-        !was_multi && entry.len() > 1
-    }
-
-    fn vlans_for(&self, mac: &str) -> Option<&HashSet<u16>> {
-        self.inner.get(mac)
+    fn record(&mut self, scope: VlanCaptureScope, mac: [u8; 6], mut incoming: MacVlanSighting) -> Option<MacVlanSighting> {
+        if !incoming.timestamp.is_finite() || mac == [0; 6] || mac[0] & 1 != 0 {
+            return None;
+        }
+        let key = (scope, mac);
+        if let Some(previous) = self.inner.get_mut(&key) {
+            if incoming.timestamp < previous.timestamp {
+                return None;
+            }
+            let recent = incoming.timestamp - previous.timestamp <= MAC_VLAN_WINDOW_SECS;
+            let changed = incoming.vlan != previous.vlan && incoming.frame != previous.frame;
+            let result = (recent && changed && !previous.reported).then_some(*previous);
+            incoming.reported = recent && (previous.reported || changed);
+            *previous = incoming;
+            return result;
+        }
+        if self.inner.len() >= MAX_TRACKED_MACS {
+            if self.last_prune.is_none_or(|last| incoming.timestamp - last >= 30.0) {
+                self.inner.retain(|_, seen| incoming.timestamp - seen.timestamp <= MAC_VLAN_WINDOW_SECS);
+                self.last_prune = Some(incoming.timestamp);
+            }
+            if self.inner.len() >= MAX_TRACKED_MACS {
+                return None;
+            }
+        }
+        self.inner.insert(key, incoming);
+        None
     }
 }
 
@@ -165,25 +193,22 @@ impl VlanIntel {
             }
 
             // MAC-on-multiple-VLANs
-            if !mac_src.is_empty() {
-                let crossed = self.mac_vlans.record(&mac_src, vid);
-                if crossed {
-                    let all_vlans = self.mac_vlans.vlans_for(&mac_src)
-                        .map(|s| {
-                            let mut v: Vec<u16> = s.iter().copied().collect();
-                            v.sort();
-                            v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",")
-                        })
-                        .unwrap_or_default();
-                    self.raise(
-                        AlertSeverity::Warning,
-                        "MAC-VLAN-Cross",
-                        format!("MAC {} seen on VLANs {} — possible VLAN-hopping or misconfiguration",
-                            mac_src, all_vlans),
-                        pkt.no, pkt.timestamp,
-                        format!("MAC_CROSS:{}", mac_src),
-                    );
-                }
+            let scope = (pkt.capture.as_ref().map(|meta| (meta.section_id, meta.interface_id)), pkt.outer_vlan_id);
+            if let Some(mac) = pkt.bytes.get(6..12).and_then(|bytes| <[u8; 6]>::try_from(bytes).ok())
+                && let Some(previous) = self.mac_vlans.record(scope, mac, MacVlanSighting {
+                    vlan: vid, frame: pkt.no, timestamp: ts, reported: false,
+                })
+            {
+                let location = scope.0.map_or_else(|| "unknown capture interface".to_owned(),
+                    |(section, interface)| format!("capture section {section}, interface {interface}"));
+                let outer = scope.1.map_or_else(String::new, |tag| format!(" under outer VLAN {tag}"));
+                self.alerts.push(VlanAlert {
+                    severity: AlertSeverity::Warning,
+                    category: "MAC-VLAN-Cross".into(),
+                    detail: format!("MAC {mac_src} was seen on VLANs {} and {vid} at {location}{outer}; port policy and forwarding are unverified", previous.vlan),
+                    pkt_no: pkt.no, timestamp: ts, related_packet: Some(previous.frame),
+                    correlation_key: Some(format!("{scope:?}:{mac_src}")),
+                });
             }
 
             // PCP=7 from non-router source (802.1p priority abuse)
@@ -219,13 +244,15 @@ impl VlanIntel {
             detail,
             pkt_no,
             timestamp: ts,
+            related_packet: None,
+            correlation_key: None,
         });
     }
 
     pub fn clear(&mut self) {
         self.stats.clear();
         self.alerts.clear();
-        self.mac_vlans.inner.clear();
+        self.mac_vlans = MacVlanMap::default();
         self.dedup.clear();
     }
 

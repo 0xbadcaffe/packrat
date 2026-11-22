@@ -393,10 +393,15 @@ fn arp_replay_scores_distinct_claim_patterns_and_capture_scopes() {
     let binding = "arp.reply_binding_change";
     let mismatch = "arp.reply_source_mismatch";
     let alternation = "arp.alternating_claims";
+    let vlan_shift = "vlan.mac_crossing";
     for (name, sequence, wire_change, expected) in [
         ("ordinary", &[(0, 10, 1), (0, 10, 1)][..], "", json!({})),
         ("vrrp", &[(0, 10, 1)][..], "vrrp", json!({})),
-        ("separate-scopes", &[(0, 10, 1), (1, 10, 2), (0, 20, 3), (0, 10, 1)][..], "", json!({})),
+        ("separate-scopes", &[(0, 10, 1), (1, 10, 2), (0, 20, 2), (0, 10, 1)][..], "", json!({})),
+        ("same-interface-vlan-shift", &[(0, 10, 1), (0, 20, 1)][..], "", json!({
+            "expect_counts":{(vlan_shift):1}, "expect_snapshots":1, "opening_frames":{(vlan_shift):[2]},
+            "opening_evidence":[{"rule_id":vlan_shift,"opening_frame":2,"frames":[1,2]}],
+        })),
         ("reassigned", &[(0, 10, 1), (0, 10, 2), (0, 10, 2)][..], "", json!({
             "expect_counts":{(binding):1,(alternation):0}, "expect_snapshots":1,
             "opening_frames":{(binding):[2]},
@@ -442,7 +447,7 @@ fn arp_replay_scores_distinct_claim_patterns_and_capture_scopes() {
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 6);
+    assert_eq!(report["passed"], 7);
 }
 
 #[test]

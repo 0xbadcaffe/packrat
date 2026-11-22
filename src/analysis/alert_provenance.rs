@@ -57,6 +57,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare all three replies with switch learning, DHCP leases, and failover logs; check whether endpoint neighbor entries actually changed.",
         ),
         (
+            "VLAN", "MAC-VLAN-Cross", "vlan.mac_crossing", 1, Correlated,
+            "Compare the two frames with trunk, VLAN and switch-port policy. A shared MAC alone does not establish forwarding between VLANs.",
+        ),
+        (
             "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 6, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
