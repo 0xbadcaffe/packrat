@@ -23,6 +23,7 @@ struct QuerySample {
     name_digest: [u8; 32],
     timestamp: f64,
     frames: Vec<u64>,
+    frames_sampled: bool,
     entropy: f64,
     label_length: usize,
 }
@@ -48,7 +49,7 @@ impl DnsTunnelTracker {
         &mut self, pkt: &Packet, name: &str, transport: &'static str, frames: &[u64],
     ) -> Option<(DnsTunnelSuspect, IdsFinding)> {
         let now = pkt.timestamp;
-        if frames.is_empty() || frames.len() > MAX_FRAMES_PER_QUERY {
+        if frames.is_empty() {
             return None;
         }
         if !name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_')) {
@@ -75,7 +76,17 @@ impl DnsTunnelTracker {
             return None;
         }
         if window.samples.len() == MAX_SAMPLES { window.samples.pop_front(); }
-        window.samples.push_back(QuerySample { name_digest, timestamp: now, frames: frames.to_vec(), entropy, label_length });
+        let frames_sampled = frames.len() > MAX_FRAMES_PER_QUERY;
+        let frames = if frames_sampled {
+            let leading = MAX_FRAMES_PER_QUERY / 2;
+            let trailing = MAX_FRAMES_PER_QUERY - leading;
+            frames[..leading].iter().chain(&frames[frames.len() - trailing..]).copied().collect()
+        } else {
+            frames.to_vec()
+        };
+        window.samples.push_back(QuerySample {
+            name_digest, timestamp: now, frames, frames_sampled, entropy, label_length,
+        });
         if window.samples.len() < TUNNEL_THRESHOLD || window.alerted { return None; }
         window.alerted = true;
         let count = window.samples.len();
@@ -85,6 +96,11 @@ impl DnsTunnelTracker {
             .filter(|&frame| frame != pkt.no).collect();
         related_packets.sort_unstable();
         related_packets.dedup();
+        let evidence_note = if window.samples.iter().any(|sample| sample.frames_sampled) {
+            "; contributing frame references sampled"
+        } else {
+            ""
+        };
         Some((
             DnsTunnelSuspect { apex: suffix.into(), query_count: count as u64, max_entropy,
                 max_subdomain_len, unique_subdomains: count, score: count as f64 },
@@ -94,7 +110,7 @@ impl DnsTunnelTracker {
                     signature: "DNS tunnel behavior",
                     severity: Severity::Medium,
                     detail: format!(
-                        "{count} distinct {transport} queries with long, high-entropy labels under {suffix} from {} to {} in 60 seconds; tunneling and data transfer unverified",
+                        "{count} distinct {transport} queries with long, high-entropy labels under {suffix} from {} to {} in 60 seconds; tunneling and data transfer unverified{evidence_note}",
                         pkt.src, pkt.dst,
                     ),
                 },

@@ -22,13 +22,14 @@ fn tcp_dns_entropy_replay_counts_messages_and_preserves_stream_evidence() {
     let rule = "dns.high_entropy_query_burst";
     let label = |index| format!("abcdefghijklmnpqrstuvwxyz234567{index}.example");
     let cases: Vec<_> = [
-        ("complete-split-and-coalesced", true, false, 8, 1),
-        ("without-opening-frames", false, false, 8, 0),
-        ("incomplete-stream-gap", true, true, 8, 0),
-        ("separate-udp-and-tcp", true, false, 4, 0),
+        ("complete-split-and-coalesced", true, false, 8, 1, 1),
+        ("without-opening-frames", false, false, 8, 0, 1),
+        ("incomplete-stream-gap", true, true, 8, 0, 1),
+        ("separate-udp-and-tcp", true, false, 4, 0, 1),
+        ("sampled-query-evidence", true, false, 8, 1, 20),
     ]
     .into_iter()
-    .map(|(name, anchored, gap, count, expected)| {
+    .map(|(name, anchored, gap, count, expected, fragments)| {
         let file = format!("{name}.pcapng");
         let mut capture = PcapNgWriter::create(&root.join(&file)).unwrap();
         if anchored {
@@ -42,11 +43,24 @@ fn tcp_dns_entropy_replay_counts_messages_and_preserves_stream_evidence() {
         let messages: Vec<_> = (0..count)
             .flat_map(|index| framed(index, label(index).as_bytes(), false))
             .collect();
-        let sequence = 107 + u32::from(gap);
+        let prefix_len = if fragments == 1 { 6 } else { fragments * 2 };
+        let piece = prefix_len / fragments;
+        for (index, prefix) in messages[..prefix_len].chunks_exact(piece).enumerate() {
+            capture
+                .write_packet(&tcp_frame(
+                    index as u64 + 3,
+                    101 + (index * piece) as u32,
+                    0x18,
+                    false,
+                    prefix,
+                ))
+                .unwrap();
+        }
+        let sequence = 101 + prefix_len as u32 + u32::from(gap);
+        let opening = fragments as u64 + 3;
         for frame in [
-            tcp_frame(3, 101, 0x18, false, &messages[..6]),
-            tcp_frame(4, sequence, 0x18, false, &messages[6..]),
-            tcp_frame(5, sequence, 0x18, false, &messages[6..]),
+            tcp_frame(opening, sequence, 0x18, false, &messages[prefix_len..]),
+            tcp_frame(opening + 1, sequence, 0x18, false, &messages[prefix_len..]),
         ] {
             capture.write_packet(&frame).unwrap();
         }
@@ -64,8 +78,14 @@ fn tcp_dns_entropy_replay_counts_messages_and_preserves_stream_evidence() {
             "expect_counts": {(rule):expected},
         });
         if expected != 0 {
-            case["opening_frames"] = json!({(rule):[4]});
-            case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":4,"frames":[3,4]}]);
+            let evidence = if fragments == 1 {
+                vec![3, 4]
+            } else {
+                (3..=9).chain(16..=23).collect()
+            };
+            case["opening_frames"] = json!({(rule):[opening]});
+            case["opening_evidence"] =
+                json!([{"rule_id":rule,"opening_frame":opening,"frames":evidence}]);
         }
         case
     })
@@ -82,6 +102,25 @@ fn tcp_dns_entropy_replay_counts_messages_and_preserves_stream_evidence() {
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
+    );
+    let detail = std::process::Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+        .arg("--alerts-only")
+        .arg(root.join("sampled-query-evidence.pcapng"))
+        .output()
+        .unwrap();
+    assert!(detail.status.success());
+    let details: Vec<_> = String::from_utf8(detail.stdout)
+        .unwrap()
+        .lines()
+        .map(|row| serde_json::from_str::<Value>(row).unwrap())
+        .filter(|row| row["type"] == "alert")
+        .collect();
+    assert_eq!(details.len(), 1);
+    assert!(
+        details[0]["alert"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("contributing frame references sampled")
     );
 }
 
