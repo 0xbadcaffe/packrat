@@ -173,6 +173,8 @@ sanitize() {
                 stopped_at_scan_budget:(.stopped_at_scan_budget | flag)
             } else null end),
             open_priority_alerts:(.open_priority_alerts_in_sample | counter),
+            open_archive_rule_alerts:(.open_archive_rule_alerts_in_sample | counter),
+            review_queue_truncated:(.review_queue_truncated | flag),
             priority_sample_at_limit:(.priority_sample_at_limit | flag),
             evidence_check:(.evidence_status | if type == "object" then
                 {alert_id:(.alert_id | counter), status:(.status | token)} else null end),
@@ -186,7 +188,7 @@ sanitize() {
             review_queue:(.review_queue | if type == "array" then .[:5] | map(objects
                 | {alert_id:(.alert_id | counter), severity:(.severity | token), rule_id:(.rule_id | token),
                    confidence:(.confidence | token), packet_evidence_status:(.packet_evidence_status | token),
-                   archive_rule:(.archive_rule | flag),
+                   archive_rule:(.archive_rule | flag), in_recent_alerts:(.in_recent_alerts | flag),
                    next_evidence_step:(.next_evidence_step | token)}
                 | select(.alert_id > 0 and (.severity == "HIGH" or .severity == "CRITICAL" or
                     (.archive_rule == true and (.severity == "MEDIUM" or .severity == "LOW"))))) else null end)

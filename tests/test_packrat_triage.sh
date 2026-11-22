@@ -266,6 +266,7 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
         archive_evidence_rules:["tcp.payload_after_observed_reset"]}' <<< "$sample" >"$health"
     PACKRAT_TEST_AUTO_QUEUE=configured run_auto | jq -e '.evidence_status.alert_id==42
         and .alerts[1].packet_evidence_status=="partial" and .open_priority_alerts_in_sample==0
+        and .open_archive_rule_alerts_in_sample==1 and .review_queue_truncated==false
         and (.review_queue | map({alert_id,severity,archive_rule,packet_evidence_status}))==
             [{alert_id:42,severity:"MEDIUM",archive_rule:true,packet_evidence_status:"partial"}]' >/dev/null
     result=$(PACKRAT_TEST_AUTO_QUEUE=backlog run_auto)
@@ -296,7 +297,10 @@ jq -e '.has_more_alerts and (.alerts | length) == 50 and all(.alerts[]; (.detail
     <<< "$result" >/dev/null
 result=$(PACKRAT_TEST_ALERT_COUNT=51 PACKRAT_TEST_OPEN_PRIORITY=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.has_more_alerts and .open_priority_alerts_in_sample == 51
+    and .open_archive_rule_alerts_in_sample == 0 and .review_queue_truncated
     and [.review_queue[].alert_id] == [51,50,49,48,47]' <<< "$result" >/dev/null
+result=$(PACKRAT_TEST_ALERT_COUNT=5 PACKRAT_TEST_OPEN_PRIORITY=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+jq -e '.review_queue_truncated == false and (.review_queue|length) == 5' <<< "$result" >/dev/null
 result=$(PACKRAT_TEST_ALERT_COUNT=512 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.has_more_alerts and .priority_sample_at_limit and .open_priority_alerts_in_sample == 0' \
     <<< "$result" >/dev/null

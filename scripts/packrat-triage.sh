@@ -60,8 +60,7 @@ else
     health_file=$1 alert_log=$2
     shift 2
 fi
-alert_limit=50
-query_limit=512
+alert_limit=50 query_limit=512
 limit_args=(--limit "$query_limit")
 if [[ $mode == live ]]; then limit_args+=(--scan-bytes 8388608); fi
 if [[ -n $target_alert ]]; then
@@ -184,10 +183,11 @@ report() {
           ] end) as $review
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
              live_packet_archive:(.[0] | live_archive),
-             has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
-             alerts:$sample,
+             alerts:$sample, has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
              priority_sample_limit:$query_limit, priority_sample_at_limit:.[3].stopped_at_limit,
              open_priority_alerts_in_sample:(if $review == null then null else $review | map(select(.archive_rule | not)) | length end),
+             open_archive_rule_alerts_in_sample:(if $review == null then null else $review | map(select(.archive_rule)) | length end),
+             review_queue_truncated:(if $review == null then null else ($review | length) > 5 end),
              review_queue:(if $review == null then null else $review[:5] end),
              evidence_selection:$selection, evidence_status:$evidence,
              alert_log_integrity:.[3], socket_context_status:$socket}

@@ -33,6 +33,7 @@ live() {
             archive_usage:{frames:1,max_frames:100,payload_bytes:1024,max_payload_bytes:65536},
             archive_path:"private archive path"},
         live_packet_archive:"enabled", open_priority_alerts_in_sample:($queue | length),
+        open_archive_rule_alerts_in_sample:0, review_queue_truncated:false,
         priority_sample_at_limit:false, has_more_alerts:($alerts | length > 50),
         alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_limit:false,detail:"private context"},
         evidence_status:{alert_id:9,status:"checked",frames:[{bytes:"private payload"}]},
@@ -72,11 +73,14 @@ for change in 'del(.capture_id)' '.session_id="bad session"' '.recent_alerts=nul
 done
 
 mixed_queue=$(jq -c '. + [.[0] + {alert_id:8,severity:"MEDIUM",archive_rule:true},
-    .[0] + {alert_id:9,severity:"MEDIUM",archive_rule:false}]' <<<"$queue")
-live current 13 "$mixed_queue" "$medium" >"$report"
+    .[0] + {alert_id:9,severity:"MEDIUM",archive_rule:false}] | .[1].in_recent_alerts=false' <<<"$queue")
+live current 13 "$mixed_queue" "$medium" | jq '
+    .open_archive_rule_alerts_in_sample=4 | .review_queue_truncated=true' >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 jq -e '(.review_queue | map(.alert_id))==[7,8] and .review_queue[1].archive_rule
-    and .review_queue[1].severity=="MEDIUM" and (tostring | contains("private") | not)' "$state" >/dev/null
+    and .review_queue[1].severity=="MEDIUM" and .review_queue[1].in_recent_alerts==false
+    and .open_archive_rule_alerts==4 and .review_queue_truncated
+    and (tostring | contains("private") | not)' "$state" >/dev/null
 live current 14 '[]' | jq '.health.archive_evidence_rules=["unsafe data"]
     | .health.archive_usage.frames=90' >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
