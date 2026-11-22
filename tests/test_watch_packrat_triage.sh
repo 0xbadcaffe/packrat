@@ -344,9 +344,23 @@ for _ in {1..80}; do
     if grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"; then break; fi
     sleep 0.1
 done
+grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"
+live current 92 '[]' | jq '.live_packet_archive="paused"' >"$report.next"
+mv -- "$report.next" "$report"
+await_packets 92
+for _ in {1..80}; do
+    if jq -se 'map(.packets)==[91,92]' "$scratch/unsafe-output" >/dev/null 2>&1; then break; fi
+    sleep 0.1
+done
+rm -- "$state.events.jsonl"
+for _ in {1..80}; do
+    if jq -se 'map(.packets)==[91,92]' "$state.events.jsonl" >/dev/null 2>&1; then break; fi
+    sleep 0.1
+done
 kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
 grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"
 cmp -s "$scratch/rotation-output" "$journal"
+cmp -s "$scratch/unsafe-output" "$state.events.jsonl"
 printf '%s\n' 'Packrat triage watcher tests passed'

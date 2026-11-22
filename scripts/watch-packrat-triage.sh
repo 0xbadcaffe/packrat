@@ -130,7 +130,8 @@ fi
 exec {lock_fd}>>"$state.lock"
 flock -n "$lock_fd" || { printf '%s\n' 'Triage state is already being refreshed.' >&2; exit 2; }
 
-journal="$state.events.jsonl" journal_limit=1048576 journal_failed=false
+journal="$state.events.jsonl" journal_limit=1048576 journal_failed=false journal_overflow=false
+pending_journal=()
 journal_path_safe() {
     local path=$1 attrs
     [[ ! -L $path ]] || return 1
@@ -151,6 +152,20 @@ append_journal() {
         mv -fT -- "$journal" "$journal.1" || return 1
     fi
     printf '%s\n' "$line" >>"$journal"
+}
+
+flush_journal() {
+    while (( ${#pending_journal[@]} > 0 )); do
+        if ! append_journal "${pending_journal[0]}"; then
+            if ! "$journal_failed"; then
+                printf '%s\n' 'Triage event journal write failed; live monitoring continues.' >&2
+                journal_failed=true
+            fi
+            return 0
+        fi
+        pending_journal=("${pending_journal[@]:1}")
+    done
+    journal_failed=false journal_overflow=false
 }
 
 sanitize() {
@@ -322,16 +337,22 @@ while :; do
     if [[ $key != "$previous" ]]; then
         event=$(jq -c 'del(.last_observed)' <<< "$event")
         if [[ $journal_enabled == 1 ]]; then
-            if append_journal "$event"; then
-                journal_failed=false
-            elif ! "$journal_failed"; then
-                printf '%s\n' 'Triage event journal write failed; live monitoring continues.' >&2
-                journal_failed=true
+            if (( ${#pending_journal[@]} >= 16 )); then
+                flush_journal
+                if (( ${#pending_journal[@]} >= 16 )); then
+                    pending_journal=("${pending_journal[@]:1}")
+                    if ! "$journal_overflow"; then
+                        printf '%s\n' 'Triage event journal backlog full; oldest pending event discarded.' >&2
+                        journal_overflow=true
+                    fi
+                fi
             fi
+            pending_journal+=("$event")
         fi
         printf '%s\n' "$event"
         previous=$key
     fi
+    if (( ${#pending_journal[@]} > 0 )); then flush_journal; fi
     prior=$(jq -c '.last_observed // .' <<< "$snapshot")
     sleep "$interval" {lock_fd}>&- &
     timer=$!
