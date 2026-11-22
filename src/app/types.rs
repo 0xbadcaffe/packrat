@@ -185,7 +185,7 @@ impl InvestigationTray {
             + metadata
     }
 
-    pub fn pin_packet(&mut self, packet: &Packet) -> Result<bool, String> {
+    pub(super) fn retain_packet(&mut self, packet: &Packet) -> Result<(), String> {
         if !self.retained_packets.contains_key(&packet.no) {
             let cost = Self::packet_cost(packet);
             if self.retained_packets.len() >= Self::MAX_RETAINED_PACKETS
@@ -198,6 +198,11 @@ impl InvestigationTray {
             self.retained_packets.insert(packet.no, packet.clone());
             self.retained_bytes += cost;
         }
+        Ok(())
+    }
+
+    pub fn pin_packet(&mut self, packet: &Packet) -> Result<bool, String> {
+        self.retain_packet(packet)?;
         Ok(self.add_packet(packet.no))
     }
 

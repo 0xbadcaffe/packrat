@@ -1,6 +1,10 @@
 use super::*;
 use super::alert_evidence::AlertEvidenceScope;
 
+#[cfg(test)]
+#[path = "../../tests/unit/app_alert_capacity_tests.rs"]
+mod tests;
+
 impl App {
     pub fn active_investigation_packet(&self) -> Option<&Packet> {
         self.worklist
@@ -221,19 +225,16 @@ impl App {
         let scope_mismatch = evidence_scope.local_mismatch();
         let mut reader = None;
         let mut archive_error = false;
-        let mut unavailable = 0;
-        let mut archived = 0;
-        let mut retained = Vec::with_capacity(packet_refs.len());
-        for packet_no in packet_refs {
-            let saved = self.saved_alert_pin(&alert, packet_no);
+        let mut resolve_frame = |app: &Self, packet_no| {
+            let saved = app.saved_alert_pin(&alert, packet_no);
             let local = saved.or_else(|| {
-                self.frame_may_be_local(evidence_scope, packet_no)
-                    .then(|| self.packet_by_no(packet_no)).flatten()
+                app.frame_may_be_local(evidence_scope, packet_no)
+                    .then(|| app.packet_by_no(packet_no)).flatten()
             }).cloned();
             let from_archive = local.is_none() && same_capture;
             let packet = if from_archive {
                 if reader.is_none() && !archive_error {
-                    match self.packet_archive.as_ref().map(|archive| archive.reader()) {
+                    match app.packet_archive.as_ref().map(|archive| archive.reader()) {
                         Some(Ok(opened)) => reader = Some(opened),
                         Some(Err(_)) => archive_error = true,
                         None => {}
@@ -251,7 +252,26 @@ impl App {
             } else {
                 local
             };
-            let Some(packet) = packet else {
+            packet.map(|packet| (packet, from_archive))
+        };
+        let mut trigger = packet_refs.binary_search(&alert.packet_no).ok()
+            .and_then(|_| resolve_frame(self, alert.packet_no));
+        if let Some((packet, _)) = &trigger {
+            // Reserve bytes before processing older evidence; add the tray item in order below.
+            let _ = self.worklist.retain_packet(packet);
+        }
+
+        let mut unavailable = 0;
+        let mut at_capacity = 0;
+        let mut archived = 0;
+        let mut retained = Vec::with_capacity(packet_refs.len());
+        for packet_no in packet_refs {
+            let frame = if packet_no == alert.packet_no {
+                trigger.take()
+            } else {
+                resolve_frame(self, packet_no)
+            };
+            let Some((packet, from_archive)) = frame else {
                 unavailable += 1;
                 continue;
             };
@@ -261,7 +281,10 @@ impl App {
                     retained.push(packet.no);
                     archived += usize::from(from_archive);
                 }
-                Err(_) => unavailable += 1,
+                Err(_) => {
+                    unavailable += 1;
+                    at_capacity += 1;
+                }
             }
         }
         self.worklist.open = true;
@@ -282,11 +305,12 @@ impl App {
         self.investigation_view = InvestigationView::Summary;
         self.navigate_to(Tab::Investigate);
         self.set_status(format!(
-            "Alert #{}: opened {} matching packets ({} archived); {} unavailable{}",
+            "Alert #{}: opened {} matching packets ({} archived); {} unavailable{}{}",
             alert.id,
             retained.len(),
             archived,
             unavailable,
+            if at_capacity > 0 { format!(" ({at_capacity} hit the tray limit)") } else { String::new() },
             scope_mismatch.map(|reason| if retained.is_empty() { reason } else { "saved case" })
                 .or(archive_error.then_some("archive read failed"))
                 .map_or_else(String::new, |reason| format!(" ({reason})"))
