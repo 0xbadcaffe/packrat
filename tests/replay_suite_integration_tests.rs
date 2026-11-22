@@ -4,6 +4,8 @@
 mod support;
 #[path = "support/dns_replay.rs"]
 mod dns_replay;
+#[path = "support/transfer_replay.rs"]
+mod transfer_replay;
 
 use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
@@ -284,4 +286,41 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
         .find(|event| event["type"] == "alert").unwrap();
     assert_eq!(finding["alert"]["provenance"]["confidence"], "heuristic");
     assert_eq!(finding["alert"]["packet_refs"], json!([1, 2, 3, 4, 5, 6, 7]));
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn outbound_transfer_replay_checks_thresholds_scope_and_packet_samples() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let volume = "traffic.asymmetric_outbound";
+    let entropy = "traffic.high_entropy_outbound";
+    transfer_replay::write_fixture(&root.join("small.pcapng"), 4, true, false);
+    transfer_replay::write_fixture(&root.join("split.pcapng"), 17, false, true);
+    transfer_replay::write_fixture(&root.join("large.pcapng"), 17, true, false);
+    let manifest = root.join("transfers.json");
+    let labels = json!({"version":1, "strict":true, "cases":[
+        {"name":"small varied transfer", "capture":"small.pcapng",
+         "expect_counts":{(volume):0,(entropy):0}, "expect_snapshots":0},
+        {"name":"volume split across interfaces", "capture":"split.pcapng",
+         "expect_counts":{(volume):0,(entropy):0}, "expect_snapshots":0},
+        {"name":"large varied transfer", "capture":"large.pcapng",
+         "expect_counts":{(volume):1,(entropy):1}, "opening_frames":{(volume):[17],(entropy):[5]},
+         "expect_snapshots":2}
+    ]});
+    std::fs::write(&manifest, labels.to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+        .arg("--alerts-only").arg(root.join("large.pcapng")).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let findings: Vec<_> = String::from_utf8(output.stdout).unwrap().lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|row| row["type"] == "alert")
+        .map(|row| row["alert"].clone()).collect();
+    assert_eq!(findings.len(), 2);
+    assert_eq!(findings[0]["packet_refs"], json!([1,2,3,4,5]));
+    assert_eq!(findings[1]["packet_refs"], json!([10,11,12,13,14,15,16,17]));
+    assert!(findings.iter().all(|alert| alert["provenance"]["confidence"] == "heuristic"));
 }
