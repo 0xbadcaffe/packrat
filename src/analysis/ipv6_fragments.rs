@@ -6,7 +6,7 @@ use crate::net::packet::Packet;
 
 const MAX_DATAGRAMS: usize = 512;
 const MAX_FRAGMENTS: usize = 128;
-const MAX_PAYLOAD_BYTES: usize = 1_048_576;
+const MAX_PAYLOAD_BYTES: usize = u16::MAX as usize;
 const STATE_TTL_SECS: f64 = 60.0;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -27,22 +27,27 @@ pub struct ReassembledIpv6Payload {
 #[derive(Debug, Clone)]
 pub enum Ipv6FragmentOutcome {
     Ignored,
-    Pending { conflicting_overlap: bool, fragment_count: usize },
-    Complete { datagram: ReassembledIpv6Payload, conflicting_overlap: bool },
+    Pending { fragment_count: usize },
+    Complete { datagram: ReassembledIpv6Payload },
+    Overlap { identification: u32, previous_frame: u64, conflicting_bytes: bool },
     Rejected { reason: &'static str },
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct DatagramState {
     fragments: Vec<Fragment>,
     final_len: Option<usize>,
-    last_seen: f64,
+    first_seen: f64,
+    first_header: Option<u8>,
+    discarded: bool,
 }
 
 #[derive(Debug)]
 struct Fragment {
     offset: usize,
     data: Vec<u8>,
+    frame: u64,
+    more_fragments: bool,
 }
 
 struct ParsedFragment<'a> {
@@ -52,9 +57,19 @@ struct ParsedFragment<'a> {
     data: &'a [u8],
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+struct ScopedDatagram {
+    interface: Option<(u32, u32)>,
+    outer_vlan: Option<u16>,
+    vlan: Option<u16>,
+    source: [u8; 16],
+    destination: [u8; 16],
+    identification: u32,
+}
+
 #[derive(Debug, Default)]
 pub struct Ipv6FragmentReassembler {
-    datagrams: HashMap<Ipv6FragmentKey, DatagramState>,
+    datagrams: HashMap<ScopedDatagram, DatagramState>,
 }
 
 impl Ipv6FragmentReassembler {
@@ -62,53 +77,107 @@ impl Ipv6FragmentReassembler {
         let Some(fragment) = parse_fragment(&packet.bytes) else {
             return Ipv6FragmentOutcome::Ignored;
         };
-        if fragment.offset.saturating_add(fragment.data.len()) > MAX_PAYLOAD_BYTES {
+        let end = fragment.offset + fragment.data.len();
+        if end > MAX_PAYLOAD_BYTES {
             return Ipv6FragmentOutcome::Rejected { reason: "IPv6 fragment payload exceeds reassembly limit" };
         }
+        if fragment.offset == 0 && !fragment.more_fragments {
+            return Ipv6FragmentOutcome::Complete {
+                datagram: ReassembledIpv6Payload {
+                    key: fragment.key, payload: fragment.data.to_vec(), fragment_count: 1,
+                },
+            };
+        }
+        if fragment.data.is_empty() || (fragment.more_fragments && fragment.data.len() % 8 != 0) {
+            return Ipv6FragmentOutcome::Rejected { reason: "Invalid IPv6 fragment payload length" };
+        }
+        if !packet.timestamp.is_finite() {
+            return Ipv6FragmentOutcome::Ignored;
+        }
 
+        let scope = ScopedDatagram {
+            interface: packet.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
+            outer_vlan: packet.outer_vlan_id,
+            vlan: packet.vlan_id,
+            source: fragment.key.source,
+            destination: fragment.key.destination,
+            identification: fragment.key.identification,
+        };
         self.datagrams.retain(|_, state| {
-            packet.timestamp < state.last_seen || packet.timestamp - state.last_seen <= STATE_TTL_SECS
+            packet.timestamp - state.first_seen <= STATE_TTL_SECS
         });
-        if !self.datagrams.contains_key(&fragment.key) && self.datagrams.len() >= MAX_DATAGRAMS {
+        if !self.datagrams.contains_key(&scope) && self.datagrams.len() >= MAX_DATAGRAMS {
             if let Some(oldest) = self.datagrams.iter()
-                .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+                .min_by(|(key_a, a), (key_b, b)| a.first_seen.total_cmp(&b.first_seen).then(key_a.cmp(key_b)))
                 .map(|(key, _)| key.clone())
             {
                 self.datagrams.remove(&oldest);
             }
         }
 
-        let state = self.datagrams.entry(fragment.key.clone()).or_default();
-        state.last_seen = packet.timestamp;
+        let state = self.datagrams.entry(scope.clone()).or_insert_with(|| DatagramState {
+            fragments: Vec::new(), final_len: None, first_seen: packet.timestamp,
+            first_header: None, discarded: false,
+        });
+        if state.discarded || state.first_seen - packet.timestamp > STATE_TTL_SECS {
+            return Ipv6FragmentOutcome::Ignored;
+        }
+        if (fragment.offset != 0 || state.first_header == Some(fragment.key.next_header))
+            && is_exact_duplicate(&state.fragments, &fragment)
+        {
+            return Ipv6FragmentOutcome::Pending { fragment_count: state.fragments.len() };
+        }
+        if let Some((previous_frame, conflicting_bytes)) = overlapping_fragment(&state.fragments, &fragment) {
+            state.discard();
+            return Ipv6FragmentOutcome::Overlap {
+                identification: scope.identification, previous_frame, conflicting_bytes,
+            };
+        }
         if state.fragments.len() >= MAX_FRAGMENTS {
+            state.discard();
             return Ipv6FragmentOutcome::Rejected { reason: "IPv6 datagram exceeds fragment-count limit" };
         }
 
-        let conflicting_overlap = has_conflicting_overlap(&state.fragments, &fragment);
+        if state.final_len.is_some_and(|length| end > length || !fragment.more_fragments)
+            || (!fragment.more_fragments && state.fragments.iter().any(|f| f.offset + f.data.len() >= end))
+        {
+            state.discard();
+            return Ipv6FragmentOutcome::Rejected { reason: "Inconsistent IPv6 final fragment length" };
+        }
         if !fragment.more_fragments {
-            state.final_len = Some(fragment.offset + fragment.data.len());
+            state.final_len = Some(end);
         }
-        if !is_exact_duplicate(&state.fragments, &fragment) {
-            state.fragments.push(Fragment { offset: fragment.offset, data: fragment.data.to_vec() });
+        if fragment.offset == 0 {
+            state.first_header = Some(fragment.key.next_header);
         }
+        state.fragments.push(Fragment {
+            offset: fragment.offset, data: fragment.data.to_vec(),
+            frame: packet.no, more_fragments: fragment.more_fragments,
+        });
 
         let fragment_count = state.fragments.len();
-        let Some(final_len) = state.final_len else {
-            return Ipv6FragmentOutcome::Pending { conflicting_overlap, fragment_count };
+        let (Some(final_len), Some(next_header)) = (state.final_len, state.first_header) else {
+            return Ipv6FragmentOutcome::Pending { fragment_count };
         };
         let Some(payload) = assemble_if_complete(&state.fragments, final_len) else {
-            return Ipv6FragmentOutcome::Pending { conflicting_overlap, fragment_count };
+            return Ipv6FragmentOutcome::Pending { fragment_count };
         };
-        let key = fragment.key;
-        self.datagrams.remove(&key);
+        let key = Ipv6FragmentKey { next_header, ..fragment.key };
+        self.datagrams.remove(&scope);
         Ipv6FragmentOutcome::Complete {
             datagram: ReassembledIpv6Payload { key, payload, fragment_count },
-            conflicting_overlap,
         }
     }
 
     pub fn clear(&mut self) {
         self.datagrams.clear();
+    }
+}
+
+impl DatagramState {
+    fn discard(&mut self) {
+        self.fragments = Vec::new();
+        self.discarded = true;
     }
 }
 
@@ -118,7 +187,10 @@ fn parse_fragment(raw: &[u8]) -> Option<ParsedFragment<'_>> {
         return None;
     }
     let payload_len = usize::from(u16::from_be_bytes([raw[ip_offset + 4], raw[ip_offset + 5]]));
-    let packet_end = (ip_offset + 40 + payload_len).min(raw.len());
+    let packet_end = ip_offset + 40 + payload_len;
+    if packet_end > raw.len() {
+        return None;
+    }
     let mut next_header = raw[ip_offset + 6];
     let mut cursor = ip_offset + 40;
 
@@ -156,41 +228,41 @@ fn parse_fragment(raw: &[u8]) -> Option<ParsedFragment<'_>> {
     })
 }
 
-fn has_conflicting_overlap(existing: &[Fragment], incoming: &ParsedFragment<'_>) -> bool {
-    existing.iter().any(|fragment| {
+fn overlapping_fragment(existing: &[Fragment], incoming: &ParsedFragment<'_>) -> Option<(u64, bool)> {
+    let mut equal_overlap = None;
+    for fragment in existing {
         let overlap_start = fragment.offset.max(incoming.offset);
         let overlap_end = (fragment.offset + fragment.data.len())
             .min(incoming.offset + incoming.data.len());
         if overlap_start >= overlap_end {
-            return false;
+            continue;
         }
         let old_start = overlap_start - fragment.offset;
         let new_start = overlap_start - incoming.offset;
         let length = overlap_end - overlap_start;
-        fragment.data[old_start..old_start + length] != incoming.data[new_start..new_start + length]
-    })
+        if fragment.data[old_start..old_start + length] != incoming.data[new_start..new_start + length] {
+            return Some((fragment.frame, true));
+        }
+        equal_overlap.get_or_insert((fragment.frame, false));
+    }
+    equal_overlap
 }
 
 fn is_exact_duplicate(existing: &[Fragment], incoming: &ParsedFragment<'_>) -> bool {
-    existing.iter().any(|fragment| fragment.offset == incoming.offset && fragment.data == incoming.data)
+    existing.iter().any(|fragment| fragment.offset == incoming.offset
+        && fragment.more_fragments == incoming.more_fragments && fragment.data == incoming.data)
 }
 
 fn assemble_if_complete(fragments: &[Fragment], final_len: usize) -> Option<Vec<u8>> {
-    if final_len > MAX_PAYLOAD_BYTES {
+    if fragments.iter().map(|fragment| fragment.data.len()).sum::<usize>() != final_len {
         return None;
     }
     let mut payload = vec![0_u8; final_len];
-    let mut covered = vec![false; final_len];
     for fragment in fragments {
-        let end = (fragment.offset + fragment.data.len()).min(final_len);
-        if fragment.offset >= end {
-            continue;
-        }
-        let length = end - fragment.offset;
-        payload[fragment.offset..end].copy_from_slice(&fragment.data[..length]);
-        covered[fragment.offset..end].fill(true);
+        let end = fragment.offset + fragment.data.len();
+        payload[fragment.offset..end].copy_from_slice(&fragment.data);
     }
-    covered.iter().all(|covered| *covered).then_some(payload)
+    Some(payload)
 }
 
 fn ethernet_network_header(raw: &[u8]) -> Option<(usize, u16)> {

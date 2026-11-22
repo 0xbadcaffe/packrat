@@ -70,22 +70,18 @@ impl SecurityEngine {
 
     pub(super) fn check_ipv6_fragment_reassembly(&mut self, pkt: &Packet) {
         match self.ipv6_fragments.ingest(pkt) {
-            Ipv6FragmentOutcome::Ignored => {}
-            Ipv6FragmentOutcome::Pending {
-                conflicting_overlap,
-                fragment_count,
-            } => {
-                if conflicting_overlap {
-                    self.push_ids(IdsAlert {
+            Ipv6FragmentOutcome::Ignored | Ipv6FragmentOutcome::Pending { .. } => {}
+            Ipv6FragmentOutcome::Overlap { identification, previous_frame, conflicting_bytes } => {
+                self.push_ids_finding(IdsFinding {
+                    alert: IdsAlert {
                         pkt_no: pkt.no,
-                        signature: "Conflicting IPv6 fragments",
-                        severity: Severity::Critical,
-                        detail: format!(
-                            "Conflicting overlap among {fragment_count} IPv6 fragments from {}",
-                            pkt.src
-                        ),
-                    });
-                }
+                        signature: if conflicting_bytes { "Conflicting IPv6 fragments" } else { "IPv6 fragment reassembly rejected" },
+                        severity: if conflicting_bytes { Severity::High } else { Severity::Medium },
+                        detail: format!("IPv6 fragment overlap in datagram {identification} from {} to {}; Packrat discarded reassembly, endpoint outcome unknown", pkt.src, pkt.dst),
+                    },
+                    related_packets: vec![previous_frame],
+                    correlation_key: Some(format!("{:?}:{}>{}:{identification}", service_scope(pkt), pkt.src, pkt.dst)),
+                });
             }
             Ipv6FragmentOutcome::Rejected { reason } => {
                 self.push_ids(IdsAlert {
@@ -95,21 +91,7 @@ impl SecurityEngine {
                     detail: format!("{reason} from {}", pkt.src),
                 });
             }
-            Ipv6FragmentOutcome::Complete {
-                datagram,
-                conflicting_overlap,
-            } => {
-                if conflicting_overlap {
-                    self.push_ids(IdsAlert {
-                        pkt_no: pkt.no,
-                        signature: "Conflicting IPv6 fragments",
-                        severity: Severity::Critical,
-                        detail: format!(
-                            "Conflicting overlap in completed IPv6 datagram from {}",
-                            pkt.src
-                        ),
-                    });
-                }
+            Ipv6FragmentOutcome::Complete { datagram } => {
                 self.ipv6_reassembled = self.ipv6_reassembled.saturating_add(1);
                 let transport_ports = datagram.payload.get(..4).map(|bytes| {
                     (

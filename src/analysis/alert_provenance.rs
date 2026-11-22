@@ -81,6 +81,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both frames and their capture scope; check receiver logs for reassembly outcome.",
         ),
         (
+            "IDS", "Conflicting IPv6 fragments", "ipv6.conflicting_fragments", 2, DirectObservation,
+            "Compare the overlapping bytes in both frames. Verify the receiver's handling independently; this alert does not show that the datagram was accepted.",
+        ),
+        (
             "IDS", "ICMP address sweep", "icmp.address_sweep", 3, Heuristic,
             "Check whether the echo requests match expected diagnostics or discovery.",
         ),
