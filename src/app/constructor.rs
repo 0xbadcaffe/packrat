@@ -168,6 +168,7 @@ impl App {
             worklist: InvestigationTray::default(),
             investigation_view: InvestigationView::Summary,
             investigation_scroll: 0,
+            dns_transaction_selection: None,
             header_cursor: 0,
             byte_cursor: 0,
             header_searching: false,

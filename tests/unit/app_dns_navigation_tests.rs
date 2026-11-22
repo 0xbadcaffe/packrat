@@ -16,7 +16,20 @@ fn dns_frame(no: u64, resolver: [u8; 4], reply: bool) -> Packet {
     raw[30..34].copy_from_slice(&dst);
     raw[34..36].copy_from_slice(&source_port.to_be_bytes());
     raw[36..38].copy_from_slice(&destination_port.to_be_bytes());
-    raw.extend([0, 42, if reply { 0x81 } else { 0x01 }, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    raw.extend([
+        0,
+        42,
+        if reply { 0x81 } else { 0x01 },
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ]);
     raw.extend_from_slice(b"\x07example\x04test\0\0\x01\0\x01");
     let length = raw.len() as u16;
     raw[16..18].copy_from_slice(&(length - 14).to_be_bytes());
@@ -25,7 +38,10 @@ fn dns_frame(no: u64, resolver: [u8; 4], reply: bool) -> Packet {
 }
 
 fn advance(app: &mut App) {
-    crate::event::handle(app, Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+    crate::event::handle(
+        app,
+        Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+    );
 }
 
 #[test]
@@ -62,12 +78,19 @@ fn enter_in_dns_transactions_cycles_only_available_exchange_evidence() {
             core.analyze(packet);
         }
     }
-    app.worklist.pin_packet(&dns_frame(99, [10, 0, 0, 55], false)).unwrap();
+    app.worklist
+        .pin_packet(&dns_frame(99, [10, 0, 0, 55], false))
+        .unwrap();
     app.worklist.pin_packet(&query).unwrap();
     app.packets.push_back(alternate);
     advance(&mut app);
     assert_eq!(app.worklist.active_packet_no(), Some(3));
-    assert!(app.status_msg.as_deref().unwrap().contains("skipped 1 unavailable"));
+    assert!(
+        app.status_msg
+            .as_deref()
+            .unwrap()
+            .contains("skipped 1 unavailable")
+    );
     advance(&mut app);
     assert_eq!(app.worklist.active_packet_no(), Some(1));
     assert_eq!(app.investigation_view, InvestigationView::Transactions);
@@ -78,7 +101,11 @@ fn enter_in_dns_transactions_cycles_only_available_exchange_evidence() {
 fn dns_transaction_navigation_recovers_a_frame_from_the_current_archive() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::new_for_test();
-    app.set_packet_archive(crate::storage::packet_archive::ArchiveWorker::open(&directory.path().join("archive")).unwrap()).unwrap();
+    app.set_packet_archive(
+        crate::storage::packet_archive::ArchiveWorker::open(&directory.path().join("archive"))
+            .unwrap(),
+    )
+    .unwrap();
     let query = dns_frame(1, [10, 0, 0, 53], false);
     let reply = dns_frame(2, [10, 0, 0, 53], true);
     app.inject_packet(query.clone());
@@ -107,24 +134,111 @@ fn dns_transaction_view_and_navigation_do_not_cross_from_saved_to_live_evidence(
         app.core.edit().analyze(packet);
         app.worklist.pin_packet(packet).unwrap();
     }
-    app.worklist.restored_packet_scopes.insert(1, "historical-capture".into());
-    app.worklist.restored_packet_scopes.insert(2, "historical-capture".into());
-    let mixed = app.query_core(|core| core.security.dns_exchange_for_packet(&query))
-        .unwrap().unwrap();
+    app.worklist
+        .restored_packet_scopes
+        .insert(1, "historical-capture".into());
+    app.worklist
+        .restored_packet_scopes
+        .insert(2, "historical-capture".into());
+    let mixed = app
+        .query_core(|core| core.security.dns_exchange_for_packet(&query))
+        .unwrap()
+        .unwrap();
     assert_eq!(mixed.replies.len(), 2);
     assert!(app.scope_dns_exchange(3, mixed.clone()).is_none());
     let scoped = app.scope_dns_exchange(1, mixed.clone()).unwrap();
-    assert_eq!(scoped.replies.iter().map(|reply| reply.packet).collect::<Vec<_>>(), [2]);
+    assert_eq!(
+        scoped
+            .replies
+            .iter()
+            .map(|reply| reply.packet)
+            .collect::<Vec<_>>(),
+        [2]
+    );
 
     advance(&mut app);
     assert_eq!(app.worklist.active_packet_no(), Some(3));
-    assert!(app.status_msg.as_deref().unwrap().contains("No retained DNS exchange"));
+    assert!(
+        app.status_msg
+            .as_deref()
+            .unwrap()
+            .contains("No retained DNS exchange")
+    );
     app.worklist.pin_packet(&query).unwrap();
     advance(&mut app);
     assert_eq!(app.worklist.active_packet_no(), Some(2));
     advance(&mut app);
     assert_eq!(app.worklist.active_packet_no(), Some(1));
 
-    app.worklist.restored_packet_scopes.insert(2, "different-capture".into());
+    app.worklist
+        .restored_packet_scopes
+        .insert(2, "different-capture".into());
     assert!(app.scope_dns_exchange(1, mixed).unwrap().replies.is_empty());
+}
+
+fn tcp_frame(no: u64, sequence: u32, flags: u8, response: bool, payload: &[u8]) -> Packet {
+    let base = dns_frame(no, [10, 0, 0, 53], response);
+    let mut raw = base.bytes[..38].to_vec();
+    raw.resize(54, 0);
+    raw[16..18].copy_from_slice(&((40 + payload.len()) as u16).to_be_bytes());
+    raw[23] = 6;
+    raw[38..42].copy_from_slice(&sequence.to_be_bytes());
+    raw[46] = 0x50;
+    raw[47] = flags;
+    raw.extend(payload);
+    crate::net::parser::parse_ethernet(&raw, no, no as f64)
+}
+
+fn two_dns_messages(response: bool) -> Vec<u8> {
+    let base = dns_frame(1, [10, 0, 0, 53], response);
+    let mut message = base.bytes[42..].to_vec();
+    let size = (message.len() as u16).to_be_bytes();
+    let mut data = size.to_vec();
+    data.extend_from_slice(&message);
+    message[1] += 1;
+    data.extend(size);
+    data.extend(&message);
+    data
+}
+
+#[test]
+fn coalesced_dns_evidence_keeps_the_keyboard_selected_transaction() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Investigate;
+    app.investigation_view = InvestigationView::Transactions;
+    let query = tcp_frame(3, 101, 0x18, false, &two_dns_messages(false));
+    let reply = tcp_frame(4, 201, 0x18, true, &two_dns_messages(true));
+    for packet in [
+        tcp_frame(1, 100, 0x02, false, &[]),
+        tcp_frame(2, 200, 0x12, true, &[]),
+        query.clone(),
+        reply.clone(),
+    ] {
+        app.core.edit().analyze(&packet);
+        app.packets.push_back(packet);
+    }
+    let selected = |app: &App| {
+        let packet = app.active_investigation_packet().unwrap();
+        app.query_core(|core| {
+            let exchanges = app.dns_exchanges(core, packet);
+            assert_eq!(exchanges.len(), 2);
+            exchanges[app.dns_exchange_index(&exchanges)].transaction_id
+        })
+        .unwrap()
+    };
+    let arrow = |app: &mut App, code| {
+        crate::event::handle(app, Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+    };
+    app.worklist.pin_packet(&reply).unwrap();
+    assert_eq!(selected(&app), 42);
+    arrow(&mut app, KeyCode::Left);
+    assert_eq!(selected(&app), 43);
+    advance(&mut app);
+    assert_eq!(app.worklist.active_packet_no(), Some(3));
+    assert_eq!(selected(&app), 43);
+    arrow(&mut app, KeyCode::Right);
+    assert_eq!(selected(&app), 42);
+    advance(&mut app);
+    assert_eq!(app.worklist.active_packet_no(), Some(4));
+    assert_eq!(selected(&app), 42);
 }

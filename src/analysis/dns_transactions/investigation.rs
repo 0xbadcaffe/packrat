@@ -53,8 +53,17 @@ pub struct DnsExchangeEvidence {
 impl DnsTransactionTracker {
     /// Use both scope and frame identity; the wire transaction ID can be reused.
     pub fn exchange_for_packet(&self, packet: &Packet) -> Option<DnsExchangeEvidence> {
-        self.exchange_from_wire(packet)
-            .or_else(|| self.exchange_from_tcp_frame(packet))
+        let mut exchanges = self.exchanges_for_packet(packet);
+        (exchanges.len() == 1).then(|| exchanges.remove(0))
+    }
+
+    pub fn exchanges_for_packet(&self, packet: &Packet) -> Vec<DnsExchangeEvidence> {
+        let tcp = self.exchanges_from_tcp_frame(packet);
+        if tcp.is_empty() {
+            self.exchange_from_wire(packet).into_iter().collect()
+        } else {
+            tcp
+        }
     }
 
     fn exchange_from_wire(&self, packet: &Packet) -> Option<DnsExchangeEvidence> {
@@ -87,18 +96,23 @@ impl DnsTransactionTracker {
         Some(exchange_evidence(&key, exchange))
     }
 
-    fn exchange_from_tcp_frame(&self, packet: &Packet) -> Option<DnsExchangeEvidence> {
+    fn exchanges_from_tcp_frame(&self, packet: &Packet) -> Vec<DnsExchangeEvidence> {
         if packet.src_port != Some(53) && packet.dst_port != Some(53) {
-            return None;
+            return Vec::new();
         }
-        let (source, destination) = crate::analysis::stream::tcp_port_pair(packet)?;
+        let Some((source, destination)) = crate::analysis::stream::tcp_port_pair(packet) else {
+            return Vec::new();
+        };
+        if (packet.src_port, packet.dst_port) != (Some(source), Some(destination)) {
+            return Vec::new();
+        }
         let (client, client_port, resolver, response) = match (source, destination) {
             (53, port) if port != 53 => (&packet.dst, port, &packet.src, true),
             (port, 53) if port != 53 => (&packet.src, port, &packet.dst, false),
-            _ => return None,
+            _ => return Vec::new(),
         };
         let scope = DnsScope::from_packet(packet, DnsTransport::Tcp);
-        let mut matching = self
+        let mut matching: Vec<_> = self
             .exchanges
             .iter()
             .filter(|(key, _)| {
@@ -121,15 +135,27 @@ impl DnsTransactionTracker {
                                 .any(|other| contains(&other.evidence))
                     })
                 } else {
-                    entry.query.packet_no == packet.no || entry.query.frames.contains(&packet.no)
+                    entry.query.packet_no == packet.no
+                        || entry.query.frames.contains(&packet.no)
+                        || entry.repeat_frames.contains(&packet.no)
                 }
-            });
-        let (key, entry) = matching.next()?;
-        // A frame shared by multiple messages is not a unique transaction selector.
+            })
+            .collect();
+        matching.sort_unstable_by_key(|(key, entry)| {
+            let question = &entry.query.question;
+            (
+                key.id,
+                entry.query.packet_no,
+                &question.name,
+                question.qtype,
+                question.qclass,
+            )
+        });
         matching
-            .next()
-            .is_none()
-            .then(|| exchange_evidence(key, entry))
+            .into_iter()
+            .take(128)
+            .map(|(key, entry)| exchange_evidence(key, entry))
+            .collect()
     }
 }
 

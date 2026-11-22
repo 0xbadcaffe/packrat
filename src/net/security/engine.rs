@@ -5,6 +5,10 @@ impl SecurityEngine {
         self.dns_transactions.exchange_for_packet(packet)
     }
 
+    pub fn dns_exchanges_for_packet(&self, packet: &Packet) -> Vec<crate::analysis::dns_transactions::DnsExchangeEvidence> {
+        self.dns_transactions.exchanges_for_packet(packet)
+    }
+
     pub fn new() -> Self {
         Self {
             findings: DetectionBatch::default(),

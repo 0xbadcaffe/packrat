@@ -1,9 +1,14 @@
 use super::*;
 
 pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
-    let exchange = app.core.security.dns_exchange_for_packet(packet)
-        .and_then(|exchange| app.scope_dns_exchange(packet.no, exchange));
-    let lines = match exchange {
+    let mut exchanges = app.dns_exchanges(&app.core, packet);
+    let selected = app.dns_exchange_index(&exchanges);
+    let title = if exchanges.len() > 1 {
+        format!("DNS Transactions ({}/{})", selected + 1, exchanges.len())
+    } else {
+        "DNS Transaction".into()
+    };
+    let lines = match (!exchanges.is_empty()).then(|| exchanges.swap_remove(selected)) {
         Some(exchange) => {
             let mut lines = vec![
                 Line::styled(format!("{} transaction 0x{:04x}", exchange.transport, exchange.transaction_id), heading()),
@@ -53,7 +58,7 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
     f.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false })
             .scroll((app.investigation_scroll.min(u16::MAX as usize) as u16, 0))
-            .block(panel("DNS Transaction")),
+            .block(panel_owned(title)),
         area,
     );
 }

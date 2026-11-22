@@ -75,6 +75,12 @@ pub(super) fn handle_investigate(app: &mut App, key: KeyEvent) {
         KeyCode::Enter if app.investigation_view == InvestigationView::Transactions => {
             app.next_dns_evidence_frame();
         }
+        KeyCode::Left if app.investigation_view == InvestigationView::Transactions => {
+            app.cycle_dns_exchange(false);
+        }
+        KeyCode::Right if app.investigation_view == InvestigationView::Transactions => {
+            app.cycle_dns_exchange(true);
+        }
         KeyCode::Char('[') => app.investigation_prev_view(),
         KeyCode::Char(']') => app.investigation_next_view(),
         KeyCode::Char('n') | KeyCode::Down => app.worklist_next_packet(),
