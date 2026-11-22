@@ -40,7 +40,9 @@ mock_archive() {
     fi
     local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' limit=51
     if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope='' limit=512; fi
-    [[ $* == "--alerts $PACKRAT_TEST_LOG$scope --limit $limit --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
+    local selector="--limit $limit"
+    if [[ -n ${PACKRAT_TEST_TARGET:-} ]]; then selector="--alert-id $PACKRAT_TEST_TARGET"; fi
+    [[ $* == "--alerts $PACKRAT_TEST_LOG$scope $selector --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
     if [[ ${PACKRAT_TEST_SCOPE_RACE:-0} == 1 ]]; then
         jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
@@ -91,9 +93,10 @@ mock_archive() {
 packrat-archive() {
     if [[ ${1-} != --alerts ]]; then mock_archive "$@"; return; fi
     mock_archive "$@" | jq -c --argjson invalid "${PACKRAT_TEST_INVALID_RECORDS:-0}" \
-        --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" --arg index "${PACKRAT_TEST_INDEX:-0}" '
+        --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" --arg index "${PACKRAT_TEST_INDEX:-0}" \
+        --arg target "${PACKRAT_TEST_TARGET:-}" '
         {alerts:.,integrity:{invalid_records:$invalid,oversized_records:$oversized,
-            stopped_at_limit:(length == (if $index == "1" then 512 else 51 end))}}'
+            stopped_at_limit:(length == (if $target != "" then 1 elif $index == "1" then 512 else 51 end))}}'
 }
 
 timeout() {
@@ -310,6 +313,23 @@ done
 saved() {
     bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$@"
 }
+saved_alert() {
+    PACKRAT_TEST_TARGET="$1" bash "$triage" --saved-alert 1700000000-432 00000000000000000000000000000001 "$@"
+}
+result=$(PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" saved_alert 42 "$PACKRAT_TEST_LOG" "$previous")
+jq -e '.status == "saved" and .scope.alert_id == 42 and .alerts[0].alert_id == 42
+    and .previous_logs == 1 and .has_more_alerts == false' <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_ALERT_COUNT=0 saved_alert 99 "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 ]]
+jq -e '.status == "saved_alert_not_observed" and .scope.alert_id == 99 and .alerts == []' <<< "$result" >/dev/null
+status=0
+result=$(saved_alert 99 "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 2 ]]
+jq -e '.status == "alert_log_scope_mismatch" and .alerts == null' <<< "$result" >/dev/null
+status=0
+PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=99 saved_alert 42 "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
+[[ $status == 2 ]]
 result=$(saved "$PACKRAT_TEST_LOG")
 jq -e '.status == "saved" and .health == null and .alerts[0].alert_id == 42
     and (has("age_seconds") | not)' <<< "$result" >/dev/null

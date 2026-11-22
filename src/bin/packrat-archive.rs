@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT] [--report-integrity]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --project-alert-evidence PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID OUTPUT_DIR [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR [--alert-log ALERT_LOG [--previous-log PATH]...]\nList previous alert logs oldest first. Log matching corroborates the alert snapshot, not the origin of the packet bytes. Integrity counts describe only the records examined."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--alert-id ALERT_ID | --limit COUNT] [--report-integrity]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --project-alert-evidence PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID OUTPUT_DIR [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR [--alert-log ALERT_LOG [--previous-log PATH]...]\nAn exact alert ID requires both --session and --capture-id. List previous alert logs oldest first. Log matching corroborates the alert snapshot, not the origin of the packet bytes. Integrity counts describe only the records examined."
         );
         return Ok(());
     };
@@ -186,10 +186,11 @@ fn project_alert(
 }
 
 fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
-    use packrat_tui::storage::alert_history::recent_alerts_report;
+    use packrat_tui::storage::alert_history::{exact_alert_report, recent_alerts_report};
 
     let log = args.next().ok_or("--alerts requires an alert log")?;
     let (mut session, mut capture, mut limit) = (None, None, None);
+    let mut alert_id = None;
     let mut previous = Vec::new();
     let mut report_integrity = false;
     while let Some(flag) = args.next() {
@@ -202,15 +203,24 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
         match flag.as_str() {
             "--session" if session.is_none() => session = Some(value),
             "--capture-id" if capture.is_none() => capture = Some(value),
+            "--alert-id" if alert_id.is_none() => alert_id = Some(value.parse()?),
             "--limit" if limit.is_none() => limit = Some(value.parse()?),
             "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(PathBuf::from(value)),
             "--previous-log" => return Err("Too many previous alert logs".into()),
             _ => return Err(format!("Unknown or repeated alert option: {flag}").into()),
         }
     }
-    let report = recent_alerts_report(
-        &previous, std::path::Path::new(&log), session.as_deref(), capture.as_deref(), limit.unwrap_or(50),
-    )?;
+    let log = std::path::Path::new(&log);
+    let report = if let Some(id) = alert_id {
+        if limit.is_some() {
+            return Err("--alert-id cannot be combined with --limit".into());
+        }
+        exact_alert_report(&previous, log,
+            session.as_deref().ok_or("--alert-id requires --session")?,
+            capture.as_deref().ok_or("--alert-id requires --capture-id")?, id)?
+    } else {
+        recent_alerts_report(&previous, log, session.as_deref(), capture.as_deref(), limit.unwrap_or(50))?
+    };
     if report_integrity {
         println!("{}", serde_json::to_string(&report)?);
     } else {

@@ -94,6 +94,28 @@ pub fn recent_alerts_report(
     capture_filter: Option<&str>,
     limit: usize,
 ) -> Result<AlertHistoryReport> {
+    filtered_alerts_report(previous, active, session_filter, capture_filter, None, limit)
+}
+
+pub fn exact_alert_report(
+    previous: &[PathBuf],
+    active: &Path,
+    session: &str,
+    capture: &str,
+    alert_id: u64,
+) -> Result<AlertHistoryReport> {
+    ensure!(alert_id != 0, "Alert ID must be positive");
+    filtered_alerts_report(previous, active, Some(session), Some(capture), Some(alert_id), 1)
+}
+
+fn filtered_alerts_report(
+    previous: &[PathBuf],
+    active: &Path,
+    session_filter: Option<&str>,
+    capture_filter: Option<&str>,
+    alert_id: Option<u64>,
+    limit: usize,
+) -> Result<AlertHistoryReport> {
     ensure!((1..=MAX_HISTORY_LIMIT).contains(&limit), "Alert history limit must be 1..={MAX_HISTORY_LIMIT}");
     let logs = AlertLogs::new(active, previous)?;
     let mut latest = Vec::with_capacity(limit);
@@ -124,6 +146,7 @@ pub fn recent_alerts_report(
             }
             if session_filter.is_some_and(|id| record.session_id != id)
                 || capture_filter.is_some_and(|id| alert.capture_id.as_deref() != Some(id))
+                || alert_id.is_some_and(|id| alert.id != id)
                 || !seen.insert((record.session_id.clone(), alert.capture_id.clone(), alert.id))
             {
                 continue;

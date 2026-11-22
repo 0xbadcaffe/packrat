@@ -4,11 +4,13 @@ set -euo pipefail
 usage() {
     printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --saved SESSION_ID CAPTURE_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
+        '       packrat-triage --saved-alert SESSION_ID CAPTURE_ID ALERT_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --list-saved ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         'Supply up to eight immutable previous logs, oldest first.' \
         'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
         '--saved reviews an explicit saved capture without consulting live health.' \
         '--saved reports saved_scope_not_observed when the supplied logs contain no matching alert records.' \
+        '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
         '--list-saved groups the latest 512 distinct saved alerts by session and capture; counts cover only that sample.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
@@ -23,6 +25,15 @@ usage() {
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
 mode=live
+target_alert=''
+if [[ ${1-} == --saved-alert ]]; then
+    if (( $# < 5 || $# > 13 )) ||
+       [[ ! $4 =~ ^[1-9][0-9]{0,14}$ ]]; then
+        usage >&2; exit 2
+    fi
+    target_alert=$4
+    set -- --saved "$2" "$3" "${@:5}"
+fi
 if [[ ${1-} == --saved ]]; then
     if (( $# < 4 || $# > 12 )) ||
        [[ ! $2 =~ ^[A-Za-z0-9_-]{1,128}$ || ! $3 =~ ^[0-9a-f]{32}$ ]]; then
@@ -44,6 +55,11 @@ fi
 alert_limit=50
 query_limit=$((alert_limit + 1))
 if [[ $mode == list_saved ]]; then query_limit=512; fi
+limit_args=(--limit "$query_limit")
+if [[ -n $target_alert ]]; then
+    alert_limit=1 query_limit=1
+    limit_args=(--alert-id "$target_alert")
+fi
 
 previous_logs=("$@")
 previous_args=()
@@ -62,6 +78,10 @@ project=${PACKRAT_TRIAGE_PROJECT:-}
 evidence_id=${PACKRAT_TRIAGE_EVIDENCE_ALERT_ID:-}
 socket_file=${PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE:-}
 if [[ $mode == list_saved ]]; then archive='' project='' evidence_id='' socket_file=''; fi
+if [[ -n $target_alert && -n $evidence_id && $target_alert != "$evidence_id" ]]; then
+    printf '%s\n' 'The evidence alert ID must match the requested saved alert.' >&2
+    exit 2
+fi
 socket_status=not_configured
 if [[ -n $socket_file ]]; then
     if [[ $socket_file != /* || $socket_file == */ || $socket_file == *[[:cntrl:]]* ]]; then
@@ -260,8 +280,9 @@ if [[ $mode == live ]]; then
     capture=$(jq -er '.health.capture_id' <<< "$state")
     run=$(jq -c '.health.capture_run_id' <<< "$state")
 elif [[ $mode == saved ]]; then
-    state=$(jq -cn --arg session "$session" --arg capture "$capture" '
+    state=$(jq -cn --arg session "$session" --arg capture "$capture" --arg target "$target_alert" '
         {mode:"saved",health:null,scope:{session_id:$session,capture_id:$capture}}
+        | if $target == "" then . else .scope.alert_id = ($target | tonumber) end
     ')
 else
     state='{"mode":"list_saved","health":null}'
@@ -281,7 +302,7 @@ fi
 read_status=0
 raw_alerts=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
     --alerts "$alert_log" "${scope_args[@]}" \
-    --limit "$query_limit" --report-integrity "${previous_args[@]}") || read_status=$?
+    "${limit_args[@]}" --report-integrity "${previous_args[@]}") || read_status=$?
 if (( read_status == 124 )); then
     report alert_log_read_timeout
     exit 2
@@ -303,8 +324,9 @@ if (( read_status != 0 )) || ! history=$(jq -cse --argjson limit "$query_limit" 
 fi
 alerts=$(jq -c '.alerts' <<< "$history")
 integrity=$(jq -c '.integrity | {invalid_records,oversized_records,stopped_at_limit}' <<< "$history")
-if [[ $mode != list_saved ]] && ! jq -e --arg session "$session" --arg capture "$capture" '
-    all(.[]; type == "object" and .session_id == $session and .capture_id == $capture)
+if [[ $mode != list_saved ]] && ! jq -e --arg session "$session" --arg capture "$capture" --arg target "$target_alert" '
+    all(.[]; type == "object" and .session_id == $session and .capture_id == $capture
+        and ($target == "" or .alert_id == ($target | tonumber)))
 ' <<< "$alerts" >/dev/null; then
     report alert_log_scope_mismatch
     exit 2
@@ -372,7 +394,9 @@ fi
 if { [[ $mode == saved ]] || jq -e '.health.issues == []' <<< "$state" >/dev/null; } &&
    jq -e '.invalid_records == 0 and .oversized_records == 0' <<< "$integrity" >/dev/null; then
     if [[ $mode == saved ]] && jq -e 'length == 0' <<< "$alerts" >/dev/null; then
-        report saved_scope_not_observed "$alerts" "$evidence" "$integrity"
+        absent_status=saved_scope_not_observed
+        if [[ -n $target_alert ]]; then absent_status=saved_alert_not_observed; fi
+        report "$absent_status" "$alerts" "$evidence" "$integrity"
         exit 1
     fi
     report "$clean_status" "$alerts" "$evidence" "$integrity"
