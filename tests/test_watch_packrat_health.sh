@@ -5,7 +5,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 watch="$root/scripts/watch-packrat-health.sh"
 
 export PACKRAT_HEALTH_PORT=9477 PACKRAT_ALERT_SESSION=packrat-alerts PACKRAT_MIN_FREE_MIB=512 PACKRAT_ALERT_PIPELINE=0
-unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE PACKRAT_HEALTH_INTERVAL PACKRAT_HEALTH_HEARTBEAT
+unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE PACKRAT_HEALTH_INTERVAL PACKRAT_HEALTH_HEARTBEAT PACKRAT_HEALTH_STATE_FILE
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
@@ -159,6 +159,30 @@ PACKRAT_HEALTH_HEARTBEAT=0 PACKRAT_FAKE_STEPS=7 PACKRAT_FAKE_SAMPLES="$stable_sa
 status=0
 PACKRAT_HEALTH_HEARTBEAT=-1 bash "$watch" --once >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
+
+(
+    state_dir=$(mktemp -d)
+    trap 'rm -rf -- "$state_dir"' EXIT
+    export PACKRAT_HEALTH_STATE_FILE="$state_dir/current state.json"
+    umask 022
+    stream=$(bash "$watch" --once)
+    [[ $(<"$PACKRAT_HEALTH_STATE_FILE") == "$stream" ]]
+    [[ $(stat --format=%a -- "$PACKRAT_HEALTH_STATE_FILE") == 600 ]]
+
+    status=0
+    stream=$(PACKRAT_FAKE_HEALTH=unreachable bash "$watch" --once) || status=$?
+    [[ $status == 1 && $(<"$PACKRAT_HEALTH_STATE_FILE") == "$stream" ]]
+    jq -e '.issues == ["health_unreachable"]' <<< "$stream" >/dev/null
+
+    mkdir -- "$state_dir/destination"
+    status=0
+    PACKRAT_HEALTH_STATE_FILE="$state_dir/destination" bash "$watch" --once >"$state_dir/failed" 2>/dev/null || status=$?
+    [[ $status == 2 && ! -s "$state_dir/failed" ]]
+    [[ $(find "$state_dir" -maxdepth 1 -name '.packrat-health.*' -print -quit) == '' ]]
+    status=0
+    PACKRAT_HEALTH_STATE_FILE=relative bash "$watch" --once >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
+)
 
 samples=$(jq -cn '
     def sample($id;$drops):

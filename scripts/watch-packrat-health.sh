@@ -5,6 +5,7 @@ usage() {
     printf '%s\n' 'Usage: bash watch-packrat-health.sh [--once]' \
         'Environment: PACKRAT_HEALTH_PORT (9477), PACKRAT_HEALTH_INTERVAL (15 seconds),' \
         'PACKRAT_HEALTH_HEARTBEAT (300 seconds between unchanged reports; 0 disables),' \
+        'PACKRAT_HEALTH_STATE_FILE (optional absolute path for the latest published record),' \
         'PACKRAT_ALERT_SESSION (optional tmux session), PACKRAT_DISK_PATH (/),' \
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
         'PACKRAT_ALERT_LOG (optional absolute alert path; requires pipeline checking),' \
@@ -24,6 +25,7 @@ if (( $# > 1 )); then usage >&2; exit 2; fi
 port=${PACKRAT_HEALTH_PORT:-9477}
 interval=${PACKRAT_HEALTH_INTERVAL:-15}
 heartbeat=${PACKRAT_HEALTH_HEARTBEAT:-300}
+state_file=${PACKRAT_HEALTH_STATE_FILE:-}
 alert_session=${PACKRAT_ALERT_SESSION:-}
 alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
 alert_log=${PACKRAT_ALERT_LOG:-}
@@ -35,6 +37,10 @@ if [[ ! $port =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )) ||
    [[ ! $heartbeat =~ ^(0|[1-9][0-9]{0,5})$ ]] ||
    [[ ! $min_free =~ ^(0|[1-9][0-9]{0,8})$ ]]; then
     printf '%s\n' 'Invalid health port, polling interval, heartbeat, or free-space threshold.' >&2
+    exit 2
+fi
+if [[ -n $state_file && ( $state_file != /* || $state_file == */ ) ]]; then
+    printf '%s\n' 'PACKRAT_HEALTH_STATE_FILE requires an absolute file path.' >&2
     exit 2
 fi
 for dependency in curl jq df; do
@@ -205,6 +211,23 @@ read_health() {
 previous=
 last_emit=0
 baseline=null
+pending_state=
+if [[ -n $state_file ]]; then
+    trap 'if [[ -n $pending_state ]]; then rm -f -- "$pending_state"; fi' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+fi
+
+publish_state() {
+    local record=$1
+    if [[ -n $state_file ]]; then
+        pending_state=$(mktemp -- "${state_file%/*}/.packrat-health.XXXXXXXX") || return 1
+        printf '%s\n' "$record" >"$pending_state" && mv -T -- "$pending_state" "$state_file" || return 1
+        pending_state=
+    fi
+    printf '%s\n' "$record"
+}
+
 while :; do
     if ! state=$(read_health); then
         state=$(jq -cn --argjson baseline "$baseline" '{issues:["monitor_input_error"],next_baseline:$baseline}')
@@ -221,9 +244,13 @@ while :; do
         event=heartbeat
     fi
     if [[ -n $event ]]; then
-        jq -c --arg time "$(date -u +%FT%TZ)" --arg event "$event" '
+        record=$(jq -c --arg time "$(date -u +%FT%TZ)" --arg event "$event" '
             del(.next_baseline) + {record_type:"capture_health", timestamp:$time, event:$event}
-        ' <<< "$state" || exit 2
+        ' <<< "$state") || exit 2
+        if ! publish_state "$record"; then
+            printf '%s\n' 'Could not publish the capture health record.' >&2
+            exit 2
+        fi
         previous=$change_key
         last_emit=$SECONDS
     fi
