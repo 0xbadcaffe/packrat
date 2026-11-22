@@ -9,24 +9,36 @@ pub(super) fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
     let declared_end = ip_offset + 40 + payload_len;
     let packet_end = declared_end.min(raw.len());
     let mut next_header = raw[ip_offset + 6];
-    let mut cursor = ip_offset + 40;
+    let mut transport = &raw[ip_offset + 40..packet_end];
     let mut extension_count = 0usize;
     let mut fragmented = false;
 
-    while matches!(next_header, 0 | 43 | 44 | 51 | 60) && cursor < packet_end {
-        extension_count += 1;
-        if extension_count > 32 {
-            break;
-        }
+    while matches!(next_header, 0 | 43 | 44 | 51 | 60) {
         let current = next_header;
-        fragmented |= current == 44;
-        next_header = *raw.get(cursor)?;
+        let Some(&[following, length_field]) = transport.first_chunk::<2>() else {
+            transport = &[];
+            break;
+        };
         let length = match current {
             44 => 8,
-            51 => (usize::from(*raw.get(cursor + 1)?) + 2) * 4,
-            _ => (usize::from(*raw.get(cursor + 1)?) + 1) * 8,
+            51 => (usize::from(length_field) + 2) * 4,
+            _ => (usize::from(length_field) + 1) * 8,
         };
-        cursor = cursor.checked_add(length)?;
+        let Some(rest) = transport.get(length..) else {
+            transport = &[];
+            break;
+        };
+        extension_count += 1;
+        next_header = following;
+        fragmented |= current == 44;
+        // A non-initial fragment does not begin at the next protocol header.
+        if extension_count > 32
+            || (current == 44 && u16::from_be_bytes([transport[2], transport[3]]) & 0xfff8 != 0)
+        {
+            transport = &[];
+            break;
+        }
+        transport = rest;
     }
 
     Some(Ipv6Inspection {
@@ -37,11 +49,7 @@ pub(super) fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
         extension_count,
         fragmented,
         complete: declared_end <= raw.len(),
-        transport: if cursor <= packet_end {
-            &raw[cursor..packet_end]
-        } else {
-            &[]
-        },
+        transport,
     })
 }
 

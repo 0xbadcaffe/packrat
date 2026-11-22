@@ -18,7 +18,7 @@ impl SecurityEngine {
                 "Excessive IPv6 extension headers",
                 Severity::High,
                 format!(
-                    "{} IPv6 extension headers from {} to {}",
+                    "Captured {} IPv6 extension headers from {} to {}",
                     inspection.extension_count, pkt.src, pkt.dst
                 ),
             ));

@@ -300,6 +300,8 @@ mod lldp_identity_cases;
 mod stp_indication_cases;
 #[path = "security_policy/ndp_hop_limit_cases.rs"]
 mod ndp_hop_limit_cases;
+#[path = "security_policy/ipv6_extension_cases.rs"]
+mod ipv6_extension_cases;
 #[path = "security_policy/payload_byte_run_cases.rs"]
 mod payload_byte_run_cases;
 #[path = "security_policy/http_observation_cases.rs"]
