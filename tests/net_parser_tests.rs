@@ -97,3 +97,16 @@ fn rejects_truncated_and_excessively_chained_ipv6_extensions() {
     let chained = parse_ethernet(&ipv6_frame(0, &chained), 2, 2.0);
     assert_eq!(chained.protocol, "RAW");
 }
+
+#[test]
+fn raw_ethernet_payload_retains_decoded_vlan_scope() {
+    let mut wire = vec![0; 12];
+    wire.extend([0x88, 0xa8, 0, 100, 0x81, 0, 0xb0, 20, 0, 4, 0x42, 0x42, 3, 0]);
+    let packet = parse_ethernet(&wire, 1, 1.0);
+    assert_eq!(packet.protocol, "RAW");
+    assert_eq!(packet.outer_vlan_id, Some(100));
+    assert_eq!(packet.vlan_id, Some(20));
+    assert_eq!(packet.vlan_pcp, Some(5));
+    assert_eq!(packet.vlan_dei, Some(1));
+    assert_eq!(packet.bytes, wire);
+}

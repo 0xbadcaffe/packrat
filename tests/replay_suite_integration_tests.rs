@@ -12,12 +12,12 @@ mod arp;
 mod dtp_replay;
 #[path = "replay_suite/vlan_tags.rs"]
 mod vlan_tags;
-
+#[path = "replay_suite/control_plane.rs"]
+mod control_plane;
 use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use serde_json::{Value, json};
 use std::{path::Path, process::{Command, Output}};
-
 fn run_suite(manifest: &Path) -> Output {
     run_suite_with_baseline(manifest, None)
 }

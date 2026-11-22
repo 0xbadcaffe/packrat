@@ -75,12 +75,8 @@ pub fn parse_ethernet(data: &[u8], no: u64, ts: f64) -> Packet {
         let etype = u16::from_be_bytes([data[offset], data[offset + 1]]);
         if etype == 0x8100 || etype == 0x88a8 {
             if tag_count == 2 {
-                let mut packet = unknown(data, no, ts);
+                let mut packet = unknown_ethernet(data, no, ts, vlan);
                 packet.info = "VLAN stack exceeds supported depth; raw frame retained".into();
-                packet.vlan_id = vlan.id;
-                packet.vlan_pcp = vlan.pcp;
-                packet.vlan_dei = vlan.dei;
-                packet.outer_vlan_id = vlan.outer_id;
                 return packet;
             }
             if offset + 4 > data.len() {
@@ -118,7 +114,7 @@ pub fn parse_ethernet(data: &[u8], no: u64, ts: f64) -> Packet {
         0x8847 | 0x8848 => parse_mpls(payload, data, no, ts, vlan),
         0x8863 => parse_pppoe(payload, data, no, ts, vlan, "discovery"),
         0x8864 => parse_pppoe(payload, data, no, ts, vlan, "session"),
-        _ => unknown(data, no, ts),
+        _ => unknown_ethernet(data, no, ts, vlan),
     }
 }
 
@@ -211,6 +207,16 @@ fn parse_pppoe(payload: &[u8], raw: &[u8], no: u64, ts: f64, vlan: VlanCtx, kind
         vlan_dei: vlan.dei,
         outer_vlan_id: vlan.outer_id,
         bytes: raw.to_vec(),
+    }
+}
+
+fn unknown_ethernet(raw: &[u8], no: u64, ts: f64, vlan: VlanCtx) -> Packet {
+    Packet {
+        vlan_id: vlan.id,
+        vlan_pcp: vlan.pcp,
+        vlan_dei: vlan.dei,
+        outer_vlan_id: vlan.outer_id,
+        ..unknown(raw, no, ts)
     }
 }
 

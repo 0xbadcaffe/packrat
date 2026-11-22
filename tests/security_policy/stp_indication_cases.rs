@@ -12,8 +12,8 @@ fn stp_indications_validate_bpdu_format_and_do_not_count_acknowledgements() {
         raw.extend(((bpdu.len() + 3) as u16).to_be_bytes());
         raw.extend([0x42, 0x42, 0x03]);
         raw.extend(bpdu);
-        let mut pkt = parse_ethernet(&raw, no, no as f64);
-        pkt.vlan_id = vlan;
+        let pkt = parse_ethernet(&raw, no, no as f64);
+        assert_eq!(pkt.vlan_id, vlan);
         pkt
     };
     let mut core = AnalysisCore::default();
