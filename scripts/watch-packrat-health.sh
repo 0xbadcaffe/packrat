@@ -14,6 +14,7 @@ usage() {
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
         'PACKRAT_ALERT_LOG (optional absolute alert path; requires pipeline checking),' \
         'PACKRAT_ALERT_VERIFY_OPEN (1 verifies the open file and pipe; uses noninteractive sudo if needed),' \
+        'PACKRAT_ALERT_CONTEXT_WATCHER (optional absolute Bash script path; requires open-pipe verification),' \
         'PACKRAT_REQUIRE_ARCHIVE (1 reports missing or inactive packet archiving),' \
         'PACKRAT_MIN_FREE_MIB (512). Health requests always use IPv4 loopback.'
 }
@@ -37,6 +38,7 @@ alert_session=${PACKRAT_ALERT_SESSION:-}
 alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
 alert_log=${PACKRAT_ALERT_LOG:-}
 alert_verify_open=${PACKRAT_ALERT_VERIFY_OPEN:-0}
+alert_context_watcher=${PACKRAT_ALERT_CONTEXT_WATCHER:-}
 require_archive=${PACKRAT_REQUIRE_ARCHIVE:-0}
 disk_path=${PACKRAT_DISK_PATH:-}
 disk_sudo=${PACKRAT_DISK_SUDO:-0}
@@ -91,6 +93,11 @@ if [[ ( $alert_verify_open != 0 && $alert_verify_open != 1 ) ||
     printf '%s\n' 'PACKRAT_ALERT_VERIFY_OPEN must be 0 or 1 and requires PACKRAT_ALERT_LOG when enabled.' >&2
     exit 2
 fi
+if [[ -n $alert_context_watcher &&
+      ( $alert_context_watcher != /* || $alert_context_watcher == *[[:cntrl:]]* || $alert_verify_open != 1 ) ]]; then
+    printf '%s\n' 'PACKRAT_ALERT_CONTEXT_WATCHER requires an absolute script path and PACKRAT_ALERT_VERIFY_OPEN=1.' >&2
+    exit 2
+fi
 if [[ -z $disk_path ]]; then
     disk_path=${alert_log%/*}
     disk_path=${disk_path:-/}
@@ -115,7 +122,7 @@ alert_pipeline_processes() {
     LC_ALL=C ps -e -o pid= -o ppid= -o stat= -o comm= | awk -v pane="$pane" '
         {
             parent[$1] = $2
-            if ($3 !~ /^[TtZX]/ && ($4 == "tail" || $4 == "jq")) roles[$1] = $4
+            if ($3 !~ /^[TtZX]/ && ($4 == "tail" || $4 == "jq" || $4 == "bash")) roles[$1] = $4
         }
         END {
             for (pid in roles) {
@@ -162,7 +169,7 @@ alert_log_followed() {
         if [[ $role == tail ]]; then
             tails+=("$pid")
         elif [[ $role == jq && $alert_verify_open == 1 ]] && pipe=$(read_pipe "/proc/$pid/fd/0"); then
-            parser_pipes[$pipe]=1
+            parser_pipes[$pipe]=$pid
         fi
     done <<< "$1"
     for pid in "${tails[@]}"; do
@@ -175,14 +182,34 @@ alert_log_followed() {
         done
         "$follow" || continue
         if [[ $alert_verify_open == 0 ]]; then return 0; fi
-        if pipe=$(read_pipe "/proc/$pid/fd/1") && [[ ${parser_pipes[$pipe]:-} == 1 ]] &&
-            alert_log_open "$pid"; then return 0; fi
+        if pipe=$(read_pipe "/proc/$pid/fd/1") && [[ -n ${parser_pipes[$pipe]:-} ]] &&
+            alert_log_open "$pid"; then
+            printf '%s\n' "${parser_pipes[$pipe]}"
+            return 0
+        fi
     done
     return 1
 }
 
+alert_context_followed() {
+    local role pid pipe parser_output
+    local -a args
+    [[ $2 =~ ^[1-9][0-9]*$ ]] || return 1
+    parser_output=$(read_pipe "/proc/$2/fd/1") || return 1
+    while read -r role pid; do
+        [[ $role == bash && $pid =~ ^[1-9][0-9]*$ ]] || continue
+        mapfile -d '' -t args < <(cat -- "/proc/$pid/cmdline" 2>/dev/null)
+        [[ ${#args[@]} == 2 && ${args[0]##*/} == bash && ${args[1]} == "$alert_context_watcher" ]] || continue
+        if pipe=$(read_pipe "/proc/$pid/fd/0") && [[ $pipe == "$parser_output" ]]; then
+            return 0
+        fi
+    done <<< "$1"
+    return 1
+}
+
 read_health() {
-    local sample watcher=null pipeline=null source=null processes pane_info dead pane disk=null free_kib
+    local sample watcher=null pipeline=null source=null context=null processes parser pane_info dead pane disk=null free_kib
+    if [[ -n $alert_context_watcher ]]; then context=false; fi
     sample=$(curl --disable --fail --silent --max-time 3 --noproxy '*' "http://127.0.0.1:$port/health") || sample=null
     if [[ -n $alert_session ]]; then
         watcher=false
@@ -194,7 +221,14 @@ read_health() {
                 if processes=$(alert_pipeline_processes "$pane"); then
                     pipeline=true
                     if [[ -n $alert_log ]]; then
-                        if alert_log_followed "$processes"; then source=true; else source=false; fi
+                        if parser=$(alert_log_followed "$processes"); then
+                            source=true
+                            if [[ -n $alert_context_watcher ]] && alert_context_followed "$processes" "$parser"; then
+                                context=true
+                            fi
+                        else
+                            source=false
+                        fi
                     fi
                 else
                     pipeline=false
@@ -207,7 +241,7 @@ read_health() {
         disk=$((10#$free_kib / 1024))
     fi
     printf '%s\n' "$sample" | jq -Rcse \
-        --argjson watcher "$watcher" --argjson pipeline "$pipeline" --argjson source "$source" \
+        --argjson watcher "$watcher" --argjson pipeline "$pipeline" --argjson source "$source" --argjson context "$context" \
         --arg alert_log "$alert_log" --arg expected_interface "$expected_interface" --arg disk_path "$disk_path" \
         --argjson verify_open "$alert_verify_open" \
         --argjson disk "$disk" --argjson min_free "$min_free" --argjson require_archive "$require_archive" \
@@ -259,9 +293,10 @@ read_health() {
                 then $drops - $baseline.drops.total else null end
             ),
             alert_saving: ($h.alert_saving // false),
-            alert_watcher_alive: (if $pipeline == false or $source == false then false else $watcher end),
+            alert_watcher_alive: (if $pipeline == false or $source == false or $context == false then false else $watcher end),
             alert_watcher_pipeline_alive: $pipeline,
             alert_watcher_source_matches: $source,
+            alert_socket_context_alive: $context,
             alert_watcher_open_log_required: ($verify_open == 1),
             alert_watcher_log: (if $alert_log == "" then null else $alert_log end),
             archive_enabled: $archive_enabled,
@@ -300,7 +335,8 @@ read_health() {
                 end,
                 (if $watcher == false then "alert_watcher_unavailable"
                  elif $pipeline == false then "alert_watcher_pipeline_inactive"
-                 elif $source == false then "alert_watcher_source_unverified" else empty end),
+                 elif $source == false then "alert_watcher_source_unverified"
+                 elif $context == false then "alert_socket_context_unverified" else empty end),
                 (if $disk == null then "disk_space_unknown"
                  elif $disk < $min_free then "disk_space_low" else empty end)
             ],

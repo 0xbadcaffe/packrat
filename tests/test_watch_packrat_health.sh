@@ -8,6 +8,7 @@ export PACKRAT_HEALTH_PORT=9477 PACKRAT_ALERT_SESSION=packrat-alerts PACKRAT_MIN
 unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE PACKRAT_HEALTH_INTERVAL PACKRAT_HEALTH_HEARTBEAT PACKRAT_HEALTH_STATE_FILE
 unset PACKRAT_EXPECT_INTERFACE PACKRAT_EXPECT_TRAFFIC_SECS
 unset PACKRAT_DISK_PATH PACKRAT_DISK_SUDO PACKRAT_ALERT_VERIFY_OPEN
+unset PACKRAT_ALERT_CONTEXT_WATCHER
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
@@ -32,8 +33,14 @@ ps() {
 }
 
 cat() {
-    [[ $* == '-- /proc/94/cmdline' && -n ${PACKRAT_FAKE_TAIL_SOURCE:-} ]] || return 1
-    printf '%s\0' /usr/bin/tail -n 0 "$PACKRAT_FAKE_TAIL_FOLLOW" -- "$PACKRAT_FAKE_TAIL_SOURCE"
+    case $* in
+        '-- /proc/94/cmdline')
+            [[ -n ${PACKRAT_FAKE_TAIL_SOURCE:-} ]] || return 1
+            printf '%s\0' /usr/bin/tail -n 0 "$PACKRAT_FAKE_TAIL_FOLLOW" -- "$PACKRAT_FAKE_TAIL_SOURCE" ;;
+        '-- /proc/96/cmdline')
+            printf '%s\0' bash "$PACKRAT_FAKE_CONTEXT_SCRIPT" ;;
+        *) return 1 ;;
+    esac
 }
 
 df() {
@@ -58,6 +65,8 @@ readlink() {
     case $2 in
         /proc/94/fd/1) printf '%s\n' 'pipe:[100]' ;;
         /proc/95/fd/0) printf '%s\n' "${PACKRAT_FAKE_PARSER_PIPE:-pipe:[100]}" ;;
+        /proc/95/fd/1) printf '%s\n' 'pipe:[200]' ;;
+        /proc/96/fd/0) printf '%s\n' "${PACKRAT_FAKE_CONTEXT_PIPE:-pipe:[200]}" ;;
         *) return 1 ;;
     esac
 }
@@ -179,6 +188,32 @@ for parser_input in 'pipe:[101]' /dev/null; do
     jq -e '.issues == ["alert_watcher_source_unverified"] and .alert_watcher_pipeline_alive
         and (.alert_watcher_source_matches | not)' <<< "$output" >/dev/null
 done
+
+(
+    export PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F
+    export PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_ALERT_VERIFY_OPEN=1 PACKRAT_FAKE_OPEN_FDS=20:150
+    export PACKRAT_ALERT_CONTEXT_WATCHER='/home/rc/context watcher'
+    export PACKRAT_FAKE_CONTEXT_SCRIPT="$PACKRAT_ALERT_CONTEXT_WATCHER"
+    processes="$PACKRAT_FAKE_PROCESSES"
+    export PACKRAT_FAKE_PROCESSES="$processes"$'\n96 91 S bash'
+    bash "$watch" --once | jq -e '.issues == [] and .alert_socket_context_alive == true
+        and .alert_watcher_alive and .alert_watcher_source_matches' >/dev/null
+    for case in wrong_pipe wrong_script unrelated stopped; do
+        status=0
+        case $case in
+            wrong_pipe) output=$(PACKRAT_FAKE_CONTEXT_PIPE='pipe:[201]' bash "$watch" --once) || status=$? ;;
+            wrong_script) output=$(PACKRAT_FAKE_CONTEXT_SCRIPT=/other bash "$watch" --once) || status=$? ;;
+            unrelated) output=$(PACKRAT_FAKE_PROCESSES="$processes"$'\n96 2 S bash' bash "$watch" --once) || status=$? ;;
+            stopped) output=$(PACKRAT_FAKE_PROCESSES="$processes"$'\n96 91 T bash' bash "$watch" --once) || status=$? ;;
+        esac
+        [[ $status == 1 ]]
+        jq -e '.issues == ["alert_socket_context_unverified"] and (.alert_socket_context_alive | not)
+            and (.alert_watcher_alive | not) and .alert_watcher_source_matches' <<< "$output" >/dev/null
+    done
+    status=0
+    PACKRAT_ALERT_VERIFY_OPEN=0 bash "$watch" --once >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
+)
 
 status=0
 output=$(PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
