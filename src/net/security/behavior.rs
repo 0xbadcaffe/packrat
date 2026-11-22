@@ -216,15 +216,23 @@ impl SecurityEngine {
             size: pkt.capture.as_ref().map_or(u32::from(pkt.length), |meta| meta.wire_length),
             packet_no: pkt.no,
         });
-        let Some(stats) = beacon_pattern(samples) else {
+        let (evidence, stats) = if let Some(stats) = beacon_pattern(samples) {
+            (samples.as_slice(), stats)
+        } else if samples.len() > BEACON_MIN_SAMPLES {
+            let recent = &samples[samples.len() - BEACON_MIN_SAMPLES..];
+            let Some(stats) = beacon_pattern(recent) else {
+                return;
+            };
+            (recent, stats)
+        } else {
             return;
         };
         state.alerted = true;
-        let related_packets = samples[..samples.len() - 1]
+        let related_packets = evidence[..evidence.len() - 1]
             .iter()
             .map(|sample| sample.packet_no)
             .collect();
-        let count = samples.len();
+        let count = evidence.len();
         self.push_ids_finding(IdsFinding {
             alert: IdsAlert {
                 pkt_no: pkt.no,
