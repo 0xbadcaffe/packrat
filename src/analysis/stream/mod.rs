@@ -174,6 +174,7 @@ pub struct ReassembledStream {
     server_pending: Vec<PendingTcpSegment>,
     client_initial_syn: Option<u32>,
     server_initial_syn: Option<u32>,
+    modbus_offset: Option<usize>,
 }
 
 impl ReassembledStream {
@@ -206,6 +207,7 @@ impl ReassembledStream {
             key,
             first_seen: ts,
             last_seen: ts,
+            modbus_offset: Some(0),
             ..Default::default()
         }
     }

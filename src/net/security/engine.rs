@@ -129,7 +129,17 @@ impl SecurityEngine {
     }
 
     pub fn inspect(&mut self, pkt: &Packet) -> DetectionBatch {
+        self.inspect_with_spanning_modbus(pkt, None)
+    }
+
+    pub(crate) fn inspect_with_spanning_modbus(
+        &mut self, pkt: &Packet,
+        spanning: Option<(industrial_policy::IndustrialFinding, Vec<u64>)>,
+    ) -> DetectionBatch {
         self.update(pkt);
+        if let Some((finding, frames)) = spanning {
+            self.record_industrial_finding(pkt, finding, frames);
+        }
         std::mem::take(&mut self.findings)
     }
 

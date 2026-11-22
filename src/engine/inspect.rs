@@ -62,7 +62,9 @@ impl AnalysisCore {
         } else {
             std::collections::HashMap::new()
         };
-        let findings = self.security.inspect(pkt);
+        self.streams.ingest(pkt);
+        let spanning_modbus = self.streams.spanning_modbus(pkt);
+        let findings = self.security.inspect_with_spanning_modbus(pkt, spanning_modbus);
         for finding in &findings.ids {
             let alert = &finding.alert;
             self.operator_graph.on_ids_alert(
@@ -208,9 +210,6 @@ impl AnalysisCore {
                 self.hosts.set_os_guess(&pkt.src, os);
             }
         }
-
-        // Stream reassembly
-        self.streams.ingest(pkt);
 
         // Timeline
         self.timeline.ingest(pkt);

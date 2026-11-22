@@ -117,7 +117,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the command and response against controller logs and approved maintenance. This packet does not prove execution.",
         ),
         (
-            "IDS", "Industrial state-changing command", "industrial.state_change", 2, Heuristic,
+            "IDS", "Industrial state-changing command", "industrial.state_change", 3, Heuristic,
             "Check the controller, operator authorization, and response. A write-like packet does not prove a state change.",
         ),
         (

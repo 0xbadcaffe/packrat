@@ -148,7 +148,7 @@ fn industrial_alert_exposes_a_policy_hint_not_a_claim_of_execution() {
         .find(|alert| alert.title == "Industrial state-changing command").unwrap();
     let provenance = alert.provenance.as_ref().unwrap();
     assert_eq!(provenance.rule_id, "industrial.state_change");
-    assert_eq!(provenance.revision, 2);
+    assert_eq!(provenance.revision, 3);
     assert_eq!(provenance.confidence, packrat_tui::analysis::alert_provenance::EvidenceConfidence::Heuristic);
     assert!(provenance.verification_hint.contains("does not prove a state change"));
     assert_eq!(alert.packet_refs, [1]);
@@ -185,4 +185,47 @@ fn modbus_policy_uses_complete_request_boundaries_and_ignores_replies() {
     reply.bytes[36..38].copy_from_slice(&50_000_u16.to_be_bytes());
     std::mem::swap(&mut reply.src_port, &mut reply.dst_port);
     assert!(industrial_policy::inspect(&reply).is_none());
+}
+
+#[test]
+fn modbus_split_evidence_uses_the_shared_tcp_stream_without_duplicate_alerts() {
+    use packrat_tui::engine::AnalysisCore;
+    let segment = |number: u64, sequence: u32, flags: u8, payload: &[u8]| {
+        let mut packet = industrial_packet("Modbus", 502, true, payload);
+        packet.no = number;
+        packet.timestamp = number as f64;
+        packet.bytes[38..42].copy_from_slice(&sequence.to_be_bytes());
+        packet.bytes[47] = flags;
+        packet
+    };
+    let message = [0, 2, 0, 0, 0, 2, 1, 6];
+    let syn = segment(1, 100, 0x02, &[]);
+    let tail = segment(2, 106, 0x18, &message[5..]);
+    let head = segment(3, 101, 0x18, &message[..5]);
+    let rule = |item: &&packrat_tui::analysis::alert_center::AlertItem| {
+        item.title == "Industrial state-changing command"
+    };
+    let mut core = AnalysisCore::default();
+    core.analyze(&syn);
+    core.analyze(&tail);
+    assert!(core.alert_center.items.iter().find(rule).is_none());
+    core.analyze(&head);
+    let alert = core.alert_center.items.iter().find(rule).unwrap();
+    assert_eq!(alert.packet_no, 3);
+    assert_eq!(alert.packet_refs, [2, 3]);
+    core.analyze(&segment(4, 101, 0x18, &message[..5]));
+    assert_eq!(core.alert_center.items.iter().find(rule).unwrap().hit_count, 1);
+
+    let mut unanchored = AnalysisCore::default();
+    unanchored.analyze(&head);
+    unanchored.analyze(&tail);
+    assert!(unanchored.alert_center.items.iter().find(rule).is_none());
+
+    let mut scoped = AnalysisCore::default();
+    scoped.analyze(&syn);
+    scoped.analyze(&tail);
+    let mut unrelated = head;
+    unrelated.vlan_id = Some(10);
+    scoped.analyze(&unrelated);
+    assert!(scoped.alert_center.items.iter().find(rule).is_none());
 }

@@ -193,7 +193,13 @@ impl SecurityEngine {
         let Some(finding) = industrial_policy::inspect(pkt) else {
             return;
         };
-        self.push_ids(IdsAlert {
+        self.record_industrial_finding(pkt, finding, Vec::new());
+    }
+
+    pub(super) fn record_industrial_finding(
+        &mut self, pkt: &Packet, finding: industrial_policy::IndustrialFinding, frames: Vec<u64>,
+    ) {
+        self.push_ids_with_evidence(IdsAlert {
             pkt_no: pkt.no,
             signature: if finding.critical {
                 "Critical industrial control command"
@@ -206,7 +212,7 @@ impl SecurityEngine {
                 Severity::High
             },
             detail: finding.detail(pkt),
-        });
+        }, frames);
     }
 
     pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet) {

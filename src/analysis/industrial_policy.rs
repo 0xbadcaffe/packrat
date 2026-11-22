@@ -44,18 +44,31 @@ pub fn inspect(packet: &Packet) -> Option<IndustrialFinding> {
 
 fn inspect_modbus(mut payload: &[u8]) -> Option<IndustrialFinding> {
     while !payload.is_empty() {
-        let length = usize::from(read_u16(payload, 4)?);
-        // The MBAP length covers the unit identifier and the bounded PDU.
-        if !(2..=254).contains(&length) || read_u16(payload, 2)? != 0 {
-            return None;
+        let (length, finding) = modbus_message(payload).ok()??;
+        if finding.is_some() {
+            return finding;
         }
-        let message = payload.get(..6 + length)?;
-        if let Some(operation) = modbus_operation(message[7]) {
-            return Some(IndustrialFinding { protocol: "Modbus/TCP", operation, critical: false });
-        }
-        payload = &payload[message.len()..];
+        payload = &payload[length..];
     }
     None
+}
+
+/// A missing message may become complete when more contiguous bytes arrive.
+pub(crate) fn modbus_message(payload: &[u8]) -> Result<Option<(usize, Option<IndustrialFinding>)>, ()> {
+    let Some(length) = read_u16(payload, 4).map(usize::from) else {
+        return Ok(None);
+    };
+    // The MBAP length covers the unit identifier and the bounded PDU.
+    if !(2..=254).contains(&length) || read_u16(payload, 2) != Some(0) {
+        return Err(());
+    }
+    let total = 6 + length;
+    let Some(message) = payload.get(..total) else {
+        return Ok(None);
+    };
+    Ok(Some((total, modbus_operation(message[7]).map(|operation| IndustrialFinding {
+        protocol: "Modbus/TCP", operation, critical: false,
+    }))))
 }
 
 fn modbus_operation(code: u8) -> Option<&'static str> {
