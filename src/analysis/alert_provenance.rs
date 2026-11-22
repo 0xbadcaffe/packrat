@@ -77,6 +77,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the retained reset and payload frames with the flow, capture timing, and endpoint TCP logs.",
         ),
         (
+            "IDS", "Conflicting TCP retransmission", "tcp.conflicting_retransmission", 2, DirectObservation,
+            "Compare both frames and their TCP sequence ranges. Check capture duplication or offload and verify what the receiver processed independently.",
+        ),
+        (
             "IDS", "Conflicting IPv4 fragments", "ipv4.conflicting_fragments", 2, DirectObservation,
             "Compare both frames and their capture scope; check receiver logs for reassembly outcome.",
         ),

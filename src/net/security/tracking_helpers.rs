@@ -1,23 +1,35 @@
 use super::*;
 
-pub(super) fn has_conflicting_tcp_overlap(
+pub(super) struct TcpOverlap {
+    pub(super) previous_frame: u64,
+    pub(super) compared_bytes: usize,
+    pub(super) difference_sequence: u32,
+}
+
+pub(super) fn conflicting_tcp_overlap(
     slices: &[FragmentSlice],
-    segment: &TcpSegment<'_>,
-) -> bool {
-    let new_start = segment.sequence;
-    let new_end = new_start.saturating_add(segment.payload.len() as u32);
-    slices.iter().any(|existing| {
-        let existing_end = existing.start.saturating_add(existing.data.len() as u32);
-        let overlap_start = new_start.max(existing.start);
-        let overlap_end = new_end.min(existing_end);
-        if overlap_start >= overlap_end {
-            return false;
+    payload_sequence: u32,
+    payload: &[u8],
+) -> Option<TcpOverlap> {
+    slices.iter().find_map(|existing| {
+        // Represent the retained slice relative to the new start across sequence wrap.
+        let start = i64::from(existing.start.wrapping_sub(payload_sequence) as i32);
+        let overlap_start = start.max(0);
+        let overlap_end = (start + existing.data.len() as i64).min(payload.len() as i64);
+        if overlap_end <= overlap_start {
+            return None;
         }
-        let new_offset = (overlap_start - new_start) as usize;
-        let existing_offset = (overlap_start - existing.start) as usize;
-        let overlap_len = (overlap_end - overlap_start) as usize;
-        segment.payload[new_offset..new_offset + overlap_len]
-            != existing.data[existing_offset..existing_offset + overlap_len]
+        let new_offset = overlap_start as usize;
+        let old_offset = (overlap_start - start) as usize;
+        let compared_bytes = (overlap_end - overlap_start) as usize;
+        let difference = payload[new_offset..new_offset + compared_bytes].iter()
+            .zip(&existing.data[old_offset..old_offset + compared_bytes])
+            .position(|(new, old)| new != old)?;
+        Some(TcpOverlap {
+            previous_frame: existing.packet_no,
+            compared_bytes,
+            difference_sequence: payload_sequence.wrapping_add((new_offset + difference) as u32),
+        })
     })
 }
 

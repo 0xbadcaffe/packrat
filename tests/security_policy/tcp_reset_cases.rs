@@ -54,3 +54,32 @@ fn tcp_reset_correlation_does_not_use_an_incomplete_ip_datagram() {
     let findings = security.inspect(&ipv4_tcp_packet(2, 101, 0x18, b"normal traffic"));
     assert!(findings.ids.iter().all(|finding| finding.alert.signature != TITLE));
 }
+
+#[test]
+fn conflicting_tcp_retransmission_links_both_frames_across_sequence_wrap() {
+    let mut core = AnalysisCore::default();
+    core.analyze(&ipv4_tcp_packet(1, u32::MAX - 2, 0x18, b"ABCD"));
+    core.analyze(&ipv4_tcp_packet(2, 0, 0x18, b"D"));
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != "Conflicting TCP retransmission"));
+    core.analyze(&ipv4_tcp_packet(3, 0, 0x18, b"X"));
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == "Conflicting TCP retransmission").unwrap();
+    assert_eq!(alert.packet_refs, [1, 3]);
+    assert!(alert.detail.contains("TCP sequence 0 (1 overlapping bytes compared)"));
+    assert!(alert.detail.contains("receiver outcome unverified"));
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "tcp.conflicting_retransmission");
+    assert!(core.incidents.incidents.is_empty());
+}
+
+#[test]
+fn conflicting_tcp_retransmission_accounts_for_syn_before_payload() {
+    let mut engine = SecurityEngine::default();
+    engine.update(&ipv4_tcp_packet(1, 100, 0x02, b"abc"));
+    assert!(engine.inspect(&ipv4_tcp_packet(2, 101, 0x18, b"abc")).ids.is_empty());
+    let mut other_vlan = ipv4_tcp_packet(3, 102, 0x18, b"X");
+    other_vlan.vlan_id = Some(100);
+    assert!(engine.inspect(&other_vlan).ids.is_empty());
+    let findings = engine.inspect(&ipv4_tcp_packet(4, 102, 0x18, b"X"));
+    let alert = findings.ids.iter().find(|finding| finding.alert.signature == "Conflicting TCP retransmission").unwrap();
+    assert_eq!(alert.related_packets, [1]);
+    assert!(alert.alert.detail.contains("TCP sequence 102"));
+}

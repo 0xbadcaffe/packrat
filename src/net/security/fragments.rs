@@ -180,33 +180,28 @@ impl SecurityEngine {
         let mut post_reset = None;
         let mut overlap = None;
         if !segment.payload.is_empty() {
+            let payload_sequence = segment.sequence.wrapping_add(u32::from(segment.flags & SYN != 0));
             if !state.post_reset_alerted
                 && segment.flags & RST == 0
                 && let Some(reset) = state.reset
                 && (0.0..=TCP_STATE_TTL_SECS).contains(&(pkt.timestamp - reset.timestamp))
                 && !slices.iter().any(|slice| {
-                    slice.start == segment.sequence && slice.data == segment.payload
+                    slice.start == payload_sequence && slice.data == segment.payload
                 })
             {
                 state.post_reset_alerted = true;
                 post_reset = Some(reset);
             }
-            if !state.overlap_alerted && has_conflicting_tcp_overlap(slices, &segment) {
+            if !state.overlap_alerted
+                && let Some(conflict) = conflicting_tcp_overlap(slices, payload_sequence, segment.payload)
+            {
                 state.overlap_alerted = true;
-                overlap = Some(IdsAlert {
-                    pkt_no: pkt.no,
-                    signature: "Conflicting TCP retransmission",
-                    severity: Severity::Critical,
-                    detail: format!(
-                        "Overlapping TCP sequence ranges contain different bytes from {} to {}",
-                        pkt.src, pkt.dst
-                    ),
-                });
+                overlap = Some(conflict);
             }
             if slices.len() < MAX_TCP_SLICES_PER_DIRECTION {
                 slices.push(FragmentSlice {
                     packet_no: pkt.no,
-                    start: segment.sequence,
+                    start: payload_sequence,
                     data: segment.payload.to_vec(),
                 });
             }
@@ -243,8 +238,23 @@ impl SecurityEngine {
                 correlation_key: Some(format!("{scope:?}:{:?}", segment.key)),
             });
         }
-        if let Some(alert) = overlap {
-            self.push_ids(alert);
+        if let Some(conflict) = overlap {
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "Conflicting TCP retransmission",
+                    severity: Severity::High,
+                    detail: format!(
+                        "Frames #{} and #{} from {} to {} differ at TCP sequence {} ({} overlapping bytes compared); receiver outcome unverified",
+                        conflict.previous_frame, pkt.no, pkt.src, pkt.dst,
+                        conflict.difference_sequence, conflict.compared_bytes,
+                    ),
+                },
+                related_packets: vec![conflict.previous_frame],
+                correlation_key: Some(format!(
+                    "{scope:?}:{:?}:{}:{}", segment.key, segment.from_a, conflict.previous_frame
+                )),
+            });
         }
     }
 }

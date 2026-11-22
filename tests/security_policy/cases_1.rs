@@ -223,7 +223,7 @@ fn detects_conflicting_tcp_retransmission_but_allows_identical_retransmission() 
     security.update(&ipv4_tcp_packet(3, 104, 0x18, b"CHANGED"));
     assert!(security.ids_alerts.iter().any(|alert| {
         alert.signature == "Conflicting TCP retransmission"
-            && alert.severity == packrat_tui::net::security::Severity::Critical
+            && alert.severity == packrat_tui::net::security::Severity::High
     }));
 }
 
