@@ -17,11 +17,13 @@ snapshot_validation='
 usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh [--once|--supervise] STATE.json -- TRIAGE_COMMAND [ARG ...]' \
         '       watch-packrat-triage.sh --check STATE.json' \
+        '       watch-packrat-triage.sh --history STATE.json' \
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
         'alert_sample_gap warns that a burst may have exceeded the recent-alert sample; review saved history.' \
         'Continuous mode journals sanitized changes in STATE.json.events.jsonl and one 1 MiB rotation (PACKRAT_TRIAGE_WATCH_JOURNAL=0 disables this).' \
+        'History emits retained journal events oldest first, or asks to retry if the journal changes during the read.' \
         'Supervision retries unexpected exits with backoff; configuration errors stop the supervisor.' \
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
@@ -29,16 +31,18 @@ usage() {
 
 once=false
 check=false
+read_only=false
 supervise=false
 case ${1-} in
     --help|-h) usage; exit 0 ;;
     --once) once=true; shift ;;
-    --check) check=true; shift ;;
+    --check) check=true read_only=true; shift ;;
+    --history) read_only=true; shift ;;
     --supervise) supervise=true; shift ;;
 esac
 if [[ ${1-} != /* || $1 == */ || $1 == *[[:cntrl:]]* ]] ||
-   { "$check" && (( $# != 1 )); } ||
-   { ! "$check" && { (( $# < 3 )) || [[ $2 != -- ]]; }; }; then
+   { "$read_only" && (( $# != 1 )); } ||
+   { ! "$read_only" && { (( $# < 3 )) || [[ $2 != -- ]]; }; }; then
     usage >&2
     exit 2
 fi
@@ -52,6 +56,55 @@ if [[ -z $directory || ! -d $directory || -L $directory || ! -O $directory ||
     printf '%s\n' 'Triage state requires a private, owned directory and regular files.' >&2
     exit 2
 fi
+journal="$state.events.jsonl" journal_limit=1048576
+journal_path_safe() {
+    local path=$1 attrs
+    [[ ! -L $path ]] || return 1
+    [[ -e $path ]] || return 0
+    [[ -f $path && -O $path ]] && attrs=$(stat --format='%a:%h' -- "$path") &&
+        [[ $attrs =~ ^([0-7]{3,4}):1$ ]] && (( (8#${BASH_REMATCH[1]} & 077) == 0 ))
+}
+
+journal_fingerprint() {
+    local path metadata size
+    for path in "$journal.1" "$journal"; do
+        journal_path_safe "$path" || return 1
+        if [[ -f $path ]]; then
+            metadata=$(stat --format='%s %d:%i:%y:%z' -- "$path") || return 1
+            size=${metadata%% *}
+            [[ $size =~ ^[0-9]{1,7}$ ]] && (( size <= journal_limit )) || return 1
+            printf '%s\n' "$metadata"
+        else
+            printf '%s\n' '-'
+        fi
+    done
+}
+
+read_journal_history() {
+    local before after records path
+    if ! before=$(journal_fingerprint 2>/dev/null); then
+        printf '%s\n' 'Triage journal is unsafe, unreadable, or over its size limit.' >&2
+        return 2
+    fi
+    local valid=true
+    records=$(
+        for path in "$journal.1" "$journal"; do
+            if [[ -f $path ]]; then head -c "$((journal_limit + 1))" -- "$path" || exit 1; fi
+        done | jq -Rc 'fromjson | if type == "object" and .record_type == "capture_triage_watch"
+            and (.updated_at | type == "string") and (has("last_observed") | not)
+            then . else error("invalid triage journal record") end'
+    ) 2>/dev/null || valid=false
+    if ! after=$(journal_fingerprint 2>/dev/null) || [[ $before != "$after" ]]; then
+        printf '%s\n' 'Triage journal changed during the read; retry.' >&2
+        return 1
+    fi
+    if ! "$valid"; then
+        printf '%s\n' 'Triage journal contains invalid records.' >&2
+        return 2
+    fi
+    if [[ -n $records ]]; then printf '%s\n' "$records"; fi
+}
+
 check_snapshot() {
     local raw result
     if [[ ! -e $state ]]; then
@@ -85,9 +138,10 @@ check_snapshot() {
     jq -e '.status == "current"' <<< "$result" >/dev/null
 }
 
-if "$check"; then
+if "$read_only"; then
     command -v jq >/dev/null || { printf '%s\n' 'Missing dependency: jq' >&2; exit 2; }
-    if check_snapshot; then exit 0; else exit "$?"; fi
+    if "$check"; then check_snapshot; else read_journal_history; fi
+    exit "$?"
 fi
 shift 2
 interval=${PACKRAT_TRIAGE_WATCH_INTERVAL:-30}
@@ -134,15 +188,8 @@ fi
 exec {lock_fd}>>"$state.lock"
 flock -n "$lock_fd" || { printf '%s\n' 'Triage state is already being refreshed.' >&2; exit 2; }
 
-journal="$state.events.jsonl" journal_limit=1048576 journal_failed=false journal_overflow=false
+journal_failed=false journal_overflow=false
 pending_journal=()
-journal_path_safe() {
-    local path=$1 attrs
-    [[ ! -L $path ]] || return 1
-    [[ -e $path ]] || return 0
-    [[ -f $path && -O $path ]] && attrs=$(stat --format='%a:%h' -- "$path") &&
-        [[ $attrs =~ ^([0-7]{3,4}):1$ ]] && (( (8#${BASH_REMATCH[1]} & 077) == 0 ))
-}
 
 append_journal() {
     local size=0 line=$1

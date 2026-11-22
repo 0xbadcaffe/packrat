@@ -381,4 +381,30 @@ grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"
 cmp -s "$scratch/rotation-output" "$journal"
 cmp -s "$scratch/unsafe-output" "$state.events.jsonl"
 jq -e '.journal_status=="current" and .journal_pending_events==0' "$state" >/dev/null
+
+history="$scratch/history.json"
+install -m 0600 "$scratch/rotation-output" "$history.events.jsonl.1"
+install -m 0600 "$scratch/unsafe-output" "$history.events.jsonl"
+bash "$watch" --history "$history" >"$scratch/history-output"
+jq -se 'map(.packets)==[90,91,92]' "$scratch/history-output" >/dev/null
+# shellcheck disable=SC2329
+head() {
+    command head "$@" || return
+    if [[ ${*: -1} == "$TEST_HISTORY_JOURNAL" ]]; then printf '\n' >>"$TEST_HISTORY_JOURNAL"; fi
+}
+export -f head
+status=0
+TEST_HISTORY_JOURNAL="$history.events.jsonl" bash "$watch" --history "$history" \
+    >"$scratch/racing-history" 2>/dev/null || status=$?
+[[ $status == 1 && ! -s $scratch/racing-history ]]
+unset -f head
+install -m 0600 "$scratch/unsafe-output" "$history.events.jsonl"
+printf '%s\n' invalid >>"$history.events.jsonl"
+status=0
+bash "$watch" --history "$history" >"$scratch/invalid-history" 2>/dev/null || status=$?
+[[ $status == 2 && ! -s $scratch/invalid-history ]]
+ln -s "$journal" "$scratch/linked-history.json.events.jsonl"
+status=0
+bash "$watch" --history "$scratch/linked-history.json" >/dev/null 2>&1 || status=$?
+[[ $status == 2 ]]
 printf '%s\n' 'Packrat triage watcher tests passed'
