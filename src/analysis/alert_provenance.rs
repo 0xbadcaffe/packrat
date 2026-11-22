@@ -53,11 +53,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Identify the owning process and expected interval before escalating.",
         ),
         (
-            "IDS", "Large asymmetric outbound transfer", "traffic.asymmetric_outbound", 1, Heuristic,
+            "IDS", "Large asymmetric outbound transfer", "traffic.asymmetric_outbound", 2, Heuristic,
             "Identify the owning process and destination. Check for an expected upload, backup, or sync job.",
         ),
         (
-            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 1, Heuristic,
+            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 2, Heuristic,
             "Check whether the traffic is normally encrypted or compressed. Verify the transfer with endpoint logs.",
         ),
         (

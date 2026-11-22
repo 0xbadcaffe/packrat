@@ -220,6 +220,28 @@ fn outbound_volume_does_not_combine_interfaces_and_keeps_reverse_evidence() {
 }
 
 #[test]
+fn sparse_transfers_do_not_cross_hour_boundaries_and_late_packets_cannot_restore_expired_volume() {
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    let transfer_count = |core: &packrat_tui::engine::AnalysisCore| {
+        core.alert_center.items.iter().filter(|a| a.title == "Large asymmetric outbound transfer").count()
+    };
+    let packet = |no, time| behavior_packet(no, time, 60_000, vec![0; 60_000]);
+    for index in 0..20 {
+        core.analyze(&packet(index + 1, index as f64 * 240.0));
+    }
+    assert_eq!(transfer_count(&core), 0);
+    core.analyze(&packet(21, 1.0));
+    core.analyze(&packet(22, 4_561.0));
+    assert_eq!(transfer_count(&core), 0);
+    core.analyze(&packet(23, 4_562.0));
+    assert_eq!(transfer_count(&core), 1);
+    let alert = core.alert_center.items.iter()
+        .find(|a| a.title == "Large asymmetric outbound transfer").unwrap();
+    assert_eq!(alert.packet_refs, [15, 16, 17, 18, 19, 20, 22, 23]);
+    assert!(alert.detail.contains("rolling hour"));
+}
+
+#[test]
 fn group_traffic_does_not_trigger_beacon_or_outbound_transfer_rules() {
     let mut security = SecurityEngine::default();
     for destination in ["255.255.255.255", "224.0.0.7", "ff02::1"] {

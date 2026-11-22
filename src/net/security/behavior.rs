@@ -1,10 +1,73 @@
 use super::*;
 
-fn sample_transfer_frame(frames: &mut std::collections::VecDeque<u64>, frame: u64) {
+fn sample_transfer_frame(frames: &mut std::collections::VecDeque<(i64, u64)>, minute: i64, frame: u64) {
     if frames.len() == 8 {
         frames.pop_front();
     }
-    frames.push_back(frame);
+    frames.push_back((minute, frame));
+}
+
+impl ExfilState {
+    fn observe(&mut self, packet: &Packet, outbound: bool) -> bool {
+        if !packet.timestamp.is_finite() {
+            return false;
+        }
+        if self.buckets.is_empty() || packet.timestamp > self.last_seen {
+            self.last_seen = packet.timestamp;
+        }
+        let minute = (packet.timestamp / 60.0).floor() as i64;
+        // The current minute and 59 preceding minutes bound memory independently of packet rate.
+        let cutoff = ((self.last_seen / 60.0).floor() as i64).saturating_sub(59);
+        if minute < cutoff {
+            return false;
+        }
+        let mut expired = false;
+        while self.buckets.front().is_some_and(|bucket| bucket.minute < cutoff) {
+            let Some(bucket) = self.buckets.pop_front() else { break };
+            self.outbound_bytes = self.outbound_bytes.saturating_sub(bucket.outbound);
+            self.inbound_bytes = self.inbound_bytes.saturating_sub(bucket.inbound);
+            self.high_entropy_bytes = self.high_entropy_bytes.saturating_sub(bucket.entropy);
+            expired = true;
+        }
+        if expired {
+            for frames in [&mut self.outbound_frames, &mut self.inbound_frames, &mut self.entropy_frames] {
+                frames.retain(|&(minute, _)| minute >= cutoff);
+            }
+            self.volume_alerted &= self.outbound_bytes >= EXFIL_VOLUME_THRESHOLD / 2;
+            self.entropy_alerted &= self.high_entropy_bytes >= EXFIL_ENTROPY_THRESHOLD / 2;
+        }
+        let index = if self.buckets.back().is_none_or(|bucket| bucket.minute < minute) {
+            self.buckets.push_back(TransferBucket { minute, ..Default::default() });
+            self.buckets.len() - 1
+        } else if self.buckets.back().is_some_and(|bucket| bucket.minute == minute) {
+            self.buckets.len() - 1
+        } else {
+            match self.buckets.make_contiguous().binary_search_by_key(&minute, |bucket| bucket.minute) {
+                Ok(index) => index,
+                Err(index) => {
+                    self.buckets.insert(index, TransferBucket { minute, ..Default::default() });
+                    index
+                }
+            }
+        };
+        let bucket = &mut self.buckets[index];
+        let length = u64::from(packet.length);
+        if outbound {
+            bucket.outbound = bucket.outbound.saturating_add(length);
+            self.outbound_bytes = self.outbound_bytes.saturating_add(length);
+            sample_transfer_frame(&mut self.outbound_frames, minute, packet.no);
+            if packet.bytes.len() >= 64 && shannon_entropy(&packet.bytes) >= 7.2 {
+                bucket.entropy = bucket.entropy.saturating_add(length);
+                self.high_entropy_bytes = self.high_entropy_bytes.saturating_add(length);
+                sample_transfer_frame(&mut self.entropy_frames, minute, packet.no);
+            }
+        } else {
+            bucket.inbound = bucket.inbound.saturating_add(length);
+            self.inbound_bytes = self.inbound_bytes.saturating_add(length);
+            sample_transfer_frame(&mut self.inbound_frames, minute, packet.no);
+        }
+        true
+    }
 }
 
 impl SecurityEngine {
@@ -50,20 +113,7 @@ impl SecurityEngine {
                 evict_oldest_exfil(&mut self.exfil_flows);
             }
             let state = self.exfil_flows.entry(key).or_default();
-            state.last_seen = pkt.timestamp;
-            if outbound {
-                state.outbound_bytes = state.outbound_bytes.saturating_add(u64::from(pkt.length));
-                sample_transfer_frame(&mut state.outbound_frames, pkt.no);
-                if pkt.bytes.len() >= 64 && shannon_entropy(&pkt.bytes) >= 7.2 {
-                    state.high_entropy_bytes = state
-                        .high_entropy_bytes
-                        .saturating_add(u64::from(pkt.length));
-                    sample_transfer_frame(&mut state.entropy_frames, pkt.no);
-                }
-            } else {
-                state.inbound_bytes = state.inbound_bytes.saturating_add(u64::from(pkt.length));
-                sample_transfer_frame(&mut state.inbound_frames, pkt.no);
-            }
+            if !state.observe(pkt, outbound) { return; }
 
             let outbound_ratio = state.outbound_bytes as f64 / state.inbound_bytes.max(1) as f64;
             if outbound
@@ -76,26 +126,26 @@ impl SecurityEngine {
                     "Large asymmetric outbound transfer",
                     Severity::High,
                     format!(
-                        "{} sent {} bytes to {} with {:.1}:1 outbound ratio",
-                        pkt.src, state.outbound_bytes, pkt.dst, outbound_ratio
+                        "{} to {}: {} captured outbound bytes with {:.1}:1 ratio in the rolling hour",
+                        pkt.src, pkt.dst, state.outbound_bytes, outbound_ratio
                     ),
-                    state.outbound_frames.iter().chain(&state.inbound_frames).copied().collect::<Vec<_>>(),
+                    state.outbound_frames.iter().chain(&state.inbound_frames).map(|&(_, frame)| frame).collect::<Vec<_>>(),
                 ));
             }
             if outbound
                 && !state.entropy_alerted
                 && state.high_entropy_bytes >= EXFIL_ENTROPY_THRESHOLD
-                && state.high_entropy_bytes * 100 / state.outbound_bytes.max(1) >= 80
+                && u128::from(state.high_entropy_bytes) * 5 >= u128::from(state.outbound_bytes) * 4
             {
                 state.entropy_alerted = true;
                 alerts.push((
                     "High-entropy outbound transfer",
                     Severity::High,
                     format!(
-                        "{} sent {} high-entropy bytes toward {}",
-                        pkt.src, state.high_entropy_bytes, pkt.dst
+                        "{} to {}: {} high-entropy captured outbound bytes in the rolling hour",
+                        pkt.src, pkt.dst, state.high_entropy_bytes
                     ),
-                    state.entropy_frames.iter().copied().collect::<Vec<_>>(),
+                    state.entropy_frames.iter().map(|&(_, frame)| frame).collect::<Vec<_>>(),
                 ));
             }
         }

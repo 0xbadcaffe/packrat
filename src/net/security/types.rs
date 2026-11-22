@@ -209,9 +209,18 @@ pub(super) struct ExfilState {
     pub(super) last_seen: f64,
     pub(super) volume_alerted: bool,
     pub(super) entropy_alerted: bool,
-    pub(super) outbound_frames: std::collections::VecDeque<u64>,
-    pub(super) inbound_frames: std::collections::VecDeque<u64>,
-    pub(super) entropy_frames: std::collections::VecDeque<u64>,
+    pub(super) outbound_frames: std::collections::VecDeque<(i64, u64)>,
+    pub(super) inbound_frames: std::collections::VecDeque<(i64, u64)>,
+    pub(super) entropy_frames: std::collections::VecDeque<(i64, u64)>,
+    pub(super) buckets: std::collections::VecDeque<TransferBucket>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct TransferBucket {
+    pub(super) minute: i64,
+    pub(super) outbound: u64,
+    pub(super) inbound: u64,
+    pub(super) entropy: u64,
 }
 
 #[derive(Debug, Default)]
