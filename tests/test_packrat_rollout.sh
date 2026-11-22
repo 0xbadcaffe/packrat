@@ -100,6 +100,45 @@ source "$root/scripts/packrat-rollout.sh"
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 data_dir=$scratch
+
+(
+    interface=wlan1
+    tick=0
+    phase=recover
+    sleep() { tick=$((tick + 1)); }
+    packet_count() {
+        if [[ $phase == idle ]]; then
+            printf '%s\n' 9
+        elif [[ $phase == reset && $tick == 1 ]]; then
+            printf '%s\n' 8
+        else
+            printf '%s\n' "$tick"
+        fi
+    }
+    capture_pid() {
+        if [[ $phase == changed && $tick -ge 2 ]]; then printf '%s\n' 43; else printf '%s\n' 42; fi
+    }
+    capture_storage_ready() { return 0; }
+    health_ready() {
+        [[ $* == "$stage_health_addr true" ]] &&
+            [[ $phase != recover || $tick != 1 ]]
+    }
+    verify_capture_progress "$bridge_session" /candidate true >"$scratch/progress"
+    [[ $tick == 4 && $(<"$scratch/progress") == *'from 2 to 4 across 3 healthy samples' ]]
+    phase=reset
+    tick=0
+    verify_capture_progress "$bridge_session" /candidate true >"$scratch/progress"
+    [[ $tick == 4 && $(<"$scratch/progress") == *'from 2 to 4 across 3 healthy samples' ]]
+    phase=changed
+    tick=0
+    verify_capture_progress "$bridge_session" /candidate true >"$scratch/progress"
+    [[ $tick == 4 && $(<"$scratch/progress") == *'from 2 to 4 across 3 healthy samples' ]]
+    phase=idle
+    tick=0
+    if verify_capture_progress "$bridge_session" /candidate true; then exit 1; fi
+    [[ $tick == 30 ]]
+)
+
 sudo() {
     [[ $1 == -n && $2 == stat ]] || return 1
     shift

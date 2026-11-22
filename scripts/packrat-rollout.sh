@@ -214,8 +214,7 @@ launch_capture() {
 
 start_capture() {
     local session=$1 executable=$2 require_fresh_capture=${3:-true}
-    local index attempt count pid address=$health_addr baseline=
-    if [[ $session == "$bridge_session" ]]; then address=$stage_health_addr; fi
+    local index attempt
     index=$(printf '%s\n' /sys/class/net/* | LC_ALL=C sort |
         awk -F / -v iface="$interface" '$NF == iface { print NR-1 }')
     [[ $index =~ ^[0-9]+$ ]] || return 1
@@ -229,18 +228,33 @@ start_capture() {
         tmux send-keys -t "=$session:" Down || return 1
     done
     tmux send-keys -t "=$session:" Enter || return 1
+    verify_capture_progress "$session" "$executable" "$require_fresh_capture"
+}
+
+verify_capture_progress() {
+    local session=$1 executable=$2 require_fresh_capture=$3
+    local attempt count pid address=$health_addr stable=0 first_count=0 last_count=0 stable_pid=
+    if [[ $session == "$bridge_session" ]]; then address=$stage_health_addr; fi
     for attempt in {1..30}; do
-        count=$(packet_count "$session")
-        if [[ $count =~ ^[0-9]+$ ]]; then
-            if [[ -n $baseline ]] && (( count > baseline )); then
-                pid=$(capture_pid "$session" "$executable") || return 1
-                if capture_storage_ready "$pid" "$session" && health_ready "$address" "$require_fresh_capture"; then
-                    printf '%s: %s packet count increased to %s\n' "$session" "$interface" "$count"
-                    return 0
-                fi
-            elif [[ -z $baseline ]]; then
-                baseline=$count
+        count=$(packet_count "$session") || count=
+        if [[ $count =~ ^(0|[1-9][0-9]{0,17})$ ]] &&
+           pid=$(capture_pid "$session" "$executable") &&
+           capture_storage_ready "$pid" "$session" &&
+           health_ready "$address" "$require_fresh_capture"; then
+            if [[ $pid != "$stable_pid" ]] || (( stable == 0 || count < last_count )); then
+                stable=0
+                stable_pid=$pid
+                first_count=$count
             fi
+            last_count=$count
+            stable=$((stable + 1))
+            if (( stable >= 3 && count > first_count )); then
+                printf '%s: %s packet count increased from %s to %s across %s healthy samples\n' \
+                    "$session" "$interface" "$first_count" "$count" "$stable"
+                return 0
+            fi
+        else
+            stable=0
         fi
         sleep 1
     done
