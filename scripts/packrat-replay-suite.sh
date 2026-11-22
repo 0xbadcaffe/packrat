@@ -7,7 +7,8 @@ usage() {
         'Example: {"version":1,"cases":[{"name":"baseline","capture":"baseline.pcapng","expect_counts":{"scan.horizontal":0}}]}' \
         'Use opening_frames to label exact frames, for example {"scan.horizontal":[12]}.' \
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
-        'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.'
+        'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.' \
+        'Set PACKRAT_REPLAY_BASELINE_ANALYZER to an older analyzer command or executable path to compare results.'
 }
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
@@ -18,6 +19,11 @@ for command in jq packrat-analyze; do
         exit 2
     fi
 done
+baseline=${PACKRAT_REPLAY_BASELINE_ANALYZER:-}
+if [[ -n $baseline ]] && ! command -v -- "$baseline" >/dev/null; then
+    printf '%s\n' 'Baseline analyzer is unavailable.' >&2
+    exit 2
+fi
 
 if ! validated=$(head -c 65537 -- "$1" | jq -Rces '
     def text($max): type == "string" and length > 0 and length <= $max and (test("[[:cntrl:]]") | not);
@@ -42,27 +48,16 @@ fi
 
 base=$(cd -- "$(dirname -- "$1")" && pwd)
 strict=$(jq -c '.strict // false' <<< "$validated")
-results=()
-while IFS= read -r label; do
-    name=$(jq -er '.name' <<< "$label")
-    capture=$(jq -er '.capture' <<< "$label")
-    if [[ $capture != /* ]]; then capture="$base/$capture"; fi
-    mapfile -t options < <(jq -r '
-        (.expect_counts // {} | to_entries[] | "--expect-alert", (.key + "=" + (.value | floor | tostring))),
-        (.opening_frames // {} | to_entries[] | .key as $id | .value[] |
-            "--expect-alert-frame", ($id + "=" + (floor | tostring)))
-    ' <<< "$label")
-
-    summary=null
-    status=0
+replay_case() {
+    local analyzer=$1 summary=null status=0
     if [[ -f $capture ]]; then
-        summary=$(packrat-analyze "${options[@]}" -- "$capture" |
+        summary=$("$analyzer" "${options[@]}" -- "$capture" |
             jq -cn 'reduce inputs as $row (null;
                 if $row.type == "summary" then
                     $row | {packets,analyzed,skipped,alerts_opened,alert_snapshots,rule_counts,alert_expectations}
                 else . end)') || status=$?
     fi
-    results+=("$(jq -cn --arg name "$name" --argjson result "${summary:-null}" --argjson status "$status" \
+    jq -cn --arg name "$name" --argjson result "${summary:-null}" --argjson status "$status" \
         --argjson strict "$strict" --argjson label "$label" '
         (($label.expect_counts // {}) + ($label.opening_frames // {}) | keys) as $labeled |
         ($result.rule_counts | if type == "object" then . else {} end) as $rules |
@@ -86,10 +81,51 @@ while IFS= read -r label; do
              count_deficit: ([$counts[] | [.expected - .observed, 0] | max] | add // 0),
              count_surplus: ([$counts[] | [.observed - .expected, 0] | max] | add // 0)
          } end)}
-    ')")
+    '
+}
+
+capture_stamp() {
+    stat -L --format='%d:%i:%s:%y:%z' -- "$capture" 2>/dev/null
+}
+
+results=()
+while IFS= read -r label; do
+    name=$(jq -er '.name' <<< "$label")
+    capture=$(jq -er '.capture' <<< "$label")
+    if [[ $capture != /* ]]; then capture="$base/$capture"; fi
+    mapfile -t options < <(jq -r '
+        (.expect_counts // {} | to_entries[] | "--expect-alert", (.key + "=" + (.value | floor | tostring))),
+        (.opening_frames // {} | to_entries[] | .key as $id | .value[] |
+            "--expect-alert-frame", ($id + "=" + (floor | tostring)))
+    ' <<< "$label")
+
+    if [[ -n $baseline ]]; then stamp=$(capture_stamp) || stamp=; fi
+    candidate=$(replay_case packrat-analyze)
+    if [[ -n $baseline ]]; then
+        reference=$(replay_case "$baseline")
+        after=$(capture_stamp) || after=
+        candidate=$(jq -c --argjson reference "$reference" --arg before "$stamp" --arg after "$after" '
+            .baseline = $reference
+            | if $before == "" or $before != $after then
+                .verdict = "inconclusive" | .score = null | .comparison = "capture_unstable"
+              elif .score == null or $reference.score == null then
+                .comparison = "inconclusive"
+              else
+                .comparison = "comparable"
+                | .delta = ({
+                    alerts_opened: (.summary.alerts_opened - $reference.summary.alerts_opened),
+                    alert_snapshots: (
+                        if .summary.alert_snapshots == null or $reference.summary.alert_snapshots == null
+                        then null else .summary.alert_snapshots - $reference.summary.alert_snapshots end
+                    )
+                  } + (.score | with_entries(.key as $key | .value -= $reference.score[$key])))
+              end
+        ' <<< "$candidate")
+    fi
+    results+=("$candidate")
 done < <(jq -c '.cases[]' <<< "$validated")
 
-report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" '
+report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" --arg baseline "$baseline" '
     [.[].score | objects] as $scores |
     {
     record_type:"capture_replay_suite", strict:$strict, total:length,
@@ -103,6 +139,8 @@ report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" '
         count_deficit: ([$scores[].count_deficit] | add // 0),
         count_surplus: ([$scores[].count_surplus] | add // 0)
     }, cases:.
-}')
+} | if $baseline == "" then . else
+    . + {comparable: ([.cases[] | select(.comparison == "comparable")] | length)}
+end')
 printf '%s\n' "$report"
-jq -e '.failed == 0 and .inconclusive == 0' <<< "$report" >/dev/null
+jq -e '.failed == 0 and .inconclusive == 0 and (.comparable // .total) == .total' <<< "$report" >/dev/null

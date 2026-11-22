@@ -10,6 +10,10 @@ use serde_json::{Value, json};
 use std::{path::Path, process::{Command, Output}};
 
 fn run_suite(manifest: &Path) -> Output {
+    run_suite_with_baseline(manifest, None)
+}
+
+fn run_suite_with_baseline(manifest: &Path, baseline: Option<&str>) -> Output {
     let analyzer = Path::new(env!("CARGO_BIN_EXE_packrat-analyze"));
     let existing_path = std::env::var_os("PATH").unwrap_or_default();
     let path = std::env::join_paths(
@@ -18,13 +22,16 @@ fn run_suite(manifest: &Path) -> Output {
     )
     .unwrap();
     let suite = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/packrat-replay-suite.sh");
-    Command::new("bash")
-        .arg(suite)
+    let mut command = Command::new("bash");
+    command.arg(suite)
         .arg(manifest)
         .current_dir("/")
         .env("PATH", path)
-        .output()
-        .unwrap()
+        .env_remove("PACKRAT_REPLAY_BASELINE_ANALYZER");
+    if let Some(baseline) = baseline {
+        command.env("PACKRAT_REPLAY_BASELINE_ANALYZER", baseline);
+    }
+    command.output().unwrap()
 }
 
 fn write_fixture(path: &Path, distinct_responses: bool) {
@@ -149,6 +156,14 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["passed"], 3);
     assert_eq!(report["cases"][0]["summary"]["alerts_opened"], 0);
+    let comparison = run_suite_with_baseline(&manifest, Some(env!("CARGO_BIN_EXE_packrat-analyze")));
+    assert!(comparison.status.success(), "{}", String::from_utf8_lossy(&comparison.stdout));
+    let report: Value = serde_json::from_slice(&comparison.stdout).unwrap();
+    assert_eq!(report["comparable"], 3);
+    assert_eq!(report["cases"][1]["delta"], json!({
+        "alerts_opened": 0, "alert_snapshots": 0, "missed_opening_frames": 0,
+        "unexpected_openings": 0, "count_deficit": 0, "count_surplus": 0
+    }));
 
     for (capture, rule, severity, confidence) in [
         ("answer.pcapng", "dns.changed_answers", "MEDIUM", "correlated"),

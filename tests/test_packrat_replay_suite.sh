@@ -44,6 +44,19 @@ packrat-analyze() {
 }
 export -f packrat-analyze
 
+packrat-baseline() {
+    [[ $* == "--expect-alert scan.horizontal=0 -- $PACKRAT_TEST_DIRECTORY/benign fixture.pcap" ]] || return 2
+    case ${PACKRAT_TEST_BASELINE:-} in
+        unstable) printf '%s\n' changed >>"${*: -1}" ;;
+        unavailable) return 2 ;;
+    esac
+    printf '%s\n' '{"type":"summary","alerts_opened":1,"rule_counts":{"scan.horizontal":1},
+        "alert_expectations":{"verdict":"failed","checks":[{"rule_id":"scan.horizontal","expected":0,"observed":1}]}}' |
+        jq -c .
+    return 1
+}
+export -f packrat-baseline
+
 sample='{"version":1,"cases":[
     {"name":"benign","capture":"benign fixture.pcap","expect_counts":{"scan.horizontal":0}},
     {"name":"changed","capture":"changed.pcap","opening_frames":{"scan.horizontal":[12]}},
@@ -63,6 +76,24 @@ jq -e '
 
 jq -c '.cases = [.cases[0]]' <<< "$sample" >"$manifest"
 bash "$suite" "$manifest" | jq -e '.total == 1 and .passed == 1' >/dev/null
+PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline bash "$suite" "$manifest" |
+    jq -e '.comparable == 1 and .passed == 1 and .cases[0].baseline.verdict == "failed"
+        and .cases[0].comparison == "comparable" and .cases[0].delta.alerts_opened == -1
+        and .cases[0].delta.count_surplus == -1 and .cases[0].delta.alert_snapshots == null' >/dev/null
+for mode in unstable unavailable; do
+    status=0
+    result=$(PACKRAT_TEST_BASELINE="$mode" PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline \
+        bash "$suite" "$manifest") || status=$?
+    [[ $status == 1 ]]
+    jq -e --arg mode "$mode" '
+        .comparable == 0 and (.cases[0] | (.delta == null)
+          and if $mode == "unstable" then .comparison == "capture_unstable" and .score == null
+              else .comparison == "inconclusive" and .verdict == "passed" end)
+    ' <<< "$result" >/dev/null
+done
+status=0
+PACKRAT_REPLAY_BASELINE_ANALYZER=/missing/baseline bash "$suite" "$manifest" >/dev/null 2>&1 || status=$?
+[[ $status == 2 ]]
 
 jq -c '.cases = [{name:"counts",capture:"counts.pcap",
                    expect_counts:{"scan.horizontal":0,"scan.vertical":2}}]' <<< "$sample" >"$manifest"
