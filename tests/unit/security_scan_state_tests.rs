@@ -21,3 +21,40 @@ fn unique_probe_and_latch_state_are_bounded_within_one_scan_window() {
     assert!(state.vertical_alerted.contains("198.51.100.100"));
     assert!(!state.vertical_alerted.contains("198.51.100.1"));
 }
+
+#[test]
+fn scan_rules_rearm_after_most_evidence_expires_without_realerting_on_sustained_traffic() {
+    for (signature, vertical, echo) in [
+        ("Horizontal host scan", false, false),
+        ("Vertical port scan", true, false),
+        ("ICMP address sweep", false, true),
+    ] {
+        let mut engine = SecurityEngine::default();
+        let mut packet = parse_ethernet(&[], 1, 1.0);
+        packet.src = "192.0.2.1".into();
+        let mut observe = |engine: &mut SecurityEngine, time: f64, targets: std::ops::RangeInclusive<u16>| {
+            for target in targets {
+                packet.timestamp = time;
+                packet.dst = format!("198.51.100.{}", if vertical { 1 } else { target });
+                if echo {
+                    engine.record_echo_request(&packet, "ICMP");
+                } else {
+                    engine.record_scan_probe(&packet, if vertical { target } else { 443 }, "TCP");
+                }
+                packet.no += 1;
+            }
+            engine.ids_alerts.iter().filter(|alert| alert.signature == signature).count()
+        };
+
+        assert_eq!(observe(&mut engine, 1.0, 1..=12), 1);
+        assert_eq!(observe(&mut engine, 12.0, 1..=6), 1);
+        // Six probes remain active, so reaching the threshold again is not a new burst.
+        assert_eq!(observe(&mut engine, 17.0, 13..=18), 1);
+        assert_eq!(observe(&mut engine, 25.0, 18..=18), 1);
+        // One lingering probe must not suppress a new burst of eleven probes.
+        assert_eq!(observe(&mut engine, 33.0, 19..=29), 2);
+        let latest = engine.findings.ids.last().unwrap();
+        assert_eq!(latest.alert.pkt_no, 36);
+        assert_eq!(latest.related_packets, (25..=35).collect::<Vec<_>>());
+    }
+}

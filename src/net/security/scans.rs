@@ -256,13 +256,17 @@ impl SourceScanState {
         }
         let previous_len = self.probes.len();
         self.probes.retain(|probe| self.last_seen - probe.timestamp <= SCAN_WINDOW_SECS);
-        if self.probes.is_empty() {
-            self.icmp_alerted = false;
+        if self.probes.len() < previous_len {
+            // Rearm after most of the burst expires, not on every threshold crossing.
+            let minimum = SCAN_UNIQUE_THRESHOLD.div_ceil(2);
+            prune_scan_latches(self, minimum);
+            if self.probes.len() < minimum {
+                self.icmp_alerted = false;
+            }
         }
         if let Some(index) = self.probes.iter().position(|prior| {
             prior.destination == pkt.dst && prior.port == port
         }) {
-            prune_scan_latches(self, previous_len);
             if self.probes[index].timestamp <= pkt.timestamp {
                 self.probes[index].timestamp = pkt.timestamp;
                 self.probes[index].packet_no = pkt.no;
@@ -274,8 +278,8 @@ impl SourceScanState {
                 .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp))
                 .map(|(index, _)| index).unwrap_or(0);
             self.probes.remove(oldest);
+            prune_scan_latches(self, 1);
         }
-        prune_scan_latches(self, previous_len);
         self.probes.push(ScanProbe {
             timestamp: pkt.timestamp,
             packet_no: pkt.no,
@@ -294,11 +298,13 @@ fn scan_key(pkt: &Packet, transport: &'static str) -> ScanSourceKey {
     }
 }
 
-fn prune_scan_latches(state: &mut SourceScanState, previous_len: usize) {
-    if state.probes.len() < previous_len {
-        state.vertical_alerted.retain(|host| state.probes.iter().any(|probe| &probe.destination == host));
-        state.horizontal_alerted.retain(|port| state.probes.iter().any(|probe| &probe.port == port));
-    }
+fn prune_scan_latches(state: &mut SourceScanState, minimum: usize) {
+    state.vertical_alerted.retain(|host| {
+        state.probes.iter().filter(|probe| &probe.destination == host).take(minimum).count() == minimum
+    });
+    state.horizontal_alerted.retain(|port| {
+        state.probes.iter().filter(|probe| &probe.port == port).take(minimum).count() == minimum
+    });
 }
 
 fn scan_finding<'a>(
