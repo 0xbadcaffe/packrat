@@ -207,7 +207,9 @@ fn dns_replay_keeps_parallel_queries_and_reply_evidence_separate() {
         {"name":"regular duplicate replies", "capture":"control.pcapng",
          "expect_counts":{(rule):0}, "expect_snapshots":0},
         {"name":"parallel queries with alternate replies", "capture":"parallel.pcapng",
-         "expect_counts":{(rule):2}, "opening_frames":{(rule):[5,6]}, "expect_snapshots":3}
+         "expect_counts":{(rule):2}, "opening_frames":{(rule):[5,6]}, "expect_snapshots":3,
+         "opening_evidence":[{"rule_id":rule,"opening_frame":5,"frames":[1,3,5]},
+                             {"rule_id":rule,"opening_frame":6,"frames":[2,4,6]}]}
     ]});
     std::fs::write(&manifest, labels.to_string()).unwrap();
     let output = run_suite(&manifest);
@@ -275,6 +277,10 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
         let mut case = json!({"name":name, "capture":file, "expect_counts":{(rule):expected}});
         if expected > 0 {
             case["opening_frames"] = json!({(rule):[7 + prefix_frames]});
+            case["opening_evidence"] = json!([{
+                "rule_id":rule,"opening_frame":7 + prefix_frames,
+                "frames":(1 + prefix_frames..=7 + prefix_frames).collect::<Vec<_>>()
+            }]);
         }
         cases.push(case);
     }
@@ -287,6 +293,17 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["passed"], 6);
     assert_eq!(report["score"]["unexpected_openings"], 0);
+    assert_eq!(report["cases"][4]["evidence_checks"][0]["observed_frames"], json!([3, 4, 5, 6, 7, 8, 9]));
+
+    let mut mislabeled = labels;
+    mislabeled["cases"][4]["opening_evidence"][0]["frames"] = json!([2, 4, 5, 6, 7, 8, 9]);
+    std::fs::write(&manifest, mislabeled.to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["failed"], 1);
+    assert_eq!(report["score"]["unexpected_openings"], 0);
+    assert_eq!(report["cases"][4]["evidence_checks"][0]["passed"], false);
 
     let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
         .arg("--alerts-only").arg(root.join("fixed.pcapng")).output().unwrap();

@@ -10,6 +10,7 @@ export PACKRAT_TEST_DIRECTORY="$scratch"
 touch -- "$scratch/benign fixture.pcap" "$scratch/changed.pcap" "$scratch/partial.pcap"
 touch -- "$scratch/unlisted.pcap" "$scratch/unregistered.pcap"
 touch -- "$scratch/counts.pcap"
+touch -- "$scratch/evidence.pcap"
 
 packrat-analyze() {
     local verdict opened=0 rules='{}'
@@ -28,6 +29,19 @@ packrat-analyze() {
             verdict=failed
             checks='[{"rule_id":"scan.horizontal","expected":0,"observed":2},
                 {"rule_id":"scan.vertical","expected":2,"observed":1}]'
+            ;;
+        "$PACKRAT_TEST_DIRECTORY/evidence.pcap")
+            [[ $# == 4 && $1 == --expect-alert-frame && $2 == scan.horizontal=12 && $3 == -- ]] || return 2
+            verdict=passed; opened=1; rules='{"scan.horizontal":1}'
+            local evidence='{"type":"alert","schema_version":1,"alert":{"hit_count":1,"packet_no":12,
+                "first_packet":12,"last_packet":12,"packet_refs":[9,2,9],"provenance":{"rule_id":"scan.horizontal"}}}'
+            case ${PACKRAT_TEST_EVIDENCE:-normal} in
+                missing) : ;;
+                duplicate) printf '%s\n' "$evidence" "$evidence" ;;
+                changed) jq -c '.alert.packet_refs = [2,8]' <<< "$evidence" ;;
+                normal) printf '%s\n' "$evidence" ;;
+            esac
+            jq -c '.alert.hit_count = 2 | .alert.packet_refs = [1,2,5]' <<< "$evidence"
             ;;
         "$PACKRAT_TEST_DIRECTORY/partial.pcap") verdict=inconclusive ;;
         "$PACKRAT_TEST_DIRECTORY/unlisted.pcap") verdict=passed; opened=1; rules='{"scan.vertical":1}' ;;
@@ -103,6 +117,32 @@ for mode in unstable unavailable; do
           and if $mode == "unstable" then .comparison == "capture_unstable" and .score == null
               else .comparison == "inconclusive" and .verdict == "passed" end)
     ' <<< "$result" >/dev/null
+done
+
+evidence_case='{"version":1,"cases":[{"name":"evidence","capture":"evidence.pcap",
+    "opening_frames":{"scan.horizontal":[12]},
+    "opening_evidence":[{"rule_id":"scan.horizontal","opening_frame":12,"frames":[12,2,9]}]}]}'
+printf '%s\n' "$evidence_case" >"$manifest"
+bash "$suite" "$manifest" | jq -e '
+    .passed == 1 and .cases[0].evidence_checks[0] == {
+        rule_id:"scan.horizontal",opening_frame:12,expected_frames:[2,9,12],observed_frames:[2,9,12],
+        matching_openings:1,passed:true
+    }' >/dev/null
+for sample_type in changed missing duplicate; do
+    status=0
+    result=$(PACKRAT_TEST_EVIDENCE="$sample_type" bash "$suite" "$manifest") || status=$?
+    [[ $status == 1 ]]
+    jq -e --arg sample "$sample_type" '.failed == 1 and (.cases[0].evidence_checks[0] |
+        .passed == false and (if $sample == "changed" then .observed_frames == [2,8,12] and .matching_openings == 1
+            elif $sample == "missing" then .observed_frames == null and .matching_openings == 0
+            else .observed_frames == null and .matching_openings == 2 end))' <<< "$result" >/dev/null
+done
+for change in 'del(.cases[0].opening_frames)' '.cases[0].opening_evidence[0].frames = [2,9]' \
+    '.cases[0].opening_evidence[0].frames = [2,12,2]' '.cases[0].opening_evidence |= . + .'; do
+    jq -c "$change" <<< "$evidence_case" >"$manifest"
+    status=0
+    bash "$suite" "$manifest" >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
 done
 status=0
 PACKRAT_REPLAY_BASELINE_ANALYZER=/missing/baseline bash "$suite" "$manifest" >/dev/null 2>&1 || status=$?

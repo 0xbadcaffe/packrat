@@ -6,6 +6,7 @@ usage() {
         'Replay up to 32 labeled captures. Relative capture paths are relative to the manifest.' \
         'Example: {"version":1,"cases":[{"name":"baseline","capture":"baseline.pcapng","expect_counts":{"scan.horizontal":0}}]}' \
         'Use opening_frames to label exact frames, for example {"scan.horizontal":[12]}.' \
+        'Use opening_evidence to check exact supporting frames: [{"rule_id":"scan.horizontal","opening_frame":12,"frames":[2,12]}].' \
         'Use expect_snapshots to also check the total number of openings and updates in a case.' \
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
         'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.' \
@@ -30,12 +31,22 @@ if ! validated=$(head -c 65537 -- "$1" | jq -Rces '
     def text($max): type == "string" and length > 0 and length <= $max and (test("[[:cntrl:]]") | not);
     def rules: all(keys[]; length <= 128 and test("\\A[A-Za-z0-9_.-]+\\z"));
     def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+    def frame: count and . > 0;
+    def frame_list: type == "array" and length > 0
+        and all(.[]; frame) and (unique | length) == length;
     def valid_case:
+        . as $case |
         type == "object" and (.name | text(128)) and (.capture | text(1024))
         and ((has("expect_snapshots") | not) or (.expect_snapshots | count))
         and ((.expect_counts // {}) | type == "object" and rules and all(.[]; count))
-        and ((.opening_frames // {}) | type == "object" and rules and all(.[]; type == "array"
-             and length > 0 and all(.[]; count and . > 0) and (unique | length) == length))
+        and ((.opening_frames // {}) | type == "object" and rules and all(.[]; frame_list))
+        and ((if has("opening_evidence") then .opening_evidence else [] end)
+            | type == "array" and length <= 64
+            and all(.[]; type == "object" and (.rule_id | type == "string")
+                and (.opening_frame | frame) and (.frames | frame_list and length <= 131)
+                and (.opening_frame as $opening | (.frames | index($opening)) != null
+                    and (($case.opening_frames[.rule_id] // []) | index($opening)) != null))
+            and (map([.rule_id,.opening_frame]) | unique | length) == length)
         and (((.expect_counts // {} | length) + ([.opening_frames // {} | .[] | length] | add // 0)) as $n
              | $n >= 1 and $n <= 64);
     select(utf8bytelength <= 65536) | fromjson | objects
@@ -51,16 +62,34 @@ fi
 base=$(cd -- "$(dirname -- "$1")" && pwd)
 strict=$(jq -c '.strict // false' <<< "$validated")
 replay_case() {
-    local analyzer=$1 summary=null status=0
+    local analyzer=$1 replay=null status=0
     if [[ -f $capture ]]; then
-        summary=$("$analyzer" "${options[@]}" -- "$capture" |
-            jq -cn 'reduce inputs as $row (null;
+        replay=$("$analyzer" "${options[@]}" -- "$capture" |
+            jq -cn --argjson label "$label" '
+                def key($rule; $frame): $rule + ":" + ($frame | tostring);
+                def ordinal: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+                def frames:
+                    if (.packet_refs | type == "array" and length <= 128 and all(.[]; ordinal)) and
+                       all([.first_packet,.packet_no,.last_packet][]; ordinal)
+                    then [.first_packet,.packet_no,.last_packet,.packet_refs[]] | map(select(. > 0)) | unique
+                    else null end;
+                ($label.opening_evidence // [] | map(key(.rule_id; .opening_frame))) as $keys |
+                reduce inputs as $row ({summary:null, evidence:{}};
                 if $row.type == "summary" then
-                    $row | {packets,analyzed,skipped,alerts_opened,alert_snapshots,rule_counts,alert_expectations}
+                    .summary = ($row | {packets,analyzed,skipped,alerts_opened,alert_snapshots,rule_counts,alert_expectations})
+                elif ($keys | length) > 0 and $row.type == "alert" and $row.schema_version == 1
+                    and $row.alert.hit_count == 1 and ($row.alert.provenance.rule_id | type == "string")
+                    and ($row.alert.packet_no | ordinal)
+                then key($row.alert.provenance.rule_id; $row.alert.packet_no) as $key
+                     | if ($keys | index($key)) != null then
+                         .evidence[$key] |= if . == null then {matches:1, frames:($row.alert | frames)}
+                                           else {matches:(.matches + 1), frames:null} end
+                       else . end
                 else . end)') || status=$?
     fi
-    jq -cn --arg name "$name" --argjson result "${summary:-null}" --argjson status "$status" \
+    jq -cn --arg name "$name" --argjson replay "${replay:-null}" --argjson status "$status" \
         --argjson strict "$strict" --argjson label "$label" '
+        $replay.summary as $result |
         (($label.expect_counts // {}) + ($label.opening_frames // {}) | keys) as $labeled |
         ($result.rule_counts | if type == "object" then . else {} end) as $rules |
         ($rules | with_entries(select(.key as $key | .value > 0 and ($labeled | index($key) == null)))) as $unlisted |
@@ -71,10 +100,18 @@ replay_case() {
         (if $label | has("expect_snapshots") then
             {expected:$label.expect_snapshots, observed:$result.alert_snapshots}
          else null end) as $snapshot_check |
+        ($label.opening_evidence // [] | map(
+            . as $spec | ($replay.evidence[$spec.rule_id + ":" + ($spec.opening_frame | tostring)]) as $match
+            | ($spec.frames | sort) as $expected
+            | {rule_id, opening_frame, expected_frames:$expected, observed_frames:$match.frames,
+               matching_openings:($match.matches // 0),
+               passed:($match.matches == 1 and $match.frames == $expected)}
+        )) as $evidence_checks |
         (if $evaluation == "failed" then "failed"
          elif $evaluation != "passed" or $status != 0 or ($strict and $unregistered == null) then "inconclusive"
          elif $snapshot_check != null and ($snapshot_check.observed | type) != "number" then "inconclusive"
          elif $snapshot_check != null and $snapshot_check.expected != $snapshot_check.observed then "failed"
+         elif any($evidence_checks[]; .passed | not) then "failed"
          elif $strict and (($unlisted | length) > 0 or $unregistered > 0) then "failed"
          else "passed" end) as $verdict |
         ($result.alert_expectations.frame_checks // []) as $frames |
@@ -89,6 +126,7 @@ replay_case() {
              count_deficit: ([$counts[] | [.expected - .observed, 0] | max] | add // 0),
              count_surplus: ([$counts[] | [.observed - .expected, 0] | max] | add // 0)
          } end)}
+        | if ($evidence_checks | length) > 0 then . + {evidence_checks:$evidence_checks} else . end
     '
 }
 
