@@ -129,7 +129,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the retained advertisements with the approved router inventory and verify endpoint router selection.",
         ),
         (
-            "IDS", "DNS tunnel behavior", "dns.high_entropy_query_burst", 1, Heuristic,
+            "IDS", "DNS tunnel behavior", "dns.high_entropy_query_burst", 2, Heuristic,
             "Compare the retained queries with expected DNS clients and resolver logs; investigate the originating process before concluding that data was transferred.",
         ),
         (

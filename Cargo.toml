@@ -61,6 +61,7 @@ httparse   = "1.10"
 loona-hpack = "0.4.3"
 md5        = "0.7"
 sha2       = "0.10"
+psl        = "2.1"
 mlua       = { version = "0.10", features = ["lua54", "vendored"], optional = true }
 aya        = { version = "=0.13.1", optional = true }
 

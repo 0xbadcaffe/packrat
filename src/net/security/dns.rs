@@ -51,8 +51,8 @@ impl DnsTunnelTracker {
         if !name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_')) {
             return None;
         }
-        let (prefix, suffix) = name[..name.rfind('.')?].rfind('.')
-            .map(|index| (&name[..index], &name[index + 1..]))?;
+        let suffix = psl::domain_str(&name)?;
+        let prefix = name.strip_suffix(suffix)?.strip_suffix('.')?;
         let (label_length, entropy) = prefix.split('.').filter(|label| label.len() >= 24)
             .map(|label| (label.len(), shannon_entropy(label.as_bytes())))
             .max_by(|a, b| a.1.total_cmp(&b.1)).filter(|&(_, entropy)| entropy >= 3.5)?;

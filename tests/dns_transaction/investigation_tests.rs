@@ -43,6 +43,28 @@ fn dns_tunnel_lead_requires_distinct_scoped_wire_queries() {
     assert_eq!(core.alert_center.items.iter().filter(|alert| alert.title == TITLE).count(), 1);
 }
 
+#[rstest::rstest]
+#[case("co.uk")]
+#[case("github.io")]
+fn dns_high_entropy_queries_do_not_combine_unrelated_registered_domains(#[case] suffix: &str) {
+    const TITLE: &str = "DNS tunnel behavior";
+    let mut core = AnalysisCore::default();
+    let query = |no, tenant| {
+        let name = format!("abcdefghijklmnpqrstuvwxyz234567{no}.{tenant}.{suffix}");
+        dns_packet(no, false, "10.0.0.5", "10.0.0.53", no as u16, &name)
+    };
+    for no in 1..=8 {
+        core.analyze(&query(no, if no % 2 == 0 { "alpha" } else { "bravo" }));
+    }
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+    for no in 9..=12 {
+        core.analyze(&query(no, "alpha"));
+    }
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(alert.packet_refs, [2, 4, 6, 8, 9, 10, 11, 12]);
+    assert!(alert.detail.contains(&format!("under alpha.{suffix} ")));
+}
+
 #[test]
 fn truncated_replies_are_retained_but_complete_replies_anchor_dns_comparison() {
     let client = "10.0.0.5";
