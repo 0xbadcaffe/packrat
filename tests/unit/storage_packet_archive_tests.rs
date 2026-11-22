@@ -152,11 +152,15 @@ fn archive_payload_cap_keeps_committed_evidence_and_never_overwrites() {
     worker.finish().unwrap();
     assert_eq!(worker.pause_reason(), Some("packet-byte limit reached"));
     assert_eq!(worker.pause_code(), Some("byte_limit"));
+    assert_eq!(worker.usage().unwrap().payload_bytes, 6);
+    assert_eq!(worker.usage().unwrap().frames, 2);
+    assert_eq!(worker.usage().unwrap().max_payload_bytes, 7);
     assert_eq!(worker.take_pause_notice(), worker.pause_reason());
     assert_eq!(worker.take_pause_notice(), None);
     worker.record(&frame(10)).unwrap();
 
     let mut worker = ArchiveWorker::open_with_limits(&archive, limits).unwrap();
+    assert_eq!(worker.usage().unwrap().frames, 2);
     worker.record(&frame(11)).unwrap();
     worker.finish().unwrap();
     assert_eq!(worker.pause_reason(), Some("packet-byte limit reached"));
@@ -197,6 +201,7 @@ fn alert_archive_deduplicates_queued_and_committed_frames_without_crossing_captu
     }
     writer.finish().unwrap();
     assert_eq!(writer.pause_reason(), None);
+    assert_eq!(writer.usage().unwrap().frames, 1);
 
     let mut writer = ArchiveWorker::open_alert_evidence(&path, limits).unwrap();
     writer.record_scoped(&scope_a, &frame_a).unwrap();

@@ -319,6 +319,12 @@ read_health() {
                 ["frame_limit","byte_limit","disk_reserve","queue_unavailable","write_failed"] | index($reason) != null
             )][0] else null end) as $pause_reason |
         ($h.archive_alert_evidence_only | if type == "boolean" then . else null end) as $evidence_only |
+        def archive_count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+        ($h.archive_usage
+         | if $archive_enabled == true and type == "object" and (.frames | archive_count)
+              and (.payload_bytes | archive_count) and (.max_frames | archive_count)
+              and (.max_payload_bytes | archive_count)
+           then {frames,payload_bytes,max_frames,max_payload_bytes} else null end) as $archive_usage |
         {
             capture_active: ($h.capture_active // false),
             capture_run_id: $run,
@@ -353,6 +359,7 @@ read_health() {
             archive_enabled: $archive_enabled,
             archive_paused: $archive_paused,
             archive_pause_reason: $pause_reason,
+            archive_usage: $archive_usage,
             archive_alert_evidence_only: $evidence_only,
             archive_requirement: (if $require_archive == "1" then "active"
                                   elif $require_archive == "alert-evidence" then "alert_evidence_only"
@@ -395,7 +402,11 @@ read_health() {
                         if $evidence_only == false then "archive_full_capture_unexpected"
                         elif $evidence_only == null then "archive_mode_unavailable"
                         else empty end
-                     else empty end)
+                     else empty end),
+                    (if $archive_paused == false and $archive_usage != null and ($archive_usage |
+                            (.max_frames > 0 and .frames / .max_frames >= 0.9)
+                            or (.max_payload_bytes > 0 and .payload_bytes / .max_payload_bytes >= 0.9))
+                     then "archive_near_capacity" else empty end)
                 end,
                 (if $watcher == false then "alert_watcher_unavailable"
                  elif $pipeline == false then "alert_watcher_pipeline_inactive"

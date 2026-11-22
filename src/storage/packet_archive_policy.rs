@@ -21,6 +21,14 @@ impl Default for ArchiveLimits {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct ArchiveUsage {
+    pub frames: u64,
+    pub max_frames: u64,
+    pub payload_bytes: u64,
+    pub max_payload_bytes: u64,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum ArchivePause {
     FrameLimit,

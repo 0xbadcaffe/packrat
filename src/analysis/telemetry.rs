@@ -48,6 +48,7 @@ pub struct TelemetrySnapshot {
     pub archive_enabled: bool,
     pub archive_paused: bool,
     pub archive_pause_reason: Option<&'static str>,
+    pub archive_usage: Option<crate::storage::packet_archive::ArchiveUsage>,
     pub archive_alert_evidence_only: bool,
     pub latency_p95_ms: f64,
     pub enriched_addresses: usize,
@@ -197,6 +198,7 @@ impl TelemetryHub {
             "archive_enabled": snapshot.archive_enabled,
             "archive_paused": snapshot.archive_paused,
             "archive_pause_reason": snapshot.archive_pause_reason,
+            "archive_usage": snapshot.archive_usage,
             "archive_alert_evidence_only": snapshot.archive_alert_evidence_only,
         });
         format!("{body}\n")

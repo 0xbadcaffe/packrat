@@ -194,6 +194,7 @@ impl App {
             archive_enabled: self.packet_archive.is_some(),
             archive_paused: archive_pause_reason.is_some(),
             archive_pause_reason,
+            archive_usage: self.packet_archive.as_ref().and_then(|archive| archive.usage()),
             archive_alert_evidence_only: self.packet_archive.as_ref().is_some_and(|archive| archive.alert_evidence_only()),
             latency_p95_ms: self.wire_pulse.p95_ms().unwrap_or(0.0),
             enriched_addresses: self.net_registry.observed.len(),

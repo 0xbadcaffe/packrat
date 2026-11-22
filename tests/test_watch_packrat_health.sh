@@ -173,6 +173,17 @@ PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$pause_samples" bash "$watch" | jq -s
     and (tostring | contains("private error path") | not)
 ' >/dev/null
 
+capacity_samples=$(jq -c '(. + {archive_enabled:true,archive_paused:false,
+    archive_usage:{frames:8,max_frames:10,payload_bytes:20,max_payload_bytes:100,private:"omitted"}}) as $base |
+    [$base, ($base | .archive_usage.frames = 9), ($base | .archive_usage.frames = "9"),
+     ($base | .archive_usage.payload_bytes = 90), ($base | .archive_paused = true | .archive_usage.payload_bytes = 90)]
+' <<< "$PACKRAT_FAKE_HEALTH")
+PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$capacity_samples" bash "$watch" | jq -se '
+    map(.issues) == [[],["archive_near_capacity"],[],["archive_near_capacity"],["archive_paused"]]
+    and .[2].archive_usage == null and .[1].archive_usage.frames == 9
+    and all(.[]; (.archive_usage | has("private") | not))
+' >/dev/null
+
 interface_samples=$(jq -c '
     [. + {capture_interface:"wlan1"},
      . + {capture_interface:"eth0"},

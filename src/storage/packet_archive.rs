@@ -6,15 +6,13 @@ use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
-
+use std::sync::{Arc, OnceLock, RwLock};
 #[path = "packet_archive_policy.rs"]
 mod policy;
 #[path = "packet_archive_reader.rs"]
 mod reader;
-pub use policy::ArchiveLimits;
+pub use policy::{ArchiveLimits, ArchiveUsage};
 pub(crate) use policy::ArchivePause;
-
 pub struct PacketArchive {
     db: Connection,
     bytes: File,
@@ -287,6 +285,7 @@ pub struct ArchiveWorker {
     sender: Option<std::sync::mpsc::SyncSender<ArchiveRecord>>,
     worker: Option<std::thread::JoinHandle<Result<(), String>>>,
     pause_reason: Arc<OnceLock<ArchivePause>>,
+    usage: Arc<RwLock<ArchiveUsage>>,
     pause_reported: bool,
     alert_evidence_only: bool,
 }
@@ -295,7 +294,6 @@ struct ArchiveRecord {
     capture_id: Option<Arc<str>>,
     packet: Packet,
 }
-
 impl ArchiveWorker {
     pub fn open(directory: &Path) -> Result<Self, String> {
         Self::open_with_limits(directory, ArchiveLimits::default())
@@ -315,6 +313,11 @@ impl ArchiveWorker {
         let mut bytes = archive.bytes.metadata().map_err(|error| error.to_string())?.len();
         let pause_reason = Arc::new(OnceLock::new());
         let worker_pause = Arc::clone(&pause_reason);
+        let usage = Arc::new(RwLock::new(ArchiveUsage {
+            frames, max_frames: limits.max_frames,
+            payload_bytes: bytes, max_payload_bytes: limits.max_payload_bytes,
+        }));
+        let worker_usage = Arc::clone(&usage);
         let worker_directory = directory.to_owned();
         let (sender, receiver) = std::sync::mpsc::sync_channel::<ArchiveRecord>(4096);
         let worker = std::thread::spawn(move || {
@@ -365,6 +368,10 @@ impl ArchiveWorker {
                     )?;
                     frames += allowed as u64;
                     bytes += pending_bytes;
+                    if let Ok(mut usage) = worker_usage.write() {
+                        usage.frames = frames;
+                        usage.payload_bytes = bytes;
+                    }
                 }
                 let reason = reason.or_else(|| {
                     if frames >= limits.max_frames {
@@ -387,6 +394,7 @@ impl ArchiveWorker {
             sender: Some(sender),
             worker: Some(worker),
             pause_reason,
+            usage,
             pause_reported: false,
             alert_evidence_only,
         })
@@ -408,6 +416,9 @@ impl ArchiveWorker {
         self.pause_reason.get().map(|reason| reason.details().0)
     }
 
+    pub(crate) fn usage(&self) -> Option<ArchiveUsage> {
+        self.usage.read().ok().map(|usage| *usage)
+    }
     pub(crate) fn take_pause_notice(&mut self) -> Option<&'static str> {
         let reason = self.pause_reason()?;
         if self.pause_reported {
@@ -483,7 +494,6 @@ impl Drop for ArchiveWorker {
         let _ = self.finish();
     }
 }
-
 #[cfg(test)]
 #[path = "../../tests/unit/storage_packet_archive_tests.rs"]
 mod tests;
