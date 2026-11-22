@@ -9,6 +9,7 @@ usage() {
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
         'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
+        'Set PACKRAT_TRIAGE_ARCHIVE and PACKRAT_TRIAGE_EVIDENCE_ALERT_ID to check frame availability for one alert.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
 }
 
@@ -28,9 +29,17 @@ done
 
 max_age_override=${PACKRAT_TRIAGE_MAX_AGE:-}
 read_timeout=${PACKRAT_TRIAGE_READ_TIMEOUT:-10}
+archive=${PACKRAT_TRIAGE_ARCHIVE:-}
+evidence_id=${PACKRAT_TRIAGE_EVIDENCE_ALERT_ID:-}
 if [[ ! -f $1 || ( -n $max_age_override && ! $max_age_override =~ ^[1-9][0-9]{0,5}$ ) ]]; then
     printf '%s\n' 'Expected a regular health file and a positive PACKRAT_TRIAGE_MAX_AGE.' >&2
     exit 2
+fi
+if [[ -n $archive || -n $evidence_id ]]; then
+    if [[ $archive != /* || $archive == *[[:cntrl:]]* || ! $evidence_id =~ ^[1-9][0-9]{0,14}$ ]]; then
+        printf '%s\n' 'Evidence status requires an absolute PACKRAT_TRIAGE_ARCHIVE and a positive alert ID.' >&2
+        exit 2
+    fi
 fi
 if [[ ! $read_timeout =~ ^[1-9][0-9]{0,3}$ ]]; then
     printf '%s\n' 'PACKRAT_TRIAGE_READ_TIMEOUT must be between 1 and 9999 seconds.' >&2
@@ -59,12 +68,14 @@ if ! state=$(load_state "$1"); then
 fi
 
 report() {
-    printf '%s\n%s\n' "$state" "${2-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
+    printf '%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
         --argjson previous "${#previous_logs[@]}" '
         .[1] as $alerts
+        | .[2] as $evidence
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
              has_more_alerts:(if $alerts == null then null else ($alerts | length) > $limit end),
-             alerts:(if $alerts == null then null else $alerts[:$limit] end)}
+             alerts:(if $alerts == null then null else $alerts[:$limit] end),
+             evidence_status:$evidence}
     '
 }
 
@@ -91,6 +102,21 @@ previous_log_stamps() {
         stamp=$(stat -L --format='%d:%i:%s:%y:%z' -- "$path") || return 1
         printf '%s\n' "$stamp"
     done
+}
+
+check_evidence() {
+    local response
+    response=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive "$archive" \
+        --alert-status "$1" "$session" "$evidence_id" --capture-id "$capture" "${previous_args[@]}") || return 1
+    jq -cse --arg session "$session" --arg capture "$capture" --argjson id "$evidence_id" '
+        select(length == 1) | .[0] | objects
+        | select(.session_id == $session and .capture_id == $capture and .alert_id == $id
+            and (.frames | type == "array" and length <= 131
+                and all(.[]; type == "object" and (.frame_number | type == "number" and . > 0 and floor == .)
+                    and (.status == "complete" or .status == "truncated" or .status == "missing"
+                        or .status == "length_unknown" or .status == "unreadable"))))
+        | {status:"checked", alert_id, frames:(.frames | map({frame_number,status}))}
+    ' <<< "$response"
 }
 
 if ! fresh; then
@@ -143,6 +169,12 @@ if ! jq -e --arg session "$session" --arg capture "$capture" '
     report alert_log_scope_mismatch
     exit 2
 fi
+evidence=null
+evidence_failed=false
+if [[ -n $evidence_id ]] && ! evidence=$(check_evidence "$2"); then
+    evidence=$(jq -cn --argjson id "$evidence_id" '{status:"unavailable",alert_id:$id,frames:null}')
+    evidence_failed=true
+fi
 if ! latest=$(load_state "$1"); then
     report health_recheck_failed
     exit 2
@@ -172,8 +204,9 @@ if ! latest_stamps=$(previous_log_stamps) || [[ $latest_stamps != "$previous_sta
     exit 1
 fi
 if jq -e '.health.issues == []' <<< "$state" >/dev/null; then
-    report current "$alerts"
+    report current "$alerts" "$evidence"
+    if "$evidence_failed"; then exit 2; fi
 else
-    report degraded "$alerts"
+    report degraded "$alerts" "$evidence"
     exit 1
 fi

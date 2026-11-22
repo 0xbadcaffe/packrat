@@ -9,7 +9,7 @@ health="$scratch/latest.json"
 export PACKRAT_TEST_LOG="$scratch/alerts.jsonl" PACKRAT_TEST_CALL="$scratch/archive-called"
 export PACKRAT_TEST_STATE="$health"
 touch -- "$PACKRAT_TEST_LOG" "$scratch/other.jsonl"
-unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT
+unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT PACKRAT_TRIAGE_ARCHIVE PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
 
 date() {
     [[ $* == '-u +%s' ]] || return 2
@@ -18,6 +18,17 @@ date() {
 
 packrat-archive() {
     printf '%s\n' called >"$PACKRAT_TEST_CALL"
+    if [[ ${2-} == --alert-status ]]; then
+        [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 42 --capture-id 00000000000000000000000000000001${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
+        if [[ ${PACKRAT_TEST_EVIDENCE_RESTART:-0} == 1 ]]; then
+            jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
+            mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
+        fi
+        jq -cn --arg capture "${PACKRAT_TEST_EVIDENCE_SCOPE:-00000000000000000000000000000001}" '
+            {session_id:"1700000000-432",capture_id:$capture,alert_id:42,
+             frames:[{frame_number:1,status:"truncated",bytes:[0,1]}, {frame_number:2,status:"missing"}]}'
+        return
+    fi
     [[ $* == "--alerts $PACKRAT_TEST_LOG --session 1700000000-432 --capture-id 00000000000000000000000000000001 --limit 51${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
     if [[ ${PACKRAT_TEST_SCOPE_RACE:-0} == 1 ]]; then
@@ -73,8 +84,26 @@ sample=$(jq -c --arg log "$PACKRAT_TEST_LOG" '.alert_watcher_log = $log' <<< "$s
 printf '%s\n' "$sample" >"$health"
 result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
 jq -e '.status == "current" and .age_seconds == 30 and .max_age_seconds == 360
-    and .alerts[0].alert_id == 42 and .has_more_alerts == false' <<< "$result" >/dev/null
+    and .alerts[0].alert_id == 42 and .has_more_alerts == false and .evidence_status == null' <<< "$result" >/dev/null
 [[ -f $PACKRAT_TEST_CALL ]]
+
+(
+    export PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
+    result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+    jq -e '.status == "current" and .evidence_status == {status:"checked",alert_id:42,
+        frames:[{frame_number:1,status:"truncated"},{frame_number:2,status:"missing"}]}' <<< "$result" >/dev/null
+    status=0
+    result=$(PACKRAT_TEST_EVIDENCE_SCOPE=other bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+    [[ $status == 2 ]]
+    jq -e '.status == "current" and .alerts[0].alert_id == 42
+        and .evidence_status == {status:"unavailable",alert_id:42,frames:null}' <<< "$result" >/dev/null
+    status=0
+    result=$(PACKRAT_TEST_EVIDENCE_RESTART=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.status == "capture_scope_changed" and .alerts == null and .evidence_status == null' \
+        <<< "$result" >/dev/null
+)
+printf '%s\n' "$sample" >"$health"
 for count in 0 50 51; do
     result=$(PACKRAT_TEST_ALERT_COUNT=$count bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e --argjson count "$count" '
