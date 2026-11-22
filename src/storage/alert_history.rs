@@ -236,6 +236,7 @@ pub(super) struct ReverseAlertLines {
     chunk: Vec<u8>,
     offset: u64,
     start: u64,
+    start_on_boundary: bool,
     end: usize,
     terminated: bool,
     oversized_records: u64,
@@ -246,14 +247,23 @@ impl ReverseAlertLines {
         Self::with_budget(file, None)
     }
 
-    fn with_budget(file: File, scan_bytes: Option<u64>) -> std::io::Result<Self> {
+    fn with_budget(mut file: File, scan_bytes: Option<u64>) -> std::io::Result<Self> {
         let metadata = file.metadata()?;
         if !metadata.is_file() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Not a regular alert log"));
         }
         let offset = metadata.len();
         let start = scan_bytes.map_or(0, |budget| offset.saturating_sub(budget));
-        Ok(Self { file, chunk: vec![0; READ_CHUNK], offset, start, end: 0,
+        let start_on_boundary = if start > 0 && start < offset {
+            // Look behind only for the delimiter, not for additional record bytes.
+            let mut delimiter = [0];
+            file.seek(SeekFrom::Start(start - 1))?;
+            file.read_exact(&mut delimiter)?;
+            delimiter == [b'\n']
+        } else {
+            start == 0
+        };
+        Ok(Self { file, chunk: vec![0; READ_CHUNK], offset, start, start_on_boundary, end: 0,
             terminated: false, oversized_records: 0 })
     }
 
@@ -263,7 +273,7 @@ impl ReverseAlertLines {
         loop {
             if self.end == 0 {
                 if self.offset == self.start {
-                    if self.start != 0 {
+                    if !self.start_on_boundary {
                         // The budget may end inside a record; do not parse the remaining suffix.
                         return Ok(false);
                     }
