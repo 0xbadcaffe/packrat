@@ -127,6 +127,32 @@ fn ipv6_tcp_integrity_links_reset_and_conflict_evidence() {
 }
 
 #[test]
+fn periodic_traffic_counts_new_tcp_sequences_not_identical_retransmissions() {
+    use super::PacketFixtureExt;
+    let signature = "Periodic fixed-size traffic";
+    let fixtures: [fn(u64, u32, u8, &[u8]) -> Packet; 2] = [ipv4_tcp_packet, ipv6_tcp_packet];
+    for packet in fixtures {
+        let mut repeated = SecurityEngine::default();
+        let mut progressive = SecurityEngine::default();
+        for index in 0..7 {
+            let frame = index + 1;
+            let time = index as f64 * 15.0;
+            let retry = packet(frame, 100, 0x18, b"same").with_number_and_timestamp(frame, time);
+            assert!(repeated.inspect(&retry).ids.iter().all(|hit| hit.alert.signature != signature));
+            let data = packet(frame, 100 + index as u32 * 4, 0x18, b"same")
+                .with_number_and_timestamp(frame, time);
+            let result = progressive.inspect(&data);
+            let finding = result.ids.iter().find(|hit| hit.alert.signature == signature);
+            if frame == 7 {
+                assert_eq!(finding.unwrap().related_packets, [1, 2, 3, 4, 5, 6]);
+            } else {
+                assert!(finding.is_none());
+            }
+        }
+    }
+}
+
+#[test]
 fn ipv6_tcp_integrity_ignores_incomplete_or_fragmented_resets() {
     for fragmented in [false, true] {
         let mut engine = SecurityEngine::default();

@@ -73,7 +73,7 @@ impl ExfilState {
 impl SecurityEngine {
     // ─── C2 Beacon and Exfiltration Correlation ─────────────────────────────
 
-    pub(super) fn check_beacon_and_exfiltration(&mut self, pkt: &Packet) {
+    pub(super) fn check_beacon_and_exfiltration(&mut self, pkt: &Packet, no_new_tcp_payload: bool) {
         if !pkt.timestamp.is_finite() {
             return;
         }
@@ -94,7 +94,9 @@ impl SecurityEngine {
         self.exfil_flows.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
         });
-        self.check_periodic_traffic(pkt);
+        if !no_new_tcp_payload {
+            self.check_periodic_traffic(pkt);
+        }
         let mut alerts = Vec::new();
         let source_internal = is_internal_address(&pkt.src);
         let destination_internal = is_internal_address(&pkt.dst);
@@ -172,15 +174,6 @@ impl SecurityEngine {
         let (Some(source_port), Some(destination_port)) = (pkt.src_port, pkt.dst_port) else {
             return;
         };
-        // Do not infer an empty segment from a short capture or a fragmented IP datagram.
-        if pkt.capture.as_ref().is_none_or(|meta| meta.link_type == 1)
-            && let Some(TcpFrame::Segment(segment)) =
-                parse_ipv4_tcp_frame(&pkt.bytes).or_else(|| parse_ipv6_tcp_frame(&pkt.bytes))
-            && segment.complete
-            && segment.payload.is_empty()
-        {
-            return;
-        }
         let source = (pkt.src.as_str(), source_port);
         let destination = (pkt.dst.as_str(), destination_port);
         let (first, second, direction) = if source <= destination {

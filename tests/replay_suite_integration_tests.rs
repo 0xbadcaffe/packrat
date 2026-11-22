@@ -235,17 +235,18 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
     let root = scratch.path();
     let rule = "traffic.periodic_fixed_size";
     let mut cases = Vec::new();
-    for (name, vary_size, split_interface, payload, prefix_frames, expected) in [
-        ("fixed", false, false, &[1_u8; 12][..], 0, 1),
-        ("variable wire size", true, false, &[1_u8; 12][..], 0, 0),
-        ("split interfaces", false, true, &[1_u8; 12][..], 0, 0),
-        ("periodic acknowledgements", false, false, &[][..], 0, 0),
-        ("fixed after irregular traffic", false, false, &[1_u8; 12][..], 2, 1),
+    for (name, vary_size, split_interface, payload, prefix_frames, sequence_step, expected) in [
+        ("fixed", false, false, &[1_u8; 12][..], 0, 12, 1),
+        ("variable wire size", true, false, &[1_u8; 12][..], 0, 12, 0),
+        ("split interfaces", false, true, &[1_u8; 12][..], 0, 12, 0),
+        ("periodic acknowledgements", false, false, &[][..], 0, 0, 0),
+        ("fixed after irregular traffic", false, false, &[1_u8; 12][..], 2, 12, 1),
+        ("identical TCP retransmissions", false, false, &[1_u8; 12][..], 0, 0, 0),
     ] {
         let file = format!("{name}.pcapng");
         let mut writer = PcapNgWriter::create(&root.join(&file)).unwrap();
         for frame in 1..=7 + prefix_frames {
-            let sequence = 100 + (frame as u32 - 1) * payload.len() as u32;
+            let sequence = 100 + (frame as u32 - 1) * sequence_step;
             let mut packet = support::tcp(frame, sequence, 0x10, payload, false);
             let captured_length = packet.bytes.len() as u32;
             packet.capture = Some(CaptureMetadata {
@@ -284,7 +285,7 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 5);
+    assert_eq!(report["passed"], 6);
     assert_eq!(report["score"]["unexpected_openings"], 0);
 
     let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
@@ -294,7 +295,7 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .find(|event| event["type"] == "alert").unwrap();
     assert_eq!(finding["alert"]["provenance"]["confidence"], "heuristic");
-    assert_eq!(finding["alert"]["provenance"]["revision"], 5);
+    assert_eq!(finding["alert"]["provenance"]["revision"], 6);
     let detail = finding["alert"]["detail"].as_str().unwrap();
     assert!(detail.contains("gaps 10.0-10.0s (mean 10.0s), sizes 900-900 bytes"));
     assert_eq!(finding["alert"]["flow"], json!({

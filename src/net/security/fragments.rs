@@ -107,9 +107,12 @@ impl SecurityEngine {
 
     // ─── TCP Integrity / Evasion ────────────────────────────────────────────
 
-    pub(super) fn check_tcp_integrity(&mut self, pkt: &Packet) {
-        if !pkt.timestamp.is_finite() {
-            return;
+    /// Returns true for a complete TCP segment verified to have no new payload.
+    pub(super) fn check_tcp_integrity(&mut self, pkt: &Packet) -> bool {
+        if !pkt.timestamp.is_finite() ||
+            pkt.capture.as_ref().is_some_and(|meta| !crate::net::parser::supports_capture_link_type(meta.link_type))
+        {
+            return false;
         }
         let segment = match parse_ipv4_tcp_frame(&pkt.bytes).or_else(|| parse_ipv6_tcp_frame(&pkt.bytes)) {
             Some(TcpFrame::Segment(segment)) => segment,
@@ -120,9 +123,9 @@ impl SecurityEngine {
                     severity: Severity::High,
                     detail: format!("{reason} from {} to {}", pkt.src, pkt.dst),
                 });
-                return;
+                return false;
             }
-            None => return,
+            None => return false,
         };
 
         const FIN: u8 = 0x01;
@@ -142,7 +145,7 @@ impl SecurityEngine {
         }
 
         if !segment.complete {
-            return;
+            return false;
         }
         let scope = service_scope(pkt);
         let key = (scope, segment.key.clone());
@@ -166,7 +169,7 @@ impl SecurityEngine {
 
         let state = self.tcp_integrity.entry(key).or_default();
         if state.started_at.is_some_and(|start| pkt.timestamp < start) {
-            return;
+            return segment.payload.is_empty();
         }
         let in_time_order = pkt.timestamp >= state.last_seen;
         state.last_seen = state.last_seen.max(pkt.timestamp);
@@ -196,9 +199,10 @@ impl SecurityEngine {
         };
         let mut post_reset = None;
         let mut overlap = None;
+        let mut duplicate = false;
         if !segment.payload.is_empty() {
             let payload_sequence = segment.sequence.wrapping_add(u32::from(segment.flags & SYN != 0));
-            let duplicate = slices.contains(payload_sequence, segment.payload);
+            duplicate = slices.contains(payload_sequence, segment.payload);
             if !state.post_reset_alerted
                 && segment.flags & RST == 0
                 && let Some(reset) = state.reset
@@ -270,6 +274,7 @@ impl SecurityEngine {
                 )),
             });
         }
+        segment.payload.is_empty() || duplicate
     }
 }
 
