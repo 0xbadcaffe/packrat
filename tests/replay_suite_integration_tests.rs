@@ -15,6 +15,8 @@ mod dtp_replay;
 mod vlan_tags;
 #[path = "replay_suite/control_plane.rs"]
 mod control_plane;
+#[path = "replay_suite/scans.rs"]
+mod scans;
 use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use serde_json::{Value, json};
@@ -42,7 +44,6 @@ fn run_suite_with_baseline(manifest: &Path, baseline: Option<&str>) -> Output {
     }
     command.output().unwrap()
 }
-
 fn write_fixture(path: &Path, distinct_responses: bool) {
     let mut capture = PcapNgWriter::create(path).unwrap();
     let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
@@ -58,7 +59,6 @@ fn write_fixture(path: &Path, distinct_responses: bool) {
     }
     capture.flush().unwrap();
 }
-
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_responses() {
@@ -84,7 +84,6 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
         ]
     });
     let run = || run_suite(&manifest);
-
     std::fs::write(&manifest, serde_json::to_vec(&labels).unwrap()).unwrap();
     let passing = run();
     assert!(

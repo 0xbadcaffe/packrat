@@ -65,7 +65,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the flag bits in the retained segment and compare nearby flow traffic. The flags alone do not establish why the segment was sent.",
         ),
         (
-            "IDS", "TCP stealth scan probe", "tcp.unusual_probe_flags", 1, Heuristic,
+            "IDS", "TCP stealth scan probe", "tcp.unusual_probe_flags", 2, Heuristic,
             "Compare nearby attempts and replies with expected application behavior before diagnosing a scan.",
         ),
         (
@@ -173,15 +173,15 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the traffic is normally encrypted or compressed. Verify the transfer with endpoint logs.",
         ),
         (
-            "IDS", "Horizontal host scan", "scan.horizontal", 6, Heuristic,
+            "IDS", "Horizontal host scan", "scan.horizontal", 7, Heuristic,
             "Compare destinations and completed handshakes; check expected discovery or monitoring.",
         ),
         (
-            "IDS", "Vertical port scan", "scan.vertical", 6, Heuristic,
+            "IDS", "Vertical port scan", "scan.vertical", 7, Heuristic,
             "Compare destination ports and completed handshakes; check scheduled scanning.",
         ),
         (
-            "IDS", "SYN arrival spike", "tcp.syn_arrival_spike", 4, Correlated,
+            "IDS", "SYN arrival spike", "tcp.syn_arrival_spike", 5, Correlated,
             "Check handshake completion, server reachability, and whether a burst was expected.",
         ),
         (

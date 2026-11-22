@@ -321,7 +321,7 @@ fn scan_evidence_deduplicates_targets_and_stays_in_its_vlan_and_transport() {
         .find(|alert| alert.title == "Horizontal host scan").unwrap();
     assert_eq!(alert.hit_count, 1);
     assert_eq!(alert.packet_refs, [80, 2, 3, 4, 5, 6, 107, 108, 109, 110, 111, 112]);
-    assert_eq!(alert.provenance.as_ref().unwrap().revision, 6);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 7);
 }
 
 #[test]

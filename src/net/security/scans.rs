@@ -40,8 +40,8 @@ impl SecurityEngine {
         };
         let mut alerts = Vec::new();
 
-        if let Some(signal) = tcp {
-            let TcpSignal { flags, sequence, source_port, destination_port, complete, .. } = signal;
+        if let Some(signal) = tcp.filter(|signal| signal.complete) {
+            let TcpSignal { flags, sequence, source_port, destination_port, .. } = signal;
             const FIN: u8 = 0x01;
             const SYN: u8 = 0x02;
             const RST: u8 = 0x04;
@@ -76,7 +76,7 @@ impl SecurityEngine {
             if flags & (SYN | ACK | FIN | RST) == SYN {
                 self.record_scan_probe(pkt, destination_port, "TCP");
                 self.record_syn_arrival(pkt, destination_port, source_port, sequence);
-                if destination_port == 22 && complete && control == SYN {
+                if destination_port == 22 && control == SYN {
                     self.record_service_observation(
                         pkt, "SSH", false, destination_port, (source_port, sequence),
                     );

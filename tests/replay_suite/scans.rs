@@ -1,0 +1,99 @@
+use super::{
+    CaptureMetadata, CaptureTimestamp, PcapNgWriter, TimestampResolution, json, run_suite,
+};
+use packrat_tui::net::parser::parse_ethernet;
+use std::path::Path;
+
+fn write_observations(path: &Path, vary_host: bool, vary_port: bool, partial: bool) {
+    let mut capture = PcapNgWriter::create(path).unwrap();
+    for no in 1..=12_u64 {
+        let mut raw = super::support::tcp(no, no as u32, 0x02, &[1, 1, 0, 0], false).bytes;
+        raw[46] = 0x60;
+        if vary_host {
+            raw[33] = 16 + no as u8;
+        }
+        if vary_port {
+            raw[36..38].copy_from_slice(&(8000 + no as u16).to_be_bytes());
+        }
+        let wire_length = raw.len() as u32;
+        if partial {
+            raw.truncate(54);
+        }
+        let mut packet = parse_ethernet(&raw, no, no as f64);
+        packet.capture = Some(CaptureMetadata {
+            captured_length: raw.len() as u32,
+            wire_length,
+            link_type: 1,
+            section_id: 0,
+            interface_id: 0,
+            interface_name: None,
+            timestamp: Some(CaptureTimestamp {
+                ticks: no * 1_000_000,
+                resolution: TimestampResolution::Decimal(6),
+                offset_seconds: 0,
+            }),
+            comments: Vec::new(),
+        });
+        capture.write_packet(&packet).unwrap();
+    }
+    capture.flush().unwrap();
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_truncation() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let horizontal = "scan.horizontal";
+    let vertical = "scan.vertical";
+    let cases: Vec<_> = [
+        ("same-destination-and-port", false, false, false, None),
+        ("distinct-hosts-truncated", true, false, true, None),
+        ("distinct-ports-truncated", false, true, true, None),
+        (
+            "distinct-hosts-complete",
+            true,
+            false,
+            false,
+            Some(horizontal),
+        ),
+        (
+            "distinct-ports-complete",
+            false,
+            true,
+            false,
+            Some(vertical),
+        ),
+    ]
+    .into_iter()
+    .map(|(name, host, port, partial, expected)| {
+        let capture = format!("{name}.pcapng");
+        write_observations(&root.join(&capture), host, port, partial);
+        let mut case = json!({
+            "name":name, "capture":capture, "allow_truncated":partial,
+            "expect_snapshots":usize::from(expected.is_some()),
+            "expect_counts":{(horizontal):usize::from(expected==Some(horizontal)),
+                             (vertical):usize::from(expected==Some(vertical))}
+        });
+        if let Some(rule) = expected {
+            case["opening_frames"] = json!({(rule):[12]});
+            case["opening_evidence"] =
+                json!([{"rule_id":rule,"opening_frame":12,"frames":(1..=12).collect::<Vec<_>>()}]);
+        }
+        case
+    })
+    .collect();
+    let manifest = root.join("scan-suite.json");
+    std::fs::write(
+        &manifest,
+        json!({"version":1,"strict":true,"cases":cases}).to_string(),
+    )
+    .unwrap();
+    let output = run_suite(&manifest);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
