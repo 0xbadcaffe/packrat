@@ -173,7 +173,7 @@ fn detects_tiny_and_excessive_ipv4_fragments() {
     let mut security = SecurityEngine::default();
     security.update(&ipv4_fragment_packet(1, 0x3456, 0, true, b"tiny"));
     for no in 2..=66 {
-        security.update(&ipv4_fragment_packet(no, 0x4567, 0, true, b"12345678"));
+        security.update(&ipv4_fragment_packet(no, 0x4567, (no as u16 - 2) * 8, true, b"12345678"));
     }
 
     assert!(

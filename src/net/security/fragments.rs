@@ -56,7 +56,6 @@ impl SecurityEngine {
             .entry(key.clone())
             .or_default();
         state.last_seen = state.last_seen.max(pkt.timestamp);
-        state.count = state.count.saturating_add(1);
 
         let conflict = if !state.overlap_alerted && !fragment.malformed_length
             && let Some(frame) = conflicting_fragment_frame(&state.slices, &fragment)
@@ -68,16 +67,20 @@ impl SecurityEngine {
             state.remember(pkt.no, fragment.offset, fragment.payload);
         }
 
-        if state.count > MAX_FRAGMENTS_PER_DATAGRAM && !state.flood_alerted {
-            state.flood_alerted = true;
-            alerts.push((
-                "IPv4 fragment flood",
-                Severity::High,
-                format!(
-                    "More than {MAX_FRAGMENTS_PER_DATAGRAM} fragment observations for one datagram key from {}",
-                    pkt.src
-                ),
-            ));
+        if let Some(related_packets) = state.observe_offset(pkt.no, &fragment) {
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "IPv4 fragment flood",
+                    severity: Severity::Medium,
+                    detail: format!(
+                        "Captured {} distinct fragment offsets for IPv4 ID 0x{:04x} from {} to {}; resource impact unverified",
+                        MAX_FRAGMENTS_PER_DATAGRAM + 1, fragment.key.identification, pkt.src, pkt.dst,
+                    ),
+                },
+                related_packets,
+                correlation_key: Some(format!("{key:?}:{}", pkt.no)),
+            });
         }
 
         for (signature, severity, detail) in alerts {

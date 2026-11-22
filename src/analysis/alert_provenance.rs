@@ -53,8 +53,8 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the fragment flags, offset, payload length, and other frames for the datagram; size alone does not establish intent.",
         ),
         (
-            "IDS", "IPv4 fragment flood", "ipv4.fragment_observation_burst", 1, Heuristic,
-            "Compare distinct fragment offsets with duplicates and capture topology. Verify resource pressure before treating the count as a denial of service.",
+            "IDS", "IPv4 fragment flood", "ipv4.fragment_observation_burst", 2, Correlated,
+            "Inspect the retained fragment offsets and compare with link MTU, source behavior, and endpoint resource pressure. Volume alone does not establish denial of service.",
         ),
         (
             "IDS", "Malformed TCP header", "tcp.invalid_header", 1, DirectObservation,

@@ -19,13 +19,28 @@ pub(super) struct FragmentSlice {
 pub(super) struct FragmentState {
     pub(super) slices: Vec<FragmentSlice>,
     pub(super) retained_bytes: usize,
-    pub(super) count: usize,
+    pub(super) offset_frames: Vec<(u32, u64)>,
     pub(super) last_seen: f64,
     pub(super) overlap_alerted: bool,
-    pub(super) flood_alerted: bool,
 }
 
 impl FragmentState {
+    pub(super) fn observe_offset(&mut self, frame: u64, fragment: &Ipv4Fragment<'_>) -> Option<Vec<u64>> {
+        let length = fragment.declared_payload_len;
+        if self.offset_frames.len() > MAX_FRAGMENTS_PER_DATAGRAM
+            || fragment.malformed_length || length == 0 || fragment.payload.len() != length
+            || (fragment.more_fragments && length % 8 != 0)
+            || fragment.offset as usize + length > MAX_FRAGMENT_EVIDENCE_BYTES - 20
+            || self.offset_frames.iter().any(|&(offset, _)| offset == fragment.offset)
+        {
+            return None;
+        }
+        self.offset_frames.push((fragment.offset, frame));
+        (self.offset_frames.len() > MAX_FRAGMENTS_PER_DATAGRAM).then(|| {
+            self.offset_frames[..MAX_FRAGMENTS_PER_DATAGRAM].iter().map(|&(_, frame)| frame).collect()
+        })
+    }
+
     pub(super) fn remember(&mut self, packet_no: u64, offset: u32, payload: &[u8]) {
         if payload.is_empty()
             || self.slices.len() >= MAX_FRAGMENTS_PER_DATAGRAM
