@@ -102,6 +102,7 @@ pub struct AlertItem {
     pub first_packet: u64,
     #[serde(default)]
     pub last_packet: u64,
+    /// Earliest known capture timestamp; the opening frame remains `first_packet`.
     #[serde(default)]
     pub first_seen: f64,
     #[serde(default)]
@@ -269,6 +270,7 @@ impl AlertCenter {
         correlation_key: impl Into<String>,
     ) -> bool {
         let (packet_no, related_packets, flow) = evidence;
+        let timestamp = if timestamp.is_finite() { timestamp } else { 0.0 };
         let source = source.into();
         let severity = severity.into().to_uppercase();
         let title = title.into();
@@ -283,13 +285,18 @@ impl AlertCenter {
                     && item.title == title
                     && item.correlation_key == correlation_key
             }) {
-                item.packet_no = packet_no;
-                item.last_packet = packet_no;
-                item.last_seen = timestamp;
+                if timestamp != 0.0 && (item.first_seen == 0.0 || timestamp < item.first_seen) {
+                    item.first_seen = timestamp;
+                }
+                if item.last_seen == 0.0 || (timestamp != 0.0 && timestamp >= item.last_seen) {
+                    item.packet_no = packet_no;
+                    item.last_packet = packet_no;
+                    item.last_seen = timestamp;
+                    item.detail = detail;
+                    item.flow = flow;
+                }
                 let evidence_changed = retain_packet_refs(item, packet_no, related_packets);
                 item.hit_count = item.hit_count.saturating_add(1);
-                item.detail = detail;
-                item.flow = flow;
                 let priority = priority_for(&severity);
                 let became_high = item.priority < AUTOMATIC_EVIDENCE_PRIORITY
                     && priority >= AUTOMATIC_EVIDENCE_PRIORITY;
