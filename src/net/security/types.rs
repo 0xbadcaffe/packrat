@@ -198,6 +198,7 @@ pub(super) struct ExfilKey {
     pub(super) external: String,
     pub(super) destination_port: u16,
     pub(super) protocol: String,
+    pub(super) scope: ServiceScope,
 }
 
 #[derive(Debug, Default)]
@@ -208,6 +209,9 @@ pub(super) struct ExfilState {
     pub(super) last_seen: f64,
     pub(super) volume_alerted: bool,
     pub(super) entropy_alerted: bool,
+    pub(super) outbound_frames: std::collections::VecDeque<u64>,
+    pub(super) inbound_frames: std::collections::VecDeque<u64>,
+    pub(super) entropy_frames: std::collections::VecDeque<u64>,
 }
 
 #[derive(Debug, Default)]

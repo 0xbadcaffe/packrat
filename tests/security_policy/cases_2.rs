@@ -150,16 +150,19 @@ fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
 #[test]
 fn detects_large_high_entropy_outbound_transfer() {
     let mut security = SecurityEngine::default();
+    let mut core = packrat_tui::engine::AnalysisCore::default();
     let encrypted_like = (0..60_000)
         .map(|index| ((index * 73) % 256) as u8)
         .collect::<Vec<_>>();
     for index in 0..17_u64 {
-        security.update(&behavior_packet(
+        let packet = behavior_packet(
             index + 1,
             index as f64 / 10.0,
             60_000,
             encrypted_like.clone(),
-        ));
+        );
+        security.update(&packet);
+        core.analyze(&packet);
     }
 
     assert!(
@@ -174,6 +177,46 @@ fn detects_large_high_entropy_outbound_transfer() {
             .iter()
             .any(|alert| alert.signature == "High-entropy outbound transfer")
     );
+    for (rule, frames) in [
+        ("traffic.asymmetric_outbound", (10..=17).collect::<Vec<_>>()),
+        ("traffic.high_entropy_outbound", (1..=5).collect()),
+    ] {
+        let alert = core.alert_center.items.iter().find(|alert| {
+            alert.provenance.as_ref().is_some_and(|provenance| provenance.rule_id == rule)
+        }).unwrap();
+        assert_eq!(alert.packet_refs, frames);
+        assert_eq!(alert.provenance.as_ref().unwrap().confidence.to_string(), "Heuristic");
+    }
+}
+
+#[test]
+fn outbound_volume_does_not_combine_interfaces_and_keeps_reverse_evidence() {
+    use packrat_tui::{
+        engine::AnalysisCore,
+        net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution},
+    };
+    let mut core = AnalysisCore::default();
+    for no in 1..=27 {
+        let mut packet = behavior_packet(no, no as f64, 60_000, vec![0; 60_000]);
+        let scope = if no <= 18 { (no - 1) % 2 } else { 0 };
+        if no == 19 {
+            std::mem::swap(&mut packet.src, &mut packet.dst);
+            std::mem::swap(&mut packet.src_port, &mut packet.dst_port);
+        }
+        packet.capture = Some(CaptureMetadata {
+            timestamp: Some(CaptureTimestamp {
+                ticks: no, resolution: TimestampResolution::Decimal(0), offset_seconds: 0,
+            }),
+            captured_length: 60_000, wire_length: 60_000, link_type: 1,
+            interface_id: scope as u32, section_id: 0, interface_name: None, comments: vec![],
+        });
+        core.analyze(&packet);
+        if no < 27 {
+            assert!(!core.alert_center.items.iter().any(|alert| alert.title == "Large asymmetric outbound transfer"));
+        }
+    }
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == "Large asymmetric outbound transfer").unwrap();
+    assert_eq!(alert.packet_refs, (19..=27).collect::<Vec<_>>());
 }
 
 #[test]

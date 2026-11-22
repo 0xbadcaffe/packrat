@@ -1,5 +1,12 @@
 use super::*;
 
+fn sample_transfer_frame(frames: &mut std::collections::VecDeque<u64>, frame: u64) {
+    if frames.len() == 8 {
+        frames.pop_front();
+    }
+    frames.push_back(frame);
+}
+
 impl SecurityEngine {
     // ─── C2 Beacon and Exfiltration Correlation ─────────────────────────────
 
@@ -21,7 +28,6 @@ impl SecurityEngine {
         self.exfil_flows.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
         });
-        evict_oldest_exfil(&mut self.exfil_flows);
         self.check_periodic_traffic(pkt);
         let mut alerts = Vec::new();
         let source_internal = is_internal_address(&pkt.src);
@@ -38,18 +44,25 @@ impl SecurityEngine {
                 external,
                 destination_port: if outbound { pkt.dst_port } else { pkt.src_port }.unwrap_or(0),
                 protocol: pkt.protocol.clone(),
+                scope: service_scope(pkt),
             };
+            if !self.exfil_flows.contains_key(&key) {
+                evict_oldest_exfil(&mut self.exfil_flows);
+            }
             let state = self.exfil_flows.entry(key).or_default();
             state.last_seen = pkt.timestamp;
             if outbound {
                 state.outbound_bytes = state.outbound_bytes.saturating_add(u64::from(pkt.length));
+                sample_transfer_frame(&mut state.outbound_frames, pkt.no);
                 if pkt.bytes.len() >= 64 && shannon_entropy(&pkt.bytes) >= 7.2 {
                     state.high_entropy_bytes = state
                         .high_entropy_bytes
                         .saturating_add(u64::from(pkt.length));
+                    sample_transfer_frame(&mut state.entropy_frames, pkt.no);
                 }
             } else {
                 state.inbound_bytes = state.inbound_bytes.saturating_add(u64::from(pkt.length));
+                sample_transfer_frame(&mut state.inbound_frames, pkt.no);
             }
 
             let outbound_ratio = state.outbound_bytes as f64 / state.inbound_bytes.max(1) as f64;
@@ -66,6 +79,7 @@ impl SecurityEngine {
                         "{} sent {} bytes to {} with {:.1}:1 outbound ratio",
                         pkt.src, state.outbound_bytes, pkt.dst, outbound_ratio
                     ),
+                    state.outbound_frames.iter().chain(&state.inbound_frames).copied().collect::<Vec<_>>(),
                 ));
             }
             if outbound
@@ -81,16 +95,22 @@ impl SecurityEngine {
                         "{} sent {} high-entropy bytes toward {}",
                         pkt.src, state.high_entropy_bytes, pkt.dst
                     ),
+                    state.entropy_frames.iter().copied().collect::<Vec<_>>(),
                 ));
             }
         }
 
-        for (signature, severity, detail) in alerts {
-            self.push_ids(IdsAlert {
-                pkt_no: pkt.no,
-                signature,
-                severity,
-                detail,
+        for (signature, severity, detail, mut related_packets) in alerts {
+            related_packets.retain(|&frame| frame != pkt.no);
+            related_packets.sort_unstable();
+            related_packets.dedup();
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert { pkt_no: pkt.no, signature, severity, detail },
+                related_packets,
+                correlation_key: Some(format!(
+                    "{:?}:{}:[{}]>[{}]:{}",
+                    service_scope(pkt), pkt.protocol, pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)
+                )),
             });
         }
     }
