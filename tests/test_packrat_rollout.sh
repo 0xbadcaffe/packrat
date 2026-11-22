@@ -250,6 +250,52 @@ mv -T -- "$data_dir/replacement" "$data_dir/alerts.jsonl"
     if backup_space_ready; then exit 1; fi
 )
 
+(
+    data_dir="$scratch/backup-fixture"
+    installed="$data_dir/installed"
+    candidate="$data_dir/candidate"
+    mkdir -p -- "$data_dir"
+    printf '%s\n' original >"$installed"
+    printf '%s\n' candidate >"$candidate"
+    printf '%s\n' alert >"$data_dir/alerts.jsonl"
+    corrupt=
+    sudo() {
+        [[ $1 == -n ]] || return 1
+        shift
+        case $1 in
+            install)
+                if [[ $2 == -d ]]; then
+                    mkdir -p -- "${*: -1}"
+                else
+                    command cp -- "${@: -2}" || return 1
+                    if [[ -n $corrupt && ${*: -1} == */rollout.*/"$corrupt" ]]; then
+                        printf '%s\n' damaged >"${*: -1}"
+                    fi
+                fi
+                ;;
+            mktemp)
+                if [[ $2 == /usr/local/bin/.packrat-stage.* ]]; then
+                    command mktemp "$data_dir/staged.XXXXXXXX"
+                else
+                    command "$@"
+                fi
+                ;;
+            cmp) command "$@" ;;
+            *) return 1 ;;
+        esac
+    }
+    for corrupt in packrat alerts.jsonl; do
+        stage_binary=
+        if prepare_backup_and_stage 2>/dev/null; then exit 1; fi
+        [[ -z $stage_binary ]]
+    done
+    corrupt=
+    prepare_backup_and_stage
+    cmp -s "$installed" "$backup_dir/packrat"
+    cmp -s "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl"
+    cmp -s "$candidate" "$stage_binary"
+)
+
 prepare_backup_and_stage() {
     trace+=("backup")
     backup_dir=/backup

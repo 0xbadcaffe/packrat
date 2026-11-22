@@ -263,6 +263,11 @@ prepare_backup_and_stage() {
     backup_dir=$(sudo -n mktemp -d "$data_dir/backups/rollout.XXXXXXXX") || return 1
     sudo -n install -o root -g root -m 0700 "$installed" "$backup_dir/packrat" || return 1
     sudo -n install -o root -g root -m 0600 "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl" || return 1
+    if ! sudo -n cmp -s -- "$installed" "$backup_dir/packrat" ||
+       ! sudo -n cmp -s -- "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl"; then
+        error "Rollback backup did not match its source; inspect $backup_dir"
+        return 1
+    fi
     stage_binary=$(sudo -n mktemp /usr/local/bin/.packrat-stage.XXXXXXXX) || return 1
     sudo -n install -o root -g root -m 0755 "$candidate" "$stage_binary" || return 1
     cmp -s "$candidate" "$stage_binary"
