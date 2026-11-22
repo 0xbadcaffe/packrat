@@ -183,12 +183,14 @@ if ! "$once" && [[ -f $state && -O $state ]]; then
         jq -Rces '
             select(utf8bytelength <= 65536) | fromjson | objects
             | select(.record_type == "capture_triage_watch"
-                and (.status == "current" or .status == "degraded")
-                and (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .)
-                and (.recent_alerts | type == "array" and length <= 50 and all(.[]; type == "object"
-                    and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
+                and (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .))
             | (now - (.updated_at | fromdateiso8601) | floor) as $age
             | select($age >= -5 and $age <= .max_age_seconds)
+            | .last_observed // .
+            | select((.status == "current" or .status == "degraded") and
+                (.capture_id | type == "string") and (.session_id | type == "string") and
+                (.recent_alerts | type == "array" and length <= 50 and all(.[]; type == "object"
+                    and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
             | {status,capture_id,session_id,recent_alerts,highest_observed_alert_id:(
                 .highest_observed_alert_id | if type == "number" and . >= 0 and . <= 9007199254740991
                     and floor == . then . else null end)}
@@ -222,19 +224,25 @@ while :; do
                             | select(.fields | length > 0)
                         ]
                     }
-                else null end}' <<< "$snapshot")
+                else null end}
+            | if (observed | not) and ($prior | observed) then
+                .last_observed = ($prior | {
+                    status,capture_id,session_id,highest_observed_alert_id,
+                    recent_alerts: [.recent_alerts[] | {alert_id,hit_count,severity,disposition,packet_evidence_status}]
+                })
+              else . end' <<< "$snapshot")
     snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")
     temp=$(mktemp -- "$directory/.packrat-triage.XXXXXXXX")
     printf '%s\n' "$snapshot" >"$temp"
     mv -fT -- "$temp" "$state"
     temp=''
     if "$once"; then printf '%s\n' "$snapshot"; break; fi
-    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .highest_observed_alert_id)' <<< "$snapshot")
+    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .highest_observed_alert_id, .last_observed)' <<< "$snapshot")
     if [[ $key != "$previous" ]]; then
-        printf '%s\n' "$event"
+        jq -c 'del(.last_observed)' <<< "$event"
         previous=$key
     fi
-    prior=$snapshot
+    prior=$(jq -c '.last_observed // .' <<< "$snapshot")
     sleep "$interval" {lock_fd}>&- &
     timer=$!
     wait "$timer"

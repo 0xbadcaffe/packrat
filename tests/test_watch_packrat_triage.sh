@@ -197,4 +197,35 @@ jq -se 'length == 2 and .[0].alert_changes==null and .[0].highest_observed_alert
     and .[1].highest_observed_alert_id==12 and .[1].alert_changes.newly_observed==[12]
     and .[1].alert_changes.updated==[{alert_id:9,fields:["hit_count"]}]' "$scratch/supervised" >/dev/null
 jq -e '.highest_observed_alert_id==12 and (has("alert_changes") | not)' "$state" >/dev/null
+
+printf '%s\n' 'invalid triage output' >"$report"
+PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/outage" &
+watch_pid=$!
+for _ in {1..80}; do
+    if jq -e '.status=="triage_unavailable"' "$state" >/dev/null 2>&1; then break; fi
+    sleep 0.1
+done
+jq -e '.status=="triage_unavailable" and .last_observed.highest_observed_alert_id==12
+    and (.last_observed.recent_alerts | map(.alert_id))==[9,12]' "$state" >/dev/null
+check_status "$state" triage_unhealthy 1
+kill "$watch_pid"
+wait "$watch_pid"
+watch_pid=''
+jq -se 'length==1 and .[0].status=="triage_unavailable" and (.[0] | has("last_observed") | not)' "$scratch/outage" >/dev/null
+
+live current 62 '[]' "$(jq -c '.[0].hit_count=4 | . + [.[0] + {alert_id:13}]' <<<"$medium")" >"$report"
+PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/recovered" &
+watch_pid=$!
+await_packets 62
+for _ in {1..80}; do
+    if jq -se 'length==1' "$scratch/recovered" >/dev/null 2>&1; then break; fi
+    sleep 0.1
+done
+kill "$watch_pid"
+wait "$watch_pid"
+watch_pid=''
+jq -se 'length==1 and .[0].highest_observed_alert_id==13
+    and .[0].alert_changes=={newly_observed:[13],updated:[{alert_id:9,fields:["hit_count"]}]}' \
+    "$scratch/recovered" >/dev/null
+jq -e '.status=="current" and (has("last_observed") | not)' "$state" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'
