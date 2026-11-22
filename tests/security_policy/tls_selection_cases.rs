@@ -69,3 +69,24 @@ fn tls_alerts_require_complete_server_selections() {
     }
     assert_eq!(core.alert_center.items.iter().filter(|alert| alert.source == "TLS").count(), 4);
 }
+
+#[test]
+fn rc4_selection_covers_rfc_cipher_suites_without_matching_adjacent_suites() {
+    let mut security = SecurityEngine::default();
+    let mut selected_rc4 = |cipher, extensions: &[u8]| {
+        let hello = server_hello(0x0303, cipher, extensions);
+        let findings = security.inspect(&https_packet(1, &hello, true));
+        findings.tls.iter().any(|alert| alert.kind == "RC4 selected")
+    };
+    for suite in [
+        0x0003, 0x0004, 0x0005, 0x0017, 0x0018, 0x0020, 0x0024, 0x0028, 0x002b,
+        0x008a, 0x008e, 0x0092, 0xc002, 0xc007, 0xc00c, 0xc011, 0xc016, 0xc033,
+    ] {
+        assert!(selected_rc4(suite, &[]), "missed RC4 suite {suite:#06x}");
+    }
+    for suite in [0x0019, 0x008b, 0x008f, 0xc003, 0xc010, 0xc02f, 0xc034] {
+        assert!(!selected_rc4(suite, &[]), "non-RC4 suite {suite:#06x}");
+    }
+    assert!(!selected_rc4(0x1301, &[0, 43, 0, 2, 3, 4]));
+    assert!(!selected_rc4(0xc011, &[0, 43, 0, 2, 3, 4]));
+}

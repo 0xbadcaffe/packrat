@@ -197,7 +197,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the server or proxy's minimum protocol version and check which clients still require TLS 1.1.",
         ),
         (
-            "TLS", "RC4 selected", "tls.rc4_selected", 1, DirectObservation,
+            "TLS", "RC4 selected", "tls.rc4_selected", 2, DirectObservation,
             "Verify the selected cipher in ServerHello and remove RC4 from the server or proxy's allowed cipher suites.",
         ),
         (

@@ -61,7 +61,7 @@ impl SecurityEngine {
                 detail: format!("{}: {kind} in ServerHello; handshake completion unverified", pkt.src),
             });
         }
-        if version <= 0x0303 && matches!(cipher, 0x0003..=0x0005) {
+        if version <= 0x0303 && is_rc4_suite(cipher) {
             self.push_tls(TlsWeakness {
                 pkt_no: pkt.no,
                 src_ip: pkt.src.clone(),
@@ -71,6 +71,15 @@ impl SecurityEngine {
             });
         }
     }
+}
+
+fn is_rc4_suite(cipher: u16) -> bool {
+    // RFC 7465 Appendix A; numeric IDs from the IANA TLS Cipher Suites registry.
+    matches!(
+        cipher,
+        0x0003..=0x0005 | 0x0017..=0x0018 | 0x0020 | 0x0024 | 0x0028 | 0x002b
+            | 0x008a | 0x008e | 0x0092 | 0xc002 | 0xc007 | 0xc00c | 0xc011 | 0xc016 | 0xc033
+    )
 }
 
 fn http_observation(pkt: &Packet, source: u16, destination: u16, payload: &[u8]) -> Option<HttpRecord> {
