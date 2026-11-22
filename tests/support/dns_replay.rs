@@ -2,6 +2,9 @@ use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::parser::parse_ethernet;
 use std::path::Path;
 
+#[path = "../replay_suite/dns_tcp.rs"]
+mod tcp_replay_tests;
+
 pub enum Scenario {
     Equivalent,
     ChangedAnswer,
