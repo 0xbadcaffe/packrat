@@ -328,6 +328,12 @@ pub(super) struct ArpObservation {
     pub(super) frame: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ArpClaimHistory {
+    pub(super) latest: ArpObservation,
+    pub(super) previous_owner: Option<ArpObservation>,
+}
+
 // ─── OS Fingerprint ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]

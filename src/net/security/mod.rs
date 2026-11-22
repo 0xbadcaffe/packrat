@@ -74,6 +74,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "STP topology change",
     "LLDP chassis identity changed",
     "ARP reply sender differs from Ethernet source",
+    "Alternating ARP claims",
     "Periodic fixed-size traffic",
     "Large asymmetric outbound transfer",
     "High-entropy outbound transfer",
@@ -154,7 +155,7 @@ pub struct SecurityEngine {
     pub dns_suspects: Vec<DnsTunnelSuspect>,
 
     // Internal state
-    ip_to_mac: HashMap<(ServiceScope, std::net::Ipv4Addr), ArpObservation>,
+    ip_to_mac: HashMap<(ServiceScope, std::net::Ipv4Addr), ArpClaimHistory>,
     os_by_ip: HashMap<String, &'static str>,
     bf_windows: HashMap<BfKey, BfWindow>,
     dns_accum: HashMap<String, DnsAccum>,

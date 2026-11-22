@@ -53,6 +53,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the Ethernet source and ARP sender with switch and neighbor tables. Check for authorized address rewriting or gateway redundancy.",
         ),
         (
+            "IDS", "Alternating ARP claims", "arp.alternating_claims", 1, Correlated,
+            "Compare all three replies with switch learning, DHCP leases, and failover logs; check whether endpoint neighbor entries actually changed.",
+        ),
+        (
             "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 6, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),

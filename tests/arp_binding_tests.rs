@@ -107,3 +107,42 @@ fn arp_source_mismatch_is_distinct_from_binding_changes_and_vrrp() {
     assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
     assert!(core.incidents.incidents.is_empty());
 }
+
+#[test]
+fn alternating_arp_claims_require_three_scoped_ordered_frames() {
+    let by_rule = |core: &AnalysisCore| {
+        core.alert_center.items.iter().position(|alert| {
+            alert.provenance.as_ref().is_some_and(|rule| rule.rule_id == "arp.alternating_claims")
+        })
+    };
+    for samples in [
+        [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (3, 3.0, 10, 2)], // One change.
+        [(1, 1.0, 10, 1), (2, 2.0, 20, 2), (3, 3.0, 10, 1)], // Different VLAN.
+        [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (3, 1.5, 10, 1)], // Reordered.
+        [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (3, 2.0, 10, 1)], // Tied timestamp.
+        [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (1, 3.0, 10, 1)], // Duplicate frame identity.
+        [(1, 1.0, 10, 1), (2, 2.0, 10, 2), (3, 32.0, 10, 1)], // Too far apart.
+    ] {
+        let mut core = AnalysisCore::default();
+        for (no, time, vlan, host) in samples {
+            core.analyze(&reply(no, time, vlan, host));
+        }
+        assert!(by_rule(&core).is_none(), "{samples:?}");
+    }
+
+    let mut core = AnalysisCore::default();
+    for (no, host) in [(1, 1), (2, 2), (3, 1)] {
+        core.analyze(&reply(no, no as f64, 10, host));
+    }
+    let index = by_rule(&core).unwrap();
+    let alert = &core.alert_center.items[index];
+    assert_eq!(alert.packet_refs, [1, 2, 3]);
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.hit_count, 1);
+    assert!(alert.detail.contains("failover, duplicate addressing, and spoofing are possible"));
+    core.analyze(&reply(4, 4.0, 10, 2));
+    let alert = &core.alert_center.items[index];
+    assert_eq!(alert.hit_count, 2);
+    assert_eq!(alert.packet_refs, [1, 2, 3, 4]);
+    assert!(core.incidents.incidents.is_empty());
+}

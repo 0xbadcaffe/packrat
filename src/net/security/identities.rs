@@ -2,6 +2,7 @@ use super::*;
 use std::net::Ipv4Addr;
 
 const ARP_COMPARISON_WINDOW_SECS: f64 = 300.0;
+const ARP_ALTERNATION_WINDOW_SECS: f64 = 30.0;
 const ARP_SOURCE_MISMATCH: &str = "ARP reply sender differs from Ethernet source";
 
 fn arp_reply_sender(raw: &[u8]) -> Option<(Ipv4Addr, [u8; 6])> {
@@ -52,22 +53,49 @@ impl SecurityEngine {
         }
         let key = (scope, ip);
         let known = self.ip_to_mac.get(&key).copied();
-        if known.is_some_and(|entry| entry.timestamp > pkt.timestamp) {
+        if known.is_some_and(|entry| entry.latest.timestamp > pkt.timestamp) {
             return;
         }
         if known.is_none() && self.ip_to_mac.len() >= MAX_CONTROL_PLANE_IDENTITIES
             && let Some(oldest) = self.ip_to_mac.iter().min_by(|a, b| {
-                a.1.timestamp.total_cmp(&b.1.timestamp).then(a.0.cmp(b.0))
+                a.1.latest.timestamp.total_cmp(&b.1.latest.timestamp).then(a.0.cmp(b.0))
             }).map(|(key, _)| *key)
         {
             self.ip_to_mac.remove(&oldest);
         }
-        self.ip_to_mac.insert(key, ArpObservation { mac, timestamp: pkt.timestamp, frame: pkt.no });
+        let latest = ArpObservation { mac, timestamp: pkt.timestamp, frame: pkt.no };
+        let previous_owner = known.and_then(|entry| {
+            if entry.latest.mac == mac { entry.previous_owner } else { Some(entry.latest) }
+        });
+        self.ip_to_mac.insert(key, ArpClaimHistory { latest, previous_owner });
 
-        if let Some(known) = known
-            && known.mac != mac
-            && pkt.timestamp - known.timestamp <= ARP_COMPARISON_WINDOW_SECS
+        if let Some(history) = known
+            && history.latest.mac != mac
+            && pkt.timestamp - history.latest.timestamp <= ARP_COMPARISON_WINDOW_SECS
         {
+            let known = history.latest;
+            if let Some(first) = history.previous_owner
+                && first.mac == mac
+                && first.timestamp < known.timestamp && known.timestamp < pkt.timestamp
+                && pkt.timestamp - first.timestamp <= ARP_ALTERNATION_WINDOW_SECS
+                && first.frame != known.frame && first.frame != pkt.no && known.frame != pkt.no
+            {
+                let returning = format_mac(mac);
+                let other = format_mac(known.mac);
+                let (a, b) = if mac < known.mac { (&returning, &other) } else { (&other, &returning) };
+                self.push_ids_finding(IdsFinding {
+                    alert: IdsAlert {
+                        pkt_no: pkt.no,
+                        signature: "Alternating ARP claims",
+                        severity: Severity::Medium,
+                        detail: format!(
+                            "ARP replies for {ip} alternated {returning}, {other}, {returning} within 30 seconds; failover, duplicate addressing, and spoofing are possible"
+                        ),
+                    },
+                    related_packets: vec![first.frame, known.frame],
+                    correlation_key: Some(format!("{scope:?}:{ip}:{a}:{b}")),
+                });
+            }
             if self.arp_anomalies.len() >= MAX_ENTRIES {
                 self.arp_anomalies.remove(0);
             }

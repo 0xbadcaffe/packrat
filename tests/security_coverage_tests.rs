@@ -141,6 +141,10 @@ const COVERAGE: &[CoverageGroup] = &[
         positive_test: "arp_source_mismatch_is_distinct_from_binding_changes_and_vrrp",
     },
     CoverageGroup {
+        signatures: &["Alternating ARP claims"],
+        positive_test: "alternating_arp_claims_require_three_scoped_ordered_frames",
+    },
+    CoverageGroup {
         signatures: &["DNS transaction question mismatch"],
         positive_test: "correlates_matching_transactions_and_rejects_question_substitution",
     },
