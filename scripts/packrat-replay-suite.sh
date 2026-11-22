@@ -9,6 +9,7 @@ usage() {
         'Use opening_evidence to check exact supporting frames: [{"rule_id":"scan.horizontal","opening_frame":12,"frames":[2,12]}].' \
         'Use expect_snapshots to also check the total number of openings and updates in a case.' \
         'Set "allow_truncated":true only for a case intentionally replaying partial frames.' \
+        'Use "single_tag_interfaces":["access1"] to apply an exact interface-name VLAN policy during a case.' \
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
         'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.' \
         'A capture that changes during replay is marked inconclusive, even without a baseline.' \
@@ -41,6 +42,9 @@ if ! validated=$(head -c 65537 -- "$1" | jq -Rces '
         type == "object" and (.name | text(128)) and (.capture | text(1024))
         and ((has("expect_snapshots") | not) or (.expect_snapshots | count))
         and ((has("allow_truncated") | not) or (.allow_truncated | type == "boolean"))
+        and ((if has("single_tag_interfaces") then .single_tag_interfaces else [] end)
+            | type == "array" and length <= 32 and (unique | length) == length
+            and all(.[]; type == "string" and length <= 128 and test("\\A[ -~]+\\z") and (startswith("-") | not)))
         and ((.expect_counts // {}) | type == "object" and rules and all(.[]; count))
         and ((.opening_frames // {}) | type == "object" and rules and all(.[]; frame_list))
         and ((if has("opening_evidence") then .opening_evidence else [] end)
@@ -158,6 +162,7 @@ while IFS= read -r label; do
     if [[ $capture != /* ]]; then capture="$base/$capture"; fi
     mapfile -t options < <(jq -r '
         (if .allow_truncated == true then "--allow-truncated" else empty end),
+        (.single_tag_interfaces[]? | "--single-tag-interface", .),
         (.expect_counts // {} | to_entries[] | "--expect-alert", (.key + "=" + (.value | floor | tostring))),
         (.opening_frames // {} | to_entries[] | .key as $id | .value[] |
             "--expect-alert-frame", ($id + "=" + (floor | tostring)))

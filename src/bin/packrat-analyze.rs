@@ -5,6 +5,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
 use packrat_tui::engine::{AnalysisCore, PacketDisposition};
+use packrat_tui::analysis::vlan::VlanPolicy;
 use packrat_tui::net::packet::CaptureMetadata;
 use packrat_tui::pcap_replay::stream_pcap;
 use serde::Serialize;
@@ -24,11 +25,13 @@ fn analyze(
     helper: Option<std::path::PathBuf>,
     alerts_only: bool,
     allow_truncated: bool,
+    vlan_policy: VlanPolicy,
     mut replay: ReplayAlerts,
     output: &mut impl Write,
 ) -> Result<(), String> {
     let mut core = AnalysisCore::default();
     core.quic_scope.decode_helper_path = helper;
+    core.vlan_intel.policy = vlan_policy;
     // Only recent packets are supplied as pre-incident context. Capture bytes
     // remain in the original file; the input is never loaded wholesale.
     let mut history = VecDeque::with_capacity(256);
@@ -162,12 +165,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut helper = None;
     let mut alerts_only = false;
     let mut allow_truncated = false;
+    let mut vlan_policy = VlanPolicy::default();
     let mut replay = ReplayAlerts::default();
     let mut positional = false;
     while let Some(arg) = args.next() {
         if !positional && (arg == "--help" || arg == "-h") {
             println!(
-                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--expect-alert-frame RULE_ID=FRAME] [--allow-truncated] [--quic-decode-helper PROGRAM] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nExpectations imply --alerts-only and exit nonzero on mismatches or skipped input. Truncated frames make expectations inconclusive unless --allow-truncated is set. --expect-alert counts newly grouped alerts; --expect-alert-frame labels their exact opening frames for a rule. Repeat the frame option for each expected frame.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
+                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--expect-alert-frame RULE_ID=FRAME] [--allow-truncated] [--quic-decode-helper PROGRAM] [--single-tag-interface NAME] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nExpectations imply --alerts-only and exit nonzero on mismatches or skipped input. Truncated frames make expectations inconclusive unless --allow-truncated is set. --expect-alert counts newly grouped alerts; --expect-alert-frame labels their exact opening frames for a rule. Repeat the frame option for each expected frame.\n--single-tag-interface requires an exact PCAPNG interface name and may be repeated. Unnamed interfaces do not match.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
             );
             return Ok(());
         }
@@ -179,6 +183,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             alerts_only = true;
         } else if !positional && arg == "--allow-truncated" {
             allow_truncated = true;
+        } else if !positional && arg == "--single-tag-interface" {
+            let name = args.next().ok_or("--single-tag-interface requires a name")?;
+            vlan_policy.add_single_tag_interface(name.to_str().ok_or("Interface name must be UTF-8")?)?;
         } else if !positional && arg == "--expect-alert" {
             let expectation = args.next().ok_or("Missing RULE_ID=COUNT after --expect-alert")?;
             replay.expect(expectation.to_str().ok_or("Alert expectations must be UTF-8")?)?;
@@ -208,6 +215,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         helper,
         alerts_only,
         allow_truncated,
+        vlan_policy,
         replay,
         &mut BufWriter::new(stdout.lock()),
     )?;

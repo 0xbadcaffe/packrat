@@ -113,8 +113,12 @@ source "$root/scripts/packrat-rollout.sh"
     read_launch_profile "${profile[@]}" --archive-alert-evidence "$archive" --archive-max-frames 4096
     [[ $(launch_capture "$main_session" /candidate) == *$'<--archive-alert-evidence>\n<'"$archive"$'>\n<--archive-max-frames>\n<4096>' ]]
     [[ $(launch_capture "$bridge_session" /candidate) == *$'<--archive-alert-evidence>\n</backup/stage-data/packet-archive>'* ]]
+    if read_launch_profile "${profile[@]}" --single-tag-interface --archive; then exit 1; fi
+    read_launch_profile "${profile[@]}" --single-tag-interface 'Access Link' --archive "$archive"
+    [[ $(launch_capture "$main_session" /candidate) == *$'<--single-tag-interface>\n<Access Link>\n<--archive>'* ]]
+    [[ $(launch_capture "$bridge_session" /candidate) == *$'<--single-tag-interface>\n<Access Link>\n<--archive>'* ]]
     read_launch_profile "${profile[@]}"
-    [[ -z $archive_path && $archive_flag == --archive && ${#archive_limits[@]} == 0 ]]
+    [[ -z $archive_path && $archive_flag == --archive && ${#archive_limits[@]} == 0 && ${#vlan_policy_args[@]} == 0 ]]
 )
 
 scratch=$(mktemp -d)

@@ -31,11 +31,12 @@ pub struct StartupOptions {
     pub archive_path: Option<std::path::PathBuf>,
     pub archive_alert_evidence_only: bool,
     pub archive_limits: crate::storage::packet_archive::ArchiveLimits,
+    pub vlan_policy: crate::analysis::vlan::VlanPolicy,
 }
 
 pub fn usage() -> String {
     let endpoint_help =
-        "      --endpoint-evidence PATH import endpoint impact evidence as NDJSON\n";
+        "      --endpoint-evidence PATH import endpoint impact evidence as NDJSON\n      --single-tag-interface NAME  flag stacked VLAN tags on an exact capture interface; repeatable\n";
     let base = usage_base();
     base.replace("      --socket-events", &format!("{endpoint_help}      --archive PATH           retain packets and SQLite index (pauses at limits)\n      --archive-alert-evidence PATH  retain only referenced HIGH/CRITICAL alert frames, not restored cases\n      --archive-max-mib N      archived packet bytes in MiB (default: 256)\n      --archive-max-frames N   total indexed frames (default: 100000)\n      --socket-events"))
 }
@@ -71,6 +72,7 @@ where
         archive_path: None,
         archive_alert_evidence_only: false,
         archive_limits: Default::default(),
+        vlan_policy: Default::default(),
     };
     let mut archive_limits_set = false;
     let mut index = 0;
@@ -110,6 +112,12 @@ where
                     .get(index)
                     .ok_or("--endpoint-evidence requires an NDJSON path")?;
                 options.endpoint_evidence_path = Some(value.into());
+            }
+            "--single-tag-interface" => {
+                index += 1;
+                options.vlan_policy.add_single_tag_interface(
+                    args.get(index).ok_or("--single-tag-interface requires a name")?,
+                )?;
             }
             "-s" | "--simulation" => options.mode = StartupMode::Simulation,
             "-h" | "--help" => return Ok(CliAction::Help),

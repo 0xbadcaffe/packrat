@@ -14,7 +14,7 @@ backup_dir=
 stage_binary=
 archive_path=
 archive_flag=--archive
-archive_limits=()
+archive_limits=() vlan_policy_args=()
 
 error() { printf '%s\n' "$*" >&2; }
 
@@ -163,13 +163,15 @@ await_primary_watcher() {
 
 read_launch_profile() {
     local flag value path='' mode=--archive max_mib='' max_frames=''
-    local -a limits=()
+    local -a limits=() policy=()
+    local LC_ALL=C
     [[ ${1-} == "$installed" && ${2-} == --telemetry-listen && ${3-} == "$health_addr" ]] || return 1
     shift 3
     while (( $# > 0 )); do
         (( $# >= 2 )) || return 1
         flag=$1 value=$2
         case $flag in
+            --single-tag-interface) [[ -n $value && $value != -* && ${#value} -le 128 && $value != *[^[:print:]]* && ${#policy[@]} -lt 64 ]] || return 1; policy+=("$flag" "$value") ;;
             --archive|--archive-alert-evidence)
                 [[ -z $path && $value == /* && $value != / ]] || return 1
                 path=$value mode=$flag
@@ -191,7 +193,7 @@ read_launch_profile() {
     [[ -n $path || ${#limits[@]} == 0 ]] || return 1
     archive_path=$path
     archive_flag=$mode
-    archive_limits=("${limits[@]}")
+    archive_limits=("${limits[@]}") vlan_policy_args=("${policy[@]}")
 }
 
 archive_for_session() {
@@ -245,6 +247,7 @@ candidate_supports_profile() {
     local help
     help=$("$candidate" --help) || return 1
     [[ $help == *--telemetry-listen* ]] || return 1
+    [[ ${#vlan_policy_args[@]} == 0 || $help == *'--single-tag-interface NAME'* ]] || return 1
     [[ -z $archive_path ]] ||
         [[ $help == *"$archive_flag PATH"* && $help == *--archive-max-mib* && $help == *--archive-max-frames* ]]
 }
@@ -294,9 +297,9 @@ replace_installed() {
 
 launch_capture() {
     local session=$1 executable=$2 archive
-    local -a archive_args=()
+    local -a archive_args=("${vlan_policy_args[@]}")
     archive=$(archive_for_session "$session")
-    if [[ -n $archive ]]; then archive_args=("$archive_flag" "$archive" "${archive_limits[@]}"); fi
+    if [[ -n $archive ]]; then archive_args+=("$archive_flag" "$archive" "${archive_limits[@]}"); fi
     case $session in
         "$main_session")
             tmux new-session -d -s "$session" -c / -x 150 -y 40 \

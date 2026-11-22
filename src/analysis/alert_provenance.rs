@@ -69,6 +69,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check both tags against the capture interface's trunk or provider tunnel policy. Tag stacking alone does not prove cross-VLAN forwarding.",
         ),
         (
+            "VLAN", "Unexpected VLAN tag stack", "vlan.tag_stack_policy_violation", 1, DirectObservation,
+            "Verify the capture-interface mapping and expected switch-port policy, then check switch logs before inferring forwarding.",
+        ),
+        (
             "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 6, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),

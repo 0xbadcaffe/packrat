@@ -64,3 +64,51 @@ fn stacked_vlan_replay_distinguishes_wire_observation_from_inferred_hopping() {
     assert!(detail.contains("outer VLAN 100 (0x88a8) and inner VLAN 20 (0x8100)"));
     assert!(detail.contains("interface 1; port policy and forwarding are unverified"));
 }
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn single_tag_policy_replay_requires_an_exact_named_interface() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let capture = root.join("mixed.pcapng");
+    let mut writer = PcapNgWriter::create(&capture).unwrap();
+    for (frame, interface_id, name, tags) in [
+        (1, 0, Some("Access Link"), 2),
+        (2, 1, Some("Access Link backup"), 2),
+        (3, 2, None, 2),
+        (4, 0, Some("Access Link"), 3),
+        (5, 0, Some("Access Link"), 1),
+    ] {
+        let mut packet = arp::reply(frame, frame as f64, 20, 1);
+        if tags >= 2 {
+            packet.bytes.splice(12..12, [0x88, 0xa8, 0, 100]);
+        }
+        if tags == 3 {
+            packet.bytes.splice(20..20, [0x81, 0, 0, 30]);
+        }
+        let length = packet.bytes.len() as u32;
+        packet.length = length as u16;
+        packet.capture = Some(CaptureMetadata {
+            timestamp: Some(CaptureTimestamp { ticks: frame, resolution: TimestampResolution::Decimal(0), offset_seconds: 0 }),
+            captured_length: length, wire_length: length, link_type: 1,
+            section_id: 0, interface_id, interface_name: name.map(str::to_owned), comments: Vec::new(),
+        });
+        writer.write_packet(&packet).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let policy = "vlan.tag_stack_policy_violation";
+    let observation = "vlan.tag_stack_observed";
+    let manifest = root.join("policy.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":[
+        {"name":"default policy","capture":"mixed.pcapng","expect_snapshots":3,
+         "expect_counts":{(policy):0,(observation):3},"opening_frames":{(observation):[1,2,3]}},
+        {"name":"named access policy","capture":"mixed.pcapng","single_tag_interfaces":["Access Link"],"expect_snapshots":4,
+         "expect_counts":{(policy):2,(observation):2},"opening_frames":{(policy):[1,4],(observation):[2,3]},
+         "opening_evidence":[{"rule_id":policy,"opening_frame":1,"frames":[1]},
+                             {"rule_id":policy,"opening_frame":4,"frames":[4]}]},
+    ]}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap()["passed"], 2);
+}

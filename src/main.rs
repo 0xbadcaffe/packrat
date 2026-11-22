@@ -75,6 +75,7 @@ async fn main() -> Result<()> {
         }
     }
     app.configure_core(move |core| {
+        core.vlan_intel.policy = options.vlan_policy;
         core.tls_tracker.decrypt_helper_path = options.tls_decrypt_helper_path;
         core.quic_scope.decode_helper_path = options.quic_decode_helper_path;
     });

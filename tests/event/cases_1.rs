@@ -34,6 +34,19 @@ fn alert_archive_is_an_explicit_alternative_to_full_capture_retention() {
 }
 
 #[test]
+fn single_tag_interface_policy_requires_distinct_printable_names() {
+    let parsed = app::parse_startup_args(["--single-tag-interface", "wlan1", "--single-tag-interface", "Access Link"]).unwrap();
+    let CliAction::Run(options) = parsed else { panic!("Expected run options") };
+    let mut policy = packrat_tui::analysis::vlan::VlanPolicy::default();
+    policy.add_single_tag_interface("Access Link").unwrap();
+    policy.add_single_tag_interface("wlan1").unwrap();
+    assert_eq!(options.vlan_policy, policy);
+    assert!(app::parse_startup_args(["--single-tag-interface", "--simulation"]).is_err());
+    assert!(app::parse_startup_args(["--single-tag-interface", "port\n1"]).is_err());
+    assert!(app::parse_startup_args(["--single-tag-interface", "wlan1", "--single-tag-interface", "wlan1"]).is_err());
+}
+
+#[test]
 fn parse_startup_args_defaults_to_capture() {
     assert_eq!(
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
@@ -55,6 +68,7 @@ fn parse_startup_args_defaults_to_capture() {
             archive_path: None,
             archive_alert_evidence_only: false,
             archive_limits: Default::default(),
+            vlan_policy: Default::default(),
         })
     );
 }
@@ -81,6 +95,7 @@ fn parse_startup_args_enables_simulation() {
             archive_path: None,
             archive_alert_evidence_only: false,
             archive_limits: Default::default(),
+            vlan_policy: Default::default(),
         })
     );
     assert_eq!(
@@ -103,6 +118,7 @@ fn parse_startup_args_enables_simulation() {
             archive_path: None,
             archive_alert_evidence_only: false,
             archive_limits: Default::default(),
+            vlan_policy: Default::default(),
         })
     );
 }
@@ -147,6 +163,7 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
             archive_path: None,
             archive_alert_evidence_only: false,
             archive_limits: Default::default(),
+            vlan_policy: Default::default(),
         })
     );
 }
@@ -174,6 +191,7 @@ fn parse_startup_args_accepts_key_log_path() {
             archive_path: None,
             archive_alert_evidence_only: false,
             archive_limits: Default::default(),
+            vlan_policy: Default::default(),
         })
     );
 }

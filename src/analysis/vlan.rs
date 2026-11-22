@@ -12,12 +12,15 @@ use std::collections::{HashMap, HashSet, BTreeMap};
 use crate::net::packet::Packet;
 #[path = "vlan_dtp.rs"]
 mod dtp;
+#[path = "vlan_policy.rs"]
+mod policy;
+pub use policy::VlanPolicy;
 
 // ─── DTP detection ────────────────────────────────────────────────────────────
 // DTP frames are sent to the Cisco multicast MAC 01:00:0c:cc:cc:cc
 const DTP_DST_MAC: [u8; 6] = [0x01, 0x00, 0x0c, 0xcc, 0xcc, 0xcc];
 
-fn two_vlan_tags(raw: &[u8]) -> Option<[(u16, u16); 2]> {
+fn vlan_stack_prefix(raw: &[u8]) -> Option<([(u16, u16); 2], bool)> {
     let field = |offset| Some(u16::from_be_bytes(raw.get(offset..offset + 2)?.try_into().ok()?));
     let is_tag = |kind| matches!(kind, 0x8100 | 0x88a8);
     let outer = field(12)?;
@@ -25,10 +28,14 @@ fn two_vlan_tags(raw: &[u8]) -> Option<[(u16, u16); 2]> {
         return None;
     }
     let inner = field(16)?;
-    if !is_tag(inner) || is_tag(field(20)?) {
+    if !is_tag(inner) {
         return None;
     }
-    Some([(outer, field(14)? & 0x0fff), (inner, field(18)? & 0x0fff)])
+    let deeper = is_tag(field(20)?);
+    if deeper {
+        field(24)?;
+    }
+    Some(([(outer, field(14)? & 0x0fff), (inner, field(18)? & 0x0fff)], deeper))
 }
 
 // ─── Data types ───────────────────────────────────────────────────────────────
@@ -133,6 +140,7 @@ impl MacVlanMap {
 
 #[derive(Debug, Default)]
 pub struct VlanIntel {
+    pub policy: VlanPolicy,
     /// Per-VLAN statistics.
     pub stats:    BTreeMap<u16, VlanStats>,
     /// Accumulated alerts.
@@ -172,16 +180,27 @@ impl VlanIntel {
             );
         }
 
-        if let Some([(outer_type, outer), (inner_type, inner)]) = two_vlan_tags(&pkt.bytes) {
+        let policy_interface = pkt.capture.as_ref().and_then(|meta| meta.interface_name.as_deref())
+            .filter(|name| self.policy.expects_single_tag(name));
+        if let Some(([(outer_type, outer), (inner_type, inner)], deeper)) = vlan_stack_prefix(&pkt.bytes)
+            && (!deeper || policy_interface.is_some())
+        {
             let scope = pkt.capture.as_ref().map(|meta| (meta.section_id, meta.interface_id));
-            let key = format!("tag_stack:{scope:?}:{outer_type:04x}:{outer}:{inner_type:04x}:{inner}");
+            let key = format!("tag_stack:{scope:?}:{outer_type:04x}:{outer}:{inner_type:04x}:{inner}:{deeper}");
             if self.allow_alert(key.clone(), pkt.no) {
                 let location = scope.map_or_else(|| "unknown capture interface".to_owned(),
                     |(section, interface)| format!("capture section {section}, interface {interface}"));
+                let (severity, category, context) = if let Some(name) = policy_interface {
+                    (AlertSeverity::Warning, "Unexpected VLAN tag stack",
+                        format!("single-tag policy for {name:?} does not allow this stack; forwarding is unverified"))
+                } else {
+                    (AlertSeverity::Info, "Stacked VLAN tags", "port policy and forwarding are unverified".into())
+                };
+                let more = if deeper { "; at least three tags present" } else { "" };
                 self.alerts.push(VlanAlert {
-                    severity: AlertSeverity::Info,
-                    category: "Stacked VLAN tags".into(),
-                    detail: format!("Observed outer VLAN {outer} (0x{outer_type:04x}) and inner VLAN {inner} (0x{inner_type:04x}) at {location}; port policy and forwarding are unverified"),
+                    severity,
+                    category: category.into(),
+                    detail: format!("Observed outer VLAN {outer} (0x{outer_type:04x}) and inner VLAN {inner} (0x{inner_type:04x}) at {location}{more}; {context}"),
                     pkt_no: pkt.no, timestamp: pkt.timestamp, related_packet: None,
                     correlation_key: Some(key),
                 });
