@@ -68,6 +68,24 @@ impl SecurityEngine {
                 Some(format!("{:?}:{}>{}", service_scope(pkt), pkt.src, pkt.dst)),
             );
         }
+        if src_port == 445
+            && let Some((445, client_port)) = crate::analysis::stream::tcp_port_pair(pkt)
+            && let Some(session_id) = crate::analysis::stream::tcp_segment_payload(pkt)
+                .and_then(|(_, payload)| smb_wire::anonymous_session_id(payload))
+        {
+            emit(
+                IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "SMB2 anonymous session accepted",
+                    severity: Severity::Medium,
+                    detail: format!(
+                        "{} accepted an anonymous SMB session for {}; subsequent share access was not verified",
+                        pkt.src, pkt.dst
+                    ),
+                },
+                Some(format!("{:?}:{}>{}:{client_port}:{session_id}", service_scope(pkt), pkt.src, pkt.dst)),
+            );
+        }
 
         // ── Log4Shell ───────────────────────────────────────────────────────
         if lookup_payload(pkt, reassembled)

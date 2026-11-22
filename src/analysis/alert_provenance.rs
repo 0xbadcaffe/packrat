@@ -133,6 +133,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Identify the server and legacy dependency; verify SMBv1 configuration and pilot removal before disabling it.",
         ),
         (
+            "IDS", "SMB2 anonymous session accepted", "smb2.anonymous_session_accepted", 1, DirectObservation,
+            "Verify the server's anonymous access policy and check subsequent TREE_CONNECT responses or server share audit logs.",
+        ),
+        (
             "IDS", "NBNS WPAD address reply", "nbns.wpad_address_reply", 1, DirectObservation,
             "Check whether the responder is an approved proxy discovery service and whether the client used it.",
         ),

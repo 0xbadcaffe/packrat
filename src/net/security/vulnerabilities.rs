@@ -86,19 +86,6 @@ impl SecurityEngine {
             }
         }
 
-        // SMB null session
-        if dst_port == 445 {
-            // NTLM with empty credentials signature
-            if Self::contains_str_ci(bytes, b"NTLMSSP")
-                && Self::contains_bytes(bytes, &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-            {
-                self.push_vuln(VulnHit {
-                    pkt_no: pkt.no,
-                    kind: "SMB Null Session",
-                    detail: format!("SMB anonymous/null NTLM from {}", pkt.src),
-                });
-            }
-        }
     }
 
     // ─── Repeated Service Observations ────────────────────────────────────────

@@ -99,6 +99,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "DNS reply changed at the same resolver",
     "DNS answer set changed at the same resolver",
     "SMBv1 server response",
+    "SMB2 anonymous session accepted",
     "Log4Shell (CVE-2021-44228)",
     "Shellcode NOP sled",
     "NBNS WPAD address reply",

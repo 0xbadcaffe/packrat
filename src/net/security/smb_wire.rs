@@ -42,6 +42,23 @@ pub(super) fn is_smb2_logon_failure(payload: &[u8]) -> bool {
         && error_data_bytes <= message.len() - 72
 }
 
+pub(super) fn anonymous_session_id(payload: &[u8]) -> Option<u64> {
+    let message = session_setup(payload, true).filter(|message| message.len() >= 72)?;
+    if message[8..12] != [0; 4]
+        || message[64..66] != 9_u16.to_le_bytes()
+        || message[66..68] != 2_u16.to_le_bytes() // SMB2_SESSION_FLAG_IS_NULL.
+    {
+        return None;
+    }
+    let offset = usize::from(u16::from_le_bytes([message[68], message[69]]));
+    let length = usize::from(u16::from_le_bytes([message[70], message[71]]));
+    if !(offset == 0 && length == 0) && (offset < 72 || offset + length > message.len()) {
+        return None;
+    }
+    let session_id = u64::from_le_bytes(message[40..48].try_into().ok()?);
+    (session_id != 0).then_some(session_id)
+}
+
 pub(super) fn has_ntlm_authenticate(payload: &[u8]) -> bool {
     let Some(message) = session_setup(payload, false).filter(|message| message.len() >= 88) else {
         return false;

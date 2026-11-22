@@ -280,3 +280,5 @@ mod dhcp_cases;
 mod lookup_marker_cases;
 #[path = "security_policy/tcp_reset_cases.rs"]
 mod tcp_reset_cases;
+#[path = "security_policy/smb_anonymous_cases.rs"]
+mod smb_anonymous_cases;

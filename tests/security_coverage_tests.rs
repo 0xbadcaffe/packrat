@@ -9,6 +9,10 @@ struct CoverageGroup {
 
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
+        signatures: &["SMB2 anonymous session accepted"],
+        positive_test: "anonymous_smb_requires_a_successful_server_session_setup",
+    },
+    CoverageGroup {
         signatures: &["DNS reply changed at the same resolver"],
         positive_test: "unsupported_dns_answer_changes_remain_low_confidence_wire_findings",
     },
@@ -199,6 +203,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy/cases_3.rs"),
     include_str!("security_policy/dhcp_cases.rs"),
     include_str!("security_policy/tcp_reset_cases.rs"),
+    include_str!("security_policy/smb_anonymous_cases.rs"),
     include_str!("ipv6_fragment_tests.rs"),
     include_str!("arp_binding_tests.rs"),
     include_str!("dns_transaction_tests.rs"),
