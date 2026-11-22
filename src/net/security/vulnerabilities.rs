@@ -164,7 +164,7 @@ impl SecurityEngine {
         window
             .observations
             .retain(|entry| window.last_seen - entry.timestamp <= AUTH_WINDOW_SECS);
-        if window.observations.is_empty() {
+        if window.observations.len() < AUTH_BURST_THRESHOLD.div_ceil(2) {
             window.alerted = false;
         }
         if window.observations.iter().any(|entry| entry.transport_token == token) {

@@ -286,6 +286,35 @@ fn http_burst_replay_counts_reordered_responses_only_within_the_active_window() 
 }
 
 #[test]
+fn http_burst_replay_keeps_sustained_traffic_grouped_and_records_a_renewed_burst() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("renewed-auth-burst.pcapng");
+    let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    let mut writer = PcapNgWriter::create(&path).unwrap();
+    for (index, timestamp) in [10.0, 10.1, 20.0, 20.1, 20.2, 42.0, 42.1, 58.0, 72.2, 72.3, 72.4, 72.5]
+        .into_iter().enumerate()
+    {
+        let frame = index as u64 + 1;
+        let mut packet = support::tcp(frame, frame as u32 * 100, 0x18, response, true);
+        packet.timestamp = timestamp;
+        writer.write_packet(&packet).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let output = run_with(&path, &["--expect-alert", "http.unauthorized_burst=1"]);
+    let rows = events(&output);
+    let auth: Vec<_> = rows.iter()
+        .filter(|row| row["alert"]["provenance"]["rule_id"] == "http.unauthorized_burst")
+        .map(|row| &row["alert"])
+        .collect();
+    assert_eq!(auth.len(), 2);
+    assert_eq!(auth[0]["packet_refs"], serde_json::json!([1, 2, 3, 4, 5]));
+    assert_eq!(auth[1]["id"], auth[0]["id"]);
+    assert_eq!(auth[1]["hit_count"], 2);
+    assert_eq!(auth[1]["packet_refs"], serde_json::json!([1, 2, 3, 4, 5, 8, 9, 10, 11, 12]));
+}
+
+#[test]
 fn labeled_scan_replay_differentiates_unique_targets_from_repeat_traffic() {
     let directory = tempfile::tempdir().unwrap();
     for (label, diverse) in [("repeated", false), ("fanout", true)] {

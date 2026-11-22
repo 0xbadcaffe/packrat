@@ -133,19 +133,19 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check the configured resolver policy, including approved public resolvers, VPNs and lab address ranges.",
         ),
         (
-            "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 3, DirectObservation,
+            "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 4, DirectObservation,
             "Compare the distinct 401 responses with application logs; check expected challenges.",
         ),
         (
-            "AUTH", "SSH connection-start burst", "ssh.connection_start_burst", 2, DirectObservation,
+            "AUTH", "SSH connection-start burst", "ssh.connection_start_burst", 3, DirectObservation,
             "Check handshake completion and compare with SSH server logs for authentication outcomes.",
         ),
         (
-            "AUTH", "FTP not-logged-in reply burst", "ftp.not_logged_in_burst", 2, DirectObservation,
+            "AUTH", "FTP not-logged-in reply burst", "ftp.not_logged_in_burst", 3, DirectObservation,
             "Inspect the preceding FTP commands and server logs; a 530 reply can reject a non-login command.",
         ),
         (
-            "AUTH", "SMB2 logon failure burst", "smb2.logon_failure_burst", 2, DirectObservation,
+            "AUTH", "SMB2 logon failure burst", "smb2.logon_failure_burst", 3, DirectObservation,
             "Compare session setup replies with Windows logon events; check for stale credentials or scheduled jobs.",
         ),
     ]
