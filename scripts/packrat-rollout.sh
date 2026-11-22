@@ -258,7 +258,7 @@ backup_space_ready() {
     ' <<< "$sizes"
 }
 
-prepare_backup_and_stage() {
+create_rollout_backup() {
     sudo -n install -d -o root -g root -m 0700 "$data_dir/backups" || return 1
     backup_dir=$(sudo -n mktemp -d "$data_dir/backups/rollout.XXXXXXXX") || return 1
     sudo -n install -o root -g root -m 0700 "$installed" "$backup_dir/packrat" || return 1
@@ -268,6 +268,10 @@ prepare_backup_and_stage() {
         error "Rollback backup did not match its source; inspect $backup_dir"
         return 1
     fi
+}
+
+prepare_backup_and_stage() {
+    create_rollout_backup || return 1
     stage_binary=$(sudo -n mktemp /usr/local/bin/.packrat-stage.XXXXXXXX) || return 1
     sudo -n install -o root -g root -m 0755 "$candidate" "$stage_binary" || return 1
     cmp -s "$candidate" "$stage_binary"

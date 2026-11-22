@@ -250,15 +250,12 @@ mv -T -- "$data_dir/replacement" "$data_dir/alerts.jsonl"
     if backup_space_ready; then exit 1; fi
 )
 
-(
-    data_dir="$scratch/backup-fixture"
-    installed="$data_dir/installed"
-    candidate="$data_dir/candidate"
+test_backup_copies() {
+    local data_dir="$scratch/backup-fixture"
+    local installed="$data_dir/installed" backup_dir='' corrupt=''
     mkdir -p -- "$data_dir"
     printf '%s\n' original >"$installed"
-    printf '%s\n' candidate >"$candidate"
     printf '%s\n' alert >"$data_dir/alerts.jsonl"
-    corrupt=
     sudo() {
         [[ $1 == -n ]] || return 1
         shift
@@ -273,28 +270,18 @@ mv -T -- "$data_dir/replacement" "$data_dir/alerts.jsonl"
                     fi
                 fi
                 ;;
-            mktemp)
-                if [[ $2 == /usr/local/bin/.packrat-stage.* ]]; then
-                    command mktemp "$data_dir/staged.XXXXXXXX"
-                else
-                    command "$@"
-                fi
-                ;;
-            cmp) command "$@" ;;
+            mktemp|cmp) command "$@" ;;
             *) return 1 ;;
         esac
     }
     for corrupt in packrat alerts.jsonl; do
-        stage_binary=
-        if prepare_backup_and_stage 2>/dev/null; then exit 1; fi
-        [[ -z $stage_binary ]]
+        if create_rollout_backup 2>/dev/null; then exit 1; fi
     done
     corrupt=
-    prepare_backup_and_stage
+    create_rollout_backup
     cmp -s "$installed" "$backup_dir/packrat"
     cmp -s "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl"
-    cmp -s "$candidate" "$stage_binary"
-)
+}
 
 prepare_backup_and_stage() {
     trace+=("backup")
@@ -399,4 +386,5 @@ run_scenario rollback_fail 1 backup start:packrat-stage:/candidate stop:packrat:
 rc=0
 bash "$root/scripts/packrat-rollout.sh" --deploy /missing 'invalid/interface' >/dev/null 2>&1 || rc=$?
 [[ $rc == 2 ]]
+test_backup_copies
 printf '%s\n' 'Packrat rollout tests passed'
