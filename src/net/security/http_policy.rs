@@ -1,7 +1,20 @@
 use super::*;
 
+pub(super) const MAX_HTTP_HEADER_BYTES: usize = 16_384;
+pub(super) const MAX_HTTP_HEADERS: usize = 48;
+
+pub(super) fn response_status(payload: &[u8]) -> Option<u16> {
+    let mut headers = [httparse::EMPTY_HEADER; MAX_HTTP_HEADERS];
+    let mut response = httparse::Response::new(&mut headers);
+    let bounded = &payload[..payload.len().min(MAX_HTTP_HEADER_BYTES)];
+    if !response.parse(bounded).ok()?.is_complete() {
+        return None;
+    }
+    response.code.filter(|code| (100..=599).contains(code))
+}
+
 pub(super) fn basic_authorization_header(payload: &[u8]) -> Option<&'static str> {
-    let header = &payload[..payload.len().min(16_384)];
+    let header = &payload[..payload.len().min(MAX_HTTP_HEADER_BYTES)];
     let end = header.windows(4).position(|window| window == b"\r\n\r\n")?;
     let mut lines = header[..end + 2].split_inclusive(|&byte| byte == b'\n');
     let mut request = lines.next()?.strip_suffix(b"\r\n")?.split(|&byte| byte == b' ');

@@ -54,3 +54,38 @@ fn http_observations_use_wire_payload_bounds_and_header_direction() {
         (2, 8080, Some(200))
     );
 }
+
+#[test]
+fn http_auth_burst_ignores_incomplete_responses_and_port_metadata_mismatches() {
+    let mut security = SecurityEngine::default();
+    let response = |no, wire_port: u16, payload: &[u8]| {
+        let mut wire = super::ipv4_tcp_packet(no, no as u32 * 1000, 0x18, payload).bytes;
+        wire[34..36].copy_from_slice(&wire_port.to_be_bytes());
+        parse_ethernet(&wire, no, no as f64)
+    };
+    let valid = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    for (i, partial) in [
+        b"HTTP/1.1 401 Unauthorized\r\n".as_slice(),
+        b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n",
+        b"HTTP/1.1 401 Unauthorized\r\nBrokenHeader\r\n\r\n",
+        b"HTTP/1.0 401 Unauthorized\r\nContent-Length: ",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        security.update(&response(i as u64 + 1, 80, partial));
+    }
+    let mut mismatch = response(5, 12345, valid);
+    mismatch.src_port = Some(80);
+    security.update(&mismatch);
+    assert!(security.brute_force.is_empty());
+
+    for no in 6..=10 {
+        security.update(&response(no, 80, valid));
+    }
+    let [alert] = security.brute_force.as_slice() else {
+        panic!("expected one HTTP response burst");
+    };
+    assert_eq!(alert.packet_refs, [6, 7, 8, 9, 10]);
+    assert_eq!(alert.attempts, 5);
+}

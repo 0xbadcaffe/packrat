@@ -52,6 +52,9 @@ impl SecurityEngine {
             80 | 443 | 8080 if is_http_unauthorized(payload) => "HTTP",
             _ => return,
         };
+        if crate::analysis::stream::tcp_port_pair(pkt) != Some((server_port, client_port)) {
+            return;
+        }
         self.record_service_observation(pkt, service, true, server_port, (client_port, sequence));
     }
 
@@ -147,15 +150,6 @@ fn is_ftp_not_logged_in(payload: &[u8]) -> bool {
 }
 
 fn is_http_unauthorized(payload: &[u8]) -> bool {
-    let Some(status) = payload
-        .strip_prefix(b"HTTP/1.1 ")
-        .or_else(|| payload.strip_prefix(b"HTTP/1.0 "))
-        .and_then(|line| line.strip_prefix(b"401 "))
-    else {
-        return false;
-    };
-    status
-        .iter()
-        .position(|byte| matches!(byte, b'\r' | b'\n'))
-        .is_some_and(|end| status.get(end..end + 2) == Some(b"\r\n"))
+    (payload.starts_with(b"HTTP/1.1 401") || payload.starts_with(b"HTTP/1.0 401"))
+        && http_policy::response_status(payload) == Some(401)
 }

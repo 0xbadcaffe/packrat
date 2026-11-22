@@ -1,8 +1,6 @@
 use super::*;
 
 const HTTP_PORTS: [u16; 5] = [80, 8080, 3000, 8000, 8888];
-const MAX_HTTP_HEADER_BYTES: usize = 16_384;
-const MAX_HTTP_HEADERS: usize = 48;
 
 impl SecurityEngine {
     // ─── HTTP Analytics ───────────────────────────────────────────────────────
@@ -82,24 +80,20 @@ fn is_rc4_suite(cipher: u16) -> bool {
 }
 
 fn http_observation(pkt: &Packet, source: u16, destination: u16, payload: &[u8]) -> Option<HttpRecord> {
-    let payload = &payload[..payload.len().min(MAX_HTTP_HEADER_BYTES)];
-    let mut headers = [httparse::EMPTY_HEADER; MAX_HTTP_HEADERS];
     let (port, method, path, user_agent, response_code) = if payload.starts_with(b"HTTP/") {
         if !HTTP_PORTS.contains(&source) {
             return None;
         }
-        let mut response = httparse::Response::new(&mut headers);
-        if !response.parse(payload).ok()?.is_complete() {
-            return None;
-        }
-        let status = response.code.filter(|code| (100..=599).contains(code))?;
+        let status = http_policy::response_status(payload)?;
         (source, String::new(), String::new(), String::new(), Some(status))
     } else {
         if !HTTP_PORTS.contains(&destination) {
             return None;
         }
+        let mut headers = [httparse::EMPTY_HEADER; http_policy::MAX_HTTP_HEADERS];
         let mut request = httparse::Request::new(&mut headers);
-        if !request.parse(payload).ok()?.is_complete() {
+        let bounded = &payload[..payload.len().min(http_policy::MAX_HTTP_HEADER_BYTES)];
+        if !request.parse(bounded).ok()?.is_complete() {
             return None;
         }
         let user_agent = request.headers.iter().find(|field| field.name.eq_ignore_ascii_case("user-agent"))
