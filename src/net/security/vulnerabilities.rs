@@ -1,5 +1,8 @@
 use super::*;
 
+const AUTH_WINDOW_SECS: f64 = 30.0;
+const AUTH_BURST_THRESHOLD: usize = 5;
+
 impl SecurityEngine {
     // ─── Vulnerability Patterns ───────────────────────────────────────────────
 
@@ -135,19 +138,14 @@ impl SecurityEngine {
             scope: service_scope(pkt),
         };
         let now = pkt.timestamp;
+        if !now.is_finite() {
+            return;
+        }
         if self.bf_windows.len() >= MAX_ENTRIES && !self.bf_windows.contains_key(&key) {
             if let Some(oldest) = self
                 .bf_windows
                 .iter()
-                .min_by(|(_, a), (_, b)| {
-                    let last = |window: &BfWindow| {
-                        window
-                            .observations
-                            .last()
-                            .map_or(f64::NEG_INFINITY, |entry| entry.timestamp)
-                    };
-                    last(a).total_cmp(&last(b))
-                })
+                .min_by(|(_, a), (_, b)| a.last_seen.total_cmp(&b.last_seen))
                 .map(|(key, _)| key.clone())
             {
                 self.bf_windows.remove(&oldest);
@@ -155,28 +153,37 @@ impl SecurityEngine {
         }
         let window = self.bf_windows.entry(key.clone()).or_insert(BfWindow {
             observations: Vec::new(),
+            last_seen: now,
             alerted: false,
         });
+        window.last_seen = window.last_seen.max(now);
+        if window.last_seen - now > AUTH_WINDOW_SECS {
+            return;
+        }
 
         window
             .observations
-            .retain(|entry| (0.0..=30.0).contains(&(now - entry.timestamp)));
+            .retain(|entry| window.last_seen - entry.timestamp <= AUTH_WINDOW_SECS);
         if window.observations.is_empty() {
             window.alerted = false;
         }
         if window.observations.iter().any(|entry| entry.transport_token == token) {
             return;
         }
-        if window.observations.len() == 5 {
-            window.observations.remove(0);
-        }
         window.observations.push(AuthObservation {
             timestamp: now,
             packet_no: pkt.no,
             transport_token: token,
         });
+        if window.observations.len() > AUTH_BURST_THRESHOLD {
+            if let Some((oldest, _)) = window.observations.iter().enumerate()
+                .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp))
+            {
+                window.observations.remove(oldest);
+            }
+        }
 
-        if !window.alerted && window.observations.len() >= 5 {
+        if !window.alerted && window.observations.len() == AUTH_BURST_THRESHOLD {
             window.alerted = true;
             if self.brute_force.len() >= MAX_ENTRIES {
                 self.brute_force.remove(0);

@@ -257,6 +257,35 @@ fn labeled_http_replay_distinguishes_retransmissions_from_distinct_responses() {
 }
 
 #[test]
+fn http_burst_replay_counts_reordered_responses_only_within_the_active_window() {
+    let directory = tempfile::tempdir().unwrap();
+    let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    for (label, times, count) in [
+        ("reordered", [100.0, 102.0, 101.0, 103.0, 104.0], 1),
+        ("too-old", [100.0, 102.0, 70.0, 103.0, 104.0], 0),
+    ] {
+        let path = directory.path().join(format!("{label}.pcapng"));
+        let mut writer = PcapNgWriter::create(&path).unwrap();
+        for (index, timestamp) in times.into_iter().enumerate() {
+            let frame = index as u64 + 1;
+            let mut packet = support::tcp(frame, frame as u32 * 100, 0x18, response, true);
+            packet.timestamp = timestamp;
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+
+        let expected = format!("http.unauthorized_burst={count}");
+        let replay = run_with(&path, &["--expect-alert", &expected]);
+        let rows = events(&replay);
+        assert_eq!(rows.last().unwrap()["alert_expectations"]["verdict"], "passed");
+        if count == 1 {
+            let alert = rows.iter().find(|row| row["type"] == "alert").unwrap();
+            assert_eq!(alert["alert"]["packet_refs"], serde_json::json!([1, 2, 3, 4, 5]));
+        }
+    }
+}
+
+#[test]
 fn labeled_scan_replay_differentiates_unique_targets_from_repeat_traffic() {
     let directory = tempfile::tempdir().unwrap();
     for (label, diverse) in [("repeated", false), ("fanout", true)] {
