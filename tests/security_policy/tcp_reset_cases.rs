@@ -174,8 +174,9 @@ fn periodic_traffic_counts_new_tcp_sequences_not_identical_retransmissions() {
             let time = index as f64 * 15.0;
             let retry = packet(frame, 100, 0x18, b"same").with_number_and_timestamp(frame, time);
             assert!(repeated.inspect(&retry).ids.iter().all(|hit| hit.alert.signature != signature));
-            let data = packet(frame, 100 + index as u32 * 4, 0x18, b"same")
+            let mut data = packet(frame, 100 + index as u32 * 4, 0x18, b"same")
                 .with_number_and_timestamp(frame, time);
+            data.protocol = if frame % 2 == 0 { "TCP" } else { "TLS" }.into();
             let result = progressive.inspect(&data);
             let finding = result.ids.iter().find(|hit| hit.alert.signature == signature);
             if frame == 7 {

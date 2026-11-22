@@ -218,7 +218,7 @@ pub(super) struct TcpSignal {
 pub(super) struct BehaviorFlowKey {
     pub(super) first: (String, u16),
     pub(super) second: (String, u16),
-    pub(super) protocol: String,
+    pub(super) transport: &'static str,
     pub(super) scope: ServiceScope,
 }
 

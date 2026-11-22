@@ -39,6 +39,16 @@ fn segment_payload(packet: &Packet, view: TcpView) -> Option<(u32, &[u8])> {
 
 pub(crate) fn tcp_port_pair(packet: &Packet) -> Option<(u16, u16)> {
     let view = tcp_view(packet)?;
+    ports_for_view(packet, view)
+}
+
+pub(crate) fn tcp_data_port_pair(packet: &Packet) -> Option<(u16, u16)> {
+    let view = tcp_view(packet)?;
+    if view.payload == view.end { return None; }
+    ports_for_view(packet, view)
+}
+
+fn ports_for_view(packet: &Packet, view: TcpView) -> Option<(u16, u16)> {
     Some((read_u16(&packet.bytes, view.header)?, read_u16(&packet.bytes, view.header + 2)?))
 }
 

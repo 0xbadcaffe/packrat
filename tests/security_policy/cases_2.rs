@@ -1,5 +1,24 @@
 use super::*;
 
+fn periodic_datagram(no: u64, timestamp: f64, size: usize, client_port: u16, reverse: bool) -> Packet {
+    let mut bytes = vec![0; size];
+    bytes[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    bytes[14] = 0x45;
+    bytes[16..18].copy_from_slice(&((size - 14) as u16).to_be_bytes());
+    bytes[23] = 17;
+    let (a, b, src, dst) = if reverse {
+        ([10, 0, 0, 5], [203, 0, 113, 9], 443_u16, client_port)
+    } else {
+        ([203, 0, 113, 9], [10, 0, 0, 5], client_port, 443_u16)
+    };
+    bytes[26..30].copy_from_slice(&a);
+    bytes[30..34].copy_from_slice(&b);
+    bytes[34..36].copy_from_slice(&src.to_be_bytes());
+    bytes[36..38].copy_from_slice(&dst.to_be_bytes());
+    bytes[38..40].copy_from_slice(&((size - 34) as u16).to_be_bytes());
+    packrat_tui::net::parser::parse_ethernet(&bytes, no, timestamp)
+}
+
 #[test]
 fn detects_stp_topology_change_and_lldp_identity_change() {
     let mut security = SecurityEngine::default();
@@ -31,12 +50,7 @@ fn detects_stp_topology_change_and_lldp_identity_change() {
 fn detects_periodic_fixed_size_traffic() {
     let mut security = SecurityEngine::default();
     for index in 0..7_u64 {
-        security.update(&behavior_packet(
-            index + 1,
-            index as f64 * 10.0,
-            120,
-            vec![0; 120],
-        ));
+        security.update(&periodic_datagram(index + 1, index as f64 * 10.0, 120, 50000, false));
     }
     assert!(
         security
@@ -50,12 +64,7 @@ fn detects_periodic_fixed_size_traffic() {
         .into_iter()
         .enumerate()
     {
-        irregular.update(&behavior_packet(
-            index as u64 + 1,
-            timestamp,
-            100 + index * 17,
-            vec![0; 100],
-        ));
+        irregular.update(&periodic_datagram(index as u64 + 1, timestamp, 100 + index * 17, 50000, false));
     }
     assert!(
         !irregular
@@ -87,20 +96,39 @@ fn periodic_traffic_ignores_empty_tcp_segments_but_keeps_payload_samples() {
 }
 
 #[test]
+fn periodic_evidence_keeps_wire_transports_separate_despite_matching_labels_and_ports() {
+    const TITLE: &str = "Periodic fixed-size traffic";
+    let mut engine = SecurityEngine::default();
+    let mut malformed = SecurityEngine::default();
+    for index in 0..7 {
+        let no = index + 1;
+        let time = index as f64 * 10.0;
+        let mut packet = if index % 2 == 0 {
+            ipv4_tcp_packet(no, index as u32 * 12, 0x18, &[1; 12])
+                .with_number_and_timestamp(no, time)
+        } else {
+            periodic_datagram(no, time, 66, 50000, false)
+        };
+        packet.protocol = "TCP".into();
+        engine.update(&packet);
+        packet.bytes.fill(0);
+        malformed.update(&packet);
+    }
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+    assert!(malformed.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+}
+
+#[test]
 fn periodic_traffic_alerts_once_per_conversation_and_keeps_directional_evidence() {
-    use packrat_tui::engine::AnalysisCore;
+    use packrat_tui::{analysis::alert_center::AlertTransport, engine::AnalysisCore};
 
     let mut core = AnalysisCore::default();
     for sample in 0..7 {
         for source_port in [50000, 50001] {
             let no = sample * 4 + if source_port == 50000 { 1 } else { 3 };
-            let mut outbound = behavior_packet(no, sample as f64 * 10.0, 120, vec![0; 120]);
-            outbound.src_port = Some(source_port);
-            let mut inbound = outbound.clone();
-            std::mem::swap(&mut inbound.src, &mut inbound.dst);
-            std::mem::swap(&mut inbound.src_port, &mut inbound.dst_port);
-            inbound.no += 1;
-            inbound.timestamp += 0.5;
+            let time = sample as f64 * 10.0;
+            let outbound = periodic_datagram(no, time, 120, source_port, false);
+            let inbound = periodic_datagram(no + 1, time + 0.5, 120, source_port, true);
             core.analyze(&outbound);
             core.analyze(&inbound);
         }
@@ -113,7 +141,12 @@ fn periodic_traffic_alerts_once_per_conversation_and_keeps_directional_evidence(
     assert_eq!(alerts.len(), 2);
     assert_ne!(alerts[0].correlation_key, alerts[1].correlation_key);
     assert_eq!(alerts[0].severity, "MEDIUM");
-    assert!(alerts.iter().all(|alert| alert.flow.is_none()));
+    for (alert, port) in alerts.iter().zip([50000, 50001]) {
+        let flow = alert.flow.unwrap();
+        assert_eq!(flow.transport, AlertTransport::Udp);
+        assert_eq!(flow.source.to_string(), format!("203.0.113.9:{port}"));
+        assert_eq!(flow.destination.to_string(), "10.0.0.5:443");
+    }
     assert_eq!(alerts[0].packet_refs, [1, 5, 9, 13, 17, 21, 25]);
     assert_eq!(alerts[1].packet_refs, [3, 7, 11, 15, 19, 23, 27]);
 }
@@ -125,9 +158,9 @@ fn periodic_alert_reports_the_ranges_measured_from_its_evidence() {
         (0.0, 120), (9.0, 119), (20.0, 122), (f64::NAN, 500),
         (30.0, 121), (39.0, 118), (50.0, 120),
     ].into_iter().enumerate() {
-        engine.update(&behavior_packet(index as u64 + 1, timestamp, length, vec![0; length]));
+        engine.update(&periodic_datagram(index as u64 + 1, timestamp, length, 50000, false));
     }
-    let result = engine.inspect(&behavior_packet(8, 60.0, 120, vec![0; 120]));
+    let result = engine.inspect(&periodic_datagram(8, 60.0, 120, 50000, false));
     let finding = result.ids.iter().find(|finding| finding.alert.signature == "Periodic fixed-size traffic").unwrap();
     assert_eq!(finding.related_packets, [1, 2, 3, 5, 6, 7]);
     assert!(finding.alert.detail.contains("7 packets"));
@@ -139,11 +172,11 @@ fn periodic_alert_reports_the_ranges_measured_from_its_evidence() {
 fn periodic_alert_only_cites_the_regular_run_after_an_irregular_prefix() {
     let mut engine = SecurityEngine::default();
     for (index, timestamp) in [0.0, 1.0, 3.0, 14.0].into_iter().enumerate() {
-        engine.update(&behavior_packet(index as u64 + 1, timestamp, 400, vec![0; 400]));
+        engine.update(&periodic_datagram(index as u64 + 1, timestamp, 400, 50000, false));
     }
     for index in 0..7 {
         let timestamp = 60.0 + index as f64 * 10.0;
-        let result = engine.inspect(&behavior_packet(index + 5, timestamp, 120, vec![0; 120]));
+        let result = engine.inspect(&periodic_datagram(index + 5, timestamp, 120, 50000, false));
         let finding = result.ids.iter().find(|finding| finding.alert.signature == "Periodic fixed-size traffic");
         if index == 6 {
             let finding = finding.unwrap();
@@ -164,7 +197,7 @@ fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
     };
 
     let packet = |no, timestamp, wire_length, section_id, interface_id| {
-        let mut packet = behavior_packet(no, timestamp, 120, vec![0; 120]);
+        let mut packet = periodic_datagram(no, timestamp, 120, 50000, false);
         packet.capture = Some(CaptureMetadata {
             timestamp: Some(CaptureTimestamp {
                 ticks: timestamp as u64,
@@ -204,7 +237,7 @@ fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
         }
         let alert = scoped.alert_center.items.iter().find(|item| is_periodic(item)).unwrap();
         assert_eq!(alert.packet_refs, [1, 3, 5, 7, 8, 9, 10]);
-        assert_eq!(alert.provenance.as_ref().unwrap().revision, 7);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 8);
     }
 }
 

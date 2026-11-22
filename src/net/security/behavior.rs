@@ -192,6 +192,16 @@ impl SecurityEngine {
         let (Some(source_port), Some(destination_port)) = (pkt.src_port, pkt.dst_port) else {
             return;
         };
+        let ports = (source_port, destination_port);
+        let transport = if crate::analysis::stream::tcp_data_port_pair(pkt) == Some(ports) {
+            "TCP"
+        } else if crate::analysis::dns_transactions::udp_payload(pkt)
+            .is_some_and(|(src, dst, _)| (src, dst) == ports)
+        {
+            "UDP"
+        } else {
+            return;
+        };
         let source = (pkt.src.as_str(), source_port);
         let destination = (pkt.dst.as_str(), destination_port);
         let (first, second, direction) = if source <= destination {
@@ -203,7 +213,7 @@ impl SecurityEngine {
         let key = BehaviorFlowKey {
             first: (first.0.into(), first.1),
             second: (second.0.into(), second.1),
-            protocol: pkt.protocol.clone(),
+            transport,
             scope,
         };
         if !self.beacon_flows.contains_key(&key) {
@@ -258,7 +268,7 @@ impl SecurityEngine {
             related_packets,
             correlation_key: Some(format!(
                 "{} {scope:?} [{}]:{}<>[{}]:{}",
-                pkt.protocol, first.0, first.1, second.0, second.1,
+                transport, first.0, first.1, second.0, second.1,
             )),
         });
     }
