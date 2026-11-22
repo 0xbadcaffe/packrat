@@ -2,6 +2,15 @@ use crate::net::packet::Packet;
 use crate::net::parser::ethernet_network_header;
 
 pub(crate) fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
+    let (ports, len, udp) = udp_view(packet)?;
+    Some((ports.0, ports.1, udp.get(8..len)?))
+}
+
+pub(crate) fn udp_port_pair(packet: &Packet) -> Option<(u16, u16)> {
+    udp_view(packet).map(|(ports, _, _)| ports)
+}
+
+fn udp_view(packet: &Packet) -> Option<((u16, u16), usize, &[u8])> {
     if packet
         .capture
         .as_ref()
@@ -31,10 +40,13 @@ pub(crate) fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
     let udp = raw.get(transport..network_end.min(raw.len()))?;
     let &[src_hi, src_lo, dst_hi, dst_lo, len_hi, len_lo, _, _] = udp.first_chunk::<8>()?;
     let udp_length = usize::from(u16::from_be_bytes([len_hi, len_lo]));
+    if !(8..=network_end.checked_sub(transport)?).contains(&udp_length) {
+        return None;
+    }
     Some((
-        u16::from_be_bytes([src_hi, src_lo]),
-        u16::from_be_bytes([dst_hi, dst_lo]),
-        udp.get(8..udp_length)?,
+        (u16::from_be_bytes([src_hi, src_lo]), u16::from_be_bytes([dst_hi, dst_lo])),
+        udp_length,
+        udp,
     ))
 }
 

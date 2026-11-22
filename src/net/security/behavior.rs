@@ -17,6 +17,18 @@ fn observed_transport_payload(packet: &Packet) -> Option<&[u8]> {
     }
 }
 
+fn transfer_transport(packet: &Packet) -> TransferTransport {
+    if let Some(ports) = packet.src_port.zip(packet.dst_port) {
+        if crate::analysis::stream::tcp_port_pair(packet) == Some(ports) {
+            return TransferTransport::Tcp;
+        }
+        if crate::analysis::dns_transactions::udp_port_pair(packet) == Some(ports) {
+            return TransferTransport::Udp;
+        }
+    }
+    TransferTransport::Other(packet.protocol.clone())
+}
+
 impl ExfilState {
     fn observe(&mut self, packet: &Packet, outbound: bool, count_payload: bool) -> Option<bool> {
         if !packet.timestamp.is_finite() {
@@ -118,6 +130,7 @@ impl SecurityEngine {
         let mut alerts = Vec::new();
         let source_internal = is_internal_address(&pkt.src);
         let destination_internal = is_internal_address(&pkt.dst);
+        let transport;
         if source_internal != destination_internal {
             let outbound = source_internal;
             let (internal, external) = if outbound {
@@ -125,11 +138,12 @@ impl SecurityEngine {
             } else {
                 (pkt.dst.clone(), pkt.src.clone())
             };
+            transport = transfer_transport(pkt);
             let key = ExfilKey {
                 internal,
                 external,
                 destination_port: if outbound { pkt.dst_port } else { pkt.src_port }.unwrap_or(0),
-                protocol: pkt.protocol.clone(),
+                transport: transport.clone(),
                 scope: service_scope(pkt),
             };
             if !self.exfil_flows.contains_key(&key) {
@@ -171,6 +185,8 @@ impl SecurityEngine {
                     state.entropy_frames.iter().map(|&(_, frame)| frame).collect::<Vec<_>>(),
                 ));
             }
+        } else {
+            return;
         }
 
         for (signature, severity, detail, mut related_packets) in alerts {
@@ -181,8 +197,8 @@ impl SecurityEngine {
                 alert: IdsAlert { pkt_no: pkt.no, signature, severity, detail },
                 related_packets,
                 correlation_key: Some(format!(
-                    "{:?}:{}:[{}]>[{}]:{}",
-                    service_scope(pkt), pkt.protocol, pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)
+                    "{:?}:{transport:?}:[{}]>[{}]:{}",
+                    service_scope(pkt), pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)
                 )),
             });
         }

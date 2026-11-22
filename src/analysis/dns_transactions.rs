@@ -15,7 +15,7 @@ mod record_wire;
 mod replies;
 mod tcp_wire;
 mod udp_wire;
-pub(crate) use udp_wire::udp_payload;
+pub(crate) use udp_wire::{udp_payload, udp_port_pair};
 
 use correlation::{ExchangeBucket, ReplyMatch};
 pub use investigation::{DnsExchangeEvidence, DnsReplyEvidence};

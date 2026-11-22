@@ -160,3 +160,62 @@ fn outbound_volume_counts_captured_bytes_above_the_display_length_limit() {
     assert_eq!(alert.pkt_no, 16);
     assert!(alert.detail.contains("1000000 captured outbound bytes"));
 }
+
+#[test]
+fn outbound_transfer_uses_wire_transport_when_display_labels_change() {
+    let payload: Vec<_> = (0..60_000).map(|index| (index * 73 % 256) as u8).collect();
+    for udp in [false, true] {
+        let mut core = packrat_tui::engine::AnalysisCore::default();
+        for no in 1..=17 {
+            let mut packet = transfer_packet(no, &payload, udp);
+            packet.protocol = match (udp, no % 2 == 0) {
+                (false, false) => "TCP", (false, true) => "TLS",
+                (true, false) => "UDP", (true, true) => "QUIC",
+            }.into();
+            core.analyze(&packet);
+        }
+        for (rule, first, expected) in [
+            ("traffic.high_entropy_outbound", 5, (1..=5).collect::<Vec<_>>()),
+            ("traffic.asymmetric_outbound", 17, (10..=17).collect()),
+        ] {
+            let findings: Vec<_> = core.alert_center.items.iter().filter(|alert| {
+                alert.provenance.as_ref().is_some_and(|item| item.rule_id == rule)
+            }).collect();
+            assert_eq!(findings.len(), 1, "{rule}; UDP={udp}");
+            assert_eq!(findings[0].first_packet, first);
+            assert_eq!(findings[0].packet_refs, expected);
+        }
+    }
+}
+
+fn transfer_packet(no: u64, payload: &[u8], udp: bool) -> Packet {
+    let mut packet = outbound_tcp(no, payload);
+    if udp {
+        packet.bytes.drain(42..54);
+        packet.bytes[16..18].copy_from_slice(&((28 + payload.len()) as u16).to_be_bytes());
+        packet.bytes[23] = 17;
+        packet.bytes[38..40].copy_from_slice(&((8 + payload.len()) as u16).to_be_bytes());
+    }
+    packet
+}
+
+#[test]
+fn outbound_volume_does_not_combine_tcp_udp_or_unverified_transport() {
+    let payload = vec![0; 60_000];
+    let mut engine = SecurityEngine::default();
+    for no in 1..=17 {
+        let mut packet = transfer_packet(no, &payload, no % 2 == 0);
+        // A captured UDP header still identifies its service when its payload is truncated.
+        if no % 2 == 0 { packet.bytes.pop(); }
+        packet.protocol = "TCP".into();
+        engine.update(&packet);
+    }
+    for no in 18..=26 {
+        let mut packet = transfer_packet(no, &payload, false);
+        packet.bytes[47] = 0x18;
+        packet.bytes[23] = 0;
+        packet.protocol = "TCP".into();
+        engine.update(&packet);
+    }
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != "Large asymmetric outbound transfer"));
+}

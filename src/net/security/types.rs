@@ -237,11 +237,18 @@ pub(super) struct BeaconState {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub(super) enum TransferTransport {
+    Tcp,
+    Udp,
+    Other(String),
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(super) struct ExfilKey {
     pub(super) internal: String,
     pub(super) external: String,
     pub(super) destination_port: u16,
-    pub(super) protocol: String,
+    pub(super) transport: TransferTransport,
     pub(super) scope: ServiceScope,
 }
 
@@ -489,5 +496,3 @@ pub struct SecuritySummary {
     pub cred_hits: usize,
     pub ipv6_reassembled: u64,
 }
-
-// ─── Security Engine ──────────────────────────────────────────────────────────
