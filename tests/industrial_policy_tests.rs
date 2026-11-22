@@ -96,3 +96,59 @@ fn ignores_read_only_modbus_and_emits_critical_control_alerts() {
         .iter()
         .any(|alert| alert.signature == "Industrial state-changing command"));
 }
+
+#[test]
+fn industrial_policy_requires_a_complete_transport_and_matching_wire_port() {
+    let mut modbus = [0_u8; 8];
+    modbus[5] = 2;
+    modbus[7] = 6;
+    let valid = industrial_packet("Modbus", 502, true, &modbus);
+    assert!(industrial_policy::inspect(&valid).is_some());
+
+    let mut fragmented = valid.clone();
+    for fragment_offset in [0x2000_u16, 1] {
+        fragmented.bytes[20..22].copy_from_slice(&fragment_offset.to_be_bytes());
+        assert!(industrial_policy::inspect(&fragmented).is_none());
+    }
+    let mut short = valid.clone();
+    short.bytes[16..18].copy_from_slice(&60_u16.to_be_bytes());
+    assert!(industrial_policy::inspect(&short).is_none());
+    let mut wrong_port = valid.clone();
+    wrong_port.bytes[36..38].copy_from_slice(&503_u16.to_be_bytes());
+    assert!(industrial_policy::inspect(&wrong_port).is_none());
+    let mut short_tcp_header = valid.clone();
+    short_tcp_header.bytes[46] = 0x40;
+    assert!(industrial_policy::inspect(&short_tcp_header).is_none());
+    assert!(industrial_policy::inspect(&industrial_packet("Modbus", 502, false, &modbus)).is_none());
+}
+
+#[test]
+fn industrial_policy_never_reads_trailing_ip_bytes_as_udp_payload() {
+    let mut bacnet = [0_u8; 10];
+    bacnet[0] = 0x81;
+    bacnet[4] = 0x01;
+    bacnet[9] = 15;
+    let mut packet = industrial_packet("BACnet", 47_808, false, &bacnet);
+    assert!(industrial_policy::inspect(&packet).is_some());
+    for udp_length in [7_u16, 8, 19] {
+        packet.bytes[38..40].copy_from_slice(&udp_length.to_be_bytes());
+        assert!(industrial_policy::inspect(&packet).is_none());
+    }
+    assert!(industrial_policy::inspect(&industrial_packet("BACnet", 47_808, true, &bacnet)).is_none());
+}
+
+#[test]
+fn industrial_alert_exposes_a_policy_hint_not_a_claim_of_execution() {
+    let mut modbus = [0_u8; 8];
+    modbus[5] = 2;
+    modbus[7] = 6;
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    core.analyze(&industrial_packet("Modbus", 502, true, &modbus));
+    let alert = core.alert_center.items.iter()
+        .find(|alert| alert.title == "Industrial state-changing command").unwrap();
+    let provenance = alert.provenance.as_ref().unwrap();
+    assert_eq!(provenance.rule_id, "industrial.state_change");
+    assert_eq!(provenance.confidence, packrat_tui::analysis::alert_provenance::EvidenceConfidence::Heuristic);
+    assert!(provenance.verification_hint.contains("does not prove a state change"));
+    assert_eq!(alert.packet_refs, [1]);
+}

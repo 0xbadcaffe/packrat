@@ -16,20 +16,23 @@ impl IndustrialFinding {
 }
 
 pub fn inspect(packet: &Packet) -> Option<IndustrialFinding> {
-    let payload = transport_payload(packet)?;
-    let source_port = packet.src_port.unwrap_or(0);
-    let destination_port = packet.dst_port.unwrap_or(0);
-
-    if source_port == 502 || destination_port == 502 || packet.protocol.eq_ignore_ascii_case("Modbus") {
+    // Decoded ports nominate candidates; the wire ports and transport decide.
+    if ![packet.src_port, packet.dst_port].into_iter().flatten()
+        .any(|port| matches!(port, 102 | 502 | 20_000 | 47_808))
+    {
+        return None;
+    }
+    let (protocol, ports, payload) = transport_payload(packet)?;
+    if protocol == 6 && ports.contains(&502) {
         return inspect_modbus(payload);
     }
-    if source_port == 20_000 || destination_port == 20_000 || packet.protocol.eq_ignore_ascii_case("DNP3") {
+    if ports.contains(&20_000) {
         return inspect_dnp3(payload);
     }
-    if source_port == 102 || destination_port == 102 || packet.protocol.eq_ignore_ascii_case("S7comm") {
+    if protocol == 6 && ports.contains(&102) {
         return inspect_s7(payload);
     }
-    if source_port == 47_808 || destination_port == 47_808 || packet.protocol.eq_ignore_ascii_case("BACnet") {
+    if protocol == 17 && ports.contains(&47_808) {
         return inspect_bacnet(payload);
     }
     None
@@ -105,7 +108,10 @@ fn inspect_bacnet(payload: &[u8]) -> Option<IndustrialFinding> {
     Some(IndustrialFinding { protocol: "BACnet/IP", operation, critical })
 }
 
-fn transport_payload(packet: &Packet) -> Option<&[u8]> {
+fn transport_payload(packet: &Packet) -> Option<(u8, [u16; 2], &[u8])> {
+    if packet.capture.as_ref().is_some_and(|meta| !crate::net::parser::supports_capture_link_type(meta.link_type)) {
+        return None;
+    }
     let raw = &packet.bytes;
     if raw.len() < 14 {
         return None;
@@ -129,15 +135,26 @@ fn transport_payload(packet: &Packet) -> Option<&[u8]> {
         return None;
     }
     let ip_header_len = usize::from(raw[ip_offset] & 0x0f) * 4;
-    let transport_offset = ip_offset + ip_header_len;
-    let packet_end = (ip_offset + usize::from(u16::from_be_bytes([raw[ip_offset + 2], raw[ip_offset + 3]])))
-        .min(raw.len());
-    match raw[ip_offset + 9] {
-        6 => {
-            let tcp_header_len = usize::from(*raw.get(transport_offset + 12)? >> 4) * 4;
-            raw.get((transport_offset + tcp_header_len)..packet_end)
-        }
-        17 => raw.get((transport_offset + 8)..packet_end),
-        _ => None,
+    if ip_header_len < 20 || read_u16(raw, ip_offset + 6)? & 0x3fff != 0 {
+        return None;
     }
+    let transport_offset = ip_offset + ip_header_len;
+    let packet_end = ip_offset + usize::from(read_u16(raw, ip_offset + 2)?);
+    let transport = raw.get(transport_offset..packet_end)?;
+    let protocol = raw[ip_offset + 9];
+    let payload = match protocol {
+        6 => {
+            let tcp_header_len = usize::from(*transport.get(12)? >> 4) * 4;
+            if tcp_header_len < 20 { return None; }
+            transport.get(tcp_header_len..)?
+        }
+        17 => transport.get(8..usize::from(read_u16(transport, 4)?))?,
+        _ => return None,
+    };
+    let ports = [read_u16(transport, 0)?, read_u16(transport, 2)?];
+    Some((protocol, ports, payload))
+}
+
+fn read_u16(bytes: &[u8], start: usize) -> Option<u16> {
+    Some(u16::from_be_bytes(bytes.get(start..start + 2)?.try_into().ok()?))
 }
