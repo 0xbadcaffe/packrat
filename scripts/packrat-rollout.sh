@@ -9,6 +9,7 @@ bridge_session=packrat-stage
 health_addr=127.0.0.1:9477
 stage_health_addr=127.0.0.1:9478
 health_state=${PACKRAT_ROLLOUT_HEALTH_STATE:-"$HOME/.cache/packrat-health/latest.json"}
+backup_reserve_mib=${PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB:-512}
 backup_dir=
 stage_binary=
 archive_path=
@@ -230,6 +231,18 @@ candidate_supports_profile() {
         [[ $help == *'--archive PATH'* && $help == *--archive-max-mib* && $help == *--archive-max-frames* ]]
 }
 
+backup_space_ready() {
+    local destination="$data_dir/backups" free_kib sizes
+    sudo -n test -d "$destination" || destination=$data_dir
+    free_kib=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 { print $4 }') || return 1
+    sizes=$(sudo -n stat --format='%s' -- "$installed" "$data_dir/alerts.jsonl") || return 1
+    [[ $free_kib =~ ^[0-9]{1,15}$ && $backup_reserve_mib =~ ^[1-9][0-9]{0,5}$ ]] || return 1
+    awk -v free="$free_kib" -v reserve="$backup_reserve_mib" '
+        /^[0-9]+$/ && length($0) <= 15 { size_kib += int(($0 + 1023) / 1024); sizes++ }
+        END { exit !(NR == 2 && sizes == 2 && free >= reserve * 1024 + size_kib) }
+    ' <<< "$sizes"
+}
+
 prepare_backup_and_stage() {
     sudo -n install -d -o root -g root -m 0700 "$data_dir/backups" || return 1
     backup_dir=$(sudo -n mktemp -d "$data_dir/backups/rollout.XXXXXXXX") || return 1
@@ -426,6 +439,7 @@ main() {
     if (( $# != 3 )) || [[ $1 != --check && $1 != --deploy ]]; then
         error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE'
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
+        error 'PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB sets free space to leave after backing up (default: 512).'
         return 2
     fi
     mode=$1 candidate=$2 interface=$3
@@ -437,6 +451,10 @@ main() {
         flock -n 9 || { error "Another rollout is in progress"; return 1; }
     fi
     preflight || return 1
+    if ! backup_space_ready; then
+        error "Insufficient or unverified free space for the alert log and rollback backup; current capture not stopped"
+        return 1
+    fi
     if [[ $mode == --check ]]; then
         printf 'Preflight passed for %s; no changes made\n' "$interface"
     elif cmp -s "$candidate" "$installed"; then

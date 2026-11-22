@@ -207,6 +207,33 @@ cp -p -- "$data_dir/alerts.jsonl" "$data_dir/replacement"
 mv -T -- "$data_dir/replacement" "$data_dir/alerts.jsonl"
 [[ $(primary_alert_log_stamp) != "$stamp" ]]
 
+(
+    backup_reserve_mib=1
+    test_mount=$data_dir
+    sudo() {
+        case $* in
+            "-n test -d $data_dir/backups") [[ -d $data_dir/backups ]] ;;
+            "-n env LC_ALL=C df -Pk -- $test_mount")
+                printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+                printf '/dev/test 99999 10 %s 1%% /\n' "$free"
+                ;;
+            "-n stat --format=%s -- $installed $data_dir/alerts.jsonl") printf '%s\n' "$test_sizes" ;;
+            *) return 1 ;;
+        esac
+    }
+    test_sizes=$'1025\n2048'
+    free=1028
+    backup_space_ready
+    test_mount="$data_dir/backups"
+    mkdir -- "$test_mount"
+    backup_space_ready
+    free=1027
+    if backup_space_ready; then exit 1; fi
+    free=1028
+    test_sizes=unexpected
+    if backup_space_ready; then exit 1; fi
+)
+
 prepare_backup_and_stage() {
     trace+=("backup")
     backup_dir=/backup
