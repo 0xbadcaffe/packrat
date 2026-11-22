@@ -221,6 +221,7 @@ impl App {
                 sequence,
                 live,
                 analysis,
+                alert_frames,
                 packet_no,
             } => {
                 let restoring = self.packet_effects.remove(&sequence).unwrap_or(true);
@@ -235,11 +236,12 @@ impl App {
                             sequence,
                             live,
                             analysis,
+                            alert_frames,
                             packet_no,
                         });
                     return false;
                 };
-                self.handle_packet_analysis(analysis, context, live, restoring, None);
+                self.handle_packet_analysis(analysis, context, live, restoring, &alert_frames);
             }
             WorkerEvent::Updated {
                 generation: event_generation,

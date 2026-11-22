@@ -68,7 +68,7 @@ impl App {
         context: AnalysisContext,
         live: bool,
         restoring: bool,
-        current: Option<&Packet>,
+        evidence: &[Packet],
     ) {
         if restoring {
             return;
@@ -124,8 +124,10 @@ impl App {
         }
         let previous_active = self.worklist.active;
         for alert in &context.alerts {
-            self.archive_alert_packets(alert, current);
+            self.archive_alert_packets(alert, evidence);
             if context.auto_pin {
+                let current = evidence.binary_search_by_key(&alert.packet_no, |packet| packet.no)
+                    .ok().map(|index| &evidence[index]);
                 self.retain_automatic_alert_evidence(alert, current);
             }
         }

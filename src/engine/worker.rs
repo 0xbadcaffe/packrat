@@ -11,6 +11,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
+mod evidence;
 mod run;
 
 #[derive(Debug, Clone, Copy)]
@@ -47,6 +48,7 @@ pub enum WorkerEvent {
         packet_no: u64,
         live: bool,
         analysis: PacketAnalysis,
+        alert_frames: Vec<Packet>,
     },
     Inspection {
         generation: u64,

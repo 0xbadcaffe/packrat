@@ -20,7 +20,7 @@ impl AlertEvidenceScope {
 }
 
 impl App {
-    pub(super) fn archive_alert_packets(&mut self, alert: &AlertItem, current: Option<&Packet>) {
+    pub(super) fn archive_alert_packets(&mut self, alert: &AlertItem, evidence: &[Packet]) {
         let Some(archive) = self.packet_archive.as_ref()
             .filter(|archive| archive.alert_evidence_only() && archive.pause_reason().is_none())
         else { return };
@@ -32,7 +32,8 @@ impl App {
             if !self.frame_may_be_local(AlertEvidenceScope::CurrentCapture, frame) {
                 return Ok(());
             }
-            let packet = current.filter(|packet| packet.no == frame).or_else(|| self.packet_by_no(frame));
+            let packet = evidence.binary_search_by_key(&frame, |packet| packet.no).ok()
+                .map(|index| &evidence[index]).or_else(|| self.packet_by_no(frame));
             packet.map_or(Ok(()), |packet| archive.record_scoped(capture_id, packet))
         };
         let (trigger, others) = (alert.packet_no, frames.iter().copied().filter(|&n| n != alert.packet_no));

@@ -54,6 +54,7 @@ pub(super) fn run(
                 }
                 sequence = number;
                 let packet_no = packet.no;
+                let alert_frames = evidence::alert_frames(&core, &analysis, &packet, &history);
                 if analysis.disposition == PacketDisposition::Analyzed {
                     history_bytes += packet.bytes.len();
                     history.push_back(packet);
@@ -73,6 +74,7 @@ pub(super) fn run(
                     packet_no,
                     live: live && response_eligible,
                     analysis,
+                    alert_frames,
                 }
             }
             Command::Inspect {
