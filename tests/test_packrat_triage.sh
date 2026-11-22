@@ -10,9 +10,7 @@ export PACKRAT_TEST_LOG="$scratch/alerts.jsonl" PACKRAT_TEST_CALL="$scratch/arch
 export PACKRAT_TEST_STATE="$health"
 touch -- "$PACKRAT_TEST_LOG" "$scratch/other.jsonl"
 unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT PACKRAT_TRIAGE_ARCHIVE PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
-unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE PACKRAT_TRIAGE_AUTO_EVIDENCE
-unset PACKRAT_TRIAGE_PROJECT
-
+unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE PACKRAT_TRIAGE_AUTO_EVIDENCE PACKRAT_TRIAGE_PROJECT
 date() {
     [[ $* == '-u +%s' ]] || return 2
     printf '%s\n' 1700000000
@@ -99,6 +97,9 @@ mock_archive() {
                   ($valid + {alert_id:44,severity:"HIGH",disposition:"New"}),
                   ($valid + {severity:"CRITICAL",disposition:"Reviewing"}),
                   ($valid + {alert_id:41,severity:"CRITICAL",disposition:"New"})
+              ] elif $queue == "configured" then [
+                  ($valid + {alert_id:43,severity:"MEDIUM",disposition:"New",rule_id:"traffic.periodic_fixed_size"}),
+                  ($valid + {severity:"MEDIUM",disposition:"Reviewing",rule_id:"tcp.payload_after_observed_reset"})
               ] elif $queue == "backlog" then
                 [range(101;43;-1) | $valid + {alert_id:.,severity:"LOW",disposition:"New"}]
                 + [($valid + {severity:"HIGH",disposition:"New"})]
@@ -128,7 +129,6 @@ timeout() {
 }
 
 export -f date mock_archive packrat-archive timeout
-
 sample='{"record_type":"capture_health","timestamp":"2023-11-14T22:12:50Z",
          "capture_active":true,"telemetry_fresh":true,"issues":[],
          "capture_id":"00000000000000000000000000000001","alert_session_id":"1700000000-432"}'
@@ -261,6 +261,10 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
     result=$(PACKRAT_TEST_ALERT_COUNT=0 run_auto)
     jq -e '.evidence_selection == "automatic" and .evidence_status == null and .alerts == []
         and .open_priority_alerts_in_sample == 0 and .review_queue == []' <<< "$result" >/dev/null
+    PACKRAT_TEST_AUTO_QUEUE=configured run_auto | jq -e '.evidence_status == null' >/dev/null
+    jq -c '. + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:true,
+        archive_evidence_rules:["tcp.payload_after_observed_reset"]}' <<< "$sample" >"$health"
+    PACKRAT_TEST_AUTO_QUEUE=configured run_auto | jq -e '.evidence_status.alert_id==42 and .alerts[1].packet_evidence_status=="partial" and .review_queue==[]' >/dev/null
     result=$(PACKRAT_TEST_AUTO_QUEUE=backlog run_auto)
     jq -e '.has_more_alerts and .priority_sample_limit == 512 and .priority_sample_at_limit == false
         and (.alerts | length) == 50 and all(.alerts[]; .alert_id != 42)

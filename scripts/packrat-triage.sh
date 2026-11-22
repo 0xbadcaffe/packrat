@@ -22,7 +22,8 @@ usage() {
         'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
         'Set PACKRAT_TRIAGE_ARCHIVE or PACKRAT_TRIAGE_PROJECT, plus PACKRAT_TRIAGE_EVIDENCE_ALERT_ID, to check one alert.' \
         'In live mode, PACKRAT_TRIAGE_AUTO_EVIDENCE=1 with PACKRAT_TRIAGE_ARCHIVE checks one open alert.' \
-        'Automatic checks prefer CRITICAL over HIGH, then newest listed, and require frame references and an enabled archive.' \
+        'Automatic checks prefer CRITICAL, then HIGH, then only MEDIUM/LOW rules named in the active selective archive policy.' \
+        'Within a severity, selects the newest eligible alert with frame references.' \
         '--saved-alert uses its explicit ID when an evidence source is supplied without PACKRAT_TRIAGE_EVIDENCE_ALERT_ID.' \
         'Packet evidence status describes checked packet bytes, not just frame references or an enabled archive.' \
         'Evidence for an alert in the recent report is withheld if its frame references changed during triage.' \
@@ -418,9 +419,15 @@ evidence=null
 evidence_failed=false
 if [[ $auto_evidence == 1 ]] &&
     jq -e '.health | .archive_enabled == true and (.archive_paused | type == "boolean")' <<< "$state" >/dev/null; then
-    evidence_id=$(jq -r '
-        first(("CRITICAL", "HIGH") as $severity | .[]
+    archive_rules=$(jq -c '.health | if .archive_alert_evidence_only == true and
+        (.archive_evidence_rules | type == "array" and length <= 16 and all(.[];
+            type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z")))
+        then .archive_evidence_rules else [] end' <<< "$state")
+    evidence_id=$(jq -r --argjson rules "$archive_rules" '
+        first(("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | .[]
             | select(.severity == $severity and (.disposition == "New" or .disposition == "Reviewing")
+                and ($severity == "CRITICAL" or $severity == "HIGH"
+                    or (.rule_id as $rule | any($rules[]; . == $rule)))
                 and (.evidence_frame_count | type == "number" and . >= 1 and . <= 131 and floor == .))
             | .alert_id | select(type == "number" and . >= 1 and . <= 999999999999999 and floor == .))
           // empty

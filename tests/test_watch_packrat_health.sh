@@ -148,8 +148,8 @@ PACKRAT_REQUIRE_ARCHIVE=true bash "$watch" --once >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
 
 evidence_samples=$(jq -c '
-    [. + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:true},
-     . + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:false},
+    [. + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:true,archive_evidence_rules:["tcp.payload_after_observed_reset"]},
+     . + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:false,archive_evidence_rules:["tcp.payload_after_observed_reset"]},
      . + {archive_enabled:true,archive_paused:true,archive_alert_evidence_only:false},
      . + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:"true"},
      . + {archive_enabled:false,archive_paused:false}]
@@ -158,6 +158,7 @@ PACKRAT_REQUIRE_ARCHIVE=alert-evidence PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES
     map(.issues) == [[], ["archive_full_capture_unexpected"], ["archive_paused","archive_full_capture_unexpected"],
                      ["archive_mode_unavailable"], ["archive_disabled"]]
     and map(.archive_alert_evidence_only) == [true,false,false,null,null]
+    and map(.archive_evidence_rules) == [["tcp.payload_after_observed_reset"],null,null,null,null]
     and all(.[]; .archive_requirement == "alert_evidence_only")
 ' >/dev/null
 

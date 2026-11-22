@@ -44,6 +44,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert!(health()["capture_truncated_frames"].is_null());
     assert!(health()["archive_pause_reason"].is_null());
     assert!(health()["archive_usage"].is_null());
+    assert!(health()["archive_evidence_rules"].is_null());
 
     hub.publish(TelemetrySnapshot {
         capturing: true,
@@ -58,6 +59,8 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
         alert_save_failed: true,
         archive_enabled: true,
         archive_paused: true,
+        archive_alert_evidence_only: true,
+        archive_evidence_rules: Some(vec!["tcp.payload_after_observed_reset".into()]),
         archive_pause_reason: Some("disk_reserve"),
         archive_usage: Some(crate::storage::packet_archive::ArchiveUsage {
             frames: 9, max_frames: 10, payload_bytes: 51, max_payload_bytes: 100,
@@ -81,6 +84,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert_eq!(health()["archive_pause_reason"], "disk_reserve");
     assert_eq!(health()["archive_usage"]["frames"], 9);
     assert_eq!(health()["archive_usage"]["max_payload_bytes"], 100);
+    assert_eq!(health()["archive_evidence_rules"], serde_json::json!(["tcp.payload_after_observed_reset"]));
 
     hub.inner.write().unwrap().updated_at = Instant::now().checked_sub(Duration::from_secs(6));
     assert_eq!(health()["telemetry_fresh"], false);

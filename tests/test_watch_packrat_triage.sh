@@ -30,12 +30,13 @@ live() {
         live_packet_archive:"enabled", open_priority_alerts_in_sample:($queue | length),
         priority_sample_at_limit:false, has_more_alerts:($alerts | length > 50),
         alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_limit:false,detail:"private context"},
+        evidence_status:{alert_id:9,status:"checked",frames:[{bytes:"private payload"}]},
         review_queue:($queue | map(. + {title:"private detail", bytes:[1,2], verify:"private advice"})),
         alerts:($alerts | map(. + {detail:"private payload", flow:{src:"10.2.3.4"}, last_seen:$packets}))
     }'
 }
 queue='[{"alert_id":7,"severity":"HIGH","rule_id":"test.rule","confidence":"correlated","packet_evidence_status":"partial","next_evidence_step":"inspect_retained_and_recover_missing_frames"}]'
-medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","disposition":"New","hit_count":1}]'
+medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","disposition":"New","hit_count":1,"packet_evidence_status":"partial"}]'
 live current 12 "$queue" "$medium" >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
@@ -43,7 +44,8 @@ check_status "$state" current 0
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .review_queue[0].packet_evidence_status=="partial"
-    and .recent_alerts==[{alert_id:9,severity:"MEDIUM",rule_id:"test.medium",disposition:"New",hit_count:1}]
+    and .evidence_check=={alert_id:9,status:"checked"}
+    and .recent_alerts==[{alert_id:9,severity:"MEDIUM",rule_id:"test.medium",disposition:"New",hit_count:1,packet_evidence_status:"partial"}]
     and .recent_alerts_at_limit==false and .has_older_alerts==false
     and .max_age_seconds==62
     and (.updated_at | fromdateiso8601) > 0

@@ -105,11 +105,14 @@ sanitize() {
             } else null end),
             open_priority_alerts:(.open_priority_alerts_in_sample | counter),
             priority_sample_at_limit:(.priority_sample_at_limit | flag),
+            evidence_check:(.evidence_status | if type == "object" then
+                {alert_id:(.alert_id | counter), status:(.status | token)} else null end),
             recent_alerts_at_limit:(.alerts | if type == "array" then length > 50 else null end),
             has_older_alerts:(.has_more_alerts | flag),
             recent_alerts:(.alerts | if type == "array" then .[:50] | map(objects
                 | {alert_id:(.alert_id | counter), severity:(.severity | severity), rule_id:(.rule_id | token),
-                   disposition:(.disposition | disposition), hit_count:(.hit_count | counter)}
+                   disposition:(.disposition | disposition), hit_count:(.hit_count | counter),
+                   packet_evidence_status:(.packet_evidence_status | token)}
                 | select(.alert_id > 0 and .severity != null)) | sort_by(.alert_id) else null end),
             review_queue:(.review_queue | if type == "array" then .[:5] | map(objects
                 | {alert_id:(.alert_id | counter), severity:(.severity | token), rule_id:(.rule_id | token),

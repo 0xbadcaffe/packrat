@@ -361,6 +361,10 @@ read_health() {
             archive_pause_reason: $pause_reason,
             archive_usage: $archive_usage,
             archive_alert_evidence_only: $evidence_only,
+            archive_evidence_rules: ($h.archive_evidence_rules | if $archive_enabled == true and $evidence_only == true and
+                type == "array" and length <= 16 and
+                all(.[]; type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z"))
+                then unique else null end),
             archive_requirement: (if $require_archive == "1" then "active"
                                   elif $require_archive == "alert-evidence" then "alert_evidence_only"
                                   else null end),
@@ -451,7 +455,7 @@ while :; do
         state=$(jq -cn --argjson baseline "$baseline" '
             {issues:["monitor_input_error"],next_baseline:{drops:$baseline.drops,truncated:$baseline.truncated,packets:null}}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled, .archive_paused, .archive_pause_reason, .archive_alert_evidence_only]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled, .archive_paused, .archive_pause_reason, .archive_alert_evidence_only, .archive_evidence_rules]' <<< "$state") || exit 2
     event=
     if "$once"; then
         event=sample
