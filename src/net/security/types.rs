@@ -64,12 +64,43 @@ pub(super) struct TcpResetObservation {
 
 #[derive(Debug, Default)]
 pub(super) struct TcpIntegrityState {
-    pub(super) from_a: Vec<FragmentSlice>,
-    pub(super) from_b: Vec<FragmentSlice>,
+    pub(super) from_a: TcpPayloadHistory,
+    pub(super) from_b: TcpPayloadHistory,
     pub(super) last_seen: f64,
     pub(super) reset: Option<TcpResetObservation>,
     pub(super) overlap_alerted: bool,
     pub(super) post_reset_alerted: bool,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct TcpPayloadHistory {
+    pub(super) slices: std::collections::VecDeque<FragmentSlice>,
+    pub(super) bytes: usize,
+}
+
+impl TcpPayloadHistory {
+    pub(super) fn clear(&mut self) {
+        self.slices.clear();
+        self.bytes = 0;
+    }
+
+    pub(super) fn contains(&self, start: u32, payload: &[u8]) -> bool {
+        self.slices.iter().any(|slice| slice.start == start && slice.data == payload)
+    }
+
+    pub(super) fn remember_distinct(&mut self, packet_no: u64, start: u32, payload: &[u8]) {
+        if payload.is_empty() || payload.len() > MAX_TCP_EVIDENCE_BYTES_PER_DIRECTION {
+            return;
+        }
+        while self.slices.len() >= MAX_TCP_SLICES_PER_DIRECTION
+            || payload.len() > MAX_TCP_EVIDENCE_BYTES_PER_DIRECTION - self.bytes
+        {
+            let Some(oldest) = self.slices.pop_front() else { return };
+            self.bytes -= oldest.data.len();
+        }
+        self.bytes += payload.len();
+        self.slices.push_back(FragmentSlice { packet_no, start, data: payload.to_vec() });
+    }
 }
 
 pub(super) struct TcpSegment<'a> {

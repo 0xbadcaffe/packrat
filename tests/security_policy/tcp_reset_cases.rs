@@ -83,3 +83,20 @@ fn conflicting_tcp_retransmission_accounts_for_syn_before_payload() {
     assert_eq!(alert.related_packets, [1]);
     assert!(alert.alert.detail.contains("TCP sequence 102"));
 }
+
+#[test]
+fn tcp_integrity_preserves_recent_evidence_after_the_first_128_segments() {
+    let mut engine = SecurityEngine::default();
+    for frame in 1..=130 {
+        engine.update(&ipv4_tcp_packet(frame, frame as u32 * 16, 0x18, b"original"));
+    }
+    let expired = engine.inspect(&ipv4_tcp_packet(131, 16, 0x18, b"other"));
+    assert!(expired.ids.is_empty());
+    for frame in 132..=270 {
+        assert!(engine.inspect(&ipv4_tcp_packet(frame, 16, 0x18, b"other")).ids.is_empty());
+    }
+    let findings = engine.inspect(&ipv4_tcp_packet(271, 130 * 16, 0x18, b"changed"));
+    let finding = findings.ids.iter().find(|finding| finding.alert.signature == "Conflicting TCP retransmission").unwrap();
+    assert_eq!(finding.related_packets, [130]);
+    assert_eq!(finding.alert.pkt_no, 271);
+}

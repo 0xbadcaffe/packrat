@@ -30,3 +30,23 @@ fn fragment_evidence_retention_caps_sample_count() {
     assert_eq!(state.slices.len(), MAX_FRAGMENTS_PER_DATAGRAM);
     assert_eq!(state.retained_bytes, MAX_FRAGMENTS_PER_DATAGRAM * 9);
 }
+
+#[test]
+fn tcp_payload_history_rolls_by_bytes_and_frames() {
+    let mut history = TcpPayloadHistory::default();
+    let large = vec![0; 40_000];
+    history.remember_distinct(1, 100, &large);
+    history.remember_distinct(2, 100_000, &large);
+    assert!(!history.contains(100, &large));
+    assert!(history.contains(100_000, &large));
+    assert_eq!(history.bytes, large.len());
+
+    history.clear();
+    for i in 0..=MAX_TCP_SLICES_PER_DIRECTION {
+        history.remember_distinct(i as u64 + 1, i as u32 * 8, b"sample");
+    }
+    assert_eq!(history.slices.len(), MAX_TCP_SLICES_PER_DIRECTION);
+    assert_eq!(history.bytes, MAX_TCP_SLICES_PER_DIRECTION * 6);
+    assert_eq!(history.slices.front().unwrap().packet_no, 2);
+    assert_eq!(history.slices.back().unwrap().packet_no, MAX_TCP_SLICES_PER_DIRECTION as u64 + 1);
+}

@@ -108,6 +108,9 @@ impl SecurityEngine {
     // ─── TCP Integrity / Evasion ────────────────────────────────────────────
 
     pub(super) fn check_tcp_integrity(&mut self, pkt: &Packet) {
+        if !pkt.timestamp.is_finite() {
+            return;
+        }
         let segment = match parse_ipv4_tcp_frame(&pkt.bytes) {
             Some(TcpFrame::Segment(segment)) => segment,
             Some(TcpFrame::Malformed(reason)) => {
@@ -181,29 +184,25 @@ impl SecurityEngine {
         let mut overlap = None;
         if !segment.payload.is_empty() {
             let payload_sequence = segment.sequence.wrapping_add(u32::from(segment.flags & SYN != 0));
+            let duplicate = slices.contains(payload_sequence, segment.payload);
             if !state.post_reset_alerted
                 && segment.flags & RST == 0
                 && let Some(reset) = state.reset
                 && (0.0..=TCP_STATE_TTL_SECS).contains(&(pkt.timestamp - reset.timestamp))
-                && !slices.iter().any(|slice| {
-                    slice.start == payload_sequence && slice.data == segment.payload
-                })
+                && !duplicate
             {
                 state.post_reset_alerted = true;
                 post_reset = Some(reset);
             }
             if !state.overlap_alerted
-                && let Some(conflict) = conflicting_tcp_overlap(slices, payload_sequence, segment.payload)
+                && !duplicate
+                && let Some(conflict) = conflicting_tcp_overlap(&slices.slices, payload_sequence, segment.payload)
             {
                 state.overlap_alerted = true;
                 overlap = Some(conflict);
             }
-            if slices.len() < MAX_TCP_SLICES_PER_DIRECTION {
-                slices.push(FragmentSlice {
-                    packet_no: pkt.no,
-                    start: payload_sequence,
-                    data: segment.payload.to_vec(),
-                });
+            if !duplicate && (!state.overlap_alerted || !state.post_reset_alerted) {
+                slices.remember_distinct(pkt.no, payload_sequence, segment.payload);
             }
         }
 

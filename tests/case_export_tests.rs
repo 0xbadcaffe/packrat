@@ -32,7 +32,7 @@ fn case_report_preserves_scoped_finding_evidence_and_rule_version() {
         finding["provenance"]["rule_id"],
         "tcp.payload_after_observed_reset"
     );
-    assert_eq!(finding["provenance"]["revision"], 2);
+    assert_eq!(finding["provenance"]["revision"], 3);
     assert_eq!(finding["provenance"]["confidence"], "heuristic");
     assert!(!contents.contains("not-in-the-case-report"));
 

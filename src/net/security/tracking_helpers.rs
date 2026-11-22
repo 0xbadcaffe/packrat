@@ -7,7 +7,7 @@ pub(super) struct TcpOverlap {
 }
 
 pub(super) fn conflicting_tcp_overlap(
-    slices: &[FragmentSlice],
+    slices: &std::collections::VecDeque<FragmentSlice>,
     payload_sequence: u32,
     payload: &[u8],
 ) -> Option<TcpOverlap> {

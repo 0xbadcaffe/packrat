@@ -32,6 +32,7 @@ const MAX_FRAGMENT_EVIDENCE_BYTES: usize = u16::MAX as usize;
 const FRAGMENT_STATE_TTL_SECS: f64 = 60.0;
 const MAX_TCP_FLOWS: usize = 512;
 const MAX_TCP_SLICES_PER_DIRECTION: usize = 128;
+const MAX_TCP_EVIDENCE_BYTES_PER_DIRECTION: usize = u16::MAX as usize;
 const TCP_STATE_TTL_SECS: f64 = 300.0;
 const SCAN_WINDOW_SECS: f64 = 15.0;
 const SYN_FLOOD_WINDOW_SECS: f64 = 1.0;
