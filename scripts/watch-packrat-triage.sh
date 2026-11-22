@@ -4,21 +4,24 @@ umask 077
 export LC_ALL=C
 
 usage() {
-    printf '%s\n' 'Usage: watch-packrat-triage.sh [--once] STATE.json -- TRIAGE_COMMAND [ARG ...]' \
+    printf '%s\n' 'Usage: watch-packrat-triage.sh [--once|--supervise] STATE.json -- TRIAGE_COMMAND [ARG ...]' \
         '       watch-packrat-triage.sh --check STATE.json' \
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
+        'Supervision retries unexpected exits with backoff; configuration errors stop the supervisor.' \
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
 }
 
 once=false
 check=false
+supervise=false
 case ${1-} in
     --help|-h) usage; exit 0 ;;
     --once) once=true; shift ;;
     --check) check=true; shift ;;
+    --supervise) supervise=true; shift ;;
 esac
 if [[ ${1-} != /* || $1 == */ || $1 == *[[:cntrl:]]* ]] ||
    { "$check" && (( $# != 1 )); } ||
@@ -79,6 +82,33 @@ fi
 for command in jq timeout flock; do
     command -v "$command" >/dev/null || { printf 'Missing dependency: %s\n' "$command" >&2; exit 2; }
 done
+
+supervise_watcher() {
+    local child='' status delay=2 started
+    # On termination, reap the current watcher or its retry timer.
+    trap 'if [[ -n $child ]]; then kill "$child" 2>/dev/null || :; wait "$child" 2>/dev/null || :; fi; exit 0' HUP INT TERM
+    while :; do
+        started=$SECONDS
+        bash "${BASH_SOURCE[0]}" "$state" -- "$@" &
+        child=$!
+        status=0
+        wait "$child" || status=$?
+        child=''
+        if (( status == 2 )); then return 2; fi
+        if (( SECONDS - started >= interval )); then delay=2; fi
+        printf 'Triage watcher exited (%d); retrying in %d seconds.\n' "$status" "$delay" >&2
+        sleep "$delay" &
+        child=$!
+        wait "$child"
+        child=''
+        delay=$((delay < 16 ? delay * 2 : 30))
+    done
+}
+
+if "$supervise"; then
+    supervise_watcher "$@"
+    exit 0
+fi
 exec {lock_fd}>>"$state.lock"
 flock -n "$lock_fd" || { printf '%s\n' 'Triage state is already being refreshed.' >&2; exit 2; }
 
@@ -142,12 +172,14 @@ read_status() {
 }
 
 temp=''
+timer=''
 trap 'if [[ -n $temp ]]; then rm -f -- "$temp"; fi' EXIT
-trap 'exit 0' INT TERM
+trap 'if [[ -n $timer ]]; then kill "$timer" 2>/dev/null || :; wait "$timer" 2>/dev/null || :; fi; exit 0' HUP INT TERM
 previous=''
 high_alert=0
 while :; do
-    snapshot=$(read_status "$@")
+    # Poll commands and the timer must not hold the writer lock after a crash.
+    snapshot=$(exec {lock_fd}>&-; read_status "$@")
     # Allow the poll interval, the next triage deadline, and timeout cleanup/scheduling.
     snapshot=$(jq -c --argjson max_age "$((interval + deadline + 7))" \
         '. + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age}' <<< "$snapshot")
@@ -185,5 +217,8 @@ while :; do
         high_alert=$(jq -r '.highest_observed_alert_id' <<< "$event")
         previous=$key
     fi
-    sleep "$interval"
+    sleep "$interval" {lock_fd}>&- &
+    timer=$!
+    wait "$timer"
+    timer=''
 done
