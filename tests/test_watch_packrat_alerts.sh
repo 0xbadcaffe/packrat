@@ -102,6 +102,19 @@ jq -cn '
     map(.alert_id) == [1,2,3,1] and all(.[]; .event == "first_seen")
 ' >/dev/null
 
+jq -cn '
+    {schema_version:1,record_type:"alert",session_id:"test",
+     alert:{id:1,hit_count:1,disposition:"New"}} as $first
+    | $first,
+      ($first | .alert.id = 2 | .alert.disposition = "Reviewing"),
+      ($first | .alert.id = 3 | .alert.hit_count = 4),
+      ($first | .alert.hit_count = 2),
+      ($first | .alert.hit_count = 3)
+' | PACKRAT_WATCH_MAX_ALERTS=2 bash "$watch" | jq -se '
+    map(.event) == ["first_seen","existing","existing","existing","updated"]
+    and map(.changes) == [[],[],[],[],["hit_count"]]
+' >/dev/null
+
 status=0
 PACKRAT_WATCH_MAX_ALERTS=0 bash "$watch" </dev/null >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]

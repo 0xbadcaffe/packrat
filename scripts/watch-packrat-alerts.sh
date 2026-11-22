@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
     printf '%s\n' 'Usage: bash watch-packrat-alerts.sh < alerts.jsonl' \
-        'Reads Packrat JSONL from stdin and emits first sightings and changed snapshots.' \
+        'Reads Packrat JSONL from stdin and emits first sightings, existing findings, and changed snapshots.' \
         'Notifications include update reasons and time since the latest observed packet.' \
         'PACKRAT_WATCH_MAX_ALERTS sets the in-memory alert history (default: 1024).'
 }
@@ -36,6 +36,11 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
         type == "string" and length <= 128 and test("\\A[A-Za-z0-9_-]+\\z");
     def observation_time:
         if type == "number" and isfinite and . > 0 then . else null end;
+    def event_kind($previous; $alert):
+        if $previous != null then "updated"
+        elif ($alert.hits != null and $alert.hits > 1)
+            or ($alert.disposition != null and $alert.disposition != "New") then "existing"
+        else "first_seen" end;
     def evidence($alert):
         ([$alert.first_packet, $alert.packet_no, $alert.last_packet]
          + ($alert.packet_refs | if type == "array" then .[:128] else [] end))
@@ -105,7 +110,7 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
             | now as $emitted
             | .emit = (($alert | del(.evidence_frames_internal)) + {
                 record_type: "capture_alert",
-                event: (if $previous == null then "first_seen" else "updated" end),
+                event: event_kind($previous; $alert),
                 changes: changes($previous; $alert),
                 emitted_at: ($emitted | todateiso8601),
                 observation_to_notification_seconds: (
