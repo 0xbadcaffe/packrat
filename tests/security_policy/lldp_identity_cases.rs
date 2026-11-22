@@ -64,3 +64,46 @@ fn stale_lldp_shutdown_cannot_remove_a_newer_same_time_identity() {
         .find(|alert| alert.title == "LLDP chassis identity changed").unwrap();
     assert_eq!(alert.packet_refs, [2, 3]);
 }
+
+#[rstest::rstest]
+#[case(2.0)]
+#[case(3.0)]
+fn withdrawn_lldp_identity_ignores_reordered_claims(#[case] delayed_time: f64) {
+    const TITLE: &str = "LLDP chassis identity changed";
+    let mac = [2, 1, 2, 3, 4, 5];
+    let mut core = AnalysisCore::default();
+    let mut shutdown = lldp_packet(3, mac, b"a");
+    shutdown.bytes[24..26].fill(0);
+    let mut delayed = lldp_packet(2, mac, b"a");
+    delayed.timestamp = delayed_time;
+    for packet in [lldp_packet(1, mac, b"a"), shutdown, delayed, lldp_packet(4, mac, b"b")] {
+        core.analyze(&packet);
+    }
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+
+    core.analyze(&lldp_packet(5, mac, b"c"));
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(alert.packet_refs, [4, 5]);
+}
+
+#[test]
+fn withdrawn_lldp_identity_yields_capacity_to_a_new_neighbor() {
+    let make = |no, host: u16, chassis: &[u8]| {
+        let [high, low] = host.to_be_bytes();
+        let mut packet = lldp_packet(no, [2, 1, 2, 3, high, low], chassis);
+        packet.timestamp = 1.0;
+        packet
+    };
+    let mut core = AnalysisCore::default();
+    for host in 1..=1024 {
+        core.analyze(&make(u64::from(host), host, b"a"));
+    }
+    let mut shutdown = make(1025, 1, b"a");
+    shutdown.bytes[24..26].fill(0);
+    core.analyze(&shutdown);
+    core.analyze(&make(1026, 1025, b"a"));
+    core.analyze(&make(1027, 1025, b"b"));
+    let alert = core.alert_center.items.iter()
+        .find(|alert| alert.title == "LLDP chassis identity changed").unwrap();
+    assert_eq!(alert.packet_refs, [1026, 1027]);
+}

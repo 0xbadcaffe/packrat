@@ -141,7 +141,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the BPDU with switch topology and maintenance logs; the indication does not prove a forwarding change.",
         ),
         (
-            "IDS", "LLDP chassis identity changed", "lldp.chassis_identity_change", 2, Correlated,
+            "IDS", "LLDP chassis identity changed", "lldp.chassis_identity_change", 3, Correlated,
             "Compare both advertisements with the switch-port inventory and maintenance records before attributing the change.",
         ),
         (

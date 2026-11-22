@@ -226,8 +226,13 @@ impl SecurityEngine {
             return;
         }
         if advertisement.ttl == 0 {
-            if existing.is_some_and(|previous| previous.chassis == advertisement.chassis) {
-                self.lldp_chassis.remove(&key);
+            if let Some(previous) = self.lldp_chassis.get_mut(&key)
+                && previous.chassis == advertisement.chassis
+            {
+                // Keep the withdrawal's order, but let capacity cleanup reclaim this entry.
+                previous.seen_at = now;
+                previous.frame = pkt.no;
+                previous.expires_at = now;
             }
             return;
         }
