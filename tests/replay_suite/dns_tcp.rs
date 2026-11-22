@@ -6,10 +6,83 @@ use std::path::Path;
 fn message(id: u16, name: &[u8], reply: bool) -> Vec<u8> {
     let mut body = id.to_be_bytes().to_vec();
     body.extend([if reply { 0x81 } else { 1 }, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
-    body.push(name.len() as u8);
-    body.extend_from_slice(name);
+    for label in name.split(|&byte| byte == b'.') {
+        body.push(label.len() as u8);
+        body.extend_from_slice(label);
+    }
     body.extend_from_slice(b"\x04test\0\0\x01\0\x01");
     body
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn tcp_dns_entropy_replay_counts_messages_and_preserves_stream_evidence() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "dns.high_entropy_query_burst";
+    let label = |index| format!("abcdefghijklmnpqrstuvwxyz234567{index}.example");
+    let cases: Vec<_> = [
+        ("complete-split-and-coalesced", true, false, 8, 1),
+        ("without-opening-frames", false, false, 8, 0),
+        ("incomplete-stream-gap", true, true, 8, 0),
+        ("separate-udp-and-tcp", true, false, 4, 0),
+    ]
+    .into_iter()
+    .map(|(name, anchored, gap, count, expected)| {
+        let file = format!("{name}.pcapng");
+        let mut capture = PcapNgWriter::create(&root.join(&file)).unwrap();
+        if anchored {
+            capture
+                .write_packet(&tcp_frame(1, 100, 0x02, false, &[]))
+                .unwrap();
+            capture
+                .write_packet(&tcp_frame(2, 500, 0x12, true, &[]))
+                .unwrap();
+        }
+        let messages: Vec<_> = (0..count)
+            .flat_map(|index| framed(index, label(index).as_bytes(), false))
+            .collect();
+        let sequence = 107 + u32::from(gap);
+        for frame in [
+            tcp_frame(3, 101, 0x18, false, &messages[..6]),
+            tcp_frame(4, sequence, 0x18, false, &messages[6..]),
+            tcp_frame(5, sequence, 0x18, false, &messages[6..]),
+        ] {
+            capture.write_packet(&frame).unwrap();
+        }
+        if count == 4 {
+            for index in 4..8 {
+                let query = message(index, label(index).as_bytes(), false);
+                capture
+                    .write_packet(&udp_frame(u64::from(index) + 2, &query, false, 53, 40_000))
+                    .unwrap();
+            }
+        }
+        capture.flush().unwrap();
+        let mut case = json!({
+            "name": name, "capture": file, "expect_snapshots": expected,
+            "expect_counts": {(rule):expected},
+        });
+        if expected != 0 {
+            case["opening_frames"] = json!({(rule):[4]});
+            case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":4,"frames":[3,4]}]);
+        }
+        case
+    })
+    .collect();
+    let manifest = root.join("tcp-dns-entropy.json");
+    std::fs::write(
+        &manifest,
+        json!({"version":1,"strict":true,"cases":cases}).to_string(),
+    )
+    .unwrap();
+    let output = run_suite(&manifest);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 
 fn framed(id: u16, name: &[u8], reply: bool) -> Vec<u8> {

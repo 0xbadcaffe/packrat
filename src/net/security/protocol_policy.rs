@@ -236,7 +236,7 @@ impl SecurityEngine {
         });
     }
 
-    pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet, dns: crate::analysis::stream::DnsTcpObservation) {
+    pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet, dns: &crate::analysis::stream::DnsTcpObservation) {
         for (id, finding) in self.dns_transactions.observe_stream(pkt, dns) {
             let (signature, severity) = match finding.kind {
                 DnsFindingKind::InvalidQuestionCount => ("DNS invalid question count", Severity::Low),

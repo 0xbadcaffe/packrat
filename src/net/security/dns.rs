@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::{dns_transactions, stream::DnsTcpObservation};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 
@@ -6,6 +7,8 @@ const TUNNEL_WINDOW_SECS: f64 = 60.0;
 const TUNNEL_THRESHOLD: usize = 8;
 const MAX_GROUPS: usize = 1024;
 const MAX_SAMPLES: usize = 32;
+const MAX_FRAMES_PER_QUERY: usize =
+    (crate::analysis::alert_center::MAX_ALERT_PACKET_REFS - 1) / TUNNEL_THRESHOLD;
 
 #[derive(Hash, Eq, PartialEq)]
 struct TunnelKey {
@@ -13,12 +16,13 @@ struct TunnelKey {
     client: String,
     resolver: String,
     suffix: String,
+    transport: &'static str,
 }
 
 struct QuerySample {
     name_digest: [u8; 32],
     timestamp: f64,
-    frame: u64,
+    frames: Vec<u64>,
     entropy: f64,
     label_length: usize,
 }
@@ -40,24 +44,23 @@ impl DnsTunnelTracker {
         self.groups.clear();
     }
 
-    fn observe(&mut self, pkt: &Packet) -> Option<(DnsTunnelSuspect, IdsFinding)> {
+    fn observe(
+        &mut self, pkt: &Packet, name: &str, transport: &'static str, frames: &[u64],
+    ) -> Option<(DnsTunnelSuspect, IdsFinding)> {
         let now = pkt.timestamp;
-        if pkt.dst_port != Some(53) || !now.is_finite() || now < 0.0
-            || pkt.capture.as_ref().is_some_and(|capture| capture.link_type != 1)
-        {
+        if frames.is_empty() || frames.len() > MAX_FRAMES_PER_QUERY {
             return None;
         }
-        let name = crate::analysis::dns_transactions::wire_query_name(pkt)?;
         if !name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_')) {
             return None;
         }
-        let suffix = psl::domain_str(&name)?;
+        let suffix = psl::domain_str(name)?;
         let prefix = name.strip_suffix(suffix)?.strip_suffix('.')?;
         let (label_length, entropy) = prefix.split('.').filter(|label| label.len() >= 24)
             .map(|label| (label.len(), shannon_entropy(label.as_bytes())))
             .max_by(|a, b| a.1.total_cmp(&b.1)).filter(|&(_, entropy)| entropy >= 3.5)?;
         let scope = service_scope(pkt);
-        let key = TunnelKey { scope, client: pkt.src.clone(), resolver: pkt.dst.clone(), suffix: suffix.into() };
+        let key = TunnelKey { scope, client: pkt.src.clone(), resolver: pkt.dst.clone(), suffix: suffix.into(), transport };
         if self.groups.len() >= MAX_GROUPS && !self.groups.contains_key(&key) {
             self.groups.retain(|_, group| now - group.last_seen <= TUNNEL_WINDOW_SECS);
             if self.groups.len() >= MAX_GROUPS { return None; }
@@ -68,16 +71,20 @@ impl DnsTunnelTracker {
         window.samples.retain(|sample| now - sample.timestamp <= TUNNEL_WINDOW_SECS);
         if window.samples.len() <= TUNNEL_THRESHOLD / 2 { window.alerted = false; }
         let name_digest = Sha256::digest(prefix.as_bytes()).into();
-        if window.samples.iter().any(|sample| sample.name_digest == name_digest || sample.frame == pkt.no) {
+        if window.samples.iter().any(|sample| sample.name_digest == name_digest) {
             return None;
         }
         if window.samples.len() == MAX_SAMPLES { window.samples.pop_front(); }
-        window.samples.push_back(QuerySample { name_digest, timestamp: now, frame: pkt.no, entropy, label_length });
+        window.samples.push_back(QuerySample { name_digest, timestamp: now, frames: frames.to_vec(), entropy, label_length });
         if window.samples.len() < TUNNEL_THRESHOLD || window.alerted { return None; }
         window.alerted = true;
         let count = window.samples.len();
         let max_entropy = window.samples.iter().map(|sample| sample.entropy).fold(0.0, f64::max);
         let max_subdomain_len = window.samples.iter().map(|sample| sample.label_length).max().unwrap_or(0);
+        let mut related_packets: Vec<_> = window.samples.iter().flat_map(|sample| sample.frames.iter().copied())
+            .filter(|&frame| frame != pkt.no).collect();
+        related_packets.sort_unstable();
+        related_packets.dedup();
         Some((
             DnsTunnelSuspect { apex: suffix.into(), query_count: count as u64, max_entropy,
                 max_subdomain_len, unique_subdomains: count, score: count as f64 },
@@ -87,21 +94,43 @@ impl DnsTunnelTracker {
                     signature: "DNS tunnel behavior",
                     severity: Severity::Medium,
                     detail: format!(
-                        "{count} distinct queries with long, high-entropy labels under {suffix} from {} to {} in 60 seconds; tunneling and data transfer unverified",
+                        "{count} distinct {transport} queries with long, high-entropy labels under {suffix} from {} to {} in 60 seconds; tunneling and data transfer unverified",
                         pkt.src, pkt.dst,
                     ),
                 },
-                related_packets: window.samples.iter().map(|sample| sample.frame)
-                    .filter(|&frame| frame != pkt.no).collect(),
-                correlation_key: Some(format!("{scope:?}:{}>{}:{suffix}:{}", pkt.src, pkt.dst, pkt.no)),
+                related_packets,
+                correlation_key: Some(format!("{scope:?}:{transport}:{}>{}:{suffix}:{}", pkt.src, pkt.dst, pkt.no)),
             },
         ))
     }
 }
 
 impl SecurityEngine {
-    pub(super) fn check_dns_tunnel(&mut self, pkt: &Packet) {
-        if let Some((suspect, finding)) = self.dns_tunnel.observe(pkt) {
+    pub(super) fn check_dns_tunnel(&mut self, pkt: &Packet, tcp: &DnsTcpObservation) {
+        if pkt.dst_port != Some(53) || !pkt.timestamp.is_finite() || pkt.timestamp < 0.0
+            || pkt.capture.as_ref().is_some_and(|capture| capture.link_type != 1)
+        {
+            return;
+        }
+        match tcp {
+            DnsTcpObservation::Anchored { destination: 53, records, .. } => {
+                for record in records {
+                    if let Some(name) = dns_transactions::query_name_from_message(&record.bytes) {
+                        self.observe_encoded_dns_query(pkt, &name, "TCP", &record.frames);
+                    }
+                }
+            }
+            DnsTcpObservation::Unanchored => {
+                if let Some(name) = dns_transactions::wire_query_name(pkt) {
+                    self.observe_encoded_dns_query(pkt, &name, "UDP", &[pkt.no]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn observe_encoded_dns_query(&mut self, pkt: &Packet, name: &str, transport: &'static str, frames: &[u64]) {
+        if let Some((suspect, finding)) = self.dns_tunnel.observe(pkt, name, transport, frames) {
             if self.dns_suspects.len() >= MAX_ENTRIES { self.dns_suspects.remove(0); }
             self.dns_suspects.push(suspect);
             self.push_ids_finding(finding);

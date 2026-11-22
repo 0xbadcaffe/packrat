@@ -179,7 +179,7 @@ impl DnsTransactionTracker {
     }
 
     pub(crate) fn observe_stream(
-        &mut self, packet: &Packet, observation: DnsTcpObservation,
+        &mut self, packet: &Packet, observation: &DnsTcpObservation,
     ) -> Vec<(Option<u16>, DnsFinding)> {
         let DnsTcpObservation::Anchored { source, destination, records } = observation else {
             let Some((transport, source, destination, bytes)) = dns_payload(packet) else { return Vec::new(); };
@@ -190,9 +190,9 @@ impl DnsTransactionTracker {
         };
         let mut output = Vec::new();
         for DnsTcpRecord { bytes, frames } in records {
-            let id = DnsQueryHeader::parse(&bytes).map(|header| header.id);
-            for mut finding in self.observe_message(packet, DnsTransport::Tcp, (source, destination), &bytes, &frames) {
-                append_evidence(&mut finding.related_packets, &frames);
+            let id = DnsQueryHeader::parse(bytes).map(|header| header.id);
+            for mut finding in self.observe_message(packet, DnsTransport::Tcp, (*source, *destination), bytes, frames) {
+                append_evidence(&mut finding.related_packets, frames);
                 output.push((id, finding));
             }
         }
@@ -388,6 +388,10 @@ fn parse_message(bytes: &[u8]) -> Option<DnsMessage<'_>> {
 
 pub(crate) fn wire_query_name(packet: &Packet) -> Option<String> {
     let (_, 53, payload) = udp_payload(packet)? else { return None };
+    query_name_from_message(payload)
+}
+
+pub(crate) fn query_name_from_message(payload: &[u8]) -> Option<String> {
     let message = parse_message(payload)?;
     (!message.response && message.question.qclass == 1).then_some(message.question.name)
 }

@@ -135,7 +135,7 @@ impl SecurityEngine {
         self.check_ipv6_fragment_reassembly(pkt);
         self.check_http_request_smuggling(pkt);
         self.check_industrial_policy(pkt, modbus);
-        self.check_dns_transaction_integrity(pkt, dns);
+        self.check_dns_transaction_integrity(pkt, &dns);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);
@@ -144,7 +144,7 @@ impl SecurityEngine {
         self.check_brute_force(pkt);
         self.check_http(pkt);
         self.check_tls(pkt, tls);
-        self.check_dns_tunnel(pkt);
+        self.check_dns_tunnel(pkt, &dns);
     }
 
     pub fn inspect(&mut self, pkt: &Packet) -> DetectionBatch {
