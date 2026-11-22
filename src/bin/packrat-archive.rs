@@ -9,15 +9,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT] [--report-integrity]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first. Integrity counts describe only the records examined."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--limit COUNT] [--report-integrity]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --project-alert-evidence PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID OUTPUT_DIR [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR\nList previous alert logs oldest first. Integrity counts describe only the records examined."
         );
         return Ok(());
     };
     if path == "--alerts" {
         return list_alerts(args);
     }
-    if path == "--project-alert-status" {
-        return project_alert_status(args);
+    if matches!(path.as_str(), "--project-alert-status" | "--project-alert-evidence") {
+        return project_alert(args, path == "--project-alert-evidence");
     }
     if path == "--verify-evidence" {
         let directory = args.next().ok_or("--verify-evidence requires an evidence directory")?;
@@ -127,10 +127,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn project_alert_status(
+fn project_alert(
     mut args: impl Iterator<Item = String>,
+    export: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use packrat_tui::storage::alert_evidence::project_alert_evidence;
+    use packrat_tui::storage::alert_evidence::{export_project_alert_evidence, project_alert_evidence};
     use std::path::Path;
 
     let project = args.next().ok_or("Project alert status requires a project path")?;
@@ -138,6 +139,11 @@ fn project_alert_status(
     let session = args.next().ok_or("Project alert status requires a session ID")?;
     let capture = args.next().ok_or("Project alert status requires a capture ID")?;
     let id = args.next().ok_or("Project alert status requires an alert ID")?.parse()?;
+    let output = if export {
+        Some(args.next().ok_or("--project-alert-evidence requires a new output directory")?)
+    } else {
+        None
+    };
     let mut previous = Vec::new();
     while let Some(flag) = args.next() {
         if flag != "--previous-log" || previous.len() == MAX_PREVIOUS_LOGS {
@@ -148,8 +154,14 @@ fn project_alert_status(
         previous.push(PathBuf::from(value));
     }
     let logs = AlertLogs::new(Path::new(&log), &previous)?;
-    let status = project_alert_evidence(Path::new(&project), logs, &session, id, &capture)?;
-    println!("{}", serde_json::to_string(&status)?);
+    let project = Path::new(&project);
+    if let Some(output) = output {
+        let summary = export_project_alert_evidence(project, logs, &session, id, &capture, Path::new(&output))?;
+        println!("{}", serde_json::to_string(&summary)?);
+    } else {
+        let status = project_alert_evidence(project, logs, &session, id, &capture)?;
+        println!("{}", serde_json::to_string(&status)?);
+    }
     Ok(())
 }
 

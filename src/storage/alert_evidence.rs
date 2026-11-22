@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::analysis::alert_center::{AlertItem, MAX_ALERT_PACKET_REFS};
 use crate::export::pcapng::PcapNgWriter;
+use crate::model::project::ProjectState;
 use crate::net::packet::Packet;
 use crate::storage::packet_archive::{PacketArchive, valid_capture_id};
 use super::alert_history::{AlertLogs, ReverseAlertLines};
@@ -103,7 +104,19 @@ pub fn export_alert_evidence_across_logs(
 ) -> Result<EvidenceExportSummary> {
     let alert = latest_alert_in_logs(logs, session_id, alert_id, capture_filter)?;
     let (capture_id, frames) = scoped_frames(&alert)?;
+    export_frames(output, session_id, capture_id, &alert, &frames, |number| {
+        archive.packet_for_capture(capture_id, number).map_err(anyhow::Error::msg)
+    })
+}
 
+fn export_frames(
+    output: &Path,
+    session_id: &str,
+    capture_id: &str,
+    alert: &AlertItem,
+    frames: &[u64],
+    fetch: impl FnMut(u64) -> Result<Option<Packet>>,
+) -> Result<EvidenceExportSummary> {
     let mut builder = DirBuilder::new();
     #[cfg(unix)]
     {
@@ -111,7 +124,7 @@ pub fn export_alert_evidence_across_logs(
         builder.mode(0o700);
     }
     builder.create(output).context("Create new evidence directory")?;
-    let result = export_into(archive, output, session_id, capture_id, &alert, frames);
+    let result = export_into(output, session_id, capture_id, alert, frames, fetch);
     if result.is_err() {
         let _ = std::fs::remove_file(output.join(MANIFEST));
         let _ = std::fs::remove_file(output.join(PCAP));
@@ -170,27 +183,65 @@ pub fn project_alert_evidence(
     let alert = latest_alert_in_logs(logs, session_id, alert_id, Some(capture_filter))?;
     let (capture_id, frames) = scoped_frames(&alert)?;
     let project = super::project_store::load(project)?;
-    let mut statuses: Vec<Option<FrameStatus>> = (0..frames.len()).map(|_| None).collect();
-    for packet in &project.pinned_packets {
-        if let Ok(index) = frames.binary_search(&packet.no)
-            && project.pinned_packet_scopes.get(&packet.no).is_some_and(|scope| scope == capture_id)
-        {
-            statuses[index] = Some(if statuses[index].is_some() {
-                FrameStatus::Unreadable
-            } else {
-                frame_status(packet)
-            });
-        }
-    }
+    let pins = project_pins(&project, capture_id, &frames);
     Ok(EvidenceAvailability {
         session_id: session_id.to_owned(),
         capture_id: capture_id.to_owned(),
         alert_id,
         evidence_frame_set_sha256: evidence_frame_set_sha256(&frames),
-        frames: frames.into_iter().zip(statuses).map(|(frame_number, status)| {
-            FrameAvailability { frame_number, status: status.unwrap_or(FrameStatus::Missing) }
+        frames: frames.into_iter().zip(pins).map(|(frame_number, pin)| {
+            let status = match pin {
+                ProjectPin::Missing => FrameStatus::Missing,
+                ProjectPin::Duplicate => FrameStatus::Unreadable,
+                ProjectPin::Unique(packet) => frame_status(packet),
+            };
+            FrameAvailability { frame_number, status }
         }).collect(),
     })
+}
+
+/// Export only uniquely scoped pins with recorded capture lengths.
+pub fn export_project_alert_evidence(
+    project: &Path,
+    logs: AlertLogs<'_>,
+    session_id: &str,
+    alert_id: u64,
+    capture_filter: &str,
+    output: &Path,
+) -> Result<EvidenceExportSummary> {
+    let alert = latest_alert_in_logs(logs, session_id, alert_id, Some(capture_filter))?;
+    let (capture_id, frames) = scoped_frames(&alert)?;
+    let project = super::project_store::load(project)?;
+    let pins = project_pins(&project, capture_id, &frames);
+    export_frames(output, session_id, capture_id, &alert, &frames, |number| {
+        Ok(match frames.binary_search(&number).ok().and_then(|index| pins.get(index)).copied() {
+            Some(ProjectPin::Unique(packet))
+                if matches!(frame_status(packet), FrameStatus::Complete | FrameStatus::Truncated) => Some(packet.clone()),
+            _ => None,
+        })
+    })
+}
+
+#[derive(Clone, Copy)]
+enum ProjectPin<'a> {
+    Missing,
+    Unique(&'a Packet),
+    Duplicate,
+}
+
+fn project_pins<'a>(project: &'a ProjectState, capture_id: &str, frames: &[u64]) -> Vec<ProjectPin<'a>> {
+    let mut pins = vec![ProjectPin::Missing; frames.len()];
+    for packet in &project.pinned_packets {
+        if let Ok(index) = frames.binary_search(&packet.no)
+            && project.pinned_packet_scopes.get(&packet.no).is_some_and(|scope| scope == capture_id)
+        {
+            pins[index] = match pins[index] {
+                ProjectPin::Missing => ProjectPin::Unique(packet),
+                _ => ProjectPin::Duplicate,
+            };
+        }
+    }
+    pins
 }
 
 fn frame_status(packet: &Packet) -> FrameStatus {
@@ -224,19 +275,19 @@ fn scoped_frames(alert: &AlertItem) -> Result<(&str, Vec<u64>)> {
 }
 
 fn export_into(
-    archive: &mut PacketArchive,
     output: &Path,
     session_id: &str,
     capture_id: &str,
     alert: &AlertItem,
-    frames: Vec<u64>,
+    frames: &[u64],
+    mut fetch: impl FnMut(u64) -> Result<Option<Packet>>,
 ) -> Result<EvidenceExportSummary> {
     let pcap_path = output.join(PCAP);
     let mut writer = None;
     let mut recovered = Vec::new();
     let mut missing = Vec::new();
-    for number in frames {
-        let Some(packet) = archive.packet_for_capture(capture_id, number).map_err(anyhow::Error::msg)? else {
+    for &number in frames {
+        let Some(packet) = fetch(number)? else {
             missing.push(number);
             continue;
         };

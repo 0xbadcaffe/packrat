@@ -27,7 +27,7 @@ fn project_alert_status_checks_only_unique_scoped_pins_against_the_log() {
     }).to_string()).unwrap();
 
     let packet = |no, captured_length, wire_length| {
-        let mut packet = parse_ethernet(&[0; 14], no, 1.0);
+        let mut packet = parse_ethernet(&[no as u8; 14], no, 1.0);
         packet.capture = Some(CaptureMetadata {
             timestamp: None, captured_length, wire_length, link_type: 1,
             interface_id: 0, section_id: 0, interface_name: None, comments: Vec::new(),
@@ -63,6 +63,40 @@ fn project_alert_status_checks_only_unique_scoped_pins_against_the_log() {
         {"frame_number":6,"status":"length_unknown"},
         {"frame_number":7,"status":"missing"},
     ]));
+
+    let output = root.path().join("evidence");
+    let export = |capture| Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--project-alert-evidence").arg(&project_path).arg(&log)
+        .args(["s", capture, "1"]).arg(&output)
+        .args(["--previous-log"]).arg(&previous).output().unwrap();
+    assert!(!export("capture-b").status.success());
+    assert!(!output.exists());
+    let result = export("capture-a");
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(),
+        json!({"recovered_frames":2,"missing_frames":5}));
+
+    let manifest_path = output.join("manifest.json");
+    let manifest = std::fs::read(&manifest_path).unwrap();
+    let view: Value = serde_json::from_slice(&manifest).unwrap();
+    assert_eq!(view["capture"]["source_frame_numbers"], json!([1, 2]));
+    assert_eq!(view["missing_frame_numbers"], json!([3, 4, 5, 6, 7]));
+    let mut payloads = Vec::new();
+    packrat_tui::pcap_replay::stream_pcap(&output.join("evidence.pcapng"), |packet| {
+        payloads.push((packet.capture.unwrap().wire_length, packet.bytes));
+        Ok(())
+    }).unwrap();
+    assert_eq!(payloads, [(14, vec![1; 14]), (60, vec![2; 14])]);
+    let verified = packrat_tui::storage::alert_evidence::verify_alert_evidence(&output).unwrap();
+    assert_eq!(verified.capture_sha256_verified, Some(true));
+    assert!(!export("capture-a").status.success());
+    assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&output).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::metadata(output.join("evidence.pcapng")).unwrap().permissions().mode() & 0o777, 0o600);
+    }
     assert_eq!(std::fs::read(&project_path).unwrap(), before);
 }
 
