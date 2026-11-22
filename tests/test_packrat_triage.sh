@@ -40,6 +40,7 @@ mock_archive() {
     local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' selector='--limit 512'
     if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope=''; fi
     if [[ -n ${PACKRAT_TEST_TARGET:-} ]]; then selector="--alert-id $PACKRAT_TEST_TARGET"; fi
+    if [[ ${PACKRAT_TEST_INDEX:-0} == 1 && $* != *" --scan-bytes 8388608 --report-integrity"* ]]; then return 2; fi
     if [[ $* == *" --scan-bytes 8388608 --report-integrity"* ]]; then selector+=' --scan-bytes 8388608'; elif [[ ${PACKRAT_TEST_SCAN_STOPPED:-false} == true ]]; then return 2; fi
     [[ $* == "--alerts $PACKRAT_TEST_LOG$scope $selector --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
@@ -484,27 +485,6 @@ status=0
 bash "$triage" --saved 1700000000-432 'legacy-unspecified' "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
 
-list_saved() {
-    PACKRAT_TEST_INDEX=1 bash "$triage" --list-saved "$@"
-}
-result=$(list_saved "$PACKRAT_TEST_LOG")
-jq -e '.record_type == "saved_capture_index" and .status == "saved"
-    and .sampled_alerts == 6 and .sampled_unscoped_alerts == 2
-    and .alert_sample_limit == 512 and .alert_log_integrity.stopped_at_limit == false
-    and (.captures | map(.session_id)) == ["1700000000-123","1700000000-432"]
-    and (.captures | map(.sampled_alerts)) == [1,3]
-    and (.captures | map(.sampled_high_or_critical)) == [1,3]
-    and (.captures | map(.sampled_open_high_or_critical)) == [0,2]
-    and (.captures | map(.next_review_alert_id)) == [null,3]
-    and .captures[1].first_seen == 10 and .captures[1].last_seen == 22
-    and (tostring | contains("not in index") | not)' <<< "$result" >/dev/null
-result=$(PACKRAT_TEST_ALERT_COUNT=512 list_saved "$PACKRAT_TEST_LOG")
-jq -e '.status == "saved" and .sampled_alerts == 512 and .alert_log_integrity.stopped_at_limit
-    and .captures[0].last_seen == null' <<< "$result" >/dev/null
-status=0
-result=$(PACKRAT_TEST_INVALID_RECORDS=1 PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" \
-    list_saved "$PACKRAT_TEST_LOG" "$previous") || status=$?
-[[ $status == 1 ]]
-jq -e '.status == "saved_log_degraded" and .previous_logs == 1 and (.captures | length) == 2' \
-    <<< "$result" >/dev/null
+# shellcheck source=tests/support/packrat_triage_saved_index.bash
+source "$root/tests/support/packrat_triage_saved_index.bash"
 printf '%s\n' 'Packrat triage tests passed'

@@ -61,7 +61,7 @@ else
 fi
 alert_limit=50 query_limit=512
 limit_args=(--limit "$query_limit")
-if [[ $mode == live ]]; then limit_args+=(--scan-bytes 8388608); fi
+if [[ $mode == live || $mode == list_saved ]]; then limit_args+=(--scan-bytes 8388608); fi
 if [[ -n $target_alert ]]; then
     alert_limit=1 query_limit=1
     limit_args=(--alert-id "$target_alert")
@@ -201,9 +201,9 @@ report_saved_index() {
         | (.alerts | map(select(scoped))) as $scoped
         | {
             record_type:"saved_capture_index",
-            status:(if $integrity.invalid_records == 0 and $integrity.oversized_records == 0 then "saved" else "saved_log_degraded" end),
-            previous_logs:$previous,
-            alert_sample_limit:$limit,
+            status:(if $integrity.invalid_records == 0 and $integrity.oversized_records == 0
+                and $integrity.stopped_at_scan_budget != true then "saved" else "saved_log_degraded" end),
+            previous_logs:$previous, alert_sample_limit:$limit,
             sampled_alerts:(.alerts | length),
             sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
             alert_log_integrity:$integrity,
