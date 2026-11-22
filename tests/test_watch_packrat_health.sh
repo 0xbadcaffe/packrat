@@ -6,6 +6,7 @@ watch="$root/scripts/watch-packrat-health.sh"
 
 export PACKRAT_HEALTH_PORT=9477 PACKRAT_ALERT_SESSION=packrat-alerts PACKRAT_MIN_FREE_MIB=512 PACKRAT_ALERT_PIPELINE=0
 unset PACKRAT_ALERT_LOG PACKRAT_REQUIRE_ARCHIVE PACKRAT_HEALTH_INTERVAL PACKRAT_HEALTH_HEARTBEAT PACKRAT_HEALTH_STATE_FILE
+unset PACKRAT_EXPECT_INTERFACE
 export PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fresh":true,"alert_saving":true,"pcap_buffer_drops":0}'
 export PACKRAT_FAKE_DISK=1048576 PACKRAT_FAKE_PANE=0 PACKRAT_TEST_STEP=0
 
@@ -88,6 +89,19 @@ PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$archive_samples" bash "$watch" | jq 
 status=0
 PACKRAT_REQUIRE_ARCHIVE=true bash "$watch" --once >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
+
+interface_samples=$(jq -c '
+    [. + {capture_interface:"wlan1"},
+     . + {capture_interface:"eth0"},
+     . + {capture_interface:"wlan1\n"},
+     . + {capture_interface:"wlan1"}]
+' <<< "$PACKRAT_FAKE_HEALTH")
+PACKRAT_EXPECT_INTERFACE=wlan1 PACKRAT_FAKE_STEPS=4 PACKRAT_FAKE_SAMPLES="$interface_samples" \
+    bash "$watch" | jq -se '
+    map(.capture_interface) == ["wlan1","eth0",null,"wlan1"]
+    and all(.[]; .expected_capture_interface == "wlan1")
+    and map(.issues) == [[],["capture_interface_mismatch"],["capture_interface_unavailable"],[]]
+' >/dev/null
 
 log='/var/lib/packrat lab/alerts.jsonl'
 export PACKRAT_FAKE_PROCESSES="$pipeline"$'\n95 91 S jq'

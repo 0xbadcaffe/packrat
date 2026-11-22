@@ -6,6 +6,7 @@ usage() {
         'Environment: PACKRAT_HEALTH_PORT (9477), PACKRAT_HEALTH_INTERVAL (15 seconds),' \
         'PACKRAT_HEALTH_HEARTBEAT (300 seconds between unchanged reports; 0 disables),' \
         'PACKRAT_HEALTH_STATE_FILE (optional absolute path for the latest published record),' \
+        'PACKRAT_EXPECT_INTERFACE (optional expected live capture interface),' \
         'PACKRAT_ALERT_SESSION (optional tmux session), PACKRAT_DISK_PATH (/),' \
         'PACKRAT_ALERT_PIPELINE (1 checks the alert session tail and jq processes),' \
         'PACKRAT_ALERT_LOG (optional absolute alert path; requires pipeline checking),' \
@@ -26,6 +27,7 @@ port=${PACKRAT_HEALTH_PORT:-9477}
 interval=${PACKRAT_HEALTH_INTERVAL:-15}
 heartbeat=${PACKRAT_HEALTH_HEARTBEAT:-300}
 state_file=${PACKRAT_HEALTH_STATE_FILE:-}
+expected_interface=${PACKRAT_EXPECT_INTERFACE:-}
 alert_session=${PACKRAT_ALERT_SESSION:-}
 alert_pipeline=${PACKRAT_ALERT_PIPELINE:-0}
 alert_log=${PACKRAT_ALERT_LOG:-}
@@ -41,6 +43,10 @@ if [[ ! $port =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )) ||
 fi
 if [[ -n $state_file && ( $state_file != /* || $state_file == */ ) ]]; then
     printf '%s\n' 'PACKRAT_HEALTH_STATE_FILE requires an absolute file path.' >&2
+    exit 2
+fi
+if [[ ${#expected_interface} -gt 256 || $expected_interface == *[[:cntrl:]]* ]]; then
+    printf '%s\n' 'Invalid PACKRAT_EXPECT_INTERFACE value.' >&2
     exit 2
 fi
 for dependency in curl jq df; do
@@ -139,12 +145,14 @@ read_health() {
     fi
     printf '%s\n' "$sample" | jq -Rcse \
         --argjson watcher "$watcher" --argjson pipeline "$pipeline" --argjson source "$source" \
-        --arg alert_log "$alert_log" \
+        --arg alert_log "$alert_log" --arg expected_interface "$expected_interface" \
         --argjson disk "$disk" --argjson min_free "$min_free" --argjson require_archive "$require_archive" \
         --argjson baseline "$baseline" '
         (try fromjson catch null) as $health |
         (if ($health|type) == "object" then $health else {} end) as $h |
         ($h.capture_run_id | if type == "string" and test("^[0-9a-f]{16}$") then . else null end) as $run |
+        ($h.capture_interface | if type == "string" and length > 0 and length <= 256
+                                 and (test("[[:cntrl:]]") | not) then . else null end) as $interface |
         ($h.capture_id | if type == "string" and test("^[0-9a-f]{32}$") then . else null end) as $capture |
         ($h.alert_session_id | if type == "string" and length <= 128 and test("^[0-9]+-[0-9]+$")
                               then . else null end) as $session |
@@ -159,6 +167,8 @@ read_health() {
         {
             capture_active: ($h.capture_active // false),
             capture_run_id: $run,
+            capture_interface: $interface,
+            expected_capture_interface: (if $expected_interface == "" then null else $expected_interface end),
             capture_id: $capture,
             alert_session_id: $session,
             telemetry_fresh: ($h.telemetry_fresh // false),
@@ -182,6 +192,11 @@ read_health() {
                 else
                     (if $h.telemetry_fresh != true then "telemetry_stale" else empty end),
                     (if $h.capture_active != true then "capture_inactive" else empty end),
+                    (if $usable and $expected_interface != "" then
+                        if $interface == null then "capture_interface_unavailable"
+                        elif $interface != $expected_interface then "capture_interface_mismatch"
+                        else empty end
+                     else empty end),
                     (if $h.alert_save_failed == true then "alert_save_failed"
                      elif $h.alert_saving != true then "alert_saving_disabled" else empty end),
                     (if $drops != null then
@@ -234,7 +249,7 @@ while :; do
     if ! state=$(read_health); then
         state=$(jq -cn --argjson baseline "$baseline" '{issues:["monitor_input_error"],next_baseline:$baseline}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .capture_id, .alert_session_id, .pcap_buffer_drops, .archive_enabled]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_id, .alert_session_id, .pcap_buffer_drops, .archive_enabled]' <<< "$state") || exit 2
     event=
     if "$once"; then
         event=sample

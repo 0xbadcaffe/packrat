@@ -175,6 +175,8 @@ impl App {
             packets_per_second: self.current_rate(),
             capturing: self.capturing,
             capture_run_id: self.capture_handle.as_ref().map(crate::capture::CaptureTask::run_id),
+            capture_interface: (self.capturing && self.capture_handle.is_some())
+                .then(|| self.selected_iface.clone()),
             capture_id: self.capture_id.clone(),
             alert_session_id: Some(self.alert_session_id.clone()),
             capture_queue: queue,
