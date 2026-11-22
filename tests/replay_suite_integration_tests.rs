@@ -6,6 +6,7 @@ mod support;
 mod dns_replay;
 
 use packrat_tui::export::pcapng::PcapNgWriter;
+use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use serde_json::{Value, json};
 use std::{path::Path, process::{Command, Output}};
 
@@ -183,4 +184,64 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         assert_eq!(alert["severity"], severity);
         assert_eq!(alert["packet_refs"], json!([1, 2, 4]));
     }
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "traffic.periodic_fixed_size";
+    let mut cases = Vec::new();
+    for (name, vary_size, split_interface, expected) in [
+        ("fixed", false, false, 1),
+        ("variable wire size", true, false, 0),
+        ("split interfaces", false, true, 0),
+    ] {
+        let file = format!("{name}.pcapng");
+        let mut writer = PcapNgWriter::create(&root.join(&file)).unwrap();
+        for frame in 1..=7 {
+            let mut packet = support::tcp(frame, 100, 0x10, &[], false);
+            let captured_length = packet.bytes.len() as u32;
+            packet.capture = Some(CaptureMetadata {
+                timestamp: Some(CaptureTimestamp {
+                    ticks: frame * 10,
+                    resolution: TimestampResolution::Decimal(0),
+                    offset_seconds: 0,
+                }),
+                captured_length,
+                wire_length: if vary_size && frame % 2 == 0 { 200 } else { 900 },
+                link_type: 1,
+                interface_id: if split_interface { (frame % 2) as u32 } else { 0 },
+                section_id: 0,
+                interface_name: None,
+                comments: Vec::new(),
+            });
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+        let mut case = json!({"name":name, "capture":file, "expect_counts":{(rule):expected}});
+        if expected > 0 {
+            case["opening_frames"] = json!({(rule):[7]});
+        }
+        cases.push(case);
+    }
+
+    let manifest = root.join("periodic.json");
+    let labels = json!({"version":1, "strict":true, "cases":cases});
+    std::fs::write(&manifest, labels.to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], 3);
+    assert_eq!(report["score"]["unexpected_openings"], 0);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+        .arg("--alerts-only").arg(root.join("fixed.pcapng")).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let finding = String::from_utf8(output.stdout).unwrap().lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .find(|event| event["type"] == "alert").unwrap();
+    assert_eq!(finding["alert"]["provenance"]["confidence"], "heuristic");
+    assert_eq!(finding["alert"]["packet_refs"], json!([1, 2, 3, 4, 5, 6, 7]));
 }
