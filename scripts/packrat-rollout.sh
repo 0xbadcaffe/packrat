@@ -64,6 +64,7 @@ capture_health_sample() {
             select(.status == "ok" and .service == "packrat"
             and .telemetry_fresh == true and .capture_active == true and .alert_saving == true
             and (.alert_save_failed | not)
+            and .capture_link_decodable != false
             and (.pcap_buffer_drops | type == "number" and . >= 0 and . <= 4294967295 and floor == .)
             and (if $fresh then .pcap_buffer_drops == 0 and scoped
                  else .capture_interface == null or .capture_interface == $interface end)

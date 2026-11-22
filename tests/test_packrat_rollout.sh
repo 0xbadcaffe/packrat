@@ -73,6 +73,10 @@ source "$root/scripts/packrat-rollout.sh"
     expected_addr=$stage_health_addr
     [[ $(capture_health_sample "$stage_health_addr" true) == legacy ]]
     good=$sample
+    sample=$(jq -c '. + {capture_link_type:113,capture_link_decodable:false}' <<< "$good")
+    if capture_health_sample "$stage_health_addr" true; then exit 1; fi
+    sample=$(jq -c '. + {capture_link_type:1,capture_link_decodable:true}' <<< "$good")
+    [[ $(capture_health_sample "$stage_health_addr" true) == legacy ]]
     for update in '.service = "other"' '.capture_interface = "eth0"' 'del(.capture_interface)' \
         '.capture_id = "invalid"' '.capture_run_id = null' '.pcap_buffer_drops = 1'; do
         sample=$(jq -c "$update" <<< "$good")

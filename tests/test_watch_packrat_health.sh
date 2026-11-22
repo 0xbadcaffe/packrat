@@ -268,6 +268,13 @@ output=$(PACKRAT_FAKE_HEALTH='{"status":"ok","capture_active":true,"telemetry_fr
 jq -e '.issues == ["pcap_buffer_drops"] and .pcap_buffer_drops == 12' <<< "$output" >/dev/null
 
 status=0
+unsupported=$(jq -c '. + {capture_link_type:113,capture_link_decodable:false}' <<< "$PACKRAT_FAKE_HEALTH")
+output=$(PACKRAT_FAKE_HEALTH="$unsupported" bash "$watch" --once) || status=$?
+[[ $status == 1 ]]
+jq -e '.issues == ["capture_link_unsupported"] and .capture_link_type == 113
+   and .capture_link_decodable == false and .pcap_buffer_drops == 0' <<< "$output" >/dev/null
+
+status=0
 pressure=$(jq -c '.capture_queue = {depth:75,capacity:100,dispatch_waiting:true,analysis_packets_pending:8}' <<< "$PACKRAT_FAKE_HEALTH")
 output=$(PACKRAT_FAKE_HEALTH="$pressure" bash "$watch" --once) || status=$?
 [[ $status == 1 ]]

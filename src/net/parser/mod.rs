@@ -2,6 +2,10 @@
 #![allow(dead_code)]
 use crate::net::packet::Packet;
 
+pub(crate) fn supports_capture_link_type(link_type: u32) -> bool {
+    link_type == 1
+}
+
 pub fn parse_captured(
     data: &[u8],
     no: u64,
@@ -14,7 +18,7 @@ pub fn parse_captured(
         return Err("Invalid captured packet lengths".into());
     }
     let timestamp = capture.timestamp.map_or(0.0, |time| time.seconds());
-    let mut packet = if capture.link_type == 1 {
+    let mut packet = if supports_capture_link_type(capture.link_type) {
         parse_ethernet(data, no, timestamp)
     } else {
         let mut packet = unknown(data, no, timestamp);

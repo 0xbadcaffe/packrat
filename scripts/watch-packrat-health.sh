@@ -251,6 +251,9 @@ read_health() {
         ($h.capture_run_id | if type == "string" and test("^[0-9a-f]{16}$") then . else null end) as $run |
         ($h.capture_interface | if type == "string" and length > 0 and length <= 256
                                  and (test("[[:cntrl:]]") | not) then . else null end) as $interface |
+        ($h.capture_link_type | if type == "number" and . >= 0 and . <= 4294967295 and floor == .
+                                then . else null end) as $link_type |
+        ($h.capture_link_decodable | if type == "boolean" then . else null end) as $link_decodable |
         ($h.capture_id | if type == "string" and test("^[0-9a-f]{32}$") then . else null end) as $capture |
         ($h.alert_session_id | if type == "string" and length <= 128 and test("^[0-9]+-[0-9]+$")
                               then . else null end) as $session |
@@ -274,6 +277,8 @@ read_health() {
             capture_active: ($h.capture_active // false),
             capture_run_id: $run,
             capture_interface: $interface,
+            capture_link_type: $link_type,
+            capture_link_decodable: $link_decodable,
             expected_capture_interface: (if $expected_interface == "" then null else $expected_interface end),
             capture_id: $capture,
             alert_session_id: $session,
@@ -308,6 +313,7 @@ read_health() {
                 else
                     (if $h.telemetry_fresh != true then "telemetry_stale" else empty end),
                     (if $h.capture_active != true then "capture_inactive" else empty end),
+                    (if $usable and $link_decodable == false then "capture_link_unsupported" else empty end),
                     (if $usable and $expected_interface != "" then
                         if $interface == null then "capture_interface_unavailable"
                         elif $interface != $expected_interface then "capture_interface_mismatch"
@@ -377,7 +383,7 @@ while :; do
         state=$(jq -cn --argjson baseline "$baseline" '
             {issues:["monitor_input_error"],next_baseline:{drops:$baseline.drops,packets:null}}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_id, .alert_session_id, .pcap_buffer_drops, .archive_enabled]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .pcap_buffer_drops, .archive_enabled]' <<< "$state") || exit 2
     event=
     if "$once"; then
         event=sample
