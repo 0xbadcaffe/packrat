@@ -13,15 +13,15 @@ fixture() {
             {
                 schema_version: 1, record_type: "alert", session_id: $session,
                 alert: {
-                    id: $id, title: "Periodic traffic", severity: "MEDIUM", disposition: "New",
+                    id: $id, source: "IDS", title: "Periodic traffic", severity: "MEDIUM", disposition: "New",
                     detail: "observed\u001b[31m\nnotes", hit_count: 1, last_packet: 41,
                     first_seen: 1700000000.125, last_seen: 1700000000.125,
-                    packet_refs: [41], bytes: [1, 2, 3], capture_id: "capture-a",
+                    packet_no: 41, packet_refs: [41], bytes: [1, 2, 3], capture_id: "capture-a",
                     provenance: {rule_id:"traffic.periodic",revision:1,confidence:"heuristic",verification_hint:"Inspect the owner"}
                 }
             };
         alert("session-a"; 1) as $a |
-        ($a | .alert.hit_count = 2 | .alert.last_packet = 42 | .alert.last_seen = 1700000001.25) as $updated |
+        ($a | .alert.hit_count = 2 | .alert.packet_no = 42 | .alert.last_packet = 42 | .alert.last_seen = 1700000001.25) as $updated |
         $a, $a, ($a | .alert.last_seen = 1700000000.5),
         $updated,
         ($updated | .alert.disposition = "Benign"),
@@ -37,6 +37,7 @@ fixture | bash "$watch" | jq -se '
     and map(.event) == ["first_seen","updated","updated","first_seen","first_seen"]
     and map(.session_id) == ["session-a","session-a","session-a","session-b","session-a"]
     and .[1].hits == 2 and .[1].last_packet == 42
+    and .[0].source == "IDS" and .[0].packet_no == 41 and .[1].packet_no == 42
     and .[0].first_seen == 1700000000.125 and .[0].last_seen == .[0].first_seen
     and .[1].first_seen == .[0].first_seen and .[1].last_seen == 1700000001.25
     and .[2].disposition == "Benign"
@@ -47,6 +48,22 @@ fixture | bash "$watch" | jq -se '
     and map(.evidence_frame_count) == [1,2,2,1,1]
     and all(.[]; .record_type == "capture_alert"
         and (has("bytes") or has("packet_refs") or has("evidence_frames_internal") | not))
+' >/dev/null
+
+jq -cn '
+    {schema_version:1,record_type:"alert",session_id:"123-45",
+     alert:{id:7,capture_id:("a"*128),packet_no:0}} as $a |
+    ($a | .alert.capture_id += "suffix"),
+    ($a | .alert.capture_id = []),
+    ($a | .alert.capture_id = "scope\n"),
+    ($a | .session_id = "session with spaces"),
+    ($a | .alert.id = 0),
+    ($a | .alert.id = 9007199254740992),
+    $a,
+    ($a | del(.alert.capture_id))
+' | bash "$watch" | jq -se '
+    length == 2 and all(.[]; .event == "first_seen" and .alert_id == 7 and .packet_no == null)
+    and .[0].capture_id == ("a" * 128) and .[1].capture_id == null
 ' >/dev/null
 
 jq -cn '

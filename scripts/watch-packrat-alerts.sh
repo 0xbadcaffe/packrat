@@ -27,39 +27,46 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
     def text($limit):
         if type == "string" then .[:$limit] else null end;
     def counter:
-        if type == "number" and . >= 0 and floor == . then . else null end;
+        if type == "number" and . >= 0 and . <= 9007199254740991 and floor == .
+        then . else null end;
+    def positive_counter:
+        counter | if . == 0 then null else . end;
+    def identifier:
+        type == "string" and length <= 128 and test("\\A[A-Za-z0-9_-]+\\z");
     def observation_time:
         if type == "number" and isfinite and . > 0 then . else null end;
     def evidence($alert):
         ([$alert.first_packet, $alert.packet_no, $alert.last_packet]
          + ($alert.packet_refs | if type == "array" then .[:128] else [] end))
-        | map(counter | select(. != null and . > 0))
+        | map(positive_counter | select(. != null))
         | unique;
     def record:
         select(utf8bytelength <= 1048576)
         | (try fromjson catch empty)
         | objects
         | select(.record_type == "alert" and .schema_version == 1)
-        | select((.session_id | type == "string" and length > 0 and length <= 128)
-                 and (.alert | type == "object"))
-        | select((.alert.id | counter) != null)
+        | select((.session_id | identifier) and (.alert | type == "object"))
         | .alert as $a
+        | select(($a.id | positive_counter) != null)
+        | select($a.capture_id == null or ($a.capture_id | identifier))
         | evidence($a) as $frames
         | (if ($a.provenance | type) == "object" then $a.provenance else {} end) as $rule
         | {
             session_id,
             alert_id: $a.id,
+            source: ($a.source | text(64)),
             severity: ($a.severity | text(16)),
             disposition: ($a.disposition | text(24)),
             title: ($a.title | text(160)),
             detail: ($a.detail | text(512)),
             hits: ($a.hit_count | counter),
+            packet_no: ($a.packet_no | positive_counter),
             last_packet: ($a.last_packet | counter),
             first_seen: ($a.first_seen | observation_time),
             last_seen: ($a.last_seen | observation_time),
             evidence_frame_count: ($frames | length),
             evidence_frames_internal: $frames,
-            capture_id: ($a.capture_id | text(128)),
+            capture_id: $a.capture_id,
             rule_id: ($rule.rule_id | text(128)),
             revision: ($rule.revision | counter),
             confidence: ($rule.confidence | text(32)),
