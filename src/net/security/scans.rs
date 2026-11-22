@@ -4,12 +4,15 @@ impl SecurityEngine {
     // ─── Scan and Flood Correlation ─────────────────────────────────────────
 
     pub(super) fn check_scan_activity(&mut self, pkt: &Packet) {
+        if !pkt.timestamp.is_finite() {
+            return;
+        }
         self.scan_sources.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= SCAN_WINDOW_SECS
         });
         self.syn_flood_targets.retain(|_, state| {
             pkt.timestamp < state.last_seen
-                || pkt.timestamp - state.last_seen <= SYN_FLOOD_WINDOW_SECS
+                || pkt.timestamp - state.last_seen <= SYN_RETRY_HISTORY_SECS
         });
         let ipv6 = ipv6_probe(&pkt.bytes);
         let tcp = match ipv6 {
@@ -202,19 +205,27 @@ impl SecurityEngine {
         if state.last_seen - pkt.timestamp > SYN_FLOOD_WINDOW_SECS {
             return;
         }
-        // Keep distinct attempts within one second of the latest observed packet.
-        state.attempts.retain(|attempt| state.last_seen - attempt.timestamp <= SYN_FLOOD_WINDOW_SECS);
-        if state.attempts.len() < SYN_FLOOD_THRESHOLD.div_ceil(2) {
+        let mut active = 0;
+        let mut repeat = false;
+        state.attempts.retain(|attempt| {
+            let age = state.last_seen - attempt.timestamp;
+            if age > SYN_RETRY_HISTORY_SECS {
+                return false;
+            }
+            active += usize::from(age <= SYN_FLOOD_WINDOW_SECS);
+            repeat |= attempt.source == pkt.src
+                && attempt.source_port == source_port && attempt.sequence == sequence;
+            true
+        });
+        if active < SYN_FLOOD_THRESHOLD.div_ceil(2) {
             state.alerted = false;
         }
-        if state.attempts.iter().any(|attempt| {
-            attempt.source == pkt.src && attempt.source_port == source_port && attempt.sequence == sequence
-        }) {
+        if repeat {
             return;
         }
-        if state.attempts.len() == SYN_FLOOD_THRESHOLD {
+        if state.attempts.len() == MAX_SYN_HISTORY_PER_TARGET {
             let oldest = state.attempts.iter().enumerate()
-                .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp))
+                .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp).then(a.packet_no.cmp(&b.packet_no)))
                 .map(|(index, _)| index).unwrap_or(0);
             state.attempts.remove(oldest);
         }
@@ -225,9 +236,11 @@ impl SecurityEngine {
             timestamp: pkt.timestamp,
             packet_no: pkt.no,
         });
-        if state.attempts.len() == SYN_FLOOD_THRESHOLD && !state.alerted {
+        if active + 1 >= SYN_FLOOD_THRESHOLD && !state.alerted {
             state.alerted = true;
-            let related_packets = state.attempts.iter().map(|attempt| attempt.packet_no)
+            let related_packets = state.attempts.iter()
+                .filter(|attempt| state.last_seen - attempt.timestamp <= SYN_FLOOD_WINDOW_SECS)
+                .map(|attempt| attempt.packet_no)
                 .filter(|&number| number != pkt.no).collect();
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
@@ -235,7 +248,7 @@ impl SecurityEngine {
                     signature: "SYN arrival spike",
                     severity: Severity::High,
                     detail: format!(
-                        "{}:{} received {SYN_FLOOD_THRESHOLD} distinct TCP SYN attempts within one second; service impact is unverified",
+                        "{}:{} received {SYN_FLOOD_THRESHOLD} distinct TCP SYN attempts within one second after excluding retained retries; service impact is unverified",
                         pkt.dst, port,
                     ),
                 },

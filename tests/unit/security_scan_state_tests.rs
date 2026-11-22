@@ -85,6 +85,59 @@ fn syn_rule_records_renewed_spikes_but_not_sustained_or_retransmitted_syns() {
 }
 
 #[test]
+fn late_syn_repeats_do_not_create_a_spike_but_new_sequences_do() {
+    let mut engine = SecurityEngine::default();
+    let mut packet = parse_ethernet(&[], 1, 1.0);
+    packet.src = "192.0.2.1".into();
+    packet.dst = "198.51.100.1".into();
+    for sequence in 0..100 {
+        packet.timestamp = if sequence < 50 { 1.0 } else { 2.1 };
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence);
+        packet.no += 1;
+    }
+    assert!(engine.ids_alerts.is_empty());
+
+    packet.timestamp = 3.2;
+    for sequence in 0..100 {
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence);
+        packet.no += 1;
+    }
+    assert!(engine.ids_alerts.is_empty());
+    for sequence in 100..200 {
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence);
+        packet.no += 1;
+    }
+    let finding = engine.findings.ids.last().unwrap();
+    assert_eq!(engine.ids_alerts.len(), 1);
+    assert_eq!(finding.alert.pkt_no, 300);
+    assert_eq!(finding.related_packets, (201..300).collect::<Vec<_>>());
+
+    packet.timestamp = 5.3;
+    for sequence in 0..100 {
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence);
+        packet.no += 1;
+    }
+    assert_eq!(engine.ids_alerts.len(), 2);
+    assert_eq!(engine.findings.ids.last().unwrap().related_packets, (301..400).collect::<Vec<_>>());
+}
+
+#[test]
+fn sustained_syn_activity_keeps_retry_memory_bounded() {
+    let mut engine = SecurityEngine::default();
+    let mut packet = parse_ethernet(&[], 1, 1.0);
+    packet.src = "192.0.2.1".into();
+    packet.dst = "198.51.100.1".into();
+    for sequence in 0..MAX_SYN_HISTORY_PER_TARGET * 2 {
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence as u32);
+        packet.no += 1;
+    }
+    assert_eq!(engine.ids_alerts.len(), 1);
+    let state = engine.syn_flood_targets.values().next().unwrap();
+    assert_eq!(state.attempts.len(), MAX_SYN_HISTORY_PER_TARGET);
+    assert_eq!(state.attempts.first().unwrap().packet_no, MAX_SYN_HISTORY_PER_TARGET as u64 + 1);
+}
+
+#[test]
 fn scan_and_syn_findings_never_join_evidence_across_capture_interfaces_or_sections() {
     use crate::net::packet::CaptureMetadata;
 

@@ -97,3 +97,41 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
         String::from_utf8_lossy(&output.stderr),
     );
 }
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn syn_spike_replay_counts_new_attempts_but_not_late_retries() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let path = root.join("syn-retries.pcapng");
+    let mut capture = PcapNgWriter::create(&path).unwrap();
+    for (ticks, sequences) in [(1000, 0..50), (2100, 50..100), (3200, 0..100), (3200, 100..200)] {
+        for sequence in sequences {
+            let mut packet = super::support::tcp(0, sequence, 0x02, &[], false);
+            let length = packet.bytes.len() as u32;
+            packet.capture = Some(CaptureMetadata {
+                captured_length: length, wire_length: length, link_type: 1,
+                section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+                timestamp: Some(CaptureTimestamp {
+                    ticks, resolution: TimestampResolution::Decimal(3), offset_seconds: 0,
+                }),
+            });
+            capture.write_packet(&packet).unwrap();
+        }
+    }
+    capture.flush().unwrap();
+    let manifest = root.join("syn-suite.json");
+    let rule = "tcp.syn_arrival_spike";
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":[{
+        "name":"late-syn-retries","capture":"syn-retries.pcapng","expect_snapshots":1,
+        "expect_counts":{(rule):1},"opening_frames":{(rule):[300]},
+        "opening_evidence":[{"rule_id":rule,"opening_frame":300,"frames":(201..=300).collect::<Vec<_>>()}]
+    }]}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}

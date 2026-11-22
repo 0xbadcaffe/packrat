@@ -181,7 +181,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare destination ports and completed handshakes; check scheduled scanning.",
         ),
         (
-            "IDS", "SYN arrival spike", "tcp.syn_arrival_spike", 5, Correlated,
+            "IDS", "SYN arrival spike", "tcp.syn_arrival_spike", 6, Correlated,
             "Check handshake completion, server reachability, and whether a burst was expected.",
         ),
         (
