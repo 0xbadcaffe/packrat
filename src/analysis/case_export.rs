@@ -12,6 +12,7 @@
 
 use std::{io::Write, path::Path};
 use crate::analysis::alert_provenance::AlertProvenance;
+use crate::analysis::alert_center::AlertFlow;
 use crate::app::App;
 
 // ─── Bundle struct (serde-serialised) ────────────────────────────────────────
@@ -98,6 +99,8 @@ struct FindingRecord<'a> {
     id: u64,
     capture_id: Option<&'a str>,
     provenance: Option<&'a AlertProvenance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    flow: Option<AlertFlow>,
     source: &'a str,
     title: &'a str,
     severity: &'a str,
@@ -326,6 +329,7 @@ fn build<'a>(app: &'a crate::app::AppView<'_>) -> CaseBundle<'a> {
         id: item.id,
         capture_id: item.capture_id.as_deref(),
         provenance: item.provenance.as_ref(),
+        flow: item.flow,
         source: &item.source,
         title: &item.title,
         severity: &item.severity,

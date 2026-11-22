@@ -1,6 +1,6 @@
 use std::{io::Write, process::Command};
 
-use packrat_tui::analysis::alert_center::{AlertCenter, AlertDisposition};
+use packrat_tui::analysis::alert_center::{AlertCenter, AlertDisposition, AlertFlow, AlertTransport};
 use serde_json::{Value, json};
 
 #[test]
@@ -26,6 +26,11 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     snapshot.packet_refs = vec![0, 4, 4, 7];
     snapshot.hit_count = 2;
     snapshot.disposition = AlertDisposition::Benign;
+    snapshot.flow = Some(AlertFlow {
+        transport: AlertTransport::Tcp,
+        source: "[2001:db8::5]:40000".parse().unwrap(),
+        destination: "[2001:db8::8]:443".parse().unwrap(),
+    });
     append(&mut file, "session-a", snapshot);
     drop(file);
 
@@ -44,7 +49,11 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     assert_eq!(report[0]["review_limitations"], json!([]));
     assert!(report[0].get("packet_refs").is_none());
     assert!(report[0].get("bytes").is_none());
+    assert_eq!(report[0]["flow"], json!({
+        "transport":"tcp", "source":"[2001:db8::5]:40000", "destination":"[2001:db8::8]:443"
+    }));
     assert_eq!(report[1]["session_id"], "session-b");
+    assert!(report[1].get("flow").is_none());
     assert_eq!(report[2]["capture_id"], "capture-b");
 
     let integrity = run(&["--report-integrity", "--session", "session-a"]);

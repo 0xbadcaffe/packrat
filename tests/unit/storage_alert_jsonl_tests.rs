@@ -25,6 +25,7 @@ fn alert(hit_count: u64, packet_no: u64) -> AlertItem {
         },
         capture_id: None,
         provenance: None,
+        flow: None,
     }
 }
 

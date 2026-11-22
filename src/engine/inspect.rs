@@ -1,4 +1,25 @@
 use super::*;
+use crate::analysis::alert_center::{AlertFlow, AlertTransport};
+
+fn observed_alert_flow(pkt: &Packet) -> Option<AlertFlow> {
+    let (transport, source_port, destination_port) =
+        if let Some((source, destination)) = crate::analysis::stream::tcp_port_pair(pkt) {
+            (AlertTransport::Tcp, source, destination)
+        } else {
+            let (source, destination, _) = crate::analysis::dns_transactions::udp_payload(pkt)?;
+            (AlertTransport::Udp, source, destination)
+        };
+    if source_port == 0 || destination_port == 0
+        || pkt.src_port != Some(source_port) || pkt.dst_port != Some(destination_port)
+    {
+        return None;
+    }
+    Some(AlertFlow {
+        transport,
+        source: std::net::SocketAddr::new(pkt.src.parse().ok()?, source_port),
+        destination: std::net::SocketAddr::new(pkt.dst.parse().ok()?, destination_port),
+    })
+}
 
 impl AnalysisCore {
     pub fn analyze_with_history<I>(&mut self, pkt: &Packet, history: I) -> PacketAnalysis
@@ -52,8 +73,13 @@ impl AnalysisCore {
                 alert.pkt_no,
                 pkt.timestamp,
             );
-            self.alert_center.record_correlated_with_evidence(
-                (alert.pkt_no, &finding.related_packets),
+            let flow = if alert.signature == "Periodic fixed-size traffic" {
+                observed_alert_flow(pkt)
+            } else {
+                None
+            };
+            self.alert_center.record_with_context(
+                (alert.pkt_no, &finding.related_packets, flow),
                 pkt.timestamp,
                 "IDS",
                 alert.severity.to_string(),

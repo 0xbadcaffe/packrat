@@ -112,6 +112,23 @@ pub struct AlertItem {
     pub capture_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<AlertProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow: Option<AlertFlow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AlertTransport {
+    #[serde(rename = "tcp")]
+    Tcp,
+    #[serde(rename = "udp")]
+    Udp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AlertFlow {
+    pub transport: AlertTransport,
+    pub source: std::net::SocketAddr,
+    pub destination: std::net::SocketAddr,
 }
 
 impl AlertItem {
@@ -236,7 +253,22 @@ impl AlertCenter {
         detail: impl Into<String>,
         correlation_key: impl Into<String>,
     ) -> bool {
-        let (packet_no, related_packets) = evidence;
+        self.record_with_context(
+            (evidence.0, evidence.1, None), timestamp, source, severity, title, detail, correlation_key,
+        )
+    }
+
+    pub(crate) fn record_with_context(
+        &mut self,
+        evidence: (u64, &[u64], Option<AlertFlow>),
+        timestamp: f64,
+        source: impl Into<String>,
+        severity: impl Into<String>,
+        title: impl Into<String>,
+        detail: impl Into<String>,
+        correlation_key: impl Into<String>,
+    ) -> bool {
+        let (packet_no, related_packets, flow) = evidence;
         let source = source.into();
         let severity = severity.into().to_uppercase();
         let title = title.into();
@@ -257,6 +289,7 @@ impl AlertCenter {
                 let evidence_changed = retain_packet_refs(item, packet_no, related_packets);
                 item.hit_count = item.hit_count.saturating_add(1);
                 item.detail = detail;
+                item.flow = flow;
                 let priority = priority_for(&severity);
                 let became_high = item.priority < AUTOMATIC_EVIDENCE_PRIORITY
                     && priority >= AUTOMATIC_EVIDENCE_PRIORITY;
@@ -299,6 +332,7 @@ impl AlertCenter {
             packet_refs: Vec::new(),
             capture_id: self.capture_id.clone(),
             provenance,
+            flow,
         };
         retain_packet_refs(&mut item, packet_no, related_packets);
         self.pending_exports.push(item.clone());

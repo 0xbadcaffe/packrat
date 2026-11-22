@@ -91,6 +91,7 @@ fn periodic_traffic_alerts_once_per_conversation_and_keeps_directional_evidence(
     assert_eq!(alerts.len(), 2);
     assert_ne!(alerts[0].correlation_key, alerts[1].correlation_key);
     assert_eq!(alerts[0].severity, "MEDIUM");
+    assert!(alerts.iter().all(|alert| alert.flow.is_none()));
     assert_eq!(alerts[0].packet_refs, [1, 5, 9, 13, 17, 21, 25]);
     assert_eq!(alerts[1].packet_refs, [3, 7, 11, 15, 19, 23, 27]);
 }

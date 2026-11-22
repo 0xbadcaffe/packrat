@@ -99,6 +99,15 @@ jq -cn '
 jq -se 'length == 1 and .[0].reason == "oversized"' "$scratch/errors" >/dev/null
 
 jq -cn '
+    {schema_version:1,record_type:"alert",session_id:"test",alert:{id:1}} as $row |
+    {transport:"tcp",source:"[2001:db8::1]:42000",destination:"192.0.2.5:443",private:"not exported"} as $flow |
+    $row, ($row | .alert.flow = $flow), ($row | .alert.flow = ($flow | .destination = "192.0.2.5:65536"))
+' | bash "$watch" | jq -se '
+    map(.changes) == [[],["flow"],["flow"]]
+    and map(.flow) == [null,{transport:"tcp",source:"[2001:db8::1]:42000",destination:"192.0.2.5:443"},null]
+' >/dev/null
+
+jq -cn '
     {schema_version:1,record_type:"alert",session_id:"test",alert:{id:1,severity:"MEDIUM",last_seen:4102444800}} as $first
     | $first,
       ($first | .alert.severity = "HIGH" | .alert.provenance = {rule_id:"rule-a",revision:2} | .alert.detail = "revised")

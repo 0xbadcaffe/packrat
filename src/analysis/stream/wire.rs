@@ -20,6 +20,11 @@ pub(crate) fn tcp_segment_payload(packet: &Packet) -> Option<(u32, &[u8])> {
     Some((sequence, packet.bytes.get(view.payload..view.end)?))
 }
 
+pub(crate) fn tcp_port_pair(packet: &Packet) -> Option<(u16, u16)> {
+    let view = tcp_view(packet)?;
+    Some((read_u16(&packet.bytes, view.header)?, read_u16(&packet.bytes, view.header + 2)?))
+}
+
 pub(super) fn tcp_view(packet: &Packet) -> Option<TcpView> {
     if packet
         .capture

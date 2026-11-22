@@ -37,6 +37,14 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
         type == "string" and length <= 128 and test("\\A[A-Za-z0-9_-]+\\z");
     def observation_time:
         if type == "number" and isfinite and . > 0 then . else null end;
+    def socket_endpoint:
+        type == "string" and length <= 64
+        and test("\\A([0-9.]+|\\[[0-9a-fA-F:.]+\\]):[1-9][0-9]{0,4}\\z")
+        and (split(":") | last | tonumber <= 65535);
+    def flow_context:
+        if type == "object" and (.transport == "tcp" or .transport == "udp")
+            and (.source | socket_endpoint) and (.destination | socket_endpoint)
+        then {transport,source,destination} else null end;
     def event_kind($previous; $alert):
         if $previous != null then "updated"
         elif ($alert.hits != null and $alert.hits > 1)
@@ -54,6 +62,7 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
             if ($before | [.packet_no, .last_packet, .evidence_frames_internal]) !=
                ($after | [.packet_no, .last_packet, .evidence_frames_internal]) then "evidence" else empty end,
             if $before.hits != $after.hits then "hit_count" else empty end,
+            if $before.flow != $after.flow then "flow" else empty end,
             if ($before | [.rule_id, .revision, .confidence, .verify]) !=
                ($after | [.rule_id, .revision, .confidence, .verify]) then "provenance" else empty end,
             if ($before | [.source, .title, .detail]) !=
@@ -83,6 +92,7 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
             evidence_frame_count: ($frames | length),
             evidence_frames_internal: $frames,
             capture_id: $a.capture_id,
+            flow: ($a.flow | flow_context),
             rule_id: ($rule.rule_id | text(128)),
             revision: ($rule.revision | counter),
             confidence: ($rule.confidence | text(32)),

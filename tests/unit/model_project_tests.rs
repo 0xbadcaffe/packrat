@@ -53,6 +53,7 @@ fn operational_investigation_state_round_trips() {
         packet_refs: vec![40, 42],
         capture_id: None,
         provenance: None,
+        flow: None,
     });
     state.investigation_items = vec![
         SavedInvestigationItem::Packet(42),
