@@ -101,7 +101,8 @@ sanitize() {
             alert_log_integrity:(.alert_log_integrity | if type == "object" then {
                 invalid_records:(.invalid_records | counter),
                 oversized_records:(.oversized_records | counter),
-                stopped_at_limit:(.stopped_at_limit | flag)
+                stopped_at_limit:(.stopped_at_limit | flag),
+                stopped_at_scan_budget:(.stopped_at_scan_budget | flag)
             } else null end),
             open_priority_alerts:(.open_priority_alerts_in_sample | counter),
             priority_sample_at_limit:(.priority_sample_at_limit | flag),

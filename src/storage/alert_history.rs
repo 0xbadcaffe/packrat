@@ -76,6 +76,8 @@ pub struct AlertHistoryIntegrity {
     pub invalid_records: u64,
     pub oversized_records: u64,
     pub stopped_at_limit: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_at_scan_budget: bool,
 }
 
 #[derive(Serialize)]
@@ -110,7 +112,18 @@ pub fn recent_alerts_report(
     capture_filter: Option<&str>,
     limit: usize,
 ) -> Result<AlertHistoryReport> {
-    filtered_alerts_report(previous, active, session_filter, capture_filter, None, limit)
+    recent_alerts_report_with_budget(previous, active, session_filter, capture_filter, limit, None)
+}
+
+pub fn recent_alerts_report_with_budget(
+    previous: &[PathBuf],
+    active: &Path,
+    session_filter: Option<&str>,
+    capture_filter: Option<&str>,
+    limit: usize,
+    scan_bytes: Option<std::num::NonZeroU64>,
+) -> Result<AlertHistoryReport> {
+    filtered_alerts_report(previous, active, session_filter, capture_filter, None, limit, scan_bytes)
 }
 
 pub fn exact_alert_report(
@@ -121,7 +134,7 @@ pub fn exact_alert_report(
     alert_id: u64,
 ) -> Result<AlertHistoryReport> {
     ensure!(alert_id != 0, "Alert ID must be positive");
-    filtered_alerts_report(previous, active, Some(session), Some(capture), Some(alert_id), 1)
+    filtered_alerts_report(previous, active, Some(session), Some(capture), Some(alert_id), 1, None)
 }
 
 fn filtered_alerts_report(
@@ -131,6 +144,7 @@ fn filtered_alerts_report(
     capture_filter: Option<&str>,
     alert_id: Option<u64>,
     limit: usize,
+    scan_bytes: Option<std::num::NonZeroU64>,
 ) -> Result<AlertHistoryReport> {
     ensure!((1..=MAX_HISTORY_LIMIT).contains(&limit), "Alert history limit must be 1..={MAX_HISTORY_LIMIT}");
     let logs = AlertLogs::new(active, previous)?;
@@ -138,9 +152,11 @@ fn filtered_alerts_report(
     let mut integrity = AlertHistoryIntegrity::default();
     let mut seen = HashSet::with_capacity(limit);
     let mut line = Vec::new();
+    let mut remaining = scan_bytes.map(std::num::NonZeroU64::get);
     for (path, file) in logs.open_newest()? {
-        let mut reader = ReverseAlertLines::new(file)
+        let mut reader = ReverseAlertLines::with_budget(file, remaining)
             .with_context(|| format!("Stat alert log {}", path.display()))?;
+        let file_bytes = reader.offset;
         loop {
             let found = reader.next(&mut line)
                 .with_context(|| format!("Read alert log {}", path.display()))?;
@@ -204,6 +220,11 @@ fn filtered_alerts_report(
                 return Ok(AlertHistoryReport { alerts: latest, integrity });
             }
         }
+        if reader.start != 0 {
+            integrity.stopped_at_scan_budget = true;
+            break;
+        }
+        remaining = remaining.map(|budget| budget.saturating_sub(file_bytes));
     }
     Ok(AlertHistoryReport { alerts: latest, integrity })
 }
@@ -214,6 +235,7 @@ pub(super) struct ReverseAlertLines {
     file: File,
     chunk: Vec<u8>,
     offset: u64,
+    start: u64,
     end: usize,
     terminated: bool,
     oversized_records: u64,
@@ -221,11 +243,17 @@ pub(super) struct ReverseAlertLines {
 
 impl ReverseAlertLines {
     pub(super) fn new(file: File) -> std::io::Result<Self> {
+        Self::with_budget(file, None)
+    }
+
+    fn with_budget(file: File, scan_bytes: Option<u64>) -> std::io::Result<Self> {
         let metadata = file.metadata()?;
         if !metadata.is_file() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Not a regular alert log"));
         }
-        Ok(Self { file, chunk: vec![0; READ_CHUNK], offset: metadata.len(), end: 0,
+        let offset = metadata.len();
+        let start = scan_bytes.map_or(0, |budget| offset.saturating_sub(budget));
+        Ok(Self { file, chunk: vec![0; READ_CHUNK], offset, start, end: 0,
             terminated: false, oversized_records: 0 })
     }
 
@@ -234,12 +262,16 @@ impl ReverseAlertLines {
         let mut oversized = false;
         loop {
             if self.end == 0 {
-                if self.offset == 0 {
+                if self.offset == self.start {
+                    if self.start != 0 {
+                        // The budget may end inside a record; do not parse the remaining suffix.
+                        return Ok(false);
+                    }
                     self.oversized_records += u64::from(oversized);
                     line.reverse();
                     return Ok(!oversized && !line.is_empty());
                 }
-                self.end = self.offset.min(READ_CHUNK as u64) as usize;
+                self.end = (self.offset - self.start).min(READ_CHUNK as u64) as usize;
                 self.offset -= self.end as u64;
                 self.file.seek(SeekFrom::Start(self.offset))?;
                 self.file.read_exact(&mut self.chunk[..self.end])?;

@@ -141,6 +141,54 @@ fn integrity_reports_oversized_first_record_and_invalid_tail_with_no_alerts() {
 }
 
 #[test]
+fn recent_alert_budget_is_shared_and_skips_the_partial_boundary_record() {
+    let directory = tempfile::tempdir().unwrap();
+    let active = directory.path().join("active.jsonl");
+    let previous = directory.path().join("previous.jsonl");
+    let mut alerts = AlertCenter::default();
+    alerts.record(1, "IDS", "MEDIUM", "Finding", "observed");
+    let row = |id| {
+        let mut alert = alerts.items[0].clone();
+        alert.id = id;
+        format!("{}\n", json!({
+            "schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert
+        }))
+    };
+    let latest = row(3);
+    let middle = row(2);
+    let oldest = row(1);
+    std::fs::write(&active, &latest).unwrap();
+    std::fs::write(&previous, format!("{oldest}{middle}")).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+            .arg("--alerts").arg(&active).arg("--previous-log").arg(&previous)
+            .args(args).output().unwrap()
+    };
+    let budget = (latest.len() + middle.len() + 10).to_string();
+    let output = run(&["--scan-bytes", &budget, "--report-integrity"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let ids = |report: &Value| {
+        report["alerts"].as_array().unwrap().iter()
+            .map(|row| row["alert_id"].as_u64().unwrap()).collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&report), [3, 2]);
+    assert_eq!(report["integrity"], json!({
+        "invalid_records":0, "oversized_records":0,
+        "stopped_at_limit":false, "stopped_at_scan_budget":true,
+    }));
+
+    let all_bytes = (latest.len() + middle.len() + oldest.len()).to_string();
+    let output = run(&["--scan-bytes", &all_bytes, "--report-integrity"]);
+    assert!(output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(ids(&report), [3, 2, 1]);
+    assert_eq!(report["integrity"]["stopped_at_scan_budget"], Value::Null);
+    assert!(!run(&["--scan-bytes", &budget]).status.success());
+    assert!(!run(&["--scan-bytes", "0", "--report-integrity"]).status.success());
+}
+
+#[test]
 fn legacy_history_marks_unverified_scope_without_inheriting_modern_rule_provenance() {
     let directory = tempfile::tempdir().unwrap();
     let log = directory.path().join("alerts.jsonl");

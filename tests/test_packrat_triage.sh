@@ -40,6 +40,7 @@ mock_archive() {
     local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' selector='--limit 512'
     if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope=''; fi
     if [[ -n ${PACKRAT_TEST_TARGET:-} ]]; then selector="--alert-id $PACKRAT_TEST_TARGET"; fi
+    if [[ $* == *" --scan-bytes 8388608 --report-integrity"* ]]; then selector+=' --scan-bytes 8388608'; elif [[ ${PACKRAT_TEST_SCAN_STOPPED:-false} == true ]]; then return 2; fi
     [[ $* == "--alerts $PACKRAT_TEST_LOG$scope $selector --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
     if [[ ${PACKRAT_TEST_SCOPE_RACE:-0} == 1 ]]; then
@@ -113,9 +114,9 @@ packrat-archive() {
     if [[ ${1-} != --alerts ]]; then mock_archive "$@"; return; fi
     mock_archive "$@" | jq -c --argjson invalid "${PACKRAT_TEST_INVALID_RECORDS:-0}" \
         --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" \
-        --arg target "${PACKRAT_TEST_TARGET:-}" '
+        --arg target "${PACKRAT_TEST_TARGET:-}" --argjson stopped "${PACKRAT_TEST_SCAN_STOPPED:-false}" '
         {alerts:.,integrity:{invalid_records:$invalid,oversized_records:$oversized,
-            stopped_at_limit:(length == (if $target != "" then 1 else 512 end))}}'
+            stopped_at_limit:(length == (if $target != "" then 1 else 512 end)),stopped_at_scan_budget:$stopped}}'
 }
 
 timeout() {
@@ -185,10 +186,9 @@ result=$(PACKRAT_TEST_ALERT_COUNT=0 PACKRAT_TEST_INVALID_RECORDS=2 PACKRAT_TEST_
 jq -e '.status == "degraded" and .alerts == []
     and .alert_log_integrity == {invalid_records:2,oversized_records:1,stopped_at_limit:false}' <<< "$result" >/dev/null
 status=0
-result=$(PACKRAT_TEST_INVALID_RECORDS=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+result=$(PACKRAT_TEST_SCAN_STOPPED=true bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
 [[ $status == 1 ]]
-jq -e '.status == "degraded" and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
-
+jq -e '.status == "degraded" and .alerts[0].alert_id == 42 and .alert_log_integrity.stopped_at_scan_budget' <<< "$result" >/dev/null
 export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
 (
     export PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space"

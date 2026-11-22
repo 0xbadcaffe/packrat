@@ -7,7 +7,7 @@ usage() {
         '       packrat-triage --saved-alert SESSION_ID CAPTURE_ID ALERT_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --list-saved ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         'Supply up to eight immutable previous logs, oldest first.' \
-        'Reports up to 50 alerts from the capture and alert log in a fresh health record.' \
+        'Live mode scans up to 8 MiB of alert history and reports when that budget limits coverage.' \
         '--saved reviews an explicit saved capture without consulting live health.' \
         '--saved reports saved_scope_not_observed when the supplied logs contain no matching alert records.' \
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
@@ -63,11 +63,11 @@ fi
 alert_limit=50
 query_limit=512
 limit_args=(--limit "$query_limit")
+if [[ $mode == live ]]; then limit_args+=(--scan-bytes 8388608); fi
 if [[ -n $target_alert ]]; then
     alert_limit=1 query_limit=1
     limit_args=(--alert-id "$target_alert")
 fi
-
 previous_logs=("$@")
 previous_args=()
 for log in "${previous_logs[@]}"; do
@@ -390,14 +390,15 @@ if (( read_status != 0 )) || ! history=$(jq -cse --argjson limit "$query_limit" 
     select(length == 1) | .[0] | objects
     | select((.alerts | type == "array" and length <= $limit and all(.[]; type == "object"))
         and (.integrity | type == "object" and (.invalid_records | count)
-            and (.oversized_records | count) and (.stopped_at_limit | type == "boolean"))
+            and (.oversized_records | count) and (.stopped_at_limit | type == "boolean")
+            and (.stopped_at_scan_budget | . == null or type == "boolean"))
         and (.integrity.stopped_at_limit == ((.alerts | length) == $limit)))
 ' <<< "$raw_alerts"); then
     report alert_log_unavailable
     exit 2
 fi
 alerts=$(jq -c '.alerts' <<< "$history")
-integrity=$(jq -c '.integrity | {invalid_records,oversized_records,stopped_at_limit}' <<< "$history")
+integrity=$(jq -c '.integrity | {invalid_records,oversized_records,stopped_at_limit} + if .stopped_at_scan_budget == true then {stopped_at_scan_budget:true} else {} end' <<< "$history")
 if [[ $mode != list_saved ]] && ! jq -e --arg session "$session" --arg capture "$capture" --arg target "$target_alert" '
     all(.[]; type == "object" and .session_id == $session and .capture_id == $capture
         and ($target == "" or .alert_id == ($target | tonumber)))
@@ -483,7 +484,7 @@ if [[ $mode == saved ]]; then
     degraded_status=saved_log_degraded
 fi
 if { [[ $mode == saved ]] || jq -e '.health.issues == []' <<< "$state" >/dev/null; } &&
-   jq -e '.invalid_records == 0 and .oversized_records == 0' <<< "$integrity" >/dev/null; then
+   jq -e '.invalid_records == 0 and .oversized_records == 0 and .stopped_at_scan_budget != true' <<< "$integrity" >/dev/null; then
     if [[ $mode == saved ]] && jq -e 'length == 0' <<< "$alerts" >/dev/null; then
         absent_status=saved_scope_not_observed
         if [[ -n $target_alert ]]; then absent_status=saved_alert_not_observed; fi

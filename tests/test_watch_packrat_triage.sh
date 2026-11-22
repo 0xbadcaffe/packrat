@@ -125,7 +125,7 @@ live degraded 36 "$queue" "$medium" | jq '.health.pcap_buffer_drops=1' >"$report
 mv -- "$report.next" "$report"
 await_packets 36
 live degraded 37 "$queue" "$medium" |
-    jq '.health.pcap_buffer_drops=1 | .alert_log_integrity.invalid_records=2' >"$report.next"
+    jq '.health.pcap_buffer_drops=1 | .alert_log_integrity.invalid_records=2 | .alert_log_integrity.stopped_at_scan_budget=true' >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 37
 check_status "$state" triage_unhealthy 1
@@ -139,5 +139,5 @@ watch_pid=''
 jq -se 'map(.packets)==[30,32,34,35,36,37] and .[1].recent_alerts[0].alert_id==9
     and .[2].recent_alerts[0].hit_count==2 and .[3].review_queue[0].alert_id==7
     and .[4].buffer_drops==1 and .[5].alert_log_integrity=={
-        invalid_records:2,oversized_records:0,stopped_at_limit:false}' "$scratch/events" >/dev/null
+        invalid_records:2,oversized_records:0,stopped_at_limit:false,stopped_at_scan_budget:true}' "$scratch/events" >/dev/null
 printf '%s\n' 'Packrat triage watcher tests passed'
