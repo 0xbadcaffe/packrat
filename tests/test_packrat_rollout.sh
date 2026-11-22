@@ -23,12 +23,53 @@ source "$root/scripts/packrat-rollout.sh"
         printf 'l-wx------ 1 root root 64 6 -> %s\n' "$mock_fd"
     }
     mock_fd=$stage_log
-    alerts_ready 42 "$stage_log"
-    if alerts_ready 42 "$primary_log"; then exit 1; fi
+    capture_file_open 42 "$stage_log"
+    if capture_file_open 42 "$primary_log"; then exit 1; fi
     mock_fd="$stage_log.1"
-    if alerts_ready 42 "$stage_log"; then exit 1; fi
+    if capture_file_open 42 "$stage_log"; then exit 1; fi
     mock_fd="$stage_log (deleted)"
-    if alerts_ready 42 "$stage_log"; then exit 1; fi
+    if capture_file_open 42 "$stage_log"; then exit 1; fi
+)
+
+(
+    backup_dir=/backup
+    archive='/root/private packet archive'
+    profile=("$installed" --telemetry-listen "$health_addr")
+    read_launch_profile "${profile[@]}" --archive-max-mib 32 --archive "$archive" --archive-max-frames 4096
+    [[ $archive_path == "$archive" ]]
+    [[ $(archive_for_session "$bridge_session") == /backup/stage-data/packet-archive ]]
+    [[ $(archive_for_session "$main_session") == "$archive" ]]
+    [[ "${archive_limits[*]}" == '--archive-max-mib 32 --archive-max-frames 4096' ]]
+
+    tmux() { printf '<%s>\n' "$@"; }
+    [[ $(launch_capture "$main_session" /candidate) == *$'<--archive>\n<'"$archive"$'>\n<--archive-max-mib>\n<32>\n<--archive-max-frames>\n<4096>' ]]
+    stage_command=$(launch_capture "$bridge_session" /candidate)
+    [[ $stage_command != *"$archive"* ]]
+    [[ $stage_command == *$'<--archive>\n</backup/stage-data/packet-archive>\n<--archive-max-mib>\n<32>\n<--archive-max-frames>\n<4096>' ]]
+
+    capture_file_open() {
+        [[ $1 == 42 && ( $2 == "$(alert_log_for_session "$bridge_session")" ||
+            $2 == "$mock_open_archive" ) ]]
+    }
+    mock_open_archive="$archive/packets.bin"
+    if capture_storage_ready 42 "$bridge_session"; then exit 1; fi
+    mock_open_archive=/backup/stage-data/packet-archive/packets.bin
+    capture_storage_ready 42 "$bridge_session"
+
+    curl() { printf '%s\n' "$sample"; }
+    sample='{"status":"ok","telemetry_fresh":true,"capture_active":true,"alert_saving":true,"pcap_buffer_drops":0,"archive_paused":true}'
+    if health_ready; then exit 1; fi
+    sample=$(jq -c '.archive_paused = false' <<< "$sample")
+    health_ready
+
+    if read_launch_profile "${profile[@]}" --archive relative; then exit 1; fi
+    if read_launch_profile "${profile[@]}" --archive "$archive" --archive /other; then exit 1; fi
+    if read_launch_profile "${profile[@]}" --archive "$archive" --archive-max-mib; then exit 1; fi
+    if read_launch_profile "${profile[@]}" --archive-max-mib 32; then exit 1; fi
+    if read_launch_profile "${profile[@]}" --archive "$archive" --simulation; then exit 1; fi
+    if read_launch_profile "${profile[@]}" --archive "$archive" --archive-max-frames 0; then exit 1; fi
+    read_launch_profile "${profile[@]}"
+    [[ -z $archive_path && ${#archive_limits[@]} == 0 ]]
 )
 
 scratch=$(mktemp -d)

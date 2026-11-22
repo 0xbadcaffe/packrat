@@ -9,6 +9,8 @@ bridge_session=packrat-stage
 health_addr=127.0.0.1:9477
 backup_dir=
 stage_binary=
+archive_path=
+archive_limits=()
 
 error() { printf '%s\n' "$*" >&2; }
 
@@ -50,11 +52,13 @@ capture_pid() {
 
 health_ready() {
     curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$health_addr/health" |
-        jq -e '.status == "ok" and .telemetry_fresh and .capture_active and .alert_saving
-            and (.alert_save_failed | not) and (.pcap_buffer_drops != null)' >/dev/null
+        jq -e --arg archive "$archive_path" '
+            .status == "ok" and .telemetry_fresh and .capture_active and .alert_saving
+            and (.alert_save_failed | not) and (.pcap_buffer_drops != null)
+            and ($archive == "" or .archive_paused == false)' >/dev/null
 }
 
-alerts_ready() {
+capture_file_open() {
     sudo -n ls -l "/proc/$1/fd" | awk -v suffix=" -> $2" '
         substr($0, length($0) - length(suffix) + 1) == suffix { found=1 }
         END { exit !found }'
@@ -72,13 +76,61 @@ primary_alert_log_stamp() {
     sudo -n stat --format='%d:%i:%s:%y:%z' -- "$data_dir/alerts.jsonl"
 }
 
+read_launch_profile() {
+    local flag value path='' max_mib='' max_frames=''
+    local -a limits=()
+    [[ ${1-} == "$installed" && ${2-} == --telemetry-listen && ${3-} == "$health_addr" ]] || return 1
+    shift 3
+    while (( $# > 0 )); do
+        (( $# >= 2 )) || return 1
+        flag=$1 value=$2
+        case $flag in
+            --archive)
+                [[ -z $path && $value == /* && $value != / ]] || return 1
+                path=$value
+                ;;
+            --archive-max-mib)
+                [[ -z $max_mib && $value =~ ^[1-9][0-9]*$ ]] || return 1
+                max_mib=$value
+                limits+=("$flag" "$value")
+                ;;
+            --archive-max-frames)
+                [[ -z $max_frames && $value =~ ^[1-9][0-9]*$ ]] || return 1
+                max_frames=$value
+                limits+=("$flag" "$value")
+                ;;
+            *) return 1 ;;
+        esac
+        shift 2
+    done
+    [[ -n $path || ${#limits[@]} == 0 ]] || return 1
+    archive_path=$path
+    archive_limits=("${limits[@]}")
+}
+
+archive_for_session() {
+    if [[ -z $archive_path ]]; then
+        return 0
+    elif [[ $1 == "$bridge_session" ]]; then
+        printf '%s\n' "$backup_dir/stage-data/packet-archive"
+    else
+        printf '%s\n' "$archive_path"
+    fi
+}
+
+capture_storage_ready() {
+    local pid=$1 session=$2 archive
+    archive=$(archive_for_session "$session")
+    capture_file_open "$pid" "$(alert_log_for_session "$session")" &&
+        { [[ -z $archive ]] || capture_file_open "$pid" "${archive%/}/packets.bin"; }
+}
+
 preflight() {
     local pid
     local -a current_args
     [[ -f $candidate && -x $candidate ]] || { error "Candidate is not executable"; return 1; }
     [[ -d /sys/class/net/$interface ]] || { error "No such network interface: $interface"; return 1; }
     sudo -n true || return 1
-    "$candidate" --help | grep -F -- '--telemetry-listen' >/dev/null || return 1
     [[ $(tmux display-message -p -t "=$main_session:" '#{session_attached}') == 0 ]] ||
         { error "The capture session is missing or has an attached operator"; return 1; }
     if tmux has-session -t "=$bridge_session" 2>/dev/null; then
@@ -87,8 +139,7 @@ preflight() {
     fi
     pid=$(capture_pid "$main_session" "$installed") || { error "Cannot identify installed capture"; return 1; }
     mapfile -d '' -t current_args < "/proc/$pid/cmdline" || return 1
-    if [[ ${#current_args[@]} != 3 || ${current_args[0]-} != "$installed" ||
-          ${current_args[1]-} != --telemetry-listen || ${current_args[2]-} != "$health_addr" ]]; then
+    if ! read_launch_profile "${current_args[@]}"; then
         error "Current capture uses a different launch profile; refusing to drop its options"
         return 1
     fi
@@ -96,9 +147,18 @@ preflight() {
         error "Current capture is not on $interface"
         return 1
     }
+    candidate_supports_profile || { error "Candidate does not support the current capture options"; return 1; }
     health_ready || { error "Current capture telemetry or alert logging is unhealthy"; return 1; }
-    alerts_ready "$pid" "$(alert_log_for_session "$main_session")" &&
+    capture_storage_ready "$pid" "$main_session" &&
         sudo -n test -f "$data_dir/alerts.jsonl"
+}
+
+candidate_supports_profile() {
+    local help
+    help=$("$candidate" --help) || return 1
+    [[ $help == *--telemetry-listen* ]] || return 1
+    [[ -z $archive_path ]] ||
+        [[ $help == *'--archive PATH'* && $help == *--archive-max-mib* && $help == *--archive-max-frames* ]]
 }
 
 prepare_backup_and_stage() {
@@ -124,24 +184,26 @@ replace_installed() {
 }
 
 launch_capture() {
-    local session=$1 executable=$2
+    local session=$1 executable=$2 archive
+    local -a archive_args=()
+    archive=$(archive_for_session "$session")
+    if [[ -n $archive ]]; then archive_args=(--archive "$archive" "${archive_limits[@]}"); fi
     case $session in
         "$main_session")
             tmux new-session -d -s "$session" -c / -x 150 -y 40 \
-                sudo -n -H "$executable" --telemetry-listen "$health_addr"
+                sudo -n -H "$executable" --telemetry-listen "$health_addr" "${archive_args[@]}"
             ;;
         "$bridge_session")
             [[ -n $backup_dir ]] || return 1
             tmux new-session -d -s "$session" -c / -x 150 -y 40 \
-                sudo -n -H env "XDG_DATA_HOME=$backup_dir/stage-data" "$executable"
+                sudo -n -H env "XDG_DATA_HOME=$backup_dir/stage-data" "$executable" "${archive_args[@]}"
             ;;
         *) return 1 ;;
     esac
 }
 
 start_capture() {
-    local session=$1 executable=$2 index attempt count pid log baseline=
-    log=$(alert_log_for_session "$session")
+    local session=$1 executable=$2 index attempt count pid baseline=
     index=$(printf '%s\n' /sys/class/net/* | LC_ALL=C sort |
         awk -F / -v iface="$interface" '$NF == iface { print NR-1 }')
     [[ $index =~ ^[0-9]+$ ]] || return 1
@@ -160,7 +222,7 @@ start_capture() {
         if [[ $count =~ ^[0-9]+$ ]]; then
             if [[ -n $baseline ]] && (( count > baseline )); then
                 pid=$(capture_pid "$session" "$executable") || return 1
-                if alerts_ready "$pid" "$log" && { [[ $session != "$main_session" ]] || health_ready; }; then
+                if capture_storage_ready "$pid" "$session" && { [[ $session != "$main_session" ]] || health_ready; }; then
                     printf '%s: %s packet count increased to %s\n' "$session" "$interface" "$count"
                     return 0
                 fi
@@ -203,6 +265,9 @@ rollout() {
     prepare_backup_and_stage || { error "Backup or staging failed; current capture not stopped"; return 1; }
     printf 'Rollback binary: %s/packrat\n' "$backup_dir"
     printf 'Staging alert log: %s\n' "$(alert_log_for_session "$bridge_session")"
+    if [[ -n $archive_path ]]; then
+        printf 'Staging packet archive: %s\n' "$(archive_for_session "$bridge_session")"
+    fi
     if ! start_capture "$bridge_session" "$stage_binary"; then
         error "Candidate did not pass staging; current capture was not stopped"
         retire_bridge || error "Inspect $bridge_session before retrying"
