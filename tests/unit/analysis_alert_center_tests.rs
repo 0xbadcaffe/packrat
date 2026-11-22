@@ -222,4 +222,16 @@ fn registered_detector_rule_ids_are_unique_and_reference_shipped_rules() {
             assert!(crate::net::security::DETECTOR_SIGNATURES.contains(&title));
         }
     }
+    for &title in crate::net::security::DETECTOR_SIGNATURES {
+        let source = match title {
+            "SSL 3.0 selected" | "TLS 1.0 selected" | "TLS 1.1 selected" | "RC4 selected" => "TLS",
+            "Telnet authentication prompt" => "EXPOSURE",
+            "ARP announcement binding changed" => "ARP",
+            _ => "IDS",
+        };
+        assert!(
+            alert_provenance::lookup(source, title).is_some(),
+            "missing provenance for {source}: {title}"
+        );
+    }
 }

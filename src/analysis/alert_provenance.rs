@@ -1,4 +1,4 @@
-//! Versioned evidence descriptions for selected built-in detection rules.
+//! Versioned evidence descriptions for built-in detection rules.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +44,58 @@ type RuleDefinition = (
 pub(super) const RULES: &[RuleDefinition] = {
     use EvidenceConfidence::{Correlated, DirectObservation, Heuristic};
     &[
+        (
+            "IDS", "Malformed IPv4 fragment", "ipv4.fragment_invalid_length", 1, DirectObservation,
+            "Compare the IPv4 header and declared length with the retained frame and capture metadata. Check whether the receiving stack discarded it.",
+        ),
+        (
+            "IDS", "Tiny IPv4 fragment", "ipv4.fragment_small_payload", 1, DirectObservation,
+            "Inspect the fragment flags, offset, payload length, and other frames for the datagram; size alone does not establish intent.",
+        ),
+        (
+            "IDS", "IPv4 fragment flood", "ipv4.fragment_observation_burst", 1, Heuristic,
+            "Compare distinct fragment offsets with duplicates and capture topology. Verify resource pressure before treating the count as a denial of service.",
+        ),
+        (
+            "IDS", "Malformed TCP header", "tcp.invalid_header", 1, DirectObservation,
+            "Check the TCP header length against the captured and declared IP lengths. Confirm truncation and endpoint handling independently.",
+        ),
+        (
+            "IDS", "Illegal TCP flag combination", "tcp.inconsistent_flags", 1, DirectObservation,
+            "Verify the flag bits in the retained segment and compare nearby flow traffic. The flags alone do not establish why the segment was sent.",
+        ),
+        (
+            "IDS", "TCP stealth scan probe", "tcp.unusual_probe_flags", 1, Heuristic,
+            "Compare nearby attempts and replies with expected application behavior before diagnosing a scan.",
+        ),
+        (
+            "IDS", "Excessive IPv6 extension headers", "ipv6.long_extension_chain", 1, DirectObservation,
+            "Inspect the extension chain, capture length, and local link policy. A long chain does not establish forwarding impact.",
+        ),
+        (
+            "IDS", "IPv6 fragment reassembly rejected", "ipv6.reassembly_rejected", 1, DirectObservation,
+            "Check the stated local reassembly rejection and related fragments. Confirm endpoint handling separately.",
+        ),
+        (
+            "IDS", "HTTP request smuggling ambiguity", "http.request_framing_ambiguity", 1, Heuristic,
+            "Compare retained headers with the full stream and with proxy and server logs. The finding does not establish divergent parsing or compromise.",
+        ),
+        (
+            "IDS", "Directory Traversal", "payload.path_traversal_marker", 1, Heuristic,
+            "Locate the byte pattern in the reconstructed application message and check server access logs before inferring a traversal attempt.",
+        ),
+        (
+            "IDS", "SQL Injection Probe", "payload.sql_like_marker", 1, Heuristic,
+            "Verify the match in application context and compare with server logs. Text alone does not establish a database query or execution.",
+        ),
+        (
+            "IDS", "XSS Probe", "payload.script_like_marker", 1, Heuristic,
+            "Verify whether the matched text was user input and how the application handled it. The match does not establish browser execution.",
+        ),
+        (
+            "IDS", "Heartbleed (CVE-2014-0160)", "tls.legacy_heartbeat_pattern", 1, Heuristic,
+            "Verify message framing and the endpoint's patch status. The byte pattern does not establish a TLS heartbeat or information disclosure.",
+        ),
         (
             "IDS", "Repeated NOP-like byte pattern", "payload.nop_like_byte_run", 1, Heuristic,
             "Inspect the retained transport payload and expected application format; a repeated byte alone does not identify executable content.",
