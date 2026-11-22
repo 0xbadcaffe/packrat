@@ -5,6 +5,45 @@ use arp::reply;
 
 const TITLE: &str = "ARP binding changed";
 const SOURCE_MISMATCH: &str = "ARP reply sender differs from Ethernet source";
+const ANNOUNCEMENT_CHANGE: &str = "ARP announcement binding changed";
+
+#[test]
+fn arp_announcements_track_owners_without_treating_probes_as_claims() {
+    let announcement = |no, vlan, host| {
+        let mut packet = reply(no, no as f64, vlan, host);
+        packet.bytes[..6].fill(255);
+        packet.bytes[25] = 1;
+        packet.bytes[36..42].fill(0);
+        packet.bytes.copy_within(32..36, 42);
+        packet
+    };
+    let mut core = AnalysisCore::default();
+    core.analyze(&announcement(1, 10, 1));
+    core.analyze(&announcement(2, 10, 1));
+    let mut probe = announcement(3, 10, 2);
+    probe.bytes[32..36].fill(0);
+    core.analyze(&probe);
+    let mut ordinary = announcement(4, 10, 2);
+    ordinary.bytes[45] = 99;
+    core.analyze(&ordinary);
+    core.analyze(&announcement(5, 20, 2));
+    let mut mismatch = announcement(6, 10, 2);
+    mismatch.bytes[11] = 3;
+    core.analyze(&mismatch);
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != ANNOUNCEMENT_CHANGE));
+
+    core.analyze(&announcement(7, 10, 2));
+    let alert = core.alert_center.items.iter().find(|a| a.title == ANNOUNCEMENT_CHANGE).unwrap();
+    assert_eq!(alert.packet_refs, [2, 7]);
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "arp.announcement_binding_change");
+    assert!(alert.detail.contains("whether any host accepted the change is unknown"));
+
+    core.analyze(&reply(8, 8.0, 10, 1));
+    let alert = core.alert_center.items.iter().find(|a| a.title == "Alternating ARP claims").unwrap();
+    assert_eq!(alert.packet_refs, [2, 7, 8]);
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+}
 
 #[test]
 fn arp_reply_changes_retain_both_frames_without_cross_vlan_matching() {

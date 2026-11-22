@@ -9,6 +9,10 @@ struct CoverageGroup {
 
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
+        signatures: &["ARP announcement binding changed"],
+        positive_test: "arp_announcements_track_owners_without_treating_probes_as_claims",
+    },
+    CoverageGroup {
         signatures: &["Telnet authentication prompt"],
         positive_test: "telnet_prompt_is_directional_and_does_not_imply_credentials",
     },

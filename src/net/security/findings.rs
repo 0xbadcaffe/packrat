@@ -12,6 +12,7 @@ pub struct DetectionBatch {
 
 #[derive(Debug)]
 pub struct ArpFinding {
+    pub involves_announcement: bool,
     pub anomaly: ArpAnomaly,
     pub previous_frame: u64,
     pub correlation_key: String,

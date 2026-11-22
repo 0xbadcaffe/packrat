@@ -80,14 +80,19 @@ impl AnalysisCore {
         }
         for finding in &findings.arp {
             let anomaly = &finding.anomaly;
+            let (title, claims) = if finding.involves_announcement {
+                ("ARP announcement binding changed", "ARP claims including an announcement")
+            } else {
+                ("ARP binding changed", "ARP replies")
+            };
             self.alert_center.record_correlated_with_evidence(
                 (anomaly.pkt_no, &[finding.previous_frame]),
                 pkt.timestamp,
                 "ARP",
                 "MEDIUM",
-                "ARP binding changed",
+                title,
                 format!(
-                    "ARP replies for {} claimed {} and then {}; whether any host accepted the change is unknown",
+                    "{claims} for {} named {} and then {}; whether any host accepted the change is unknown",
                     anomaly.ip, anomaly.old_mac, anomaly.new_mac
                 ),
                 &finding.correlation_key,

@@ -75,6 +75,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
     "LLDP chassis identity changed",
     "ARP reply sender differs from Ethernet source",
     "Alternating ARP claims",
+    "ARP announcement binding changed",
     "Periodic fixed-size traffic",
     "Large asymmetric outbound transfer",
     "High-entropy outbound transfer",

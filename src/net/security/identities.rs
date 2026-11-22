@@ -5,11 +5,11 @@ const ARP_COMPARISON_WINDOW_SECS: f64 = 300.0;
 const ARP_ALTERNATION_WINDOW_SECS: f64 = 30.0;
 const ARP_SOURCE_MISMATCH: &str = "ARP reply sender differs from Ethernet source";
 
-fn arp_reply_sender(raw: &[u8]) -> Option<(Ipv4Addr, [u8; 6])> {
+fn arp_claim_sender(raw: &[u8]) -> Option<(Ipv4Addr, [u8; 6], bool)> {
     let (offset, 0x0806) = ethernet_network_header(raw)? else { return None };
     let arp = raw.get(offset..offset + 28)?;
-    // Ethernet hardware, IPv4 protocol, 6-byte MAC, 4-byte IP, and reply opcode.
-    if arp[..8] != [0, 1, 8, 0, 6, 4, 0, 2] {
+    // Ethernet hardware, IPv4 protocol, 6-byte MAC, and 4-byte IP.
+    if arp[..6] != [0, 1, 8, 0, 6, 4] {
         return None;
     }
     let mac: [u8; 6] = arp[8..14].try_into().ok()?;
@@ -17,7 +17,14 @@ fn arp_reply_sender(raw: &[u8]) -> Option<(Ipv4Addr, [u8; 6])> {
     if mac == [0; 6] || mac[0] & 1 != 0 || ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() {
         return None;
     }
-    Some((ip, mac))
+    let announcement = match arp[6..8] {
+        [0, 2] => false,
+        // RFC 5227: an announcement is a broadcast request with matching sender and target IP.
+        [0, 1] if raw.get(..6)? == [255; 6] && raw.get(6..12)? == mac
+            && arp[18..24] == [0; 6] && arp[14..18] == arp[24..28] => true,
+        _ => return None,
+    };
+    Some((ip, mac, announcement))
 }
 
 impl SecurityEngine {
@@ -27,7 +34,7 @@ impl SecurityEngine {
         if !pkt.protocol.eq_ignore_ascii_case("ARP") || !pkt.timestamp.is_finite() {
             return;
         }
-        let Some((ip, mac)) = arp_reply_sender(&pkt.bytes) else { return };
+        let Some((ip, mac, announcement)) = arp_claim_sender(&pkt.bytes) else { return };
         let scope = service_scope(pkt);
         let Some(ethernet_mac) = pkt.bytes.get(6..12).and_then(|bytes| <[u8; 6]>::try_from(bytes).ok())
         else { return };
@@ -63,7 +70,7 @@ impl SecurityEngine {
         {
             self.ip_to_mac.remove(&oldest);
         }
-        let latest = ArpObservation { mac, timestamp: pkt.timestamp, frame: pkt.no };
+        let latest = ArpObservation { mac, timestamp: pkt.timestamp, frame: pkt.no, announcement };
         let previous_owner = known.and_then(|entry| {
             if entry.latest.mac == mac { entry.previous_owner } else { Some(entry.latest) }
         });
@@ -89,7 +96,7 @@ impl SecurityEngine {
                         signature: "Alternating ARP claims",
                         severity: Severity::Medium,
                         detail: format!(
-                            "ARP replies for {ip} alternated {returning}, {other}, {returning} within 30 seconds; failover, duplicate addressing, and spoofing are possible"
+                            "ARP claims for {ip} alternated {returning}, {other}, {returning} within 30 seconds; failover, duplicate addressing, and spoofing are possible"
                         ),
                     },
                     related_packets: vec![first.frame, known.frame],
@@ -109,6 +116,7 @@ impl SecurityEngine {
             self.findings.arp.push(ArpFinding {
                 anomaly,
                 previous_frame: known.frame,
+                involves_announcement: announcement || known.announcement,
                 correlation_key: format!("{scope:?}:{ip}"),
             });
         }

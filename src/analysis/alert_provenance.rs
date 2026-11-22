@@ -49,12 +49,16 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both ARP replies with DHCP leases, failover events, and the affected host's neighbor table.",
         ),
         (
+            "ARP", "ARP announcement binding changed", "arp.announcement_binding_change", 1, Correlated,
+            "Compare the claims with address assignments, failover logs, and endpoint neighbor tables. An announcement does not prove cache poisoning.",
+        ),
+        (
             "IDS", "ARP reply sender differs from Ethernet source", "arp.reply_source_mismatch", 1, DirectObservation,
             "Compare the Ethernet source and ARP sender with switch and neighbor tables. Check for authorized address rewriting or gateway redundancy.",
         ),
         (
-            "IDS", "Alternating ARP claims", "arp.alternating_claims", 1, Correlated,
-            "Compare all three replies with switch learning, DHCP leases, and failover logs; check whether endpoint neighbor entries actually changed.",
+            "IDS", "Alternating ARP claims", "arp.alternating_claims", 2, Correlated,
+            "Compare all three claims with switch learning, DHCP leases, and failover logs; check whether endpoint neighbor entries actually changed.",
         ),
         (
             "VLAN", "MAC-VLAN-Cross", "vlan.mac_crossing", 1, Correlated,

@@ -323,6 +323,7 @@ pub struct ArpAnomaly {
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ArpObservation {
+    pub(super) announcement: bool,
     pub(super) mac: [u8; 6],
     pub(super) timestamp: f64,
     pub(super) frame: u64,
