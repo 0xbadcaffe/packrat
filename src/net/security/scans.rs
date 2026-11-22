@@ -33,6 +33,11 @@ impl SecurityEngine {
                 _ => None,
             },
         };
+        let ipv4 = if tcp.is_none() && ipv6.is_none() {
+            ipv4_discovery_probe(&pkt.bytes)
+        } else {
+            None
+        };
         let mut alerts = Vec::new();
 
         if let Some(signal) = tcp {
@@ -80,17 +85,13 @@ impl SecurityEngine {
             self.record_admin_tcp(pkt, signal);
         } else if let Some(Ipv6Probe::EmptyUdp(port)) = ipv6 {
             self.record_scan_probe(pkt, port, "UDP");
-        } else if is_empty_ipv4_udp_probe(&pkt.bytes) {
-            if let Some(port) = pkt.dst_port {
-                self.record_scan_probe(pkt, port, "UDP");
-            }
+        } else if let Some(Ipv4DiscoveryProbe::EmptyUdp(port)) = ipv4 {
+            self.record_scan_probe(pkt, port, "UDP");
         }
 
         let echo_protocol = if matches!(ipv6, Some(Ipv6Probe::EchoRequest)) {
             Some("ICMPv6")
-        } else if pkt.protocol.eq_ignore_ascii_case("ICMP")
-            && pkt.info.to_ascii_lowercase().contains("echo request")
-        {
+        } else if matches!(ipv4, Some(Ipv4DiscoveryProbe::EchoRequest)) {
             Some("ICMP")
         } else {
             None

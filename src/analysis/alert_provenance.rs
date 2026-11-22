@@ -173,11 +173,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the traffic is normally encrypted or compressed. Verify the transfer with endpoint logs.",
         ),
         (
-            "IDS", "Horizontal host scan", "scan.horizontal", 5, Heuristic,
+            "IDS", "Horizontal host scan", "scan.horizontal", 6, Heuristic,
             "Compare destinations and completed handshakes; check expected discovery or monitoring.",
         ),
         (
-            "IDS", "Vertical port scan", "scan.vertical", 5, Heuristic,
+            "IDS", "Vertical port scan", "scan.vertical", 6, Heuristic,
             "Compare destination ports and completed handshakes; check scheduled scanning.",
         ),
         (
@@ -201,7 +201,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the overlapping bytes in both frames. Verify the receiver's handling independently; this alert does not show that the datagram was accepted.",
         ),
         (
-            "IDS", "ICMP address sweep", "icmp.address_sweep", 3, Heuristic,
+            "IDS", "ICMP address sweep", "icmp.address_sweep", 4, Heuristic,
             "Check whether the echo requests match expected diagnostics or discovery.",
         ),
         (

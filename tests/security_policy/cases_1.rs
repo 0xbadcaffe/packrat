@@ -321,7 +321,7 @@ fn scan_evidence_deduplicates_targets_and_stays_in_its_vlan_and_transport() {
         .find(|alert| alert.title == "Horizontal host scan").unwrap();
     assert_eq!(alert.hit_count, 1);
     assert_eq!(alert.packet_refs, [80, 2, 3, 4, 5, 6, 107, 108, 109, 110, 111, 112]);
-    assert_eq!(alert.provenance.as_ref().unwrap().revision, 5);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 6);
 }
 
 #[test]
@@ -362,11 +362,9 @@ fn detects_distinct_syn_arrival_spike_within_one_second() {
 fn detects_icmp_address_sweep() {
     let mut security = SecurityEngine::default();
     for index in 1..=12_u8 {
-        let mut echo = packet("ICMP", 0, "Echo request", vec![]);
-        echo.no = index as u64;
-        echo.timestamp = index as f64;
-        echo.dst = format!("10.0.0.{index}");
-        echo.dst_port = None;
+        let echo = super::ipv4_discovery_cases::discovery_packet(
+            u64::from(index), index, 1, &[8, 0, 0, 0, 0, 0, 0, 0],
+        );
         security.update(&echo);
     }
 

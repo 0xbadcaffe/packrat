@@ -103,19 +103,34 @@ pub(super) fn parse_ipv4_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
     ))
 }
 
-pub(super) fn is_empty_ipv4_udp_probe(raw: &[u8]) -> bool {
-    let Some((ip_offset, 0x0800)) = ethernet_network_header(raw) else {
-        return false;
-    };
-    if raw.len() < ip_offset + 20 || raw[ip_offset] >> 4 != 4 || raw[ip_offset + 9] != 17 {
-        return false;
+pub(super) enum Ipv4DiscoveryProbe {
+    EmptyUdp(u16),
+    EchoRequest,
+}
+
+pub(super) fn ipv4_discovery_probe(raw: &[u8]) -> Option<Ipv4DiscoveryProbe> {
+    let (offset, 0x0800) = ethernet_network_header(raw)? else { return None };
+    let header = raw.get(offset..offset + 20)?;
+    let header_len = usize::from(header[0] & 0x0f) * 4;
+    let total_len = usize::from(u16_be_at(header, 2));
+    if header[0] >> 4 != 4 || header_len < 20 || u16_be_at(header, 6) & 0x3fff != 0 {
+        return None;
     }
-    let ip_header_len = usize::from(raw[ip_offset] & 0x0f) * 4;
-    let udp_offset = ip_offset + ip_header_len;
-    if ip_header_len < 20 || raw.len() < udp_offset + 8 {
-        return false;
+    if [12, 16].into_iter().any(|start| {
+        let address = Ipv4Addr::new(header[start], header[start + 1], header[start + 2], header[start + 3]);
+        address.is_unspecified() || address.is_multicast() || address.is_broadcast()
+    }) {
+        return None;
     }
-    u16::from_be_bytes([raw[udp_offset + 4], raw[udp_offset + 5]]) == 8
+    let payload = raw.get(offset..offset + total_len)?.get(header_len..)?;
+    match header[9] {
+        1 if payload.len() >= 8 && payload.starts_with(&[8, 0]) => Some(Ipv4DiscoveryProbe::EchoRequest),
+        17 if payload.len() == 8 && u16_be_at(payload, 4) == 8 => {
+            let port = u16_be_at(payload, 2);
+            (port != 0).then_some(Ipv4DiscoveryProbe::EmptyUdp(port))
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
