@@ -63,7 +63,9 @@ md5        = "0.7"
 sha2       = "0.10"
 mlua       = { version = "0.10", features = ["lua54", "vendored"], optional = true }
 aya        = { version = "=0.13.1", optional = true }
-libc       = { version = "0.2", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc       = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4.5"
@@ -72,7 +74,7 @@ landlock = "0.4.5"
 default        = ["terminal-ui"]
 terminal-ui    = ["dep:ratatui", "dep:crossterm", "dep:mlua"]
 real-capture   = ["dep:pcap"]
-ebpf-sockets   = ["dep:aya", "dep:libc"]
+ebpf-sockets   = ["dep:aya"]
 
 [dev-dependencies]
 insta   = { version = "1", features = ["yaml"] }

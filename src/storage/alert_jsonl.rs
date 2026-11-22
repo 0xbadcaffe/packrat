@@ -118,26 +118,23 @@ impl AlertJsonlWriter {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("Create alert export directory: {error}"))?;
 
+        let mut file = open_alert_file(&path)?;
         let mut latest_snapshots = BTreeMap::new();
-        match File::open(&path) {
-            Ok(existing) => {
-                let mut reader = BufReader::new(existing);
-                let mut line = Vec::new();
-                while next_alert_line(&mut reader, &mut line)
-                    .map_err(|error| format!("Read alert JSONL file {}: {error}", path.display()))?
-                {
-                    let Some(record) = ExistingAlertRecord::decode(&line) else {
-                        continue;
-                    };
-                    if record.session_id == session_id && let Ok(digest) = snapshot_digest(&record.alert) {
-                        remember(&mut latest_snapshots, snapshot_key(&record.alert), digest);
-                    }
+        {
+            let mut reader = BufReader::new(&mut file);
+            let mut line = Vec::new();
+            while next_alert_line(&mut reader, &mut line)
+                .map_err(|error| format!("Read alert JSONL file {}: {error}", path.display()))?
+            {
+                let Some(record) = ExistingAlertRecord::decode(&line) else {
+                    continue;
+                };
+                if record.session_id == session_id && let Ok(digest) = snapshot_digest(&record.alert) {
+                    remember(&mut latest_snapshots, snapshot_key(&record.alert), digest);
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("Read alert JSONL file {}: {error}", path.display())),
         }
-        let (writer, needs_separator) = open_append(&path)?;
+        let (writer, needs_separator) = prepare_append(file)?;
         Ok(Self {
             path,
             session_id: session_id.to_owned(),
@@ -213,29 +210,61 @@ impl AlertJsonlWriter {
 
         let current = self.writer.get_ref().metadata()
             .map_err(|error| format!("Stat open alert JSONL file: {error}"))?;
-        match std::fs::metadata(&self.path) {
-            Ok(path) if (path.dev(), path.ino()) == (current.dev(), current.ino()) => return Ok(()),
+        match std::fs::symlink_metadata(&self.path) {
+            Ok(path) if (path.dev(), path.ino()) == (current.dev(), current.ino()) => {
+                return verify_alert_file(&current, &self.path);
+            }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("Stat alert JSONL file {}: {error}", self.path.display())),
         }
         self.writer.flush()
             .map_err(|error| format!("Flush rotated alert JSONL file: {error}"))?;
-        (self.writer, self.needs_separator) = open_append(&self.path)?;
+        (self.writer, self.needs_separator) = prepare_append(open_alert_file(&self.path)?)?;
         Ok(())
     }
 }
 
-fn open_append(path: &std::path::Path) -> Result<(BufWriter<File>, bool), String> {
+fn open_alert_file(path: &std::path::Path) -> Result<File, String> {
+    let context = |error| format!("Open alert JSONL file {}: {error}", path.display());
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => verify_alert_file(&metadata, path)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(context(error)),
+    }
     let mut options = OpenOptions::new();
     options.create(true).read(true).append(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
-    let mut file = options.open(path)
-        .map_err(|error| format!("Open alert JSONL file {}: {error}", path.display()))?;
+    let file = options.open(path).map_err(context)?;
+    verify_alert_file(&file.metadata().map_err(context)?, path)?;
+    Ok(file)
+}
+
+fn verify_alert_file(metadata: &std::fs::Metadata, path: &std::path::Path) -> Result<(), String> {
+    if !metadata.is_file() {
+        return Err(format!("Alert JSONL path is not a regular file: {}", path.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        // SAFETY: geteuid has no arguments or caller invariants.
+        let owner = unsafe { libc::geteuid() };
+        if metadata.uid() != owner || metadata.mode() & 0o077 != 0 || metadata.nlink() != 1 {
+            return Err(format!(
+                "Alert JSONL file must be owned by the capture user, have owner-only permissions (chmod 600), and have one hard link: {}",
+                path.display(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn prepare_append(mut file: File) -> Result<(BufWriter<File>, bool), String> {
     let needs_separator = if file.metadata().map_err(|error| error.to_string())?.len() > 0 {
         let mut last = [0];
         file.seek(SeekFrom::End(-1)).and_then(|_| file.read_exact(&mut last))

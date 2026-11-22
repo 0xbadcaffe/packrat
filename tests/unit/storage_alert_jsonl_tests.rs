@@ -95,6 +95,17 @@ fn read_log(path: &std::path::Path) -> Vec<ExistingAlertRecord> {
         .collect()
 }
 
+fn write_private_log(path: &std::path::Path, contents: &[u8]) {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path).unwrap().write_all(contents).unwrap();
+}
+
 #[test]
 fn disposition_can_return_to_a_previously_logged_state() {
     let directory = tempfile::tempdir().unwrap();
@@ -152,7 +163,7 @@ fn saved_snapshot_index_stays_bounded_when_reopening_long_logs() {
 fn reopening_after_a_torn_line_does_not_lose_the_next_snapshot() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("alerts.jsonl");
-    std::fs::write(&path, b"{\"alert\":").unwrap();
+    write_private_log(&path, b"{\"alert\":");
     let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
     writer.append_alerts(&[alert(1, 1)]).unwrap();
     let contents = std::fs::read_to_string(&path).unwrap();
@@ -193,7 +204,7 @@ fn rotated_replacement_with_a_torn_record_preserves_the_next_alert() {
     let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
     writer.append_alerts(&[alert(1, 1)]).unwrap();
     std::fs::rename(&path, &previous).unwrap();
-    std::fs::write(&path, b"{\"alert\":").unwrap();
+    write_private_log(&path, b"{\"alert\":");
 
     writer.append_alerts(&[alert(2, 2), alert(3, 3)]).unwrap();
     assert!(std::fs::read_to_string(&path).unwrap().starts_with("{\"alert\":\n"));
@@ -202,4 +213,55 @@ fn rotated_replacement_with_a_torn_record_preserves_the_next_alert() {
         read_log(&path).iter().map(|record| record.alert.hit_count).collect::<Vec<_>>(),
         [2, 3],
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn saved_alert_log_rejects_broad_permissions_without_rewriting_contents() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    write_private_log(&path, b"old record\n");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let error = AlertJsonlWriter::open(path.clone(), "session-a").err().unwrap();
+    assert!(error.contains("chmod 600"), "{error}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"old record\n");
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o644);
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    writer.append_alerts(&[alert(1, 1)]).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(writer.append_alerts(&[alert(2, 2)]).is_err());
+    assert_eq!(read_log(&path)[0].alert.hit_count, 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn saved_alert_log_rejects_redirects_and_nonregular_file() {
+    use std::os::unix::{fs::symlink, net::UnixListener};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let other = directory.path().join("other.jsonl");
+    write_private_log(&other, b"untouched\n");
+
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    writer.append_alerts(&[alert(1, 1)]).unwrap();
+    let previous = directory.path().join("alerts.jsonl.1");
+    std::fs::rename(&path, &previous).unwrap();
+
+    symlink(&other, &path).unwrap();
+    assert!(AlertJsonlWriter::open(path.clone(), "session-a").is_err());
+    assert!(writer.append_alerts(&[alert(2, 2)]).is_err());
+    std::fs::remove_file(&path).unwrap();
+    std::fs::hard_link(&other, &path).unwrap();
+    assert!(AlertJsonlWriter::open(path.clone(), "session-a").is_err());
+    assert!(writer.append_alerts(&[alert(2, 2)]).is_err());
+    std::fs::remove_file(&path).unwrap();
+    let _listener = UnixListener::bind(&path).unwrap();
+    assert!(AlertJsonlWriter::open(path, "session-a").is_err());
+    assert_eq!(std::fs::read(&other).unwrap(), b"untouched\n");
+    assert_eq!(read_log(&previous).len(), 1);
 }
