@@ -129,4 +129,49 @@ jq -cn '
 status=0
 PACKRAT_WATCH_MAX_ALERTS=0 bash "$watch" </dev/null >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
+
+(
+    log="$scratch/live.jsonl"
+    stream="$scratch/notifications.jsonl"
+    fifo="$scratch/follow"
+    mkfifo -- "$fifo"
+    row() {
+        jq -cn --arg session "$1" --arg capture "$2" --argjson hits "$3" '
+            {schema_version:1,record_type:"alert",session_id:$session,
+             alert:{id:1,capture_id:$capture,hit_count:$hits,disposition:"New"}}'
+    }
+    row session-a capture-a 1 >"$log"
+    tail -n +1 -F --sleep-interval=0.05 --max-unchanged-stats=1 -- "$log" >"$fifo" 2>"$scratch/tail.err" &
+    tail_pid=$!
+    bash "$watch" <"$fifo" >"$stream" 2>"$scratch/watch.err" &
+    watch_pid=$!
+    stop_pipeline() {
+        kill "$tail_pid" "$watch_pid" 2>/dev/null || :
+        wait "$tail_pid" "$watch_pid" 2>/dev/null || :
+    }
+    trap stop_pipeline EXIT
+    await_notifications() {
+        local count=$1 attempt
+        for ((attempt=0; attempt<100; attempt++)); do
+            kill -0 "$tail_pid" "$watch_pid" 2>/dev/null || return 1
+            if jq -se --argjson count "$count" 'length >= $count' "$stream" 2>/dev/null; then return 0; fi
+            sleep 0.05
+        done
+        return 1
+    }
+
+    await_notifications 1 >/dev/null
+    mv -- "$log" "$log.1"
+    row session-a capture-a 2 >"$log"
+    row session-b capture-b 1 >>"$log"
+    await_notifications 3 >/dev/null
+    jq -se 'map(.event) == ["first_seen","updated","first_seen"]
+        and map(.changes) == [[],["hit_count"],[]]
+        and map(.capture_id) == ["capture-a","capture-a","capture-b"]
+        and map(.hits) == [1,2,1]' "$stream" >/dev/null
+    [[ ! -s $scratch/watch.err ]]
+    stop_pipeline
+    trap - EXIT
+)
+
 printf '%s\n' 'Packrat alert watcher tests passed'
