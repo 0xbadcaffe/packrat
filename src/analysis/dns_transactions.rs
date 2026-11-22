@@ -388,15 +388,21 @@ pub(crate) fn parse_name(bytes: &[u8], start: usize) -> Option<(String, usize)> 
 }
 
 pub(crate) fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
+    if packet.capture.as_ref().is_some_and(|metadata| metadata.link_type != 1) {
+        return None;
+    }
     let raw = packet.bytes.as_slice();
     let mut network = 14usize;
     let mut ether_type = u16::from_be_bytes([*raw.get(12)?, *raw.get(13)?]);
-    while matches!(ether_type, 0x8100 | 0x88a8) {
+    for _ in 0..2 {
+        if !matches!(ether_type, 0x8100 | 0x88a8) {
+            break;
+        }
         ether_type = u16::from_be_bytes([*raw.get(network + 2)?, *raw.get(network + 3)?]);
         network += 4;
     }
     let (transport, network_end) = match ether_type {
-        0x0800 if raw.get(network + 9) == Some(&17) => {
+        0x0800 if raw.get(network)? >> 4 == 4 && raw.get(network + 9) == Some(&17) => {
             let ihl = usize::from(raw.get(network)? & 0x0f) * 4;
             let fragment = u16::from_be_bytes(raw.get(network + 6..network + 8)?.try_into().ok()?);
             if ihl < 20 || fragment & 0x3fff != 0 {
@@ -405,28 +411,20 @@ pub(crate) fn udp_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
             let length = u16::from_be_bytes(raw.get(network + 2..network + 4)?.try_into().ok()?);
             (network + ihl, network + usize::from(length))
         }
-        0x86dd => {
+        0x86dd if raw.get(network)? >> 4 == 6 => {
             let length = u16::from_be_bytes(raw.get(network + 4..network + 6)?.try_into().ok()?);
-            (ipv6_udp_offset(raw, network)?, network + 40 + usize::from(length))
+            let end = network + 40 + usize::from(length);
+            (ipv6_udp_offset(&raw[..end.min(raw.len())], network)?, end)
         }
         _ => return None,
     };
-    let source_port = u16::from_be_bytes([*raw.get(transport)?, *raw.get(transport + 1)?]);
-    let destination_port = u16::from_be_bytes([*raw.get(transport + 2)?, *raw.get(transport + 3)?]);
-    let udp_length =
-        u16::from_be_bytes([*raw.get(transport + 4)?, *raw.get(transport + 5)?]) as usize;
-    if udp_length < 8 {
-        return None;
-    }
-    let payload_start = transport.checked_add(8)?;
-    let payload_end = transport.checked_add(udp_length)?;
-    if payload_end > network_end {
-        return None;
-    }
+    let udp = raw.get(transport..network_end.min(raw.len()))?;
+    let &[src_hi, src_lo, dst_hi, dst_lo, len_hi, len_lo, _, _] = udp.first_chunk::<8>()?;
+    let udp_length = usize::from(u16::from_be_bytes([len_hi, len_lo]));
     Some((
-        source_port,
-        destination_port,
-        raw.get(payload_start..payload_end)?,
+        u16::from_be_bytes([src_hi, src_lo]),
+        u16::from_be_bytes([dst_hi, dst_lo]),
+        udp.get(8..udp_length)?,
     ))
 }
 

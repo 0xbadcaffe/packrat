@@ -6,14 +6,14 @@ use packrat_tui::net::security::Severity;
 
 #[path = "dns_transaction/txt_reply_tests.rs"]
 mod txt_reply_tests;
-
 #[path = "dns_transaction/external_resolver_tests.rs"]
 mod external_resolver_tests;
-
 #[path = "dns_transaction/investigation_tests.rs"]
 mod investigation_tests;
 #[path = "dns_transaction/jndi_label_tests.rs"]
 mod jndi_label_tests;
+#[path = "dns_transaction/wire_bounds_tests.rs"]
+mod wire_bounds_tests;
 fn dns_packet(
     no: u64,
     response: bool,
