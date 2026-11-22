@@ -12,6 +12,12 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
                 Line::raw(format!("Expected resolver {}", exchange.expected_resolver)),
                 Line::raw(format!("{} Query #{}", marker(packet.no, exchange.query_packet), exchange.query_packet)),
             ];
+            for frame in exchange.repeated_query_packets {
+                lines.push(Line::raw(format!("{} Repeat query #{frame}", marker(packet.no, frame))));
+            }
+            if exchange.additional_queries_omitted {
+                lines.push(Line::raw("Additional repeat queries exceeded the investigation limit"));
+            }
             if exchange.replies.is_empty() {
                 lines.push(Line::raw("No matched reply retained"));
             }

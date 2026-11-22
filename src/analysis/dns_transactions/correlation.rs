@@ -1,6 +1,8 @@
 use super::{PendingQuery, Question, RecentResponse, RESPONSE_TTL_SECS, TRANSACTION_TTL_SECS};
 
 const MAX_CANDIDATES: usize = 4;
+const MAX_QUERY_REPEATS: usize = 4;
+const MAX_PENDING_AGE_SECS: f64 = 2.0 * TRANSACTION_TTL_SECS;
 
 #[derive(Debug, Default)]
 pub(super) struct ExchangeBucket {
@@ -12,6 +14,48 @@ pub(super) struct ExchangeBucket {
 pub(super) struct Exchange {
     pub(super) query: PendingQuery,
     pub(super) reply: Option<RecentResponse>,
+    pub(super) repeat_frames: Vec<u64>,
+    pub(super) repeats_omitted: bool,
+    latest_query_at: f64,
+}
+
+impl Exchange {
+    fn new(query: PendingQuery) -> Self {
+        Self {
+            latest_query_at: query.timestamp,
+            query,
+            reply: None,
+            repeat_frames: Vec::new(),
+            repeats_omitted: false,
+        }
+    }
+
+    fn record_query(&mut self, query: PendingQuery) {
+        let latest = self.reply.as_ref().map_or(self.latest_query_at, |reply| {
+            self.latest_query_at.max(reply.timestamp)
+        });
+        if query.timestamp < latest {
+            return;
+        }
+        if self.reply.is_some() || query.wire_fingerprint != self.query.wire_fingerprint {
+            *self = Self::new(query);
+            return;
+        }
+        if query.packet_no == self.query.packet_no || self.repeat_frames.contains(&query.packet_no) {
+            return;
+        }
+        self.latest_query_at = query.timestamp;
+        if self.repeat_frames.len() < MAX_QUERY_REPEATS {
+            self.repeat_frames.push(query.packet_no);
+        } else {
+            self.repeats_omitted = true;
+        }
+    }
+
+    fn is_pending_at(&self, now: f64) -> bool {
+        now - self.latest_query_at <= TRANSACTION_TTL_SECS
+            && now - self.query.timestamp <= MAX_PENDING_AGE_SECS
+    }
 }
 
 pub(super) enum ReplyMatch {
@@ -26,12 +70,9 @@ impl ExchangeBucket {
         if let Some(entry) = self.entries.iter_mut().find(|entry| {
             entry.query.server == query.server && entry.query.question == query.question
         }) {
-            let newest = entry.reply.as_ref().map_or(entry.query.timestamp, |reply| reply.timestamp);
-            if query.timestamp >= newest {
-                *entry = Exchange { query, reply: None };
-            }
+            entry.record_query(query);
         } else if self.entries.len() < MAX_CANDIDATES {
-            self.entries.push(Exchange { query, reply: None });
+            self.entries.push(Exchange::new(query));
         } else {
             // A discarded query may be the true match for a later partial match.
             self.saturated_at = Some(self.saturated_at.map_or(query.timestamp, |old| old.max(query.timestamp)));
@@ -40,11 +81,10 @@ impl ExchangeBucket {
 
     pub(super) fn expire(&mut self, now: f64) {
         self.entries.retain(|entry| {
-            let (seen, ttl) = entry.reply.as_ref().map_or(
-                (entry.query.timestamp, TRANSACTION_TTL_SECS),
-                |reply| (reply.timestamp, RESPONSE_TTL_SECS),
-            );
-            now - seen <= ttl
+            entry.reply.as_ref().map_or_else(
+                || entry.is_pending_at(now),
+                |reply| now - reply.timestamp <= RESPONSE_TTL_SECS,
+            )
         });
         if self.saturated_at.is_some_and(|seen| now - seen > TRANSACTION_TTL_SECS) {
             self.saturated_at = None;

@@ -28,6 +28,8 @@ pub struct DnsExchangeEvidence {
     pub query_type: u16,
     pub query_class: u16,
     pub query_packet: u64,
+    pub repeated_query_packets: Vec<u64>,
+    pub additional_queries_omitted: bool,
     pub client: String,
     pub client_port: u16,
     pub expected_resolver: String,
@@ -58,7 +60,7 @@ impl DnsTransactionTracker {
                         || reply.alternates.iter().any(|other| other.evidence.packet == packet.no)
                 })
             } else {
-                entry.query.packet_no == packet.no
+                entry.query.packet_no == packet.no || entry.repeat_frames.contains(&packet.no)
             }
         })?;
         let mut replies = Vec::new();
@@ -74,6 +76,8 @@ impl DnsTransactionTracker {
             query_type: exchange.query.question.qtype,
             query_class: exchange.query.question.qclass,
             query_packet: exchange.query.packet_no,
+            repeated_query_packets: exchange.repeat_frames.clone(),
+            additional_queries_omitted: exchange.repeats_omitted,
             client: client.clone(),
             client_port,
             expected_resolver: exchange.query.server.clone(),

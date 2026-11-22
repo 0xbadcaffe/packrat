@@ -29,6 +29,26 @@ fn advance(app: &mut App) {
 }
 
 #[test]
+fn enter_in_dns_transactions_visits_repeated_queries() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Investigate;
+    app.investigation_view = InvestigationView::Transactions;
+    let resolver = [10, 0, 0, 53];
+    let query = dns_frame(1, resolver, false);
+    let retry = dns_frame(2, resolver, false);
+    let reply = dns_frame(3, resolver, true);
+    for frame in [&query, &retry, &reply] {
+        app.core.edit().analyze(frame);
+        app.packets.push_back(frame.clone());
+    }
+    app.worklist.pin_packet(&query).unwrap();
+    for frame in [2, 3, 1] {
+        advance(&mut app);
+        assert_eq!(app.worklist.active_packet_no(), Some(frame));
+    }
+}
+
+#[test]
 fn enter_in_dns_transactions_cycles_only_available_exchange_evidence() {
     let mut app = App::new_for_test();
     app.active_tab = Tab::Investigate;

@@ -27,6 +27,7 @@ impl App {
         if self.dns_frame_origin(exchange.query_packet) != origin {
             return None;
         }
+        exchange.repeated_query_packets.retain(|&query| self.dns_frame_origin(query) == origin);
         exchange.replies.retain(|reply| self.dns_frame_origin(reply.packet) == origin);
         Some(exchange)
     }
@@ -48,6 +49,7 @@ impl App {
             return;
         };
         let frames: Vec<_> = std::iter::once(exchange.query_packet)
+            .chain(exchange.repeated_query_packets)
             .chain(exchange.replies.iter().map(|reply| reply.packet)).collect();
         let Some(index) = frames.iter().position(|&frame| frame == current) else { return };
         let mut archive = None;

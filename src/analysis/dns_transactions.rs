@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::net::packet::Packet;
+use sha2::{Digest, Sha256};
 
 mod answers;
 mod correlation;
@@ -91,6 +92,7 @@ struct PendingQuery {
     server: String,
     question: Question,
     timestamp: f64,
+    wire_fingerprint: [u8; 32],
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -160,6 +162,7 @@ impl DnsTransactionTracker {
                     server: packet.dst.clone(),
                     question: message.question,
                     timestamp: packet.timestamp,
+                    wire_fingerprint: Sha256::digest(message.bytes).into(),
                 },
             );
             return if jndi_label {

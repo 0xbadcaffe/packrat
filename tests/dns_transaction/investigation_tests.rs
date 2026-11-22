@@ -1,6 +1,70 @@
 use super::*;
 
 #[test]
+fn repeated_pending_dns_queries_keep_the_original_alert_anchor() {
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let query = dns_packet(1, false, client, resolver, 33, "example.test");
+    let mut retry = dns_packet(2, false, client, resolver, 33, "example.test");
+    let mut reply = dns_packet(3, true, resolver, client, 33, "example.test");
+    let mut alternate = dns_packet(4, true, "10.0.0.54", client, 33, "example.test");
+    retry.timestamp = 29.0;
+    reply.timestamp = 32.0;
+    alternate.timestamp = 33.0;
+    let mut core = AnalysisCore::default();
+    for packet in [&query, &retry, &retry, &reply, &alternate] {
+        core.analyze(packet);
+    }
+    let conflict = core.alert_center.items.iter().find(|alert| {
+        alert.provenance.as_ref().is_some_and(|rule| rule.rule_id == "dns.competing_responders")
+    }).unwrap();
+    assert_eq!(conflict.packet_refs, [1, 3, 4]);
+    for frame in [&query, &retry, &reply, &alternate] {
+        let evidence = core.security.dns_exchange_for_packet(frame).unwrap();
+        assert_eq!(evidence.query_packet, 1);
+        assert_eq!(evidence.repeated_query_packets, [2]);
+        assert!(!evidence.additional_queries_omitted);
+    }
+}
+
+#[test]
+fn pending_repeats_cannot_extend_dns_exchange_state_indefinitely() {
+    let mut tracker = DnsTransactionTracker::default();
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let query = dns_packet(1, false, client, resolver, 34, "example.test");
+    tracker.observe(&query);
+    for (frame, timestamp) in [(2, 3.0), (3, 7.0), (4, 17.0), (5, 37.0), (6, 59.0)] {
+        let mut retry = dns_packet(frame, false, client, resolver, 34, "example.test");
+        retry.timestamp = timestamp;
+        tracker.observe(&retry);
+    }
+    let evidence = tracker.exchange_for_packet(&query).unwrap();
+    assert_eq!(evidence.repeated_query_packets, [2, 3, 4, 5]);
+    assert!(evidence.additional_queries_omitted);
+    let mut late = dns_packet(7, true, resolver, client, 34, "example.test");
+    late.timestamp = 62.0;
+    assert_eq!(tracker.observe(&late)[0].kind, DnsFindingKind::ReplyWithoutObservedQuery);
+    assert!(tracker.exchange_for_packet(&query).is_none());
+}
+
+#[test]
+fn dns_query_with_the_same_question_but_different_wire_flags_is_not_a_repeat() {
+    let mut tracker = DnsTransactionTracker::default();
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let query = dns_packet(1, false, client, resolver, 35, "example.test");
+    let mut changed = dns_packet(2, false, client, resolver, 35, "example.test");
+    changed.bytes[44] ^= 0x01;
+    tracker.observe(&query);
+    tracker.observe(&changed);
+    assert!(tracker.exchange_for_packet(&query).is_none());
+    let evidence = tracker.exchange_for_packet(&changed).unwrap();
+    assert_eq!(evidence.query_packet, 2);
+    assert!(evidence.repeated_query_packets.is_empty());
+}
+
+#[test]
 fn invalid_dns_question_counts_are_reported_but_do_not_enter_correlation() {
     let client = "10.0.0.5";
     let resolver = "10.0.0.53";
