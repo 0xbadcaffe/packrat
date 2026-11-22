@@ -13,8 +13,13 @@ rollout=${PACKRAT_BUILD_ROLLOUT:-"$HOME/.local/bin/packrat-rollout"}
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$cache/packrat-native-build/target"}
 export CARGO_INCREMENTAL=0
 jobs=${PACKRAT_BUILD_JOBS:-3}
+minimum_free_mib=${PACKRAT_BUILD_MIN_FREE_MIB:-2048}
 if [[ $rollout != /* || ! -x $rollout || $CARGO_TARGET_DIR != /* || ! $jobs =~ ^[1-9][0-9]?$ ]]; then
     printf '%s\n' 'Build requires an executable absolute rollout path, an absolute Cargo target path, and 1-99 build jobs.' >&2
+    exit 2
+fi
+if [[ ! $minimum_free_mib =~ ^[1-9][0-9]{0,5}$ ]]; then
+    printf '%s\n' 'PACKRAT_BUILD_MIN_FREE_MIB must be a positive number of MiB (default: 2048).' >&2
     exit 2
 fi
 
@@ -24,6 +29,16 @@ if ! flock -n 8; then
     printf '%s\n' 'Another native Packrat build is in progress.' >&2
     exit 1
 fi
+mkdir -p -- "$CARGO_TARGET_DIR"
+for path in "$cache" "$CARGO_TARGET_DIR"; do
+    if ! LC_ALL=C df -k --output=avail -- "$path" | awk -v minimum="$minimum_free_mib" '
+        NR == 2 && NF == 1 && $1 ~ /^[0-9]+$/ { enough = ($1 >= minimum * 1024) }
+        END { exit !(NR == 2 && enough) }
+    '; then
+        printf 'Cannot verify %s MiB free for native build at %s; capture unchanged.\n' "$minimum_free_mib" "$path" >&2
+        exit 1
+    fi
+done
 
 stage=$(mktemp -d -- "$cache/packrat-native-source.XXXXXXXX")
 trap 'rm -rf -- "$stage"' EXIT

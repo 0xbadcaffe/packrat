@@ -23,6 +23,17 @@ cargo() {
 }
 export -f cargo
 
+df() {
+    [[ $# == 4 && $1 == -k && $2 == --output=avail && $3 == -- ]]
+    printf '%s\n' 'Avail'
+    case ${TEST_DISK_FAIL:-}:$4 in
+        "low:$HOME/.cache") printf '%s\n' 2097151 ;;
+        "invalid:$CARGO_TARGET_DIR") printf '%s\n' unknown ;;
+        *) printf '%s\n' 2097152 ;;
+    esac
+}
+export -f df
+
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
     '[[ $2 == "$HOME/.cache/packrat-native-source."*/packrat && $PACKRAT_ROLLOUT_ANALYZER == "${2%/*}/packrat-analyze" ]]' \
@@ -49,6 +60,13 @@ TEST_ROLLOUT_STATUS=32 bash "$wrapper" --deploy wlan1 <"$scratch/source.tar" || 
 [[ $status == 32 ]]
 assert_clean
 if bash "$wrapper" --deploy wlan1 </dev/null 2>/dev/null; then exit 1; fi
+assert_clean
+for disk_failure in low invalid; do
+    if TEST_DISK_FAIL=$disk_failure bash "$wrapper" --deploy wlan1 <"$scratch/source.tar" 2>"$scratch/error"; then exit 1; fi
+    grep -Fq 'Cannot verify 2048 MiB free' "$scratch/error"
+    assert_clean
+done
+if PACKRAT_BUILD_MIN_FREE_MIB=2049 bash "$wrapper" --deploy wlan1 <"$scratch/source.tar" 2>/dev/null; then exit 1; fi
 assert_clean
 (
     flock -n 8
