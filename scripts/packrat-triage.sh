@@ -101,6 +101,8 @@ if ! jq -e '
     .health | .capture_active == true and .telemetry_fresh == true
     and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"))
     and (.alert_session_id | type == "string" and length <= 128 and test("\\A[0-9]+-[0-9]+\\z"))
+    and ((has("capture_run_id") | not) or
+         (.capture_run_id | type == "string" and test("\\A[0-9a-f]{16}\\z")))
 ' <<< "$state" >/dev/null; then
     report capture_scope_unavailable
     exit 1
@@ -118,6 +120,7 @@ if ! previous_stamps=$(previous_log_stamps); then
 fi
 session=$(jq -er '.health.alert_session_id' <<< "$state")
 capture=$(jq -er '.health.capture_id' <<< "$state")
+run=$(jq -c '.health.capture_run_id' <<< "$state")
 read_status=0
 raw_alerts=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
     --alerts "$2" --session "$session" --capture-id "$capture" \
@@ -143,9 +146,10 @@ if ! fresh; then
     report stale_health
     exit 1
 fi
-if ! jq -e --arg session "$session" --arg capture "$capture" '
+if ! jq -e --arg session "$session" --arg capture "$capture" --argjson run "$run" '
     .health | .capture_active == true and .telemetry_fresh == true
     and .alert_session_id == $session and .capture_id == $capture
+    and .capture_run_id == $run
 ' <<< "$state" >/dev/null; then
     report capture_scope_changed
     exit 1

@@ -24,6 +24,10 @@ packrat-archive() {
         jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
         mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
     fi
+    if [[ ${PACKRAT_TEST_RUN_RACE:-0} == 1 ]]; then
+        jq -c '.capture_run_id = "0000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
+        mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
+    fi
     case ${PACKRAT_TEST_LOG_RACE:-} in
         append) printf '%s\n' snapshot >>"$PACKRAT_TEST_LOG" ;;
         truncate) : >"$PACKRAT_TEST_LOG" ;;
@@ -130,6 +134,13 @@ check_failure 1 alert_log_mismatch
 printf '%s\n' "$sample" >"$health"
 PACKRAT_TEST_SCOPE_RACE=1 check_failure 1 capture_scope_changed
 [[ -e $PACKRAT_TEST_CALL ]]
+rm -- "$PACKRAT_TEST_CALL"
+jq -c '.capture_run_id = null' <<< "$sample" >"$health"
+check_failure 1 capture_scope_unavailable
+[[ ! -e $PACKRAT_TEST_CALL ]]
+jq -c '.capture_run_id = "0000000000000001"' <<< "$sample" >"$health"
+bash "$triage" "$health" "$PACKRAT_TEST_LOG" | jq -e '.status == "current"' >/dev/null
+PACKRAT_TEST_RUN_RACE=1 check_failure 1 capture_scope_changed
 printf '%s\n' "$sample" >"$health"
 PACKRAT_TEST_LOG_ERROR=1 check_failure 2 alert_log_unavailable
 [[ -e $PACKRAT_TEST_CALL ]]
