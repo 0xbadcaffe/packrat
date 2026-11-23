@@ -70,3 +70,77 @@ mkfifo -- "$fixture"
 reject
 
 printf '%s\n' 'watcher baseline comparison tests passed'
+
+bin=$tmp/bin
+mkdir "$bin"
+cp -- "$tool" "$bin/packrat-watch-baseline"
+cp -- "$(dirname "$tool")/packrat-watch-coverage.sh" "$bin/packrat-watch-coverage"
+export TEST_DIR=$tmp
+cat > "$bin/packrat-rollout" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $* == "--identify wlan1" && $PACKRAT_ROLLOUT_TRIAGE_STATE == "$TEST_DIR/journal" &&
+   $PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL == 1 && -x $PACKRAT_ROLLOUT_TRIAGE_CHECK ]]
+if [[ -f $TEST_DIR/observed ]]; then
+    cat "$TEST_DIR/build-after"
+else
+    touch "$TEST_DIR/observed"
+    cat "$TEST_DIR/build-before"
+fi
+STUB
+cat > "$bin/packrat-watch-triage" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# == 2 && $1 == --history && $2 == "$TEST_DIR/journal" ]]
+cat -- "$2"
+STUB
+chmod +x "$bin/packrat-watch-triage"
+jq -c '.build' "$before" > "$tmp/build-before"
+jq '.packets += 15 | .observed_at = "2026-11-23T11:02:01Z"' "$tmp/build-before" > "$tmp/build-after"
+jq -nc '
+    {record_type:"capture_triage_watch",status:"current",capture_id:"a",session_id:"one",
+     updated_at:"2026-11-23T11:00:00Z",buffer_drops:0,packets:100,
+     packet_counter_gap:false,healthy_capture_since:1,alert_sample_gap:false,
+     highest_observed_alert_id:0,checkpoint:true} as $initial
+    | $initial, ($initial | .updated_at = "2026-11-23T11:01:00Z" | .packets = 2100
+      | .highest_observed_alert_id = 1 | .alert_changes.newly_observed = [1])
+' > "$tmp/journal"
+record() {
+    rm -f -- "$tmp/observed"
+    "$bin/packrat-watch-baseline" --record wlan1 "$tmp/journal" "$1"
+}
+record "$tmp/recorded"
+[[ $(stat -c %a -- "$tmp/recorded") == 600 ]]
+jq -e '.build.packets == 2515 and .coverage.observed_openings == 1
+    and .coverage.alert_comparable_packets == 2000' "$tmp/recorded" >/dev/null
+bash "$tool" "$before" "$tmp/recorded" | jq -e '.status == "same_capture"' >/dev/null
+
+saved=$(sha256sum -- "$tmp/recorded")
+! record "$tmp/recorded" 2>/dev/null || exit 1
+[[ $(sha256sum -- "$tmp/recorded") == "$saved" ]]
+ln -s -- "$tmp/recorded" "$tmp/output-link"
+! record "$tmp/output-link" 2>/dev/null || exit 1
+[[ -L $tmp/output-link && $(sha256sum -- "$tmp/recorded") == "$saved" ]]
+
+jq '.capture_run_id = "changed"' "$tmp/build-before" > "$tmp/build-after"
+! record "$tmp/unstable" 2>/dev/null || exit 1
+[[ ! -e $tmp/unstable ]]
+jq '.packets -= 1' "$tmp/build-before" > "$tmp/build-after"
+! record "$tmp/regressed" 2>/dev/null || exit 1
+[[ ! -e $tmp/regressed ]]
+cp -- "$tmp/build-before" "$tmp/build-after"
+jq -sc '.[0]' "$tmp/journal" > "$tmp/single"
+cp -- "$tmp/journal" "$tmp/journal-original"
+mv -- "$tmp/single" "$tmp/journal"
+record "$tmp/insufficient"
+bash "$tool" "$tmp/insufficient" "$after" | jq -e '
+    .status == "insufficient_alert_coverage" and .before.openings == null
+    and .observed_rate_delta_per_10000_packets == null' >/dev/null
+jq -c '.status = "stale"' "$tmp/journal-original" > "$tmp/journal"
+! record "$tmp/stale" 2>/dev/null || exit 1
+[[ ! -e $tmp/stale ]]
+jq -c '.capture_id = "wrong-capture"' "$tmp/journal-original" > "$tmp/journal"
+! record "$tmp/wrong" 2>/dev/null || exit 1
+[[ ! -e $tmp/wrong ]]
+
+printf '%s\n' 'watcher baseline recording tests passed'

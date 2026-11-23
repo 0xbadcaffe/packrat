@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Compare two retained capture coverage reports linked to verified builds.
+# Record and compare retained capture coverage linked to verified builds.
 set -euo pipefail
 export LC_ALL=C
 
 usage() {
     printf '%s\n' 'Usage: packrat-watch-baseline.sh BEFORE.json AFTER.json' \
+        '       packrat-watch-baseline.sh --record INTERFACE STATE.json OUTPUT.json' \
+        'Recording requires a healthy live capture and publishes a private file without overwriting.' \
         'Compares observed alert openings, not detector accuracy or total network activity.'
 }
-
-if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
-if (( $# != 2 )); then usage >&2; exit 2; fi
 
 read_baseline() {
     local path=$1
@@ -55,6 +54,49 @@ read_baseline() {
           else error("Invalid or mismatched build and coverage baseline") end
     '
 }
+
+record_baseline() (
+    set -euo pipefail
+    umask 077
+    local interface=$1 state=$2 output=$3 bin rollout watcher coverage stage before after report
+    if [[ ! $interface =~ ^[A-Za-z0-9_.-]{1,128}$ || ! -f $state || -z ${output##*/} ]]; then
+        printf '%s\n' 'Expected an interface, a watcher state file, and a new output file' >&2
+        exit 2
+    fi
+    bin=$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")
+    rollout="$bin/packrat-rollout" watcher="$bin/packrat-watch-triage" coverage="$bin/packrat-watch-coverage"
+    if [[ -f $bin/packrat-rollout.sh ]]; then
+        rollout="$bin/packrat-rollout.sh" watcher="$bin/watch-packrat-triage.sh" coverage="$bin/packrat-watch-coverage.sh"
+    fi
+    export PACKRAT_ROLLOUT_TRIAGE_STATE="$state" PACKRAT_ROLLOUT_TRIAGE_CHECK="$watcher"
+    export PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL=1
+    before=$(bash "$rollout" --identify "$interface")
+    report=$("$watcher" --history "$state" | "$coverage")
+    after=$(bash "$rollout" --identify "$interface")
+    stage=$(mktemp -- "$(dirname -- "$output")/.packrat-baseline.XXXXXXXX")
+    trap 'rm -f -- "$stage"' EXIT
+    printf '%s\n' "$before" "$report" "$after" | jq -ces --arg interface "$interface" '
+        if length == 3 then .[0] as $a | .[1] as $c | .[2] as $b
+          | if $b.interface == $interface and $c.journal_tail_status == "current"
+              and ($a | del(.packets,.observed_at)) == ($b | del(.packets,.observed_at))
+              and ($a.packets | type == "number" and . >= 0 and floor == .)
+              and $a.packets <= $b.packets and ($a.observed_at | type == "string")
+              and $a.observed_at <= $b.observed_at
+            then {record_type:"capture_build_baseline",build:$b,coverage:$c}
+            else error("Capture or journal changed during baseline recording") end
+        else error("Expected two build proofs and one coverage report") end
+    ' > "$stage"
+    read_baseline "$stage" >/dev/null
+    ln -T -- "$stage" "$output"
+)
+
+if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
+if [[ ${1-} == --record ]]; then
+    if (( $# != 4 )); then usage >&2; exit 2; fi
+    record_baseline "$2" "$3" "$4"
+    exit
+fi
+if (( $# != 2 )); then usage >&2; exit 2; fi
 
 before=$(read_baseline "$1")
 after=$(read_baseline "$2")
