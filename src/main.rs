@@ -160,7 +160,14 @@ async fn run_loop(
             redraw_pending = false;
         }
 
+        let analysis_ready = app.analysis_event_notifier();
         tokio::select! {
+            _ = async {
+                match analysis_ready {
+                    Some(ready) => ready.notified().await,
+                    None => std::future::pending().await,
+                }
+            } => {}
             _ = tick_interval.tick() => {
                 app.tick();
                 redraw_pending = true;

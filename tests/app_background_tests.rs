@@ -127,8 +127,8 @@ fn synthetic_flood_retains_rate_debt_while_respecting_each_tick_budget() {
     assert_eq!(app.craft.flood_tick_budget(1000), 0);
 }
 
-#[test]
-fn live_dispatch_keeps_the_rejected_packet_and_unread_capture_tail() {
+#[tokio::test]
+async fn live_dispatch_resumes_on_worker_events_without_a_ui_tick() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
     let mut app = App::new(tx.clone());
     app.capturing = true;
@@ -158,13 +158,18 @@ fn live_dispatch_keeps_the_rejected_packet_and_unread_capture_tail() {
     assert_eq!(pressure.capacity, 1024);
     assert_eq!(pressure.depth, rx.len());
     assert!(pressure.dispatch_waiting && pressure.analysis_packets_pending > 0);
+    let ready = app.analysis_event_notifier().unwrap();
     release.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while !rx.is_empty() || pending.is_some() || !app.analysis_idle() {
         app.poll_analysis();
         app.dispatch_capture(&mut rx, &mut pending).unwrap();
         assert!(Instant::now() < deadline);
-        std::thread::yield_now();
+        if pending.is_some() || (rx.is_empty() && !app.analysis_idle()) {
+            tokio::time::timeout_at(deadline.into(), ready.notified())
+                .await
+                .expect("capture stalled waiting for the analysis worker");
+        }
     }
     assert_eq!(app.packets.len(), 600);
     assert_eq!(

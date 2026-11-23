@@ -9,6 +9,7 @@ pub(super) fn run(
     output: SyncSender<WorkerEvent>,
     cancel: Arc<AtomicBool>,
     monitor: &WorkerMonitor,
+    event_ready: &tokio::sync::Notify,
 ) -> Result<(), String> {
     let mut history = VecDeque::<Packet>::new();
     let mut history_bytes = 0usize;
@@ -175,6 +176,7 @@ pub(super) fn run(
         if !send(&output, event, &cancel) {
             break;
         }
+        event_ready.notify_one();
     }
     let core = shared.0.lock().map_err(|_| "Analysis state poisoned")?;
     publish(&core, monitor, generation, sequence, analyzed, skipped);

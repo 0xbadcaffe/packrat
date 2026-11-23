@@ -32,6 +32,10 @@ impl App {
         self.analysis_worker.is_some()
     }
 
+    pub fn analysis_event_notifier(&self) -> Option<std::sync::Arc<tokio::sync::Notify>> {
+        self.analysis_worker.as_ref().map(AnalysisWorker::event_notifier)
+    }
+
     pub fn stop_background_analysis(&mut self) -> Result<usize, String> {
         self.abort_capture();
         self.capturing = false;
@@ -125,8 +129,12 @@ impl App {
             return;
         }
         let began = std::time::Instant::now();
+        let mut processed = 0;
         for _ in 0..128 {
             if began.elapsed() >= std::time::Duration::from_millis(4) {
+                if let Some(ready) = self.analysis_event_notifier() {
+                    ready.notify_one();
+                }
                 break;
             }
             let event = if let Some(event) = self.pending_analysis_events.pop_front() {
@@ -146,6 +154,12 @@ impl App {
             };
             if !self.handle_worker_event(event) {
                 break;
+            }
+            processed += 1;
+        }
+        if processed == 128 {
+            if let Some(ready) = self.analysis_event_notifier() {
+                ready.notify_one();
             }
         }
         for _ in 0..256 {

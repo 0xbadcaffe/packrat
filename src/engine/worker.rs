@@ -129,6 +129,7 @@ pub struct AnalysisWorker {
     core: ReadCore,
     cancel: Arc<AtomicBool>,
     monitor: WorkerMonitor,
+    event_ready: Arc<tokio::sync::Notify>,
     generation: u64,
     sequence: u64,
 }
@@ -163,6 +164,8 @@ impl AnalysisWorker {
             failure: Arc::new(Mutex::new(None)),
         };
         let worker_monitor = monitor.clone();
+        let event_ready = Arc::new(tokio::sync::Notify::new());
+        let worker_event_ready = event_ready.clone();
         let worker_cancel = Arc::clone(&cancel);
         let worker_core = core.clone();
         let thread = std::thread::Builder::new()
@@ -176,6 +179,7 @@ impl AnalysisWorker {
                         output,
                         worker_cancel,
                         &worker_monitor,
+                        &worker_event_ready,
                     )
                 }))
                 .unwrap_or_else(|_| {
@@ -188,6 +192,7 @@ impl AnalysisWorker {
                         .unwrap_or_else(|error| error.into_inner()) = Some(error.clone());
                 }
                 worker_monitor.running.store(false, Ordering::Release);
+                worker_event_ready.notify_one();
                 result
             })
             .map_err(|error| format!("Start analysis worker: {error}"))?;
@@ -198,6 +203,7 @@ impl AnalysisWorker {
             core,
             cancel,
             monitor,
+            event_ready,
             generation: 0,
             sequence: 0,
         })
@@ -205,6 +211,12 @@ impl AnalysisWorker {
 
     pub fn monitor(&self) -> WorkerMonitor {
         self.monitor.clone()
+    }
+
+    /// A single consumer can use this to wake and drain events with `try_event`.
+    /// Notifications can coalesce and do not replace checking events or their errors.
+    pub fn event_notifier(&self) -> Arc<tokio::sync::Notify> {
+        self.event_ready.clone()
     }
 
     pub fn read_core(&self) -> ReadCore {
