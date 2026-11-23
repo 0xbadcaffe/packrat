@@ -2,6 +2,7 @@
 
 analyzer_candidate=${PACKRAT_ROLLOUT_ANALYZER:-}
 archive_candidate=${PACKRAT_ROLLOUT_ARCHIVE:-}
+baseline_recorder=${PACKRAT_ROLLOUT_BASELINE_RECORDER-"$HOME/.local/bin/packrat-watch-baseline"}
 installed_analyzer=/usr/local/bin/packrat-analyze
 installed_archive=/usr/local/bin/packrat-archive
 companion_tools=(analyzer archive)
@@ -39,6 +40,25 @@ write_capture_receipt() {
     fi
     printf 'Verified capture receipt: %s\n' "$receipt"
 }
+
+record_pre_cutover_baseline() (
+    [[ -n $triage_state && -n $baseline_recorder && -x $baseline_recorder ]] || return 0
+    local capture_stamp=$1 scratch hash receipt="$backup_dir/before-baseline.json"
+    hash=$(sudo -n sha256sum -- "$backup_dir/packrat") || return 1
+    hash=${hash%% *}
+    umask 077
+    scratch=$(mktemp -d) || return 1
+    trap 'rm -rf -- "$scratch"' EXIT
+    timeout --kill-after=1s 15s "$baseline_recorder" --record "$interface" "$triage_state" "$scratch/baseline.json" &&
+        jq -es --argjson scope "$capture_stamp" --arg interface "$interface" --arg hash "$hash" '
+            length == 1 and (.[0] | .record_type == "capture_build_baseline"
+                and .build.sha256 == $hash and .build.interface == $interface and .build.capture_run_id == $scope.capture_run_id
+                and .build.scope == {capture_id:$scope.capture_id,session_id:$scope.alert_session_id}
+                and .coverage.scope == .build.scope)
+        ' "$scratch/baseline.json" >/dev/null &&
+        sudo -n install -o root -g root -m 0600 -- "$scratch/baseline.json" "$receipt" &&
+        printf 'Pre-cutover baseline: %s\n' "$receipt"
+)
 
 triage_watcher_ready() {
     [[ -n $triage_state ]] || return 0

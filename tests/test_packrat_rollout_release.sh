@@ -26,7 +26,7 @@ sudo() {
             ;;
         mv) if "$fail_replace" || [[ ${*: -1} == "$fail_destination" ]]; then return 1; fi; command "$@" ;;
         rm) if "$fail_cleanup" && [[ ${*: -1} == */packrat-analyze.next ]]; then return 1; fi; command "$@" ;;
-        mktemp|cmp) command "$@" ;;
+        mktemp|cmp|sha256sum) command "$@" ;;
         *) return 1 ;;
     esac
 }
@@ -44,6 +44,31 @@ create_rollout_backup
 stage_companion_updates
 cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
 cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
+(
+    baseline_recorder="$scratch/recorder"
+    triage_state="$scratch/triage.json"
+    interface=wlan1
+    export FIXTURE="$scratch/baseline.json"
+    cat >"$baseline_recorder" <<'STUB'
+#!/usr/bin/env bash
+[[ $# == 4 && $1 == --record && $2 == wlan1 && $3 == */triage.json ]] || exit 1
+cp -- "$FIXTURE" "$4"
+STUB
+    chmod +x -- "$baseline_recorder"
+    stamp='{"capture_id":"capture-a","alert_session_id":"session-a","capture_run_id":"run-a"}'
+    checksum=$(sha256sum -- "$backup_dir/packrat")
+    jq -nc --arg sha "${checksum%% *}" '{capture_id:"capture-a",session_id:"session-a"} as $scope |
+        {record_type:"capture_build_baseline",build:{scope:$scope,capture_run_id:"run-a",interface:"wlan1",sha256:$sha},coverage:{scope:$scope}}' >"$FIXTURE"
+    record_pre_cutover_baseline "$stamp" >"$scratch/baseline-result"
+    grep -Fq 'Pre-cutover baseline:' "$scratch/baseline-result"
+    cmp -s -- "$FIXTURE" "$backup_dir/before-baseline.json"
+    [[ $(stat -c %a -- "$backup_dir/before-baseline.json") == 600 ]]
+    for patch in '.build.sha256="wrong"' '.build.scope.session_id="other"' '.coverage.scope.capture_id="other"'; do
+        jq "$patch" "$backup_dir/before-baseline.json" >"$FIXTURE"
+        if record_pre_cutover_baseline "$stamp" >/dev/null; then exit 1; fi
+    done
+    jq -e '.build.scope.session_id == "session-a" and .coverage.scope.capture_id == "capture-a"' "$backup_dir/before-baseline.json" >/dev/null
+)
 fail_replace=true
 if promote_companions; then exit 1; fi
 cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"

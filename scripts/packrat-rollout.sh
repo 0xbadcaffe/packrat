@@ -341,6 +341,7 @@ rollout() {
     fi
     apply_requested_profile || { error "Archive profile changed; current capture not stopped"; return 1; }
     prepare_backup_and_stage || { error "Backup or staging failed; current capture not stopped"; return 1; }
+    record_pre_cutover_baseline "$primary_before" || error "Pre-cutover alert baseline unavailable; rollout safety checks still apply"
     printf 'Rollback binary: %s/packrat\n' "$backup_dir"
     printf 'Staging alert log: %s\n' "$(alert_log_for_session "$bridge_session")"
     if [[ -n $archive_path ]]; then
@@ -453,8 +454,7 @@ main() {
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
         error 'Set PACKRAT_ROLLOUT_ANALYZER to stage and promote a matching packrat-analyze binary.'
         error 'Set PACKRAT_ROLLOUT_ARCHIVE for packrat-archive, or PACKRAT_ROLLOUT_ADD_EVIDENCE_RULE / PACKRAT_ROLLOUT_REMOVE_EVIDENCE_RULE to change one selective archive rule.'
-        error 'Set PACKRAT_ROLLOUT_TRIAGE_STATE to require fresh triage for the same capture.'
-        error 'PACKRAT_ROLLOUT_TRIAGE_CHECK overrides the triage watcher executable.'
+        error 'Set PACKRAT_ROLLOUT_TRIAGE_STATE for fresh triage. PACKRAT_ROLLOUT_TRIAGE_CHECK and PACKRAT_ROLLOUT_BASELINE_RECORDER override the watcher and optional recorder.'
         error 'PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL=1 requires healthy journal writes and no backlog.'
         error 'PACKRAT_ROLLOUT_ALLOW_HISTORICAL_DROPS=1 allows replacing a capture with verified past drops only.'
         error 'The health watcher must run with PACKRAT_ALERT_VERIFY_OPEN=1 and verify the current alert log.'
