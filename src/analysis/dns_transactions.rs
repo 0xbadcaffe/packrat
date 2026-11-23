@@ -18,7 +18,7 @@ mod udp_wire;
 pub(crate) use udp_wire::{udp_payload, udp_port_pair};
 
 use correlation::{ExchangeBucket, ReplyMatch};
-pub use investigation::{DnsExchangeEvidence, DnsReplyEvidence};
+pub use investigation::{DnsExchangeEvidence, DnsQueryRetryEvidence, DnsReplyEvidence};
 use replies::{RecentResponse, ReplyOutcome, question_mismatch};
 
 const TRANSACTION_TTL_SECS: f64 = 30.0;

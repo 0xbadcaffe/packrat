@@ -21,7 +21,15 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
                 lines.push(Line::raw(format!("{}   Query bytes #{frame}", marker(packet.no, frame))));
             }
             for frame in exchange.repeated_query_packets {
-                lines.push(Line::raw(format!("{} Repeat query #{frame}", marker(packet.no, frame))));
+                if exchange.timing_retry.as_ref().is_none_or(|retry| retry.packet != frame) {
+                    lines.push(Line::raw(format!("{} Repeat query #{frame}", marker(packet.no, frame))));
+                }
+            }
+            if let Some(retry) = exchange.timing_retry {
+                lines.push(Line::raw(format!("{} Retry kept query eligible #{}", marker(packet.no, retry.packet), retry.packet)));
+                for frame in retry.frames.into_iter().filter(|&frame| frame != retry.packet) {
+                    lines.push(Line::raw(format!("{}   Retry bytes #{frame}", marker(packet.no, frame))));
+                }
             }
             if exchange.additional_queries_omitted {
                 lines.push(Line::raw("Additional repeat queries exceeded the investigation limit"));

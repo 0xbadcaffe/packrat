@@ -42,12 +42,33 @@ pub struct DnsExchangeEvidence {
     pub query_packet: u64,
     pub query_frames: Vec<u64>,
     pub repeated_query_packets: Vec<u64>,
+    pub timing_retry: Option<DnsQueryRetryEvidence>,
     pub additional_queries_omitted: bool,
     pub client: String,
     pub client_port: u16,
     pub expected_resolver: String,
     pub replies: Vec<DnsReplyEvidence>,
     pub additional_replies_omitted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DnsQueryRetryEvidence {
+    pub packet: u64,
+    pub frames: Vec<u64>,
+}
+
+impl DnsExchangeEvidence {
+    pub(crate) fn frame_numbers(&self) -> impl Iterator<Item = u64> + '_ {
+        std::iter::once(self.query_packet)
+            .chain(self.query_frames.iter().copied())
+            .chain(self.repeated_query_packets.iter().copied())
+            .chain(self.timing_retry.iter().flat_map(|retry| {
+                std::iter::once(retry.packet).chain(retry.frames.iter().copied())
+            }))
+            .chain(self.replies.iter().flat_map(|reply| {
+                std::iter::once(reply.packet).chain(reply.frames.iter().copied())
+            }))
+    }
 }
 
 impl DnsTransactionTracker {
@@ -90,7 +111,7 @@ impl DnsTransactionTracker {
                             .any(|other| other.evidence.packet == packet.no)
                 })
             } else {
-                entry.query.packet_no == packet.no || entry.repeat_frames.contains(&packet.no)
+                query_contains_frame(entry, packet.no)
             }
         })?;
         Some(exchange_evidence(&key, exchange))
@@ -135,9 +156,7 @@ impl DnsTransactionTracker {
                                 .any(|other| contains(&other.evidence))
                     })
                 } else {
-                    entry.query.packet_no == packet.no
-                        || entry.query.frames.contains(&packet.no)
-                        || entry.repeat_frames.contains(&packet.no)
+                    query_contains_frame(entry, packet.no)
                 }
             })
             .collect();
@@ -157,6 +176,13 @@ impl DnsTransactionTracker {
             .map(|(key, entry)| exchange_evidence(key, entry))
             .collect()
     }
+}
+
+fn query_contains_frame(exchange: &Exchange, frame: u64) -> bool {
+    exchange.query.packet_no == frame
+        || exchange.query.frames.contains(&frame)
+        || exchange.repeat_frames.contains(&frame)
+        || exchange.timing_retry().is_some_and(|(retry, frames)| retry == frame || frames.contains(&frame))
 }
 
 fn exchange_evidence(key: &TransactionKey, exchange: &Exchange) -> DnsExchangeEvidence {
@@ -184,6 +210,10 @@ fn exchange_evidence(key: &TransactionKey, exchange: &Exchange) -> DnsExchangeEv
         query_packet: exchange.query.packet_no,
         query_frames: exchange.query.frames.clone(),
         repeated_query_packets: exchange.repeat_frames.clone(),
+        timing_retry: exchange.timing_retry().map(|(packet, frames)| DnsQueryRetryEvidence {
+            packet,
+            frames: frames.to_vec(),
+        }),
         additional_queries_omitted: exchange.repeats_omitted,
         client: key.client.clone(),
         client_port: key.client_port,

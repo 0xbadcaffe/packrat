@@ -65,6 +65,52 @@ fn enter_in_dns_transactions_visits_repeated_queries() {
 }
 
 #[test]
+fn enter_in_dns_transactions_visits_each_timing_retry_segment_without_crossing_scopes() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Investigate;
+    app.investigation_view = InvestigationView::Transactions;
+    let queries = two_dns_messages(false);
+    let replies = two_dns_messages(true);
+    let first_message = |data: &[u8]| 2 + u16::from_be_bytes([data[0], data[1]]) as usize;
+    let query = &queries[..first_message(&queries)];
+    let reply = &replies[..first_message(&replies)];
+    let retry_seq = 101 + query.len() as u32;
+    for (mut packet, timestamp) in [
+        (tcp_frame(1, 100, 0x02, false, &[]), 1.0),
+        (tcp_frame(2, 200, 0x12, true, &[]), 2.0),
+        (tcp_frame(3, 101, 0x18, false, query), 3.0),
+        (tcp_frame(4, retry_seq, 0x18, false, &query[..5]), 27.0),
+        (tcp_frame(5, retry_seq + 5, 0x18, false, &query[5..]), 28.0),
+        (tcp_frame(6, 201, 0x18, true, reply), 34.0),
+    ] {
+        packet.timestamp = timestamp;
+        app.core.edit().analyze(&packet);
+        if packet.no == 4 {
+            app.worklist.pin_packet(&packet).unwrap();
+        }
+        app.packets.push_back(packet);
+    }
+    for frame in [5, 6, 3, 4] {
+        advance(&mut app);
+        assert_eq!(app.worklist.active_packet_no(), Some(frame));
+    }
+    {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| crate::ui::draw(frame, &app)).unwrap();
+        let rendered = terminal.backend().buffer().content().iter()
+            .map(|cell| cell.symbol()).collect::<String>();
+        assert!(rendered.contains("Retry kept query eligible #5"));
+        assert!(rendered.contains("Retry bytes #4"));
+    }
+    app.worklist.restored_packet_scopes.insert(5, "other-capture".into());
+    let packet = app.active_investigation_packet().unwrap();
+    assert!(app.query_core(|core| app.dns_exchanges(core, packet)).unwrap().is_empty());
+    advance(&mut app);
+    assert_eq!(app.worklist.active_packet_no(), Some(4));
+}
+
+#[test]
 fn enter_in_dns_transactions_cycles_only_available_exchange_evidence() {
     let mut app = App::new_for_test();
     app.active_tab = Tab::Investigate;

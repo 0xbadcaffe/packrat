@@ -58,19 +58,20 @@ impl Exchange {
 
     pub(super) fn append_query_evidence(&self, evidence: &mut Vec<u64>, current_reply_frames: &[u64]) {
         append_evidence(evidence, &self.query.frames);
-        let Some(reply) = &self.reply else { return; };
-        if reply.timestamp - self.query.timestamp <= TRANSACTION_TTL_SECS
-            || self.latest_query > (reply.timestamp, reply.first.packet)
-            || reply.timestamp - self.latest_query.0 > TRANSACTION_TTL_SECS
-        {
-            return;
-        }
-        let retry_frames = &self.latest_retry_frames;
+        let Some((retry, retry_frames)) = self.timing_retry() else { return; };
         // Reserve the trigger and its message segments before adding optional retry evidence.
         if evidence.len() + current_reply_frames.len() + retry_frames.len() + 2 <= MAX_ALERT_PACKET_REFS {
-            append_evidence(evidence, &[self.latest_query.1]);
+            append_evidence(evidence, &[retry]);
             append_evidence(evidence, retry_frames);
         }
+    }
+
+    pub(super) fn timing_retry(&self) -> Option<(u64, &[u64])> {
+        let reply = self.reply.as_ref()?;
+        (reply.timestamp - self.query.timestamp > TRANSACTION_TTL_SECS
+            && self.latest_query <= (reply.timestamp, reply.first.packet)
+            && reply.timestamp - self.latest_query.0 <= TRANSACTION_TTL_SECS)
+            .then_some((self.latest_query.1, &self.latest_retry_frames))
     }
 
     fn is_pending_at(&self, now: f64) -> bool {

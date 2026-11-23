@@ -92,6 +92,10 @@ fn dns_conflict_archives_latest_retry_when_it_kept_an_old_query_eligible() {
     app.inject_packet(udp(trigger, true, "10.0.0.54", 10, 34.0));
     let expected = [1, 6, 7, trigger];
     let scope = finish_app(&mut app, "dns.competing_responders", &expected);
+    let retry = udp(6, false, resolver, 10, 27.0);
+    let exchange = app.query_core(|core| core.security.dns_exchange_for_packet(&retry)).unwrap().unwrap();
+    assert_eq!(exchange.repeated_query_packets, [2, 3, 4, 5]);
+    assert_eq!(exchange.timing_retry.unwrap().packet, 6);
 
     let mut archive = PacketArchive::open_readonly(&path).unwrap();
     assert_eq!(archive.count().unwrap(), expected.len() as u64);

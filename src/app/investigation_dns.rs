@@ -104,6 +104,10 @@ impl App {
         exchange
             .repeated_query_packets
             .retain(|&query| self.dns_frame_origin(query) == origin);
+        exchange.timing_retry = exchange.timing_retry.filter(|retry| {
+            self.dns_frame_origin(retry.packet) == origin
+                && retry.frames.iter().all(|&frame| self.dns_frame_origin(frame) == origin)
+        });
         exchange
             .replies
             .retain(|reply| self.dns_frame_origin(reply.packet) == origin);
@@ -112,7 +116,8 @@ impl App {
                 .frames
                 .retain(|&frame| self.dns_frame_origin(frame) == origin);
         }
-        Some(exchange)
+        let includes_frame = exchange.frame_numbers().any(|candidate| candidate == frame);
+        includes_frame.then_some(exchange)
     }
 
     pub(crate) fn next_dns_evidence_frame(&mut self) {
@@ -136,13 +141,7 @@ impl App {
             return;
         };
         self.dns_transaction_selection = Some(DnsSelection::new(&exchange));
-        let mut frames: Vec<_> = std::iter::once(exchange.query_packet)
-            .chain(exchange.query_frames)
-            .chain(exchange.repeated_query_packets)
-            .chain(exchange.replies.iter().flat_map(|reply| {
-                std::iter::once(reply.packet).chain(reply.frames.iter().copied())
-            }))
-            .collect();
+        let mut frames: Vec<_> = exchange.frame_numbers().collect();
         frames.sort_unstable();
         frames.dedup();
         let Some(index) = frames.iter().position(|&frame| frame == current) else {
