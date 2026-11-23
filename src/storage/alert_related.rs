@@ -22,6 +22,7 @@ use crate::analysis::{
 const WINDOW_SECONDS: u64 = 300;
 const SCAN_BYTES: NonZeroU64 = NonZeroU64::new(8 * 1024 * 1024).unwrap();
 const MAX_MATCHES: usize = 32;
+const TRIGGER_TIMESTAMP_TOLERANCE_SECONDS: f64 = 0.001;
 
 #[derive(Serialize)]
 pub struct RelatedAlertReport {
@@ -34,6 +35,8 @@ pub struct RelatedAlertReport {
     anchor_trigger_time: Option<f64>,
     anchor_source: Option<&'static str>,
     anchor_frame: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor_trigger_evidence: Option<TriggerEvidence>,
     trigger_window_seconds: u64,
     sampled_alerts: usize,
     scan_complete: bool,
@@ -49,6 +52,20 @@ struct RelatedAlert {
     snapshot: TriggerSnapshot,
     seconds_from_anchor_trigger: f64,
     direction: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trigger_evidence: Option<TriggerEvidence>,
+}
+
+#[derive(Serialize)]
+struct TriggerEvidence {
+    frame_number: Option<u64>,
+    status: &'static str,
+}
+
+enum TriggerFrame {
+    Missing,
+    HeaderUnavailable,
+    Transport { flow: AlertFlow, time: Option<f64> },
 }
 
 #[derive(Serialize)]
@@ -59,6 +76,8 @@ struct TriggerSnapshot {
     severity: &'static str,
     disposition: AlertDisposition,
     evidence_frame_count: usize,
+    #[serde(skip)]
+    frame: u64,
     #[serde(skip)]
     flow: AlertFlow,
     #[serde(skip)]
@@ -95,6 +114,7 @@ fn classify(snapshot: TriggerSnapshot, anchor: AlertFlow, trigger: f64) -> Optio
         snapshot,
         seconds_from_anchor_trigger: delta,
         direction,
+        trigger_evidence: None,
     })
 }
 
@@ -125,6 +145,7 @@ fn snapshot(alert: &AlertItem, flow: AlertFlow, time: f64) -> TriggerSnapshot {
         },
         disposition: alert.disposition,
         evidence_frame_count: alert.evidence_frame_numbers().len(),
+        frame: alert.packet_no,
         flow,
         time,
     }
@@ -144,10 +165,18 @@ pub fn related_alerts_with_evidence(
     anchor_id: u64,
     evidence_archive: Option<&Path>,
 ) -> Result<RelatedAlertReport> {
+    related_alerts_report(previous, active, session, capture, anchor_id, evidence_archive, false)
+}
+
+pub fn related_alerts_report(
+    previous: &[PathBuf], active: &Path, session: &str, capture: &str, anchor_id: u64,
+    evidence_archive: Option<&Path>, verify_triggers: bool,
+) -> Result<RelatedAlertReport> {
     ensure!(
         anchor_id > 0 && valid_capture_id(session) && valid_capture_id(capture),
         "Expected a positive ID and explicit session and capture IDs"
     );
+    ensure!(!verify_triggers || evidence_archive.is_some(), "Trigger verification requires an evidence archive");
     let mut seen = HashSet::new();
     let mut anchor = None;
     let mut candidates = Vec::new();
@@ -176,11 +205,20 @@ pub fn related_alerts_with_evidence(
     let (mut anchor_flow, mut trigger, packet_no) = anchor.unwrap_or_default();
     let mut anchor_source = anchor_flow.zip(trigger).map(|_| "recorded_alert");
     let mut anchor_frame = None;
-    if anchor_source.is_none() && packet_no > 0 && let Some(path) = evidence_archive
-        && let Some((flow, time)) = retained_trigger(path, capture, packet_no)?
-    {
-        anchor_flow = Some(flow);
-        trigger = Some(time);
+    let needs_fallback = anchor_source.is_none() && packet_no > 0;
+    let mut archive = evidence_archive.filter(|_| needs_fallback || (verify_triggers && anchor.is_some()))
+        .map(PacketArchive::open_readonly).transpose().map_err(anyhow::Error::msg)?;
+    let mut anchor_header = if needs_fallback {
+        archive.as_mut().map(|reader| read_trigger(reader, capture, packet_no))
+    } else {
+        None
+    };
+    if !verify_triggers && anchor_header.as_ref().is_some_and(Result::is_err) {
+        anchor_header.take().unwrap()?;
+    }
+    if let Some(Ok(TriggerFrame::Transport { flow, time: Some(time) })) = anchor_header.as_ref() {
+        anchor_flow = Some(*flow);
+        trigger = Some(*time);
         anchor_source = Some("retained_trigger_frame");
         anchor_frame = Some(packet_no);
     }
@@ -208,6 +246,17 @@ pub fn related_alerts_with_evidence(
     });
     let matching_alerts_in_sample = matches.len();
     matches.truncate(MAX_MATCHES);
+    let mut anchor_trigger_evidence = None;
+    if verify_triggers && let Some(archive) = &mut archive {
+        let expected = anchor_flow.zip(trigger);
+        anchor_trigger_evidence = Some(check_trigger(archive, capture, packet_no, expected,
+            anchor_header.take(), anchor_source == Some("retained_trigger_frame")));
+        for alert in &mut matches {
+            let snapshot = &alert.snapshot;
+            alert.trigger_evidence = Some(check_trigger(archive, capture, snapshot.frame,
+                Some((snapshot.flow, snapshot.time)), None, false));
+        }
+    }
     Ok(RelatedAlertReport {
         record_type: "related_alerts",
         status,
@@ -218,6 +267,7 @@ pub fn related_alerts_with_evidence(
         anchor_trigger_time: trigger.filter(|_| anchor_flow.is_some()),
         anchor_source,
         anchor_frame,
+        anchor_trigger_evidence,
         trigger_window_seconds: WINDOW_SECONDS,
         sampled_alerts,
         scan_complete,
@@ -228,14 +278,12 @@ pub fn related_alerts_with_evidence(
     })
 }
 
-fn retained_trigger(path: &Path, capture: &str, frame: u64) -> Result<Option<(AlertFlow, f64)>> {
-    let mut archive = PacketArchive::open_readonly(path).map_err(anyhow::Error::msg)?;
-    let packet = archive.packet_for_capture(capture, frame).map_err(anyhow::Error::msg)?;
-    Ok(packet.and_then(|packet| {
-        let time = packet.timestamp;
-        if !time.is_finite() || time <= 0.0
-            || !matches!(frame_status(&packet), FrameStatus::Complete | FrameStatus::Truncated)
-        {
+fn read_trigger(archive: &mut PacketArchive, capture: &str, frame: u64) -> Result<TriggerFrame> {
+    let Some(packet) = archive.packet_for_capture(capture, frame).map_err(anyhow::Error::msg)? else {
+        return Ok(TriggerFrame::Missing);
+    };
+    let header = (|| {
+        if !matches!(frame_status(&packet), FrameStatus::Complete | FrameStatus::Truncated) {
             return None;
         }
         let wire = captured_transport_header(&packet)?;
@@ -245,6 +293,32 @@ fn retained_trigger(path: &Path, capture: &str, frame: u64) -> Result<Option<(Al
             _ => return None,
         };
         let flow = AlertFlow { transport, source: wire.source, destination: wire.destination };
-        usable_flow(flow).then_some((flow, time))
-    }))
+        let time = packet.timestamp;
+        usable_flow(flow).then_some(TriggerFrame::Transport {
+            flow, time: (time.is_finite() && time > 0.0).then_some(time),
+        })
+    })();
+    Ok(header.unwrap_or(TriggerFrame::HeaderUnavailable))
+}
+
+fn check_trigger(
+    archive: &mut PacketArchive, capture: &str, frame: u64, expected: Option<(AlertFlow, f64)>,
+    cached: Option<Result<TriggerFrame>>, derived: bool,
+) -> TriggerEvidence {
+    let status = if frame == 0 { "not_referenced" } else {
+        match cached.unwrap_or_else(|| read_trigger(archive, capture, frame)) {
+            Err(_) => "read_failed",
+            Ok(TriggerFrame::Missing) => "missing_frame",
+            Ok(TriggerFrame::HeaderUnavailable) => "header_unavailable",
+            Ok(TriggerFrame::Transport { flow, time }) => match (expected, time) {
+                (Some((saved, _)), _) if saved != flow => "tuple_differs_from_wire",
+                (_, None) => "timestamp_unavailable",
+                (Some((_, saved_time)), Some(time)) if (saved_time - time).abs() > TRIGGER_TIMESTAMP_TOLERANCE_SECONDS => "timestamp_differs_from_wire",
+                (Some(_), Some(_)) if derived => "derived_from_wire",
+                (Some(_), Some(_)) => "matches_wire",
+                (None, Some(_)) => "recorded_tuple_or_time_unavailable",
+            },
+        }
+    };
+    TriggerEvidence { frame_number: (frame > 0).then_some(frame), status }
 }

@@ -210,6 +210,55 @@ fn related_search_recovers_only_the_exact_archived_trigger_in_the_same_capture()
 }
 
 #[test]
+fn related_search_distinguishes_log_only_matches_from_checked_trigger_headers() {
+    use packrat_tui::{net::packet::CaptureMetadata, storage::packet_archive::PacketArchive};
+    let mut log = tempfile::NamedTempFile::new().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let archive_path = folder.path().join("archive");
+    let mut archive = PacketArchive::open(&archive_path).unwrap();
+    let packet = |frame, time| {
+        let mut packet = packets::tcp(frame, 100, 0x02, b"Private payload");
+        let size = packet.bytes.len() as u32;
+        packet.timestamp = time;
+        packet.capture = Some(CaptureMetadata {
+            timestamp: None, captured_length: size, wire_length: size, link_type: 1,
+            section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+        });
+        packet
+    };
+    let mut other_tuple = packet(4, 804.);
+    other_tuple.bytes[34..36].copy_from_slice(&42_000_u16.to_be_bytes());
+    let mut unreadable = packet(6, 806.);
+    unreadable.capture.as_mut().unwrap().captured_length = 1;
+    archive.append_scoped("capture-a", &[
+        packet(1, 800.), packet(2, 802.), other_tuple, packet(5, 805.5), unreadable,
+    ]).unwrap();
+    archive.append_scoped("capture-b", &[packet(3, 803.)]).unwrap();
+    drop(archive);
+    let matching = AlertFlow { source: "10.0.0.1:40000".parse().unwrap(),
+        destination: "10.0.0.2:80".parse().unwrap(), ..flow() };
+    for (id, frame, time) in [(1, 1, 800.), (2, 2, 802.), (3, 3, 803.), (4, 4, 804.),
+        (5, 5, 805.), (6, 6, 806.), (7, 0, 807.)] {
+        let mut row = record(id, time, (id > 1).then_some(matching), "session-a", "capture-a");
+        row["alert"]["packet_no"] = json!(frame);
+        writeln!(log, "{row}").unwrap();
+    }
+    let archive = archive_path.to_str().unwrap();
+    let unverified = run(log.path(), "1", &["--evidence-archive", archive]);
+    assert!(unverified.get("anchor_trigger_evidence").is_none());
+    assert!(unverified["matches"][0].get("trigger_evidence").is_none());
+    let args = ["--evidence-archive", archive, "--verify-trigger-frames"];
+    let report = run(log.path(), "1", &args);
+    assert_eq!(report["anchor_trigger_evidence"], json!({"frame_number":1,"status":"derived_from_wire"}));
+    assert_eq!(report["matching_alerts_in_sample"], 6);
+    let statuses: Vec<_> = report["matches"].as_array().unwrap().iter()
+        .map(|record| record["trigger_evidence"]["status"].as_str().unwrap()).collect();
+    assert_eq!(statuses, ["matches_wire", "missing_frame", "tuple_differs_from_wire", "timestamp_differs_from_wire", "header_unavailable", "not_referenced"]);
+    assert_eq!(run(log.path(), "2", &args)["anchor_trigger_evidence"]["status"], "matches_wire");
+    assert!(!command(log.path(), "2").args(SCOPE).arg("--verify-trigger-frames").output().unwrap().status.success());
+}
+
+#[test]
 fn caps_returned_matches_without_hiding_the_sample_count() {
     let mut log = tempfile::NamedTempFile::new().unwrap();
     for id in 1..=35 {

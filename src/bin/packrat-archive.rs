@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("       packrat-archive DIRECTORY --alert-project ALERT_LOG SESSION_ID ALERT_ID OUTPUT_JSON --capture-id CAPTURE_ID [--previous-log PATH]...\nOpen the resulting JSON with packrat --project OUTPUT_JSON. It contains packet bytes.\nAlert evidence bundles count all omitted frames as missing and identify unreadable and unknown-length frames separately.");
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
         println!("       packrat-archive DIRECTORY --alert-flow-summary ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nGroups cited frame numbers by TCP/UDP direction and reports unassigned references without exporting packet bytes.");
-        println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]... [--evidence-archive DIRECTORY]\nSearches up to 8 MiB and returns up to 32 nearby tuple matches. An optional archive can supply the exact retained trigger when the log lacks a usable tuple or time.");
+        println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]... [--evidence-archive DIRECTORY [--verify-trigger-frames]]\nSearches up to 8 MiB and returns up to 32 nearby tuple matches. The archive can supply the exact retained trigger when the log lacks a usable tuple or time. Verification checks retained trigger headers for the anchor and returned matches.");
         println!("       packrat-archive --alerts ALERT_LOG --alert-range FIRST..LAST --session SESSION_ID --capture-id CAPTURE_ID --report-integrity [--scan-bytes BYTES] [--limit N] [--previous-log PATH]...\nSelects matching IDs before applying the result limit. Repeat --alert-range up to 64 times; the default scan budget is 8 MiB.");
         return Ok(());
     };
@@ -218,12 +218,17 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
     let mut ranges = Vec::new();
     let mut related_to = None;
     let mut evidence_archive = None;
+    let mut verify_triggers = false;
     let mut scan_bytes = None;
     let mut previous = Vec::new();
     let mut report_integrity = false;
     while let Some(flag) = args.next() {
         if flag == "--report-integrity" && !report_integrity {
             report_integrity = true;
+            continue;
+        }
+        if flag == "--verify-trigger-frames" && !verify_triggers {
+            verify_triggers = true;
             continue;
         }
         let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
@@ -250,14 +255,16 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
         if alert_id.is_some() || !ranges.is_empty() || limit.is_some() || scan_bytes.is_some() || report_integrity {
             return Err("--related-to uses its own bounded scan and cannot be combined with other query options".into());
         }
-        let report = packrat_tui::storage::alert_related::related_alerts_with_evidence(
+        let report = packrat_tui::storage::alert_related::related_alerts_report(
             &previous, std::path::Path::new(&log), session.as_deref().ok_or("--related-to requires --session")?,
-            capture.as_deref().ok_or("--related-to requires --capture-id")?, anchor, evidence_archive.as_deref(),
+            capture.as_deref().ok_or("--related-to requires --capture-id")?, anchor, evidence_archive.as_deref(), verify_triggers,
         )?;
         println!("{}", serde_json::to_string(&report)?);
         return Ok(());
     }
-    if evidence_archive.is_some() { return Err("--evidence-archive requires --related-to".into()); }
+    if evidence_archive.is_some() || verify_triggers {
+        return Err("--evidence-archive and --verify-trigger-frames require --related-to".into());
+    }
     if scan_bytes.is_some() && (!report_integrity || alert_id.is_some()) {
         return Err("--scan-bytes requires --report-integrity and cannot be combined with --alert-id".into());
     }
