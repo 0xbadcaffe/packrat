@@ -34,6 +34,7 @@ pub struct TelemetrySnapshot {
     pub bytes_total: u64,
     pub visible_packets: usize,
     pub flows: usize,
+    pub flow_summary_evictions: u64,
     pub hosts: usize,
     pub security_findings: usize,
     pub rule_hits: usize,
@@ -75,6 +76,9 @@ impl TelemetrySnapshot {
                 "packrat_visible_packets {}\n",
                 "# TYPE packrat_active_flows gauge\n",
                 "packrat_active_flows {}\n",
+                "# HELP packrat_flow_summary_evictions_total Flow summaries evicted from the display cache, not packets dropped.\n",
+                "# TYPE packrat_flow_summary_evictions_total counter\n",
+                "packrat_flow_summary_evictions_total {}\n",
                 "# TYPE packrat_hosts_observed gauge\n",
                 "packrat_hosts_observed {}\n",
                 "# TYPE packrat_security_findings gauge\n",
@@ -110,6 +114,7 @@ impl TelemetrySnapshot {
             self.bytes_total,
             self.visible_packets,
             self.flows,
+            self.flow_summary_evictions,
             self.hosts,
             self.security_findings,
             self.rule_hits,
@@ -198,12 +203,17 @@ impl TelemetryHub {
             .map(|state| (state.snapshot.clone(), state.updated_at))
             .unwrap_or_default();
         let age = updated_at.map(|time| time.elapsed());
+        let fresh = age.is_some_and(|age| age <= Duration::from_secs(5));
         let body = serde_json::json!({
             "status": "ok",
             "service": "packrat",
-            "telemetry_fresh": age.is_some_and(|age| age <= Duration::from_secs(5)),
+            "telemetry_fresh": fresh,
             "capture_active": snapshot.capturing,
             "packets_total": snapshot.packets_total,
+            "flow_cache": fresh.then(|| serde_json::json!({
+                "retained_summaries": snapshot.flows,
+                "summary_evictions": snapshot.flow_summary_evictions,
+            })),
             "capture_run_id": snapshot.capture_run_id.map(|id| format!("{id:016x}")),
             "capture_interface": snapshot.capture_interface.as_deref(),
             "capture_link_type": snapshot.capture_link_type,

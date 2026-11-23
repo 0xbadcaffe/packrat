@@ -33,6 +33,29 @@ fn metrics_do_not_report_unknown_loss_as_zero() {
 }
 
 #[test]
+fn flow_cache_evictions_are_separate_from_capture_loss_and_require_fresh_health() {
+    let hub = TelemetryHub::default();
+    let health = || serde_json::from_str::<serde_json::Value>(&hub.health()).unwrap();
+    assert!(health()["flow_cache"].is_null());
+    hub.publish(TelemetrySnapshot {
+        flows: 8192,
+        flow_summary_evictions: 42,
+        pcap_buffer_drops: Some(0),
+        ..Default::default()
+    });
+    assert_eq!(health()["flow_cache"], serde_json::json!({
+        "retained_summaries":8192,"summary_evictions":42
+    }));
+    assert_eq!(health()["pcap_buffer_drops"], 0);
+    let metrics = hub.snapshot().openmetrics();
+    assert!(metrics.contains("packrat_active_flows 8192\n"));
+    assert!(metrics.contains("packrat_flow_summary_evictions_total 42\n"));
+    assert!(metrics.contains("packrat_capture_pcap_buffer_drops 0\n"));
+    hub.inner.write().unwrap().updated_at = Instant::now().checked_sub(Duration::from_secs(6));
+    assert!(health()["flow_cache"].is_null());
+}
+
+#[test]
 fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     let hub = TelemetryHub::default();
     let health = || serde_json::from_str::<serde_json::Value>(&hub.health()).unwrap();
