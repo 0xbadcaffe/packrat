@@ -153,7 +153,10 @@ fn archive_cli_exports_latest_scoped_alert_with_provenance_and_missing_frames() 
     let frame = ipv6_tcp_frame();
     let mut other_bytes = frame.clone();
     other_bytes[0] ^= 1;
-    let exact = packrat_tui::net::parser::parse_ethernet(&frame, 7, 1.0);
+    let source = directory.path().join("source.pcap");
+    std::fs::write(&source, pcap(&frame, 1, false)).unwrap();
+    let mut exact = read_pcap(&source).unwrap().remove(0);
+    exact.no = 7;
     let other = packrat_tui::net::parser::parse_ethernet(&other_bytes, 7, 1.0);
     let missing_in_a = packrat_tui::net::parser::parse_ethernet(&other_bytes, 8, 2.0);
     archive.append_scoped("capture-a", &[exact]).unwrap();

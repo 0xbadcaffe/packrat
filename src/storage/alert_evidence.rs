@@ -287,7 +287,8 @@ fn export_into(
     let mut recovered = Vec::new();
     let mut missing = Vec::new();
     for &number in frames {
-        let Some(packet) = fetch(number)? else {
+        // PCAPNG has no unknown wire length; do not let the legacy writer infer one.
+        let Some(packet) = fetch(number)?.filter(|packet| frame_status(packet) != FrameStatus::LengthUnknown) else {
             missing.push(number);
             continue;
         };

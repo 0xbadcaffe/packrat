@@ -119,3 +119,20 @@ fn evidence_verification_accepts_an_all_missing_manifest_without_claiming_a_dige
     File::create(output.join(PCAP)).unwrap();
     assert!(verify_alert_evidence(&output).err().unwrap().to_string().contains("does not reference"));
 }
+
+#[test]
+fn unknown_wire_length_is_not_inferred_for_archived_alert_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let log = temp.path().join("alerts.jsonl");
+    append_record(&mut File::create(&log).unwrap(), &snapshot(Some("capture-a")));
+    let mut archive = PacketArchive::open(&temp.path().join("archive")).unwrap();
+    archive.append_scoped("capture-a", &[parse_ethernet(&[1; 14], 1, 1.0)]).unwrap();
+
+    let report = alert_evidence_availability(&mut archive, &log, "session", 1, Some("capture-a")).unwrap();
+    assert!(matches!(report.frames[0].status, FrameStatus::LengthUnknown));
+    let output = temp.path().join("evidence");
+    let summary = export_alert_evidence(&mut archive, &log, "session", 1, &output).unwrap();
+    assert_eq!((summary.recovered_frames, summary.missing_frames), (0, 1));
+    assert!(!output.join(PCAP).exists());
+    assert_eq!(archive.packet_for_capture("capture-a", 1).unwrap().unwrap().bytes, [1; 14]);
+}

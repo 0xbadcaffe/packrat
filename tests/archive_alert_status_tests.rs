@@ -274,6 +274,18 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
     assert_ne!(changed["evidence_frame_set_sha256"], fingerprint);
     assert_eq!(changed["frames"].as_array().unwrap().len(), 5);
 
+    let partial = directory.path().join("partial");
+    let result = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&archive_path).arg("--alert-evidence").arg(&log).args(["s", "1"])
+        .arg(&partial).args(["--capture-id", "capture-a"]).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let report = packrat_tui::storage::alert_evidence::verify_alert_evidence(&partial).unwrap();
+    assert_eq!((report.recovered_frames, report.missing_frames), (2, 3));
+    let manifest: Value = serde_json::from_slice(&std::fs::read(partial.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["missing_frame_numbers"], json!([3, 4, 6]));
+    let packets = packrat_tui::pcap_replay::read_pcap(&partial.join("evidence.pcapng")).unwrap();
+    assert_eq!(packets[1].capture.as_ref().unwrap().wire_length, 60);
+
     let export = directory.path().join("export");
     let missing = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
         .arg(&archive_path).arg("--alert-evidence").arg(&log).args(["s", "1"])
