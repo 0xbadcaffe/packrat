@@ -1,4 +1,5 @@
 use super::*;
+use super::fragments::TcpPayloadObservation;
 use std::{collections::VecDeque, ops::Range};
 
 // Callers validate timestamps. Frame order breaks ties in coarse capture clocks.
@@ -49,34 +50,44 @@ fn overlapping_tcp_bytes(
     Some((overlap_start as usize..overlap_end as usize, &existing.data[old_offset..old_offset + count]))
 }
 
-pub(super) fn tcp_payload_already_seen(
+pub(super) fn tcp_payload_observation(
     slices: &VecDeque<FragmentSlice>,
     payload_sequence: u32,
     payload: &[u8],
-) -> bool {
+) -> TcpPayloadObservation {
+    use TcpPayloadObservation::{Partial, Repeat, UnknownOrNew};
     let mut matching = Vec::new();
     for existing in slices {
         if let Some((range, saved)) = overlapping_tcp_bytes(existing, payload_sequence, payload.len())
             && payload[range.clone()] == *saved
         {
             if range.len() == payload.len() {
-                return true;
+                return Repeat;
             }
             matching.push(range);
         }
     }
+    if matching.is_empty() {
+        return UnknownOrNew;
+    }
     matching.sort_unstable_by_key(|range| range.start);
+    let mut fresh = Vec::new();
     let mut covered = 0;
     for range in matching {
         if range.start > covered {
-            break;
+            fresh.push(covered..range.start);
         }
         covered = covered.max(range.end);
-        if covered == payload.len() {
-            return true;
-        }
     }
-    false
+    if covered < payload.len() {
+        fresh.push(covered..payload.len());
+    }
+    if fresh.is_empty() {
+        Repeat
+    } else {
+        let repeated_bytes = payload.len() - fresh.iter().map(Range::len).sum::<usize>();
+        Partial { fresh, repeated_bytes }
+    }
 }
 
 pub(super) fn evict_oldest_scan_source(states: &mut HashMap<ScanSourceKey, SourceScanState>) {

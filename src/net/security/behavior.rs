@@ -109,7 +109,7 @@ fn transfer_transport(packet: &Packet) -> TransferTransport {
 }
 
 impl ExfilState {
-    fn observe(&mut self, packet: &Packet, outbound: bool, count_payload: bool, retain_entropy: bool) -> Option<bool> {
+    fn observe(&mut self, packet: &Packet, outbound: bool, tcp: &TcpPayloadObservation, retain_entropy: bool) -> Option<bool> {
         if !packet.timestamp.is_finite() {
             return None;
         }
@@ -156,17 +156,30 @@ impl ExfilState {
             }
         };
         let bucket = &mut self.buckets[index];
-        let length = packet.bytes.len() as u64;
+        let repeated = match tcp {
+            TcpPayloadObservation::Partial { repeated_bytes, .. } if outbound => *repeated_bytes,
+            _ => 0,
+        };
+        let length = packet.bytes.len().saturating_sub(repeated) as u64;
         let mut high_entropy_payload = false;
         if outbound {
             bucket.outbound = bucket.outbound.saturating_add(length);
             self.outbound_bytes = self.outbound_bytes.saturating_add(length);
             sample_transfer_frame(&mut self.outbound_frames, minute, packet.no);
-            if count_payload && let Some(payload) = observed_transport_payload(packet) {
-                let payload_bytes = payload.len() as u64;
+            if !matches!(tcp, TcpPayloadObservation::Empty | TcpPayloadObservation::Repeat)
+                && let Some(payload) = observed_transport_payload(packet)
+            {
+                let payload_bytes = payload.len().saturating_sub(repeated) as u64;
                 bucket.outbound_payload = bucket.outbound_payload.saturating_add(payload_bytes);
                 self.outbound_payload_bytes = self.outbound_payload_bytes.saturating_add(payload_bytes);
-                if payload.len() >= 64 && shannon_entropy(payload) >= 7.2 {
+                let high_entropy = payload_bytes >= 64 && match tcp {
+                    TcpPayloadObservation::Partial { fresh, .. } =>
+                        crate::net::inspector::shannon_entropy_chunks(
+                            fresh.iter().filter_map(|range| payload.get(range.clone())),
+                        ) >= 7.2,
+                    _ => shannon_entropy(payload) >= 7.2,
+                };
+                if high_entropy {
                     high_entropy_payload = true;
                     bucket.entropy = bucket.entropy.saturating_add(payload_bytes);
                     self.high_entropy_bytes = self.high_entropy_bytes.saturating_add(payload_bytes);
@@ -213,8 +226,7 @@ impl SecurityEngine {
         self.exfil_flows.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
         });
-        let may_have_new_payload = tcp_payload == TcpPayloadObservation::UnknownOrNew;
-        if may_have_new_payload {
+        if matches!(tcp_payload, TcpPayloadObservation::UnknownOrNew | TcpPayloadObservation::Partial { .. }) {
             self.check_periodic_traffic(pkt, archive_rules);
         }
         let mut alerts = Vec::new();
@@ -225,7 +237,7 @@ impl SecurityEngine {
             let outbound = source_internal;
             transport = transfer_transport(pkt);
             // Observed reverse traffic remains in the baseline; removing it would inflate the ratio.
-            if outbound && matches!(transport, TransferTransport::Tcp) && tcp_payload == TcpPayloadObservation::Repeat {
+            if outbound && matches!(transport, TransferTransport::Tcp) && matches!(tcp_payload, TcpPayloadObservation::Repeat) {
                 return;
             }
             let (internal, external) = if outbound {
@@ -245,7 +257,7 @@ impl SecurityEngine {
             }
             let state = self.exfil_flows.entry(key).or_default();
             let retain_entropy = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "traffic.high_entropy_outbound"));
-            let Some(high_entropy_payload) = state.observe(pkt, outbound, may_have_new_payload, retain_entropy) else { return };
+            let Some(high_entropy_payload) = state.observe(pkt, outbound, &tcp_payload, retain_entropy) else { return };
 
             let volume = match state.inbound_bytes {
                 0 => Some(VolumeEvidence::OneWay),

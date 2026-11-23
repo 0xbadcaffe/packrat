@@ -49,10 +49,18 @@ const MAGIC_SIGS: &[(&str, &[u8])] = &[
 const SCAN_OFFSETS: &[usize] = &[0, 14, 34, 42, 54, 66];
 
 pub fn shannon_entropy(data: &[u8]) -> f64 {
-    if data.is_empty() { return 0.0; }
+    shannon_entropy_chunks(std::iter::once(data))
+}
+
+pub(crate) fn shannon_entropy_chunks<'a>(chunks: impl IntoIterator<Item = &'a [u8]>) -> f64 {
     let mut counts = [0u32; 256];
-    for &b in data { counts[b as usize] += 1; }
-    let n = data.len() as f64;
+    let mut len = 0;
+    for chunk in chunks {
+        len += chunk.len();
+        for &b in chunk { counts[b as usize] += 1; }
+    }
+    if len == 0 { return 0.0; }
+    let n = len as f64;
     -counts.iter().filter(|&&c| c > 0)
         .map(|&c| { let p = c as f64 / n; p * p.log2() })
         .sum::<f64>()

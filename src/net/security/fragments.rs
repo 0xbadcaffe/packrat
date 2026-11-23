@@ -1,10 +1,10 @@
 use super::*;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum TcpPayloadObservation {
     UnknownOrNew,
     Empty,
     Repeat,
+    Partial { fresh: Vec<std::ops::Range<usize>>, repeated_bytes: usize },
 }
 
 impl SecurityEngine {
@@ -220,12 +220,14 @@ impl SecurityEngine {
         };
         let mut post_reset = None;
         let mut overlap = None;
-        let mut already_seen = false;
+        let mut payload_observation = Empty;
         if !segment.payload.is_empty() {
             let payload_sequence = segment.sequence.wrapping_add(u32::from(segment.flags & SYN != 0));
             let duplicate = slices.contains(payload_sequence, segment.payload);
-            already_seen = duplicate
-                || tcp_payload_already_seen(&slices.slices, payload_sequence, segment.payload);
+            payload_observation = if duplicate { Repeat } else {
+                tcp_payload_observation(&slices.slices, payload_sequence, segment.payload)
+            };
+            let already_seen = matches!(payload_observation, Repeat);
             if segment.flags & RST == 0
                 && let Some(reset) = state.reset
                 && !state.post_reset_alerted[usize::from(reset.from_a != segment.from_a)]
@@ -244,7 +246,7 @@ impl SecurityEngine {
                 state.overlap_alerted = true;
                 overlap = Some(conflict);
             }
-            if !already_seen && (!state.overlap_alerted || state.post_reset_alerted.contains(&false)) {
+            if !already_seen {
                 slices.remember_distinct(pkt.no, payload_sequence, segment.payload);
             }
         }
@@ -315,7 +317,7 @@ impl SecurityEngine {
                 )),
             });
         }
-        if segment.payload.is_empty() { Empty } else if already_seen { Repeat } else { UnknownOrNew }
+        payload_observation
     }
 }
 

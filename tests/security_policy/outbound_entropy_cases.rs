@@ -86,6 +86,55 @@ fn repeated_tcp_bytes_do_not_accumulate_outbound_evidence(#[case] resegmented: b
 }
 
 #[test]
+fn resegmented_tcp_retries_count_only_new_payload_and_still_detect_real_transfers() {
+    let data: Vec<_> = (0..60_040).map(|index| (index * 73 % 256) as u8).collect();
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    let rule = |alert: &packrat_tui::analysis::alert_center::AlertItem| {
+        alert.provenance.as_ref().is_some_and(|item| matches!(item.rule_id.as_str(),
+            "traffic.high_entropy_outbound" | "traffic.asymmetric_outbound"))
+    };
+    for frame in 1..=35 {
+        let offset = frame as usize - 1;
+        let mut packet = outbound_tcp(frame, &data[offset..offset + 60_000]);
+        let sequence = 60_000 + offset as u32;
+        packet.bytes[38..42].copy_from_slice(&sequence.to_be_bytes());
+        core.analyze(&packet);
+    }
+    assert!(!core.alert_center.items.iter().any(rule));
+
+    for frame in 36..=51 {
+        core.analyze(&outbound_tcp(frame, &data[..60_000]));
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| rule(alert)).collect();
+    assert_eq!(alerts.len(), 2);
+    let entropy = alerts.iter().find(|alert| alert.title == "High-entropy outbound transfer").unwrap();
+    assert_eq!(entropy.first_packet, 39);
+    assert_eq!(entropy.packet_refs, [1, 36, 37, 38, 39]);
+    let volume = alerts.iter().find(|alert| alert.title == "Large asymmetric outbound transfer").unwrap();
+    assert_eq!(volume.first_packet, 51);
+}
+
+#[test]
+fn entropy_counts_new_suffixes_of_partial_retransmissions() {
+    const TITLE: &str = "High-entropy outbound transfer";
+    let data: Vec<_> = (0..270_000).map(|index| (index * 73 % 256) as u8).collect();
+    let mut security = SecurityEngine::default();
+    for frame in 1..=8 {
+        let offset = (frame as usize - 1) * 30_000;
+        let mut packet = outbound_tcp(frame, &data[offset..offset + 60_000]);
+        let sequence = 60_000 + offset as u32;
+        packet.bytes[38..42].copy_from_slice(&sequence.to_be_bytes());
+        security.update(&packet);
+        if frame < 8 {
+            assert!(security.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+        }
+    }
+    let alert = security.ids_alerts.iter().find(|alert| alert.signature == TITLE).unwrap();
+    assert_eq!(alert.pkt_no, 8);
+    assert!(alert.detail.contains("270000 high-entropy outbound transport payload bytes"));
+}
+
+#[test]
 fn detects_large_high_entropy_outbound_transfer() {
     let mut security = SecurityEngine::default();
     let mut core = packrat_tui::engine::AnalysisCore::default();
@@ -111,8 +160,8 @@ fn detects_large_high_entropy_outbound_transfer() {
             .any(|alert| alert.signature == "High-entropy outbound transfer")
     );
     for (rule, severity, revision, frames) in [
-        ("traffic.asymmetric_outbound", "MEDIUM", 7, (10..=17).collect::<Vec<_>>()),
-        ("traffic.high_entropy_outbound", "MEDIUM", 7, (1..=5).collect()),
+        ("traffic.asymmetric_outbound", "MEDIUM", 8, (10..=17).collect::<Vec<_>>()),
+        ("traffic.high_entropy_outbound", "MEDIUM", 8, (1..=5).collect()),
     ] {
         let alert = core
             .alert_center
@@ -257,7 +306,9 @@ fn outbound_volume_counts_captured_bytes_above_the_display_length_limit() {
     let mut truncated = SecurityEngine::default();
     for no in 1..=16 {
         let wire = if no < 16 { FRAME } else { TOTAL - 15 * FRAME };
-        let packet = outbound_tcp(no, &vec![0; wire - 54]);
+        let mut packet = outbound_tcp(no, &vec![0; wire - 54]);
+        let sequence = no as u32 * u32::from(u16::MAX);
+        packet.bytes[38..42].copy_from_slice(&sequence.to_be_bytes());
         let parse = |len| parse_captured(&packet.bytes[..len], no, CaptureMetadata {
             timestamp: Some(CaptureTimestamp {
                 ticks: no, resolution: TimestampResolution::Decimal(0), offset_seconds: 0,
