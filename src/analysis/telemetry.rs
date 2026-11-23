@@ -21,6 +21,13 @@ pub struct CaptureQueueTelemetry {
     pub analysis_packets_pending: usize,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct CaptureCounters {
+    pub pcap_buffer_drops: Option<u32>,
+    pub truncated_frames: Option<u64>,
+    pub queue_full_packets: Option<u64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TelemetrySnapshot {
     pub packets_total: u64,
@@ -159,9 +166,15 @@ struct TelemetryState {
 }
 
 impl TelemetryHub {
-    pub(crate) fn publish_capture_queue(&self, queue: CaptureQueueTelemetry) {
-        if let Ok(mut state) = self.inner.write() {
-            state.snapshot.capture_queue = queue;
+    pub(crate) fn publish_capture_health(&self, run_id: Option<u64>, queue: CaptureQueueTelemetry, counters: CaptureCounters) {
+        if let Ok(mut state) = self.inner.write()
+            && state.snapshot.capture_run_id == run_id
+        {
+            let snapshot = &mut state.snapshot;
+            snapshot.capture_queue = queue;
+            snapshot.pcap_buffer_drops = counters.pcap_buffer_drops;
+            snapshot.capture_truncated_frames = counters.truncated_frames;
+            snapshot.capture_queue_full_packets = counters.queue_full_packets;
         }
     }
 

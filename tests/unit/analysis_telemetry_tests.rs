@@ -107,9 +107,9 @@ fn ethernet_capture_reports_a_supported_link_type() {
 #[test]
 fn queue_pressure_does_not_claim_packet_loss_or_refresh_analysis_health() {
     let hub = TelemetryHub::default();
-    hub.publish_capture_queue(CaptureQueueTelemetry {
+    hub.publish_capture_health(None, CaptureQueueTelemetry {
         depth: 75, capacity: 100, dispatch_waiting: true, analysis_packets_pending: 8,
-    });
+    }, CaptureCounters::default());
     let health: serde_json::Value = serde_json::from_str(&hub.health()).unwrap();
     assert_eq!(health["telemetry_fresh"], false);
     assert!(health["pcap_buffer_drops"].is_null());
@@ -118,6 +118,27 @@ fn queue_pressure_does_not_claim_packet_loss_or_refresh_analysis_health() {
     assert!(metrics.contains("packrat_capture_queue_depth 75\n"));
     assert!(metrics.contains("packrat_capture_dispatch_waiting 1\n"));
     assert!(metrics.contains("packrat_analysis_packets_pending 8\n"));
+}
+
+#[test]
+fn partial_capture_health_does_not_mix_capture_runs_or_extend_freshness() {
+    let hub = TelemetryHub::default();
+    hub.publish(TelemetrySnapshot { capture_run_id: Some(1), capture_queue_full_packets: Some(0), ..Default::default() });
+    let old_time = Instant::now().checked_sub(Duration::from_secs(6));
+    hub.inner.write().unwrap().updated_at = old_time;
+    let queue = CaptureQueueTelemetry { depth: 60, ..Default::default() };
+    let counters = CaptureCounters { pcap_buffer_drops: Some(4), truncated_frames: Some(3), queue_full_packets: Some(95) };
+    hub.publish_capture_health(Some(2), queue, counters);
+    assert_eq!(hub.snapshot().capture_queue_full_packets, Some(0));
+    assert_eq!(hub.snapshot().capture_queue.depth, 0);
+
+    hub.publish_capture_health(Some(1), queue, counters);
+    let health: serde_json::Value = serde_json::from_str(&hub.health()).unwrap();
+    assert_eq!(health["telemetry_fresh"], false);
+    assert_eq!(health["pcap_buffer_drops"], 4);
+    assert_eq!(health["capture_truncated_frames"], 3);
+    assert_eq!(health["capture_queue_full_packets"], 95);
+    assert_eq!(health["capture_queue"]["depth"], 60);
 }
 
 #[tokio::test]

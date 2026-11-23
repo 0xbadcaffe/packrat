@@ -1,4 +1,5 @@
 use super::*;
+use crate::{analysis::telemetry::CaptureCounters, capture::CaptureTask};
 
 impl App {
     /// Inject a crafted packet into the live packet list.
@@ -143,13 +144,19 @@ impl App {
             dispatch_waiting: self.capture_dispatch_waiting,
             analysis_packets_pending: self.packet_effects.len(),
         };
+        let run_id = self.capture_handle.as_ref().map(CaptureTask::run_id);
+        let counters = CaptureCounters {
+            pcap_buffer_drops: self.pcap_buffer_drops(),
+            truncated_frames: self.capture_handle.as_ref().and_then(CaptureTask::truncated_frames),
+            queue_full_packets: self.capture_handle.as_ref().and_then(CaptureTask::queue_full_packets),
+        };
         if !self.analysis_generation_ready() {
-            self.telemetry.publish_capture_queue(queue);
+            self.telemetry.publish_capture_health(run_id, queue, counters);
             return;
         }
         let core_handle = self.core.clone();
         let Ok(Some(core)) = core_handle.try_read() else {
-            self.telemetry.publish_capture_queue(queue);
+            self.telemetry.publish_capture_health(run_id, queue, counters);
             return;
         };
         let archive_pause_reason = self.packet_archive.as_ref().and_then(|archive| archive.pause_code());
@@ -173,16 +180,16 @@ impl App {
             evidence_exports: self.evidence_vault.exports.len(),
             packets_per_second: self.current_rate(),
             capturing: self.capturing,
-            capture_run_id: self.capture_handle.as_ref().map(crate::capture::CaptureTask::run_id),
+            capture_run_id: run_id,
             capture_interface: (self.capturing && self.capture_handle.is_some())
                 .then(|| self.selected_iface.clone()),
             capture_link_type: self.capture_handle.as_ref().and_then(crate::capture::CaptureTask::link_type),
             capture_id: self.capture_id.clone(),
             alert_session_id: Some(self.alert_session_id.clone()),
             capture_queue: queue,
-            pcap_buffer_drops: self.pcap_buffer_drops(),
-            capture_truncated_frames: self.capture_handle.as_ref().and_then(crate::capture::CaptureTask::truncated_frames),
-            capture_queue_full_packets: self.capture_handle.as_ref().and_then(crate::capture::CaptureTask::queue_full_packets),
+            pcap_buffer_drops: counters.pcap_buffer_drops,
+            capture_truncated_frames: counters.truncated_frames,
+            capture_queue_full_packets: counters.queue_full_packets,
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),
             alert_save_failed: self.save_alerts && core.alert_save_error.is_some(),
             archive_enabled: self.packet_archive.is_some(),
@@ -196,3 +203,7 @@ impl App {
         });
     }
 }
+
+#[cfg(all(test, feature = "real-capture"))]
+#[path = "../../tests/unit/app_capture_health_tests.rs"]
+mod tests;
