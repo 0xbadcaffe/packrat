@@ -1,4 +1,6 @@
 use super::*;
+#[path = "periodic_episodes.rs"]
+mod periodic_episodes;
 
 fn periodic_datagram(no: u64, timestamp: f64, size: usize, client_port: u16, reverse: bool) -> Packet {
     let mut bytes = vec![0; size];
@@ -237,7 +239,7 @@ fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
         }
         let alert = scoped.alert_center.items.iter().find(|item| is_periodic(item)).unwrap();
         assert_eq!(alert.packet_refs, [1, 3, 5, 7, 8, 9, 10]);
-        assert_eq!(alert.provenance.as_ref().unwrap().revision, 8);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 9);
     }
 }
 

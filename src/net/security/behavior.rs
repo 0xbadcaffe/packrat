@@ -324,8 +324,8 @@ impl SecurityEngine {
             },
             related_packets,
             correlation_key: Some(format!(
-                "{} {scope:?} [{}]:{}<>[{}]:{}",
-                transport, first.0, first.1, second.0, second.1,
+                "{} {scope:?} [{}]:{}<>[{}]:{}:episode:{}",
+                transport, first.0, first.1, second.0, second.1, pkt.no,
             )),
         });
     }

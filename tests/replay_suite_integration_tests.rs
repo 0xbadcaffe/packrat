@@ -19,6 +19,8 @@ mod control_plane;
 mod scans;
 #[path = "replay_suite/dhcp.rs"]
 mod dhcp;
+#[path = "replay_suite/periodic_episodes.rs"]
+mod periodic_episodes;
 use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use serde_json::{Value, json};
@@ -135,7 +137,6 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
     );
     assert_eq!(report["cases"][1]["verdict"], "failed");
 }
-
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_data() {
@@ -200,7 +201,6 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         assert_eq!(alert["packet_refs"], json!([1, 2, 4]));
     }
 }
-
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn dns_replay_keeps_parallel_queries_and_reply_evidence_separate() {
@@ -333,7 +333,7 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .find(|event| event["type"] == "alert").unwrap();
     assert_eq!(finding["alert"]["provenance"]["confidence"], "heuristic");
-    assert_eq!(finding["alert"]["provenance"]["revision"], 8);
+    assert_eq!(finding["alert"]["provenance"]["revision"], 9);
     let detail = finding["alert"]["detail"].as_str().unwrap();
     assert!(detail.contains("gaps 10.0-10.0s (mean 10.0s), sizes 900-900 bytes"));
     assert_eq!(finding["alert"]["flow"], json!({
