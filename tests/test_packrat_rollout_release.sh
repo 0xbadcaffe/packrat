@@ -11,6 +11,7 @@ installed="$scratch/packrat"
 installed_analyzer="$scratch/packrat-analyze"
 analyzer_candidate="$scratch/candidate"
 fail_replace=false
+fail_destination=''
 fail_cleanup=false
 sudo() {
     [[ $1 == -n ]] || return 1
@@ -23,7 +24,7 @@ sudo() {
                 command install -m "$7" -- "${@: -2}"
             fi
             ;;
-        mv) "$fail_replace" && return 1; command "$@" ;;
+        mv) if "$fail_replace" || [[ ${*: -1} == "$fail_destination" ]]; then return 1; fi; command "$@" ;;
         rm) if "$fail_cleanup" && [[ ${*: -1} == */packrat-analyze.next ]]; then return 1; fi; command "$@" ;;
         mktemp|cmp) command "$@" ;;
         *) return 1 ;;
@@ -36,40 +37,72 @@ printf '%s\n' 'alert evidence' >"$data_dir/alerts.jsonl"
 printf '%s\n' '#!/usr/bin/env bash' 'echo wrong-candidate' >"$analyzer_candidate"
 printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-analyze old"' >"$installed_analyzer"
 chmod 0755 -- "$analyzer_candidate" "$installed_analyzer"
-if analyzer_candidate_ready; then exit 1; fi
+if companion_candidates_ready; then exit 1; fi
 printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-analyze new"' >"$analyzer_candidate"
-analyzer_candidate_ready
+companion_candidates_ready
 create_rollout_backup
-stage_analyzer_update
+stage_companion_updates
 cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
 cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
 fail_replace=true
-if promote_analyzer; then exit 1; fi
+if promote_companions; then exit 1; fi
 cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
 cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
 fail_replace=false
 printf '%s\n' '#!/usr/bin/env bash' 'echo independent-update' >"$installed_analyzer"
-if promote_analyzer; then exit 1; fi
+if promote_companions; then exit 1; fi
 [[ $("$installed_analyzer") == independent-update ]]
-update_analyzer_only >"$scratch/result"
-grep -Fq 'Analyzer updated; capture unchanged' "$scratch/result"
+update_companions_only >"$scratch/result"
+grep -Fq 'Companions updated; capture unchanged' "$scratch/result"
 cmp -s -- "$analyzer_candidate" "$installed_analyzer"
 cmp -s -- "$installed" "$backup_dir/packrat"
 cmp -s -- "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl"
 [[ $("$backup_dir/packrat-analyze") == independent-update ]]
 [[ ! -e $backup_dir/packrat-analyze.next ]]
-update_analyzer_only >"$scratch/result"
+update_companions_only >"$scratch/result"
 grep -Fq 'Candidate is already installed; capture unchanged' "$scratch/result"
 
 printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-analyze another candidate"' >"$analyzer_candidate"
 create_rollout_backup
-stage_analyzer_update
+stage_companion_updates
 fail_cleanup=true
-promote_analyzer 2>"$scratch/warning"
-grep -Fq 'Staged analyzer cleanup failed' "$scratch/warning"
+promote_companions 2>"$scratch/warning"
+grep -Fq 'Staged companion cleanup failed' "$scratch/warning"
 cmp -s -- "$analyzer_candidate" "$installed_analyzer"
 cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
 [[ $("$backup_dir/packrat-analyze") == 'Usage: packrat-analyze new' ]]
+
+fail_cleanup=false
+installed_archive="$scratch/packrat-archive"
+archive_candidate="$scratch/next-archive"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-archive old"' >"$installed_archive"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-analyze wrong-tool"' >"$archive_candidate"
+chmod 0755 -- "$installed_archive" "$archive_candidate"
+if companion_candidates_ready; then exit 1; fi
+printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-archive new"' >"$archive_candidate"
+companion_candidates_ready
+printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-analyze later"' >"$analyzer_candidate"
+create_rollout_backup
+stage_companion_updates
+fail_destination=$installed_archive
+if promote_companions; then exit 1; fi
+cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
+cmp -s -- "$installed_archive" "$backup_dir/packrat-archive"
+cmp -s -- "$archive_candidate" "$backup_dir/packrat-archive.next"
+fail_destination=''
+update_companions_only >"$scratch/result"
+cmp -s -- "$analyzer_candidate" "$installed_analyzer"
+cmp -s -- "$archive_candidate" "$installed_archive"
+[[ $("$backup_dir/packrat-archive") == 'Usage: packrat-archive old' ]]
+[[ ! -e $backup_dir/packrat-archive.next ]]
+
+analyzer_candidate=''
+printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-archive later"' >"$archive_candidate"
+update_companions_only >"$scratch/result"
+grep -Fq 'Companions updated; capture unchanged' "$scratch/result"
+cmp -s -- "$archive_candidate" "$installed_archive"
+[[ ! -e $backup_dir/packrat-analyze ]]
+[[ $("$installed_analyzer") == 'Usage: packrat-analyze later' ]]
 
 (
     scope='{"capture_id":"00000000000000000000000000000001","capture_run_id":"0000000000000002",

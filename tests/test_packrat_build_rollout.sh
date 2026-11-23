@@ -13,13 +13,14 @@ tar -cf "$scratch/source.tar" -C "$scratch/source" Cargo.toml Cargo.lock
 touch -- "$HOME/.cache/alert-evidence"
 
 cargo() {
-    [[ $* == 'build --locked --release --features real-capture -j 2 --bin packrat --bin packrat-analyze' && $CARGO_INCREMENTAL == 0 ]]
+    [[ $* == 'build --locked --release --features real-capture -j 2 --bin packrat --bin packrat-analyze --bin packrat-archive' && $CARGO_INCREMENTAL == 0 ]]
     [[ $PWD == "$HOME/.cache/packrat-native-source."* && -f Cargo.toml && -f Cargo.lock ]]
     printf '%s\n' build >>"$TEST_TRACE"
     [[ ${TEST_BUILD_FAIL:-0} != 1 ]] || return 37
     mkdir -p -- "$CARGO_TARGET_DIR/release"
     printf '%s\n' capture >"$CARGO_TARGET_DIR/release/packrat"
     printf '%s\n' analyzer >"$CARGO_TARGET_DIR/release/packrat-analyze"
+    printf '%s\n' archive >"$CARGO_TARGET_DIR/release/packrat-archive"
 }
 export -f cargo
 
@@ -38,6 +39,7 @@ export -f df
 printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
     '[[ $2 == "$HOME/.cache/packrat-native-source."*/packrat && $PACKRAT_ROLLOUT_ANALYZER == "${2%/*}/packrat-analyze" ]]' \
     '[[ -x $2 && -x $PACKRAT_ROLLOUT_ANALYZER && $(<"$2") == capture && $(<"$PACKRAT_ROLLOUT_ANALYZER") == analyzer ]]' \
+    '[[ $PACKRAT_ROLLOUT_ARCHIVE == "${2%/*}/packrat-archive" && -x $PACKRAT_ROLLOUT_ARCHIVE && $(<"$PACKRAT_ROLLOUT_ARCHIVE") == archive ]]' \
     'printf "%s\n" "$1 $3 ${4-}" >>"$TEST_TRACE"' \
     'exit "${TEST_ROLLOUT_STATUS:-0}"' >"$PACKRAT_BUILD_ROLLOUT"
 chmod +x -- "$PACKRAT_BUILD_ROLLOUT"

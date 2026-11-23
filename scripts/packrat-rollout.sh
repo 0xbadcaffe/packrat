@@ -406,17 +406,17 @@ rollout() {
     fi
     if replace_installed "$stage_binary" && start_capture "$main_session" "$installed"; then
         if ! await_primary_watcher; then
-            if [[ -z $analyzer_candidate ]]; then
+            if ! companion_update_selected; then
                 error "Replacement is live but alert monitoring could not be verified; staging capture left running"
                 return 1
             fi
-            error "Replacement alert monitoring could not be verified; analyzer not promoted"
-        elif promote_analyzer; then
+            error "Replacement alert monitoring could not be verified; companions not promoted"
+        elif promote_companions; then
             retire_bridge || { error "Replacement is live; inspect the staging session"; return 1; }
             printf '%s\n' 'Rollout verified'
             return 0
         else
-            error "Analyzer installation failed; the previous analyzer was not replaced"
+            error "Companion installation failed; inspect rollback files under $backup_dir"
         fi
     fi
     error "Replacement failed health checks; attempting rollback"
@@ -444,6 +444,7 @@ main() {
         error 'The opt-in enables a new private archive for HIGH/CRITICAL evidence only (64 MiB packet bytes, 8192 frames).'
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
         error 'Set PACKRAT_ROLLOUT_ANALYZER to stage and promote a matching packrat-analyze binary.'
+        error 'Set PACKRAT_ROLLOUT_ARCHIVE to stage and promote a matching packrat-archive binary.'
         error 'Set PACKRAT_ROLLOUT_TRIAGE_STATE to require fresh triage for the same capture.'
         error 'PACKRAT_ROLLOUT_TRIAGE_CHECK overrides the triage watcher executable.'
         error 'PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL=1 requires healthy journal writes and no backlog.'
@@ -469,7 +470,7 @@ main() {
         exec 9>"$HOME/.cache/packrat-rollout.lock" || return 1
         flock -n 9 || { error "Another rollout is in progress"; return 1; }
     fi
-    analyzer_candidate_ready || { error "Analyzer candidate or installed rollback binary is not usable"; return 1; }
+    companion_candidates_ready || { error "Companion candidate or installed rollback binary is not usable"; return 1; }
     preflight || return 1
     if ! backup_space_ready; then
         error "Insufficient or unverified free space for the alert log and rollback backup; current capture not stopped"
@@ -478,7 +479,7 @@ main() {
     if [[ $mode == --check ]]; then
         printf 'Preflight passed for %s; no changes made\n' "$interface"
     elif ! "$enable_alert_evidence" && cmp -s "$candidate" "$installed"; then
-        update_analyzer_only
+        update_companions_only
     else
         rollout
     fi

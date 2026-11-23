@@ -422,7 +422,7 @@ alert_watcher_ready() {
     [[ $scenario != watcher_lost_before_cutover ]]
 }
 await_primary_watcher() { [[ $scenario != watcher_lost_after_cutover && ( $scenario != analyzer_watcher_fail || $main_starts != 1 ) ]]; }
-promote_analyzer() { if [[ $scenario == analyzer_* ]]; then trace+=("analyzer"); [[ $scenario == analyzer_success ]]; fi; }
+promote_companions() { if [[ $scenario == analyzer_* ]]; then trace+=("analyzer"); [[ $scenario == analyzer_success ]]; fi; }
 stage_alert_log_size() {
     case $scenario in
         staged_finding) printf '%s\n' 512 ;;

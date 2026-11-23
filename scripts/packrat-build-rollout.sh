@@ -48,10 +48,12 @@ tar --extract --file=- --directory="$stage" --no-same-owner --no-same-permission
 [[ -f $stage/Cargo.toml && -f $stage/Cargo.lock ]]
 (
     cd -- "$stage"
-    cargo build --locked --release --features real-capture -j "$jobs" --bin packrat --bin packrat-analyze </dev/null
+    cargo build --locked --release --features real-capture -j "$jobs" \
+        --bin packrat --bin packrat-analyze --bin packrat-archive </dev/null
 )
 
-for binary in packrat packrat-analyze; do
+for binary in packrat packrat-analyze packrat-archive; do
     install -m 0755 -- "$CARGO_TARGET_DIR/release/$binary" "$stage/$binary"
 done
-PACKRAT_ROLLOUT_ANALYZER="$stage/packrat-analyze" "$rollout" "$1" "$stage/packrat" "${@:2}" </dev/null 8>&-
+PACKRAT_ROLLOUT_ANALYZER="$stage/packrat-analyze" PACKRAT_ROLLOUT_ARCHIVE="$stage/packrat-archive" \
+    "$rollout" "$1" "$stage/packrat" "${@:2}" </dev/null 8>&-

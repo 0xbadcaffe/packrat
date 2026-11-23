@@ -1,22 +1,33 @@
 #!/usr/bin/env bash
 
 analyzer_candidate=${PACKRAT_ROLLOUT_ANALYZER:-}
+archive_candidate=${PACKRAT_ROLLOUT_ARCHIVE:-}
 installed_analyzer=/usr/local/bin/packrat-analyze
+installed_archive=/usr/local/bin/packrat-archive
+companion_tools=(analyzer archive)
+companion_update_selected() { [[ -n $analyzer_candidate || -n $archive_candidate ]]; }
 
-analyzer_candidate_ready() {
-    local help
-    [[ -n $analyzer_candidate ]] || return 0
-    analyzer_candidate=$(realpath -- "$analyzer_candidate") &&
-        [[ -f $analyzer_candidate && -x $analyzer_candidate &&
-           -f $installed_analyzer && -x $installed_analyzer && ! -L $installed_analyzer ]] &&
-        help=$(timeout 5s "$analyzer_candidate" --help) &&
-        [[ $help == *'Usage: packrat-analyze'* ]]
+companion_candidates_ready() {
+    local tool proposed destination resolved help
+    for tool in "${companion_tools[@]}"; do
+        proposed="${tool}_candidate" destination="installed_$tool"
+        [[ -n ${!proposed} ]] || continue
+        resolved=$(realpath -- "${!proposed}") &&
+            [[ -f $resolved && -x $resolved &&
+               -f ${!destination} && -x ${!destination} && ! -L ${!destination} ]] &&
+            help=$(timeout 5s "$resolved" --help) &&
+            [[ $help == "Usage: ${!destination##*/} "* ]] || return 1
+        printf -v "$proposed" '%s' "$resolved"
+    done
 }
 
 backup_space_ready() {
-    local destination="$data_dir/backups" free_kib sizes reserve=$backup_reserve_mib
+    local destination="$data_dir/backups" free_kib sizes reserve=$backup_reserve_mib tool proposed current
     local -a files=("$installed" "$data_dir/alerts.jsonl")
-    if [[ -n $analyzer_candidate ]]; then files+=("$installed_analyzer" "$analyzer_candidate"); fi
+    for tool in "${companion_tools[@]}"; do
+        proposed="${tool}_candidate" current="installed_$tool"
+        if [[ -n ${!proposed} ]]; then files+=("${!current}" "${!proposed}"); fi
+    done
     sudo -n test -d "$destination" || destination=$data_dir
     free_kib=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 { print $4 }') || return 1
     sizes=$(sudo -n stat --format='%s' -- "${files[@]}") || return 1
@@ -40,16 +51,21 @@ create_rollout_backup() {
     fi
 }
 
-stage_analyzer_update() {
-    [[ -n $analyzer_candidate ]] || return 0
-    sudo -n install -o root -g root -m 0700 "$installed_analyzer" "$backup_dir/packrat-analyze" &&
-        sudo -n cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze" &&
-        sudo -n install -o root -g root -m 0700 "$analyzer_candidate" "$backup_dir/packrat-analyze.next" &&
-        sudo -n cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
+stage_companion_updates() {
+    local tool proposed destination previous
+    for tool in "${companion_tools[@]}"; do
+        proposed="${tool}_candidate" destination="installed_$tool"
+        [[ -n ${!proposed} ]] || continue
+        previous="$backup_dir/${!destination##*/}"
+        sudo -n install -o root -g root -m 0700 "${!destination}" "$previous" &&
+            sudo -n cmp -s -- "${!destination}" "$previous" &&
+            sudo -n install -o root -g root -m 0700 "${!proposed}" "$previous.next" &&
+            sudo -n cmp -s -- "${!proposed}" "$previous.next" || return 1
+    done
 }
 
 prepare_backup_and_stage() {
-    create_rollout_backup && stage_analyzer_update || return 1
+    create_rollout_backup && stage_companion_updates || return 1
     stage_binary=$(sudo -n mktemp /usr/local/bin/.packrat-stage.XXXXXXXX) || return 1
     sudo -n install -o root -g root -m 0755 "$candidate" "$stage_binary" || return 1
     cmp -s "$candidate" "$stage_binary"
@@ -67,22 +83,47 @@ replace_installed() {
     return 1
 }
 
-promote_analyzer() {
-    [[ -n $analyzer_candidate ]] || return 0
-    # Refuse to overwrite an independent update after we made the rollback copy.
-    sudo -n cmp -s -- "$backup_dir/packrat-analyze" "$installed_analyzer" &&
-        replace_installed "$backup_dir/packrat-analyze.next" "$installed_analyzer" || return 1
-    # Cleanup after promotion must not trigger a capture rollback.
-    sudo -n rm -f -- "$backup_dir/packrat-analyze.next" ||
-        error "Staged analyzer cleanup failed; inspect $backup_dir/packrat-analyze.next"
-    printf 'Analyzer rollback binary: %s/packrat-analyze\n' "$backup_dir"
+promote_companions() {
+    local tool proposed destination previous i
+    local -a selected=() promoted=()
+    # Check all installed companions before changing any of them.
+    for tool in "${companion_tools[@]}"; do
+        proposed="${tool}_candidate" destination="installed_$tool"
+        [[ -n ${!proposed} ]] || continue
+        sudo -n cmp -s -- "$backup_dir/${!destination##*/}" "${!destination}" || return 1
+        selected+=("${!destination}")
+    done
+    for destination in "${selected[@]}"; do
+        previous="$backup_dir/${destination##*/}"
+        if ! sudo -n cmp -s -- "$previous" "$destination" ||
+           ! replace_installed "$previous.next" "$destination"; then
+            for ((i=${#promoted[@]}-1; i>=0; i--)); do
+                destination=${promoted[i]} previous="$backup_dir/${promoted[i]##*/}"
+                if ! sudo -n cmp -s -- "$previous.next" "$destination" ||
+                   ! replace_installed "$previous" "$destination"; then
+                    error "Could not restore $destination; inspect $previous"
+                fi
+            done
+            return 1
+        fi
+        promoted+=("$destination")
+    done
+    for destination in "${promoted[@]}"; do
+        previous="$backup_dir/${destination##*/}"
+        sudo -n rm -f -- "$previous.next" || error "Staged companion cleanup failed; inspect $previous.next"
+        printf 'Companion rollback binary: %s\n' "$previous"
+    done
 }
 
-update_analyzer_only() {
-    if [[ -n $analyzer_candidate ]] && ! cmp -s -- "$analyzer_candidate" "$installed_analyzer"; then
-        create_rollout_backup && stage_analyzer_update && promote_analyzer || return 1
-        printf '%s\n' 'Analyzer updated; capture unchanged'
-    else
-        printf '%s\n' 'Candidate is already installed; capture unchanged'
-    fi
+update_companions_only() {
+    local tool proposed destination
+    for tool in "${companion_tools[@]}"; do
+        proposed="${tool}_candidate" destination="installed_$tool"
+        if [[ -n ${!proposed} ]] && ! cmp -s -- "${!proposed}" "${!destination}"; then
+            create_rollout_backup && stage_companion_updates && promote_companions || return 1
+            printf '%s\n' 'Companions updated; capture unchanged'
+            return 0
+        fi
+    done
+    printf '%s\n' 'Candidate is already installed; capture unchanged'
 }
