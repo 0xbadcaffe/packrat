@@ -421,7 +421,21 @@ PACKRAT_FAKE_STEPS=8 PACKRAT_FAKE_SAMPLES="$samples" bash "$watch" | jq -se '
     and map(.pcap_buffer_drops) == [4, 7, null, 12, 20, 1, 3]
     and map(.pcap_buffer_drops_delta) == [null, 3, null, 5, null, null, 2]
     and map(.capture_queue_full_packets_delta) == [null,6,null,10,null,null,4] and .[2].issues == ["health_unreachable"]
+    and (.[] | select(.pcap_buffer_drops == 1) | .issues | index("capture_queue_counter_regressed")) != null
     and all(.[]; has("next_baseline") | not)
+' >/dev/null
+
+queue_samples=$(jq -cn --argjson health "$PACKRAT_FAKE_HEALTH" '
+    ($health + {capture_run_id:"000000000000000a",capture_queue_full_packets:0,
+                capture_queue:{depth:1,capacity:100}}) as $base
+    | [$base, ($base | .capture_queue_full_packets = 3),
+       ($base | .capture_queue_full_packets = 3), $base]
+')
+PACKRAT_FAKE_STEPS=4 PACKRAT_FAKE_SAMPLES="$queue_samples" bash "$watch" | jq -se '
+    map(.capture_queue_full_packets) == [0,3,3,0]
+    and map(.capture_queue_full_packets_delta) == [null,3,0,null]
+    and map(.issues) == [[],["capture_queue_packets_dropped"],[],["capture_queue_counter_regressed"]]
+    and all(.[]; .pcap_buffer_drops == 0 and .capture_queue.depth == 1)
 ' >/dev/null
 
 truncation_samples=$(jq -cn --argjson health "$PACKRAT_FAKE_HEALTH" '

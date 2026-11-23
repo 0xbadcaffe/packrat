@@ -400,6 +400,9 @@ read_health() {
                      then "capture_frames_truncated" else empty end),
                     (if $h.capture_active == true and $queue != null and $queue.depth * 4 >= $queue.capacity * 3
                      then "capture_queue_high" else empty end),
+                    (if (counter_delta($queue_full; $baseline.queue_full) // 0) > 0 then "capture_queue_packets_dropped"
+                     elif $usable and $run != null and $queue_full != null and $baseline.queue_full.run == $run
+                          and $queue_full < $baseline.queue_full.total then "capture_queue_counter_regressed" else empty end),
                     (if $archive_paused == true then "archive_paused"
                      elif $require_archive != "0" then
                         if $archive_enabled == false then "archive_disabled"
