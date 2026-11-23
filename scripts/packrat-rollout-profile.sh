@@ -51,7 +51,29 @@ read_launch_profile() {
     archive_rule_args=("${rule_args[@]}")
 }
 
+archive_rule_enabled() {
+    local i
+    for ((i=1; i<${#archive_rule_args[@]}; i+=2)); do
+        [[ ${archive_rule_args[i]} != "$1" ]] || return 0
+    done
+    return 1
+}
+
 apply_requested_profile() {
+    if [[ -n $retain_rule ]]; then
+        if "$enable_alert_evidence" || [[ -z $archive_path || $archive_flag != --archive-alert-evidence ||
+                                          ! $retain_rule =~ ^[a-z0-9][a-z0-9_.-]{0,127}$ ]]; then
+            error "The requested rule requires an existing selective archive and a valid rule ID"
+            return 1
+        fi
+        if archive_rule_enabled "$retain_rule"; then return 0; fi
+        if (( ${#archive_rule_args[@]} >= 32 )); then
+            error "The selective archive already has 16 additional rules"
+            return 1
+        fi
+        archive_rule_args+=(--archive-evidence-rule "$retain_rule")
+        return 0
+    fi
     "$enable_alert_evidence" || return 0
     local parent resolved path="$data_dir/alert-evidence-archive"
     if [[ -n $archive_path ]]; then

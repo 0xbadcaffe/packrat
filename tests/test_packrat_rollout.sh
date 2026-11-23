@@ -4,7 +4,6 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=scripts/packrat-rollout.sh
 source "$root/scripts/packrat-rollout.sh"
-
 (
     backup_dir=/backup
     stage_log=$(alert_log_for_session "$bridge_session")
@@ -121,8 +120,9 @@ source "$root/scripts/packrat-rollout.sh"
     [[ $(launch_capture "$bridge_session" /candidate) == *$'<--archive-alert-evidence>\n</backup/stage-data/packet-archive>'*$'<--archive-evidence-rule>\n<'"$rule>" ]]
     sample=$good
     if capture_health_sample; then exit 1; fi
-    sample=$(jq -c '.archive_alert_evidence_only = true' <<< "$good")
+    sample=$(jq -c --arg rule "$rule" '.archive_alert_evidence_only = true | .archive_evidence_rules = [$rule]' <<< "$good")
     [[ $(capture_health_sample) == legacy ]]
+    if sample=$(jq -c 'del(.archive_evidence_rules)' <<< "$sample") capture_health_sample; then exit 1; fi
     if read_launch_profile "${profile[@]}" --single-tag-interface --archive; then exit 1; fi
     read_launch_profile "${profile[@]}" --single-tag-interface 'Access Link' --archive "$archive"
     [[ $(launch_capture "$main_session" /candidate) == *$'<--single-tag-interface>\n<Access Link>\n<--archive>'* ]]
@@ -130,7 +130,6 @@ source "$root/scripts/packrat-rollout.sh"
     read_launch_profile "${profile[@]}"
     [[ -z $archive_path && $archive_flag == --archive && ${#archive_limits[@]} == 0 && ${#vlan_policy_args[@]} == 0 ]]
 )
-
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 data_dir=$scratch
@@ -356,6 +355,7 @@ start_capture() {
         fi
     fi
     if [[ $require_zero == false ]]; then trace+=("allow-existing-drops"); fi
+    if [[ $scenario == retain_health_fail ]] && ! retention_trace "$require_zero"; then return 2; fi
     if [[ $session == "$bridge_session" ]]; then
         case $scenario in
             new_alert) printf '%s\n' 'new finding in primary' >>"$data_dir/alerts.jsonl" ;;
@@ -368,7 +368,7 @@ start_capture() {
     else
         main_starts=$((main_starts + 1))
         if [[ $scenario == rollback_fail ]]; then return 1; fi
-        [[ ( $scenario != health_fail && $scenario != evidence_health_fail ) || $main_starts == 2 ]]
+        [[ ( $scenario != health_fail && $scenario != evidence_health_fail && $scenario != retain_health_fail ) || $main_starts == 2 ]]
     fi
 }
 
@@ -385,7 +385,6 @@ replace_installed() {
     trace+=("install:$1")
     [[ $scenario != install_fail || $1 == /backup/packrat ]]
 }
-
 retire_bridge() { trace+=("retire-stage"); }
 write_capture_receipt() { [[ $scenario != receipt_fail ]]; }
 capture_health_sample() { [[ $* == "$stage_health_addr true" && $scenario != stage_loss_before_cutover ]]; }
@@ -411,8 +410,9 @@ run_scenario() {
     local main_starts=0
     local primary_cutover=true
     local primary_stamp=original
-    local archive_path='' archive_flag=--archive enable_alert_evidence=false analyzer_candidate=''
-    local -a archive_limits=()
+    local archive_path='' archive_flag=--archive enable_alert_evidence=false analyzer_candidate='' retain_rule=''
+    local -a archive_limits=() archive_rule_args=()
+    if [[ $scenario == retain_health_fail ]]; then prepare_retention_case; fi
     if [[ $scenario == evidence_* ]]; then enable_alert_evidence=true; fi
     if [[ $scenario == primary_missing ]]; then primary_stamp=unavailable; elif [[ $scenario == analyzer_* ]]; then analyzer_candidate=/candidate-analyzer; fi
     rollout >"$scratch/rollout-output" 2>&1 || actual=$?
@@ -490,7 +490,6 @@ run_scenario evidence_health_fail 1 backup start:packrat-stage:/candidate eviden
     "reserve:$data_dir/alert-evidence-archive" stop:packrat:/usr/local/bin/packrat install:/candidate \
     start:packrat:/usr/local/bin/packrat evidence-profile stop:packrat:/usr/local/bin/packrat \
     install:/backup/packrat start:packrat:/usr/local/bin/packrat original-profile allow-existing-drops retire-stage
-
 rc=0
 bash "$root/scripts/packrat-rollout.sh" --deploy /missing 'invalid/interface' >/dev/null 2>&1 || rc=$?
 [[ $rc == 2 ]]
