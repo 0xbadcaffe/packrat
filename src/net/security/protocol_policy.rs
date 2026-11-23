@@ -154,7 +154,19 @@ impl SecurityEngine {
                     outer_vlan_id: pkt.outer_vlan_id,
                     bytes: datagram.payload,
                 };
+                let first_finding = self.findings.ids.len();
                 self.check_reassembled_ids(pkt, &synthetic, &datagram.frame_numbers, datagram.key.identification);
+                if datagram.frame_numbers.len() > 1 && archive_rules.is_some_and(|rules| {
+                    self.findings.ids[first_finding..].iter().any(|finding| {
+                        matches!(finding.alert.severity, Severity::High | Severity::Critical)
+                            || crate::analysis::alert_provenance::rule_id_for("IDS", finding.alert.signature)
+                                .is_some_and(|id| rules.iter().any(|rule| rule == id))
+                    })
+                }) {
+                    self.findings.retained_evidence.extend(datagram.frame_numbers.iter().filter_map(|&frame| {
+                        self.ipv6_fragment_evidence.cited_packet(pkt, frame).cloned()
+                    }));
+                }
             }
         }
     }

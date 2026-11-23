@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::{collections::HashSet, fs::{File, OpenOptions}, io::{Read, Seek, SeekFrom}, ops::RangeInclusive, path::{Path, PathBuf}};
 
 use crate::analysis::alert_center::{AlertDisposition, AlertFlow, CREDENTIAL_ALERT_DETAIL, MAX_ALERT_PACKET_REFS};
-use crate::analysis::alert_provenance::{EvidenceConfidence, legacy_rule_hint};
+use crate::analysis::alert_provenance::{EvidenceConfidence, rule_id_for};
 use super::alert_jsonl::{ExistingAlertRecord, MAX_ALERT_LINE};
 use super::alert_evidence::evidence_frame_set_sha256;
 use super::packet_archive::valid_capture_id;
@@ -235,7 +235,7 @@ fn filtered_alerts_report(
         let first_review_delay_ms = first_reviewed_unix_ms.zip(first_saved_unix_ms)
             .and_then(|(reviewed, saved)| reviewed.checked_sub(saved));
         let legacy_rule_hint = if alert.capture_id.is_none() && alert.provenance.is_none() {
-            legacy_rule_hint(&alert.source, &alert.title)
+            rule_id_for(&alert.source, &alert.title)
         } else {
             None
         };

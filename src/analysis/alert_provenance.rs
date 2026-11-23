@@ -349,7 +349,7 @@ fn matching_rule(source: &str, title: &str) -> Option<&'static RuleDefinition> {
         .find(|&&(namespace, signature, ..)| namespace == source && signature == title)
 }
 
-pub(crate) fn legacy_rule_hint(source: &str, title: &str) -> Option<&'static str> {
+pub(crate) fn rule_id_for(source: &str, title: &str) -> Option<&'static str> {
     matching_rule(source, title).map(|rule| rule.2)
 }
 

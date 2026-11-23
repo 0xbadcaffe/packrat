@@ -14,6 +14,17 @@ fn drain(app: &mut App) {
     }
 }
 
+fn roll_history(app: &mut App, first: u64) -> u64 {
+    drain(app);
+    let trigger = first + WorkerLimits::default().history_packets as u64 + 1;
+    for frame in first..trigger {
+        app.inject_packet(parse_ethernet(&[0; 14], frame, 6.0));
+        drain(app);
+    }
+    app.packets.clear();
+    trigger
+}
+
 #[test]
 fn overlap_archive_recovers_the_cited_fragment_after_rollover_without_other_frames() {
     for (conflict, opt_in) in [(true, false), (false, false), (false, true)] {
@@ -28,13 +39,7 @@ fn overlap_archive_recovers_the_cited_fragment_after_rollover_without_other_fram
         app.inject_packet(original.clone());
         app.inject_packet(fragment_packet(2, 7, 0, true, b"abcdefghijklmnop"));
         app.inject_packet(fragment_packet(3, 8, 0, true, b"abcdefghijklmnop"));
-        drain(&mut app);
-        let trigger = WorkerLimits::default().history_packets as u64 + 5;
-        for frame in 4..trigger {
-            app.inject_packet(parse_ethernet(&[0; 14], frame, 6.0));
-            drain(&mut app);
-        }
-        app.packets.clear();
+        let trigger = roll_history(&mut app, 4);
         let payload = if conflict { b"XXXXXXXXqrstuvwx" } else { b"ijklmnopqrstuvwx" };
         let mut incoming = fragment_packet(trigger, 7, 8, true, payload);
         incoming.timestamp = 0.5;
@@ -53,6 +58,49 @@ fn overlap_archive_recovers_the_cited_fragment_after_rollover_without_other_fram
         for packet in [original, incoming] {
             assert_eq!(archive.packet_for_capture(&scope, packet.no).unwrap().map(|saved| saved.bytes),
                 expected.then_some(packet.bytes));
+        }
+    }
+}
+
+#[test]
+fn investigation_reopens_opted_in_reassembled_alert_with_original_frames() {
+    let rule = "payload.script_like_marker";
+    for opt_in in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("archive");
+        let mut app = App::new_for_test();
+        let archive = ArchiveWorker::open_alert_evidence(&path, ArchiveLimits::default()).unwrap();
+        app.set_packet_archive_with_rules(archive, opt_in.then(|| rule.into()).into_iter().collect()).unwrap();
+        app.start_background_analysis().unwrap();
+        let tail = fragment_packet(1, 7, 24, false, b"ript>");
+        app.inject_packet(tail.clone());
+        app.inject_packet(fragment_packet(2, 7, 24, false, b"ript>"));
+        app.inject_packet(fragment_packet(3, 8, 24, false, b"text."));
+        let trigger = roll_history(&mut app, 4);
+        let mut head = fragment_packet(trigger, 7, 0, true, b"abcdefghijklmnopqrstu<sc");
+        head.timestamp = 6.0;
+        app.inject_packet(head.clone());
+        drain(&mut app);
+        app.stop_background_analysis().unwrap();
+        app.packet_archive.as_mut().unwrap().finish().unwrap();
+        app.packets.clear();
+
+        let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
+            alert.provenance.as_ref().is_some_and(|p| p.rule_id == rule)).cloned()).unwrap().unwrap();
+        assert_eq!(alert.packet_refs, [1, trigger]);
+        assert!(app.investigate_selected_alert());
+        if opt_in {
+            assert_eq!(app.worklist.packet_nos(), [1, trigger]);
+            assert_eq!(app.active_investigation_packet().unwrap().bytes, head.bytes);
+        } else {
+            assert!(app.worklist.packet_nos().is_empty());
+        }
+        let scope = alert.capture_id.unwrap();
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if opt_in { 2 } else { 0 });
+        for packet in [tail, head] {
+            assert_eq!(archive.packet_for_capture(&scope, packet.no).unwrap().map(|saved| saved.bytes),
+                opt_in.then_some(packet.bytes));
         }
     }
 }
