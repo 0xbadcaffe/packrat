@@ -201,7 +201,7 @@ impl SecurityEngine {
                         pkt.src, pkt.dst, state.outbound_bytes
                     ),
                     state.outbound_frames.iter().chain(&state.inbound_frames).map(|&(_, frame)| frame).collect::<Vec<_>>(),
-                    Some(opening_frame),
+                    opening_frame,
                 ));
             }
             if high_entropy_payload
@@ -218,25 +218,21 @@ impl SecurityEngine {
                         pkt.src, pkt.dst, state.high_entropy_bytes
                     ),
                     state.entropy_frames.iter().map(|&(_, frame)| frame).collect::<Vec<_>>(),
-                    None,
+                    pkt.no,
                 ));
             }
         } else {
             return;
         }
 
-        for (signature, severity, detail, mut related_packets, episode) in alerts {
+        for (signature, severity, detail, mut related_packets, opening_frame) in alerts {
             related_packets.retain(|&frame| frame != pkt.no);
             related_packets.sort_unstable();
             related_packets.dedup();
-            let mut correlation_key = format!(
-                "{:?}:{transport:?}:[{}]>[{}]:{}",
+            let correlation_key = format!(
+                "{:?}:{transport:?}:[{}]>[{}]:{}:episode:{opening_frame}",
                 service_scope(pkt), pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)
             );
-            if let Some(opening_frame) = episode {
-                use std::fmt::Write as _;
-                let _ = write!(correlation_key, ":episode:{opening_frame}");
-            }
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert { pkt_no: pkt.no, signature, severity, detail },
                 related_packets,

@@ -112,7 +112,7 @@ fn detects_large_high_entropy_outbound_transfer() {
     );
     for (rule, severity, revision, frames) in [
         ("traffic.asymmetric_outbound", "MEDIUM", 7, (10..=17).collect::<Vec<_>>()),
-        ("traffic.high_entropy_outbound", "MEDIUM", 6, (1..=5).collect()),
+        ("traffic.high_entropy_outbound", "MEDIUM", 7, (1..=5).collect()),
     ] {
         let alert = core
             .alert_center
@@ -137,6 +137,39 @@ fn detects_large_high_entropy_outbound_transfer() {
             "Heuristic"
         );
     }
+}
+
+#[test]
+fn renewed_entropy_transfer_keeps_a_reviewed_episode_separate() {
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+
+    const TITLE: &str = "High-entropy outbound transfer";
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    let data: Vec<_> = (0..60_000).map(|index| (index * 73 % 256) as u8).collect();
+    for frame in 1..=5 {
+        core.analyze(&outbound_tcp(frame, &data));
+    }
+    let first = core.alert_center.items.iter().find(|a| a.title == TITLE).unwrap();
+    let (id, scope) = (first.id, first.capture_id.clone());
+    assert!(core.alert_center.set_disposition(id, scope.as_deref(), AlertDisposition::Benign));
+
+    let mut keepalive = outbound_tcp(6, b"keepalive");
+    keepalive.timestamp = 3_550.0;
+    core.analyze(&keepalive);
+    for frame in 7..=12 {
+        let mut packet = outbound_tcp(frame, &data);
+        packet.timestamp += 3_620.0;
+        core.analyze(&packet);
+    }
+
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|a| a.title == TITLE).collect();
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0].id, id);
+    assert_eq!(alerts[0].disposition, AlertDisposition::Benign);
+    assert_eq!(alerts[0].packet_refs, [1, 2, 3, 4, 5]);
+    assert_ne!(alerts[1].id, id);
+    assert_eq!(alerts[1].disposition, AlertDisposition::New);
+    assert_eq!(alerts[1].packet_refs, [7, 8, 9, 10, 11]);
 }
 
 #[test]

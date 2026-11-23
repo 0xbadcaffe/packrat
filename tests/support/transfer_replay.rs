@@ -66,3 +66,35 @@ pub fn write_timed_fixture(
     }
     capture.flush().unwrap();
 }
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn outbound_entropy_replay_reports_separate_episodes() {
+    use serde_json::{Value, json};
+
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let entropy = "traffic.high_entropy_outbound";
+    write_timed_fixture(
+        &root.join("episodes.pcapng"),
+        (1..=5).chain(36_210..=36_214),
+        true,
+        false,
+    );
+    let manifest = root.join("episodes.json");
+    let labels = json!({"version":1, "strict":true, "cases":[{
+        "name":"renewed outbound entropy", "capture":"episodes.pcapng",
+        "expect_counts":{(entropy):2}, "opening_frames":{(entropy):[5,10]},
+        "expect_snapshots":2
+    }]});
+    std::fs::write(&manifest, labels.to_string()).unwrap();
+    let output = super::run_suite(&manifest);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], 1);
+}
