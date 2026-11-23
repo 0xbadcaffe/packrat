@@ -462,7 +462,7 @@ fn ipv6_tcp_scan_counts_only_complete_initial_syns_through_extensions() {
     }
     let alert = core.alert_center.items.iter().find(|a| a.title == "Horizontal host scan").unwrap();
     assert_eq!(alert.packet_refs, (37..=48).collect::<Vec<_>>());
-    assert_eq!(alert.provenance.as_ref().unwrap().revision, 7);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 8);
 }
 
 #[rstest]

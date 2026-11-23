@@ -1,5 +1,22 @@
 use super::*;
 
+#[derive(Debug)]
+pub(super) struct ScanProbe {
+    timestamp: f64,
+    packet_no: u64,
+    destination: String,
+    port: u16,
+    tcp: Option<ScanTcpProbe>,
+}
+
+#[derive(Debug, Default)]
+struct ScanTcpProbe {
+    source_port: u16,
+    sequence: u32,
+    syn_ack: Option<u64>,
+    reset_ack: Option<u64>,
+}
+
 impl SecurityEngine {
     // ─── Scan and Flood Correlation ─────────────────────────────────────────
 
@@ -77,19 +94,21 @@ impl SecurityEngine {
             }
 
             if flags & (SYN | ACK | FIN | RST) == SYN {
-                self.record_scan_probe(pkt, destination_port, "TCP");
+                self.record_scan_probe(pkt, destination_port, "TCP", Some((source_port, sequence)));
                 self.record_syn_arrival(pkt, destination_port, source_port, sequence);
                 if destination_port == 22 && control == SYN {
                     self.record_service_observation(
                         pkt, "SSH", false, destination_port, (source_port, sequence),
                     );
                 }
+            } else if control == (SYN | ACK) || control == (RST | ACK) {
+                self.record_scan_reply(pkt, signal, control == (RST | ACK));
             }
             self.record_admin_tcp(pkt, signal);
         } else if let Some(Ipv6Probe::EmptyUdp(port)) = ipv6 {
-            self.record_scan_probe(pkt, port, "UDP");
+            self.record_scan_probe(pkt, port, "UDP", None);
         } else if let Some(Ipv4DiscoveryProbe::EmptyUdp(port)) = ipv4 {
-            self.record_scan_probe(pkt, port, "UDP");
+            self.record_scan_probe(pkt, port, "UDP", None);
         }
 
         let echo_protocol = if matches!(ipv6, Some(Ipv6Probe::EchoRequest)) {
@@ -123,7 +142,7 @@ impl SecurityEngine {
     fn record_echo_request(&mut self, pkt: &Packet, protocol: &'static str) {
         let key = scan_key(pkt, protocol);
         let state = self.scan_state(key.clone());
-        if !state.push_probe(pkt, 0) {
+        if !state.push_probe(pkt, 0, None) {
             return;
         }
         let count = state.probes.len();
@@ -143,10 +162,10 @@ impl SecurityEngine {
         self.push_ids_finding(finding);
     }
 
-    fn record_scan_probe(&mut self, pkt: &Packet, port: u16, transport: &'static str) {
+    fn record_scan_probe(&mut self, pkt: &Packet, port: u16, transport: &'static str, tcp: Option<(u16, u32)>) {
         let key = scan_key(pkt, transport);
         let state = self.scan_state(key.clone());
-        if !state.push_probe(pkt, port) {
+        if !state.push_probe(pkt, port, tcp) {
             return;
         }
 
@@ -177,6 +196,25 @@ impl SecurityEngine {
             ));
         for finding in vertical.into_iter().chain(horizontal) {
             self.push_ids_finding(finding);
+        }
+    }
+
+    fn record_scan_reply(&mut self, pkt: &Packet, tcp: TcpSignal, reset: bool) {
+        let key = ScanSourceKey {
+            address: pkt.dst.clone(),
+            transport: "TCP",
+            scope: service_scope(pkt),
+        };
+        let Some(state) = self.scan_sources.get_mut(&key) else { return };
+        let Some(probe) = state.probes.iter_mut().find(|probe| {
+            probe.destination == pkt.src && probe.port == tcp.source_port
+                && (pkt.timestamp, pkt.no) > (probe.timestamp, probe.packet_no)
+                && pkt.timestamp - probe.timestamp <= SCAN_WINDOW_SECS
+        }) else { return };
+        let Some(attempt) = &mut probe.tcp else { return };
+        if attempt.source_port == tcp.destination_port && attempt.sequence.wrapping_add(1) == tcp.acknowledgement {
+            let reply = if reset { &mut attempt.reset_ack } else { &mut attempt.syn_ack };
+            reply.get_or_insert(pkt.no);
         }
     }
 
@@ -260,7 +298,7 @@ impl SecurityEngine {
 }
 
 impl SourceScanState {
-    fn push_probe(&mut self, pkt: &Packet, port: u16) -> bool {
+    fn push_probe(&mut self, pkt: &Packet, port: u16, tcp: Option<(u16, u32)>) -> bool {
         self.last_seen = if self.probes.is_empty() {
             pkt.timestamp
         } else {
@@ -279,12 +317,15 @@ impl SourceScanState {
                 self.icmp_alerted = false;
             }
         }
+        let tcp = tcp.map(|(source_port, sequence)| ScanTcpProbe { source_port, sequence, ..Default::default() });
         if let Some(index) = self.probes.iter().position(|prior| {
             prior.destination == pkt.dst && prior.port == port
         }) {
-            if self.probes[index].timestamp <= pkt.timestamp {
-                self.probes[index].timestamp = pkt.timestamp;
-                self.probes[index].packet_no = pkt.no;
+            let probe = &mut self.probes[index];
+            if (probe.timestamp, probe.packet_no) < (pkt.timestamp, pkt.no) {
+                probe.timestamp = pkt.timestamp;
+                probe.packet_no = pkt.no;
+                probe.tcp = tcp;
             }
             return false;
         }
@@ -300,6 +341,7 @@ impl SourceScanState {
             packet_no: pkt.no,
             destination: pkt.dst.clone(),
             port,
+            tcp,
         });
         true
     }
@@ -327,12 +369,29 @@ fn scan_finding<'a>(
     key: &ScanSourceKey,
     signature: &'static str,
     target: &str,
-    detail: String,
+    mut detail: String,
     probes: impl Iterator<Item = &'a ScanProbe>,
 ) -> IdsFinding {
+    let (mut syn_acks, mut resets) = (0, 0);
+    let mut related_packets = Vec::new();
+    for probe in probes {
+        if probe.packet_no != pkt.no {
+            related_packets.push(probe.packet_no);
+        }
+        if let Some(tcp) = &probe.tcp {
+            syn_acks += usize::from(tcp.syn_ack.is_some());
+            resets += usize::from(tcp.reset_ack.is_some());
+            related_packets.extend(tcp.syn_ack);
+            related_packets.extend(tcp.reset_ack);
+        }
+    }
+    if key.transport == "TCP" {
+        use std::fmt::Write as _;
+        let _ = write!(detail, "; matched replies at alert time: SYN-ACK={syn_acks}, RST-ACK={resets}; handshake completion and intent unverified");
+    }
     IdsFinding {
         alert: IdsAlert { pkt_no: pkt.no, signature, severity: Severity::High, detail },
-        related_packets: probes.map(|probe| probe.packet_no).filter(|&no| no != pkt.no).collect(),
+        related_packets,
         correlation_key: Some(format!("{}:{:?}:{}:{target}", key.transport, key.scope, key.address)),
     }
 }

@@ -39,6 +39,28 @@ fn write_observations(path: &Path, vary_host: bool, vary_port: bool, partial: bo
     capture.flush().unwrap();
 }
 
+fn write_scan_with_replies(path: &Path) {
+    let mut capture = PcapNgWriter::create(path).unwrap();
+    let mut frame = 0;
+    let mut write = |host, flags, acknowledgement: u32| {
+        frame += 1;
+        let reply = flags != 0x02;
+        let mut raw = super::support::tcp(frame, 100, flags, &[], reply).bytes;
+        raw[if reply { 29 } else { 33 }] = host;
+        raw[42..46].copy_from_slice(&acknowledgement.to_be_bytes());
+        capture.write_packet(&parse_ethernet(&raw, frame, frame as f64 / 100.0)).unwrap();
+    };
+    write(21, 0x02, 0);
+    write(21, 0x12, 101);
+    write(21, 0x14, 102); // Wrong acknowledgement.
+    write(22, 0x02, 0);
+    write(22, 0x14, 101);
+    for host in 23..=32 {
+        write(host, 0x02, 0);
+    }
+    capture.flush().unwrap();
+}
+
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_truncation() {
@@ -46,7 +68,7 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
     let root = scratch.path();
     let horizontal = "scan.horizontal";
     let vertical = "scan.vertical";
-    let cases: Vec<_> = [
+    let mut cases: Vec<_> = [
         ("same-destination-and-port", false, false, false, None),
         ("distinct-hosts-truncated", true, false, true, None),
         ("distinct-ports-truncated", false, true, true, None),
@@ -83,6 +105,14 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
         case
     })
     .collect();
+    let capture = "fan-out-with-replies.pcapng";
+    write_scan_with_replies(&root.join(capture));
+    let frames = (1..=15).filter(|&frame| frame != 3).collect::<Vec<_>>();
+    cases.push(json!({
+        "name":"scoped-reply-evidence", "capture":capture, "expect_snapshots":1,
+        "expect_counts":{(horizontal):1,(vertical):0}, "opening_frames":{(horizontal):[15]},
+        "opening_evidence":[{"rule_id":horizontal,"opening_frame":15,"frames":frames}],
+    }));
     let manifest = root.join("scan-suite.json");
     std::fs::write(
         &manifest,

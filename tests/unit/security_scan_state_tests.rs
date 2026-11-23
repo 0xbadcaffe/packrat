@@ -2,6 +2,60 @@ use super::*;
 use crate::net::parser::parse_ethernet;
 
 #[test]
+fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
+    let tcp_frame = |no, target, flags, ack: u32, client_port: u16, vlan| {
+        let client = [192, 0, 2, 1];
+        let host = [198, 51, 100, target];
+        let (src, dst, sport, dport) = if flags == 0x02 {
+            (client, host, client_port, 443_u16)
+        } else {
+            (host, client, 443_u16, client_port)
+        };
+        let mut raw = [0_u8; 54];
+        raw[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+        raw[14] = 0x45;
+        raw[16..18].copy_from_slice(&40_u16.to_be_bytes());
+        raw[22] = 64;
+        raw[23] = 6;
+        raw[26..30].copy_from_slice(&src);
+        raw[30..34].copy_from_slice(&dst);
+        raw[34..36].copy_from_slice(&sport.to_be_bytes());
+        raw[36..38].copy_from_slice(&dport.to_be_bytes());
+        raw[38..42].copy_from_slice(&u32::MAX.to_be_bytes());
+        raw[42..46].copy_from_slice(&ack.to_be_bytes());
+        raw[46] = 0x50;
+        raw[47] = flags;
+        let mut packet = parse_ethernet(&raw, no, 1.0);
+        packet.vlan_id = Some(vlan);
+        packet
+    };
+    let mut engine = SecurityEngine::default();
+    for (no, host, flags, ack, port, vlan) in [
+        (2, 1, 0x02, 0, 40_000, 10),
+        (1, 1, 0x12, 0, 40_000, 10), // Same timestamp, before the SYN.
+        (3, 1, 0x12, 1, 40_000, 10), // Wrong acknowledgement.
+        (4, 1, 0x14, 0, 40_001, 10), // Wrong client port.
+        (5, 1, 0x14, 0, 40_000, 20), // Different capture scope.
+        (6, 1, 0x12, 0, 40_000, 10),
+        (7, 1, 0x12, 0, 40_000, 10), // Retransmitted reply.
+        (8, 2, 0x02, 0, 40_000, 10),
+        (9, 2, 0x14, 0, 40_000, 10),
+    ] {
+        engine.update(&tcp_frame(no, host, flags, ack, port, vlan));
+    }
+    for host in 3..=12 {
+        engine.update(&tcp_frame(u64::from(host) + 7, host, 0x02, 0, 40_000, 10));
+    }
+    let finding = engine.findings.ids.iter().find(|f| f.alert.signature == "Horizontal host scan").unwrap();
+    assert_eq!(finding.alert.pkt_no, 19);
+    assert!(finding.alert.detail.contains("matched replies at alert time: SYN-ACK=1, RST-ACK=1"));
+    assert!(finding.alert.detail.contains("handshake completion and intent unverified"));
+    assert_eq!(finding.related_packets, [2, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+    engine.update(&tcp_frame(20, 12, 0x12, 0, 40_000, 10));
+    assert!(!engine.findings.ids.iter().any(|f| f.alert.signature == "Horizontal host scan"));
+}
+
+#[test]
 fn unique_probe_and_latch_state_are_bounded_within_one_scan_window() {
     let mut engine = SecurityEngine::default();
     let mut packet = parse_ethernet(&[], 1, 1.0);
@@ -9,7 +63,7 @@ fn unique_probe_and_latch_state_are_bounded_within_one_scan_window() {
     for host in 1..=100 {
         packet.dst = format!("198.51.100.{host}");
         for port in 1..=SCAN_UNIQUE_THRESHOLD as u16 {
-            engine.record_scan_probe(&packet, port, "TCP");
+            engine.record_scan_probe(&packet, port, "TCP", None);
             packet.no += 1;
             packet.timestamp += 0.001;
         }
@@ -39,7 +93,7 @@ fn scan_rules_rearm_after_most_evidence_expires_without_realerting_on_sustained_
                 if echo {
                     engine.record_echo_request(&packet, "ICMP");
                 } else {
-                    engine.record_scan_probe(&packet, if vertical { target } else { 443 }, "TCP");
+                    engine.record_scan_probe(&packet, if vertical { target } else { 443 }, "TCP", None);
                 }
                 packet.no += 1;
             }
@@ -169,8 +223,8 @@ fn scan_and_syn_findings_never_join_evidence_across_capture_interfaces_or_sectio
                     _ => "198.51.100.1".into(),
                 };
                 match mode {
-                    "horizontal" => engine.record_scan_probe(&packet, 443, "TCP"),
-                    "vertical" => engine.record_scan_probe(&packet, frame as u16, "TCP"),
+                    "horizontal" => engine.record_scan_probe(&packet, 443, "TCP", None),
+                    "vertical" => engine.record_scan_probe(&packet, frame as u16, "TCP", None),
                     "echo" => engine.record_echo_request(&packet, "ICMP"),
                     _ => engine.record_syn_arrival(&packet, 443, 40_000, frame as u32),
                 }

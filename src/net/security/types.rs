@@ -1,4 +1,5 @@
 use super::*;
+use super::scans::ScanProbe;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct FragmentKey {
@@ -130,14 +131,6 @@ pub(super) struct TcpSegment<'a> {
 pub(super) enum TcpFrame<'a> {
     Malformed(&'static str),
     Segment(TcpSegment<'a>),
-}
-
-#[derive(Debug)]
-pub(super) struct ScanProbe {
-    pub(super) timestamp: f64,
-    pub(super) packet_no: u64,
-    pub(super) destination: String,
-    pub(super) port: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

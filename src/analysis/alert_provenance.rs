@@ -173,11 +173,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the traffic is normally encrypted or compressed. Verify the transfer with endpoint logs.",
         ),
         (
-            "IDS", "Horizontal host scan", "scan.horizontal", 7, Heuristic,
+            "IDS", "Horizontal host scan", "scan.horizontal", 8, Heuristic,
             "Compare destinations and completed handshakes; check expected discovery or monitoring.",
         ),
         (
-            "IDS", "Vertical port scan", "scan.vertical", 7, Heuristic,
+            "IDS", "Vertical port scan", "scan.vertical", 8, Heuristic,
             "Compare destination ports and completed handshakes; check scheduled scanning.",
         ),
         (
