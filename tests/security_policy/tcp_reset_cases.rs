@@ -62,9 +62,40 @@ fn detects_tcp_payload_continuing_after_reset() {
     assert_eq!(alert.severity, "MEDIUM");
     let rule = alert.provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "tcp.payload_after_observed_reset");
+    assert_eq!(rule.revision, 8);
     assert_eq!(rule.confidence.to_string(), "Heuristic");
     assert!(alert.detail.contains("payload seq 101 followed reset frame #2 (same direction, seq 100)"));
     assert!(alert.detail.contains("reset acceptance and on-wire ordering unverified"));
+}
+
+#[test]
+fn peer_payload_is_a_low_severity_lead_and_does_not_hide_same_sender_evidence() {
+    let mut core = AnalysisCore::default();
+    core.analyze(&ipv4_tcp_packet(1, 100, 0x04, b""));
+
+    let mut peer = ipv4_tcp_packet(2, 200, 0x18, b"in flight");
+    for offset in 0..4 { peer.bytes.swap(26 + offset, 30 + offset); }
+    for offset in 0..2 { peer.bytes.swap(34 + offset, 36 + offset); }
+    core.analyze(&parse_ethernet(&peer.bytes, 2, 2.0));
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    let id = alert.id;
+    assert_eq!(alert.severity, "LOW");
+    assert_eq!(alert.packet_refs, [1, 2]);
+    assert!(alert.detail.contains("opposite direction"));
+    assert!(alert.detail.contains("peer payload may already have been in flight"));
+
+    peer.bytes[38..42].copy_from_slice(&209_u32.to_be_bytes());
+    core.analyze(&parse_ethernet(&peer.bytes, 3, 3.0));
+    core.analyze(&ipv4_tcp_packet(4, 101, 0x18, b"same sender"));
+    let mut matching = core.alert_center.items.iter().filter(|alert| alert.title == TITLE);
+    let alert = matching.next().unwrap();
+    assert_eq!(alert.id, id);
+    assert_eq!(alert.hit_count, 2);
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.packet_refs, [1, 2, 4]);
+    assert!(alert.detail.contains("same direction"));
+    assert!(matching.next().is_none());
+    assert!(core.incidents.incidents.is_empty());
 }
 
 #[test]

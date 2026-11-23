@@ -185,7 +185,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check handshake completion, server reachability, and whether a burst was expected.",
         ),
         (
-            "IDS", "TCP payload after reset", "tcp.payload_after_observed_reset", 7, Heuristic,
+            "IDS", "TCP payload after reset", "tcp.payload_after_observed_reset", 8, Heuristic,
             "Compare the retained reset and payload frames with the flow, capture timing, and endpoint TCP logs.",
         ),
         (

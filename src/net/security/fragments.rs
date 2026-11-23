@@ -214,15 +214,15 @@ impl SecurityEngine {
             let duplicate = slices.contains(payload_sequence, segment.payload);
             already_seen = duplicate
                 || tcp_payload_already_seen(&slices.slices, payload_sequence, segment.payload);
-            if !state.post_reset_alerted
-                && segment.flags & RST == 0
+            if segment.flags & RST == 0
                 && let Some(reset) = state.reset
+                && !state.post_reset_alerted[usize::from(reset.from_a != segment.from_a)]
                 && reset.packet_no != pkt.no
                 && observation_precedes((reset.timestamp, reset.packet_no), (pkt.timestamp, pkt.no))
                 && (0.0..=TCP_STATE_TTL_SECS).contains(&(pkt.timestamp - reset.timestamp))
                 && !already_seen
             {
-                state.post_reset_alerted = true;
+                state.post_reset_alerted[usize::from(reset.from_a != segment.from_a)] = true;
                 post_reset = Some(reset);
             }
             if !state.overlap_alerted
@@ -232,7 +232,7 @@ impl SecurityEngine {
                 state.overlap_alerted = true;
                 overlap = Some(conflict);
             }
-            if !already_seen && (!state.overlap_alerted || !state.post_reset_alerted) {
+            if !already_seen && (!state.overlap_alerted || state.post_reset_alerted.contains(&false)) {
                 slices.remember_distinct(pkt.no, payload_sequence, segment.payload);
             }
         }
@@ -252,14 +252,18 @@ impl SecurityEngine {
             } else {
                 (segment.key.endpoint_b, segment.key.endpoint_a)
             };
-            let direction = if reset.from_a == segment.from_a { "same" } else { "opposite" };
+            let (direction, severity, caveat) = if reset.from_a == segment.from_a {
+                ("same", Severity::Medium, "")
+            } else {
+                ("opposite", Severity::Low, "; peer payload may already have been in flight")
+            };
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
                     signature: "TCP payload after reset",
-                    severity: Severity::Medium,
+                    severity,
                     detail: format!(
-                        "TCP {} to {}: payload seq {} followed reset frame #{} ({} direction, seq {}); reset acceptance and on-wire ordering unverified",
+                        "TCP {} to {}: payload seq {} followed reset frame #{} ({} direction, seq {}); reset acceptance and on-wire ordering unverified{caveat}",
                         src, dst,
                         segment.sequence, reset.packet_no, direction, reset.sequence,
                     ),

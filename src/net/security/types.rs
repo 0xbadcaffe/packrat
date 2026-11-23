@@ -89,7 +89,7 @@ pub(super) struct TcpIntegrityState {
     pub(super) past_opening: bool,
     pub(super) reset: Option<TcpResetObservation>,
     pub(super) overlap_alerted: bool,
-    pub(super) post_reset_alerted: bool,
+    pub(super) post_reset_alerted: [bool; 2],
 }
 
 #[derive(Debug, Default)]
