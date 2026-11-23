@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, net::{IpAddr, SocketAddr}};
 use anyhow::Result;
 use serde::Serialize;
 
+use crate::analysis::alert_center::{AlertFlow, AlertTransport};
 use crate::analysis::packet_fields::{CapturedVlanTag, MAX_EVIDENCE_VLAN_TAGS, captured_transport_header};
 use crate::net::packet::Packet;
 
@@ -20,6 +21,8 @@ pub struct AlertPacketMetadata {
     evidence_frame_set_sha256: String,
     #[serde(skip)]
     trigger_frame_number: Option<u64>,
+    #[serde(skip)]
+    recorded_trigger_flow: Option<AlertFlow>,
     frames: Vec<FrameMetadata>,
 }
 
@@ -100,6 +103,15 @@ struct TriggerFrame {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TriggerTupleStatus {
+    NotRecorded,
+    TriggerHeaderUnavailable,
+    MatchesWire,
+    DiffersFromWire,
+}
+
+#[derive(Serialize)]
 pub struct AlertFlowSummary {
     record_type: &'static str,
     session_id: String,
@@ -114,6 +126,7 @@ pub struct AlertFlowSummary {
     retained_frames_without_flow: usize,
     max_vlan_tags: usize,
     trigger_frame: Option<TriggerFrame>,
+    trigger_tuple_status: TriggerTupleStatus,
     directional_flows: Vec<DirectionalFlow>,
     unassigned_frames: Vec<FlowFrameRef>,
     limitation: &'static str,
@@ -164,6 +177,11 @@ pub fn alert_flow_summary(
         truncated_frames: 0, length_unknown_frames: 0, retained_frames_without_flow: 0,
         max_vlan_tags: MAX_EVIDENCE_VLAN_TAGS,
         trigger_frame: None,
+        trigger_tuple_status: if metadata.recorded_trigger_flow.is_some() {
+            TriggerTupleStatus::TriggerHeaderUnavailable
+        } else {
+            TriggerTupleStatus::NotRecorded
+        },
         directional_flows: Vec::new(),
         unassigned_frames: Vec::new(),
         limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Frames beyond the VLAN depth limit have no flow summary.",
@@ -195,6 +213,19 @@ pub fn alert_flow_summary(
             result.unassigned_frames.push(reference);
             continue;
         };
+        if is_trigger && let Some(saved) = metadata.recorded_trigger_flow {
+            let protocol = match saved.transport {
+                AlertTransport::Tcp => "tcp",
+                AlertTransport::Udp => "udp",
+            };
+            result.trigger_tuple_status = if protocol == flow.protocol && saved.source == flow.source
+                && saved.destination == flow.destination
+            {
+                TriggerTupleStatus::MatchesWire
+            } else {
+                TriggerTupleStatus::DiffersFromWire
+            };
+        }
         let counts = flows.entry(flow).or_default();
         counts.frames.push(reference);
         counts.evidence_frames = counts.frames.len();
@@ -234,6 +265,7 @@ pub fn alert_packet_metadata(
         alert_id,
         evidence_frame_set_sha256: evidence_frame_set_sha256(&frames),
         trigger_frame_number: (alert.packet_no > 0).then_some(alert.packet_no),
+        recorded_trigger_flow: alert.flow,
         frames: frames
             .into_iter()
             .map(|frame_number| {

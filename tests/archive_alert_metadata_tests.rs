@@ -3,7 +3,7 @@ mod packets;
 
 use std::process::Command;
 
-use packrat_tui::analysis::alert_center::AlertCenter;
+use packrat_tui::analysis::alert_center::{AlertCenter, AlertFlow, AlertTransport};
 use packrat_tui::net::packet::CaptureMetadata;
 use packrat_tui::storage::packet_archive::PacketArchive;
 use serde_json::{Value, json};
@@ -94,11 +94,16 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
     let mut alert = center.items.remove(0);
     alert.capture_id = Some("scope-a".into());
     alert.packet_refs = (1..=7).collect();
-    let records: Vec<_> = [(1, 2), (2, 5), (3, 6), (4, 0)].into_iter().map(|(id, trigger)| {
+    let records: Vec<_> = [(1, 2), (2, 5), (3, 6), (4, 0), (5, 2), (6, 2)].into_iter().map(|(id, trigger)| {
         let mut alert = alert.clone();
         alert.id = id;
         alert.packet_no = trigger;
         alert.last_packet = trigger;
+        alert.flow = (id != 6).then(|| AlertFlow {
+            transport: AlertTransport::Tcp,
+            source: if id == 5 { "203.0.113.77:80" } else { "10.0.0.2:80" }.parse().unwrap(),
+            destination: "10.0.0.1:40000".parse().unwrap(),
+        });
         json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string()
     }).collect();
     std::fs::write(&log, records.join("\n")).unwrap();
@@ -144,6 +149,7 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
     };
     let report = run("1");
     assert_eq!(report["record_type"], "alert_flow_summary");
+    assert_eq!(report["trigger_tuple_status"], "matches_wire");
     assert_eq!(report["trigger_frame"], json!({"frame_number":2,"status":"complete","transport_header_observed":true}));
     assert_eq!(report["referenced_frames"], 7);
     assert_eq!(report["missing_frames"], 1);
@@ -186,9 +192,12 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
     ] {
         let report = run(id);
         assert_eq!(report["trigger_frame"], expected);
+        assert_eq!(report["trigger_tuple_status"], "trigger_header_unavailable");
         assert!(report["directional_flows"].as_array().unwrap().iter()
             .all(|flow| flow["contains_trigger_frame"] == false));
     }
+    assert_eq!(run("5")["trigger_tuple_status"], "differs_from_wire");
+    assert_eq!(run("6")["trigger_tuple_status"], "not_recorded");
 }
 
 #[test]
