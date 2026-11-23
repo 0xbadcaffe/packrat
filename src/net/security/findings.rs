@@ -9,6 +9,7 @@ pub struct DetectionBatch {
     pub authentication: Vec<BruteForceAlert>,
     pub tls: Vec<TlsWeakness>,
     pub(crate) ids_evidence: Vec<IdsEvidenceUpdate>,
+    pub(crate) retained_evidence: Vec<crate::net::packet::Packet>,
 }
 
 #[derive(Debug)]

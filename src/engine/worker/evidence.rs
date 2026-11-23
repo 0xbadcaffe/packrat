@@ -34,7 +34,7 @@ pub(super) fn alert_frames(
     let mut bytes = 0;
     let mut frames = Vec::new();
     // Prefer the trigger and newest supporting frames when the event budget is tight.
-    for packet in std::iter::once(current).chain(history.iter().rev()) {
+    for packet in std::iter::once(current).chain(history.iter().rev()).chain(&analysis.retained_evidence) {
         if !references.remove(&packet.no) || packet.bytes.len() > MAX_BYTES - bytes {
             continue;
         }

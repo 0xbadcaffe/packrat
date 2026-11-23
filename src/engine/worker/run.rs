@@ -47,7 +47,7 @@ pub(super) fn run(
                     return Err("Packet crossed an analysis generation boundary".into());
                 }
                 response_eligible &= live;
-                let analysis = core.analyze_with_history(&packet, history.iter().cloned());
+                let mut analysis = core.analyze_with_history(&packet, history.iter().cloned());
                 if analysis.disposition == PacketDisposition::Analyzed {
                     analyzed += 1;
                 } else {
@@ -56,6 +56,7 @@ pub(super) fn run(
                 sequence = number;
                 let packet_no = packet.no;
                 let alert_frames = evidence::alert_frames(&core, &analysis, &packet, &history);
+                analysis.retained_evidence.clear();
                 if analysis.disposition == PacketDisposition::Analyzed {
                     history_bytes += packet.bytes.len();
                     history.push_back(packet);

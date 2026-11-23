@@ -16,8 +16,12 @@ fn worker_handoff_keeps_only_referenced_frames_and_is_opt_in() {
         (2, &[]), 2.0, "TEST", "HIGH", "Old finding", "observation", "old",
     );
     core.alert_center.capture_id = Some("current".into());
-    let analysis = PacketAnalysis { alert_pins: vec![1, 2], ..Default::default() };
-    let history = VecDeque::from([packet(1, 14), packet(2, 15), packet(3, 16)]);
+    let analysis = PacketAnalysis {
+        alert_pins: vec![1, 2],
+        retained_evidence: vec![packet(1, 14), packet(3, 16), packet(13, 18)],
+        ..Default::default()
+    };
+    let history = VecDeque::from([packet(2, 15), packet(3, 16)]);
     let trigger = packet(4, 17);
     assert!(alert_frames(&core, &analysis, &trigger, &history).is_empty());
     core.alert_center.archive_evidence_rules = Some(Vec::new());

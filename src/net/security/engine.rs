@@ -118,12 +118,12 @@ impl SecurityEngine {
     /// Process a single packet through all detection engines.
     pub fn update(&mut self, pkt: &Packet) {
         self.update_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None,
-            crate::analysis::stream::DnsTcpObservation::Unanchored, None);
+            crate::analysis::stream::DnsTcpObservation::Unanchored, None, None);
     }
 
     fn update_with_context(&mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation,
         tls: Option<(u16, u16)>, dns: crate::analysis::stream::DnsTcpObservation,
-        split_http_401: Option<(u32, Vec<u64>)>,
+        split_http_401: Option<(u32, Vec<u64>)>, archive_rules: Option<&[String]>,
     ) {
         self.findings = DetectionBatch::default();
         if pkt.capture.as_ref().is_some_and(|capture| !crate::net::parser::supports_capture_link_type(capture.link_type))
@@ -135,7 +135,7 @@ impl SecurityEngine {
         self.check_ipv4_fragments(pkt);
         let tcp_payload = self.check_tcp_integrity(pkt);
         self.check_scan_activity(pkt);
-        self.check_ipv6_control_plane(pkt);
+        self.check_ipv6_control_plane(pkt, archive_rules);
         self.check_layer2_control_plane(pkt);
         self.check_beacon_and_exfiltration(pkt, tcp_payload);
         self.check_ntlm_fanout(pkt);
@@ -157,14 +157,15 @@ impl SecurityEngine {
 
     pub fn inspect(&mut self, pkt: &Packet) -> DetectionBatch {
         self.inspect_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None,
-            crate::analysis::stream::DnsTcpObservation::Unanchored, None)
+            crate::analysis::stream::DnsTcpObservation::Unanchored, None, None)
     }
 
     pub(crate) fn inspect_with_context(
         &mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation, tls: Option<(u16, u16)>,
         dns: crate::analysis::stream::DnsTcpObservation, split_http_401: Option<(u32, Vec<u64>)>,
+        archive_rules: Option<&[String]>,
     ) -> DetectionBatch {
-        self.update_with_context(pkt, modbus, tls, dns, split_http_401);
+        self.update_with_context(pkt, modbus, tls, dns, split_http_401, archive_rules);
         std::mem::take(&mut self.findings)
     }
 

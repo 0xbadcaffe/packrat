@@ -139,12 +139,19 @@ impl App {
         self.net_registry.observe(&pkt.src);
         self.net_registry.observe(&pkt.dst);
         if self.analysis_worker.is_none() {
-            let analysis = self
+            let mut analysis = self
                 .core
                 .edit()
                 .analyze_with_history(&pkt, self.packets.iter().cloned());
             if let Some(context) = self.analysis_context(&analysis) {
-                self.handle_packet_analysis(analysis, context, live, restoring, std::slice::from_ref(&pkt));
+                let mut retained = std::mem::take(&mut analysis.retained_evidence);
+                if retained.is_empty() {
+                    self.handle_packet_analysis(analysis, context, live, restoring, std::slice::from_ref(&pkt));
+                } else {
+                    retained.push(pkt.clone());
+                    retained.sort_unstable_by_key(|packet| packet.no);
+                    self.handle_packet_analysis(analysis, context, live, restoring, &retained);
+                }
             }
         }
         self.retain_analyzed_display(pkt, restoring);

@@ -36,6 +36,7 @@ impl AnalysisCore {
         let split_http_401 = self.observe_split_http_401(pkt);
         let findings = self.security.inspect_with_context(
             pkt, modbus, segmented_tls.as_ref().map(|(selection, _)| *selection), dns, split_http_401,
+            self.alert_center.archive_evidence_rules.as_deref(),
         );
         for finding in &findings.ids {
             let alert = &finding.alert;
@@ -357,6 +358,7 @@ impl AnalysisCore {
             disposition,
             incidents: notices,
             alert_pins: self.alert_center.drain_pending_pins(),
+            retained_evidence: findings.retained_evidence,
         }
     }
 }

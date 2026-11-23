@@ -51,6 +51,8 @@ pub struct PacketAnalysis {
     pub disposition: PacketDisposition,
     pub incidents: Vec<IncidentNotice>,
     pub alert_pins: Vec<u64>,
+    #[serde(skip)]
+    pub(crate) retained_evidence: Vec<Packet>,
 }
 
 pub struct AnalysisCore {

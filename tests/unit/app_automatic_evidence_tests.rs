@@ -47,15 +47,28 @@ fn detected_router_change_is_saved_and_only_opted_in_evidence_is_archived() {
             core.alert_jsonl_writer = Some(std::sync::Arc::new(std::sync::Mutex::new(writer)));
         });
         app.start_background_analysis().unwrap();
-        for (frame, host, vlan) in [(1, 1, 10), (2, 2, 20), (3, 3, 10)] {
-            app.inject_packet(router_advertisement_fixture(frame, host, vlan));
+        let wait = |app: &mut App| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !app.analysis_idle() {
+                app.poll_analysis();
+                assert!(std::time::Instant::now() < deadline, "background analysis did not finish");
+                std::thread::yield_now();
+            }
+        };
+        app.inject_packet(router_advertisement_fixture(1, 1, 10));
+        app.inject_packet(router_advertisement_fixture(2, 2, 20));
+        let trigger_frame = crate::engine::worker::WorkerLimits::default().history_packets as u64 + 4;
+        for frame in 3..trigger_frame {
+            let filler = crate::net::parser::parse_ethernet(&[0; 14], frame, 3.0);
+            app.inject_packet(filler);
+            wait(&mut app);
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !app.analysis_idle() {
-            app.poll_analysis();
-            assert!(std::time::Instant::now() < deadline, "background analysis did not finish");
-            std::thread::yield_now();
-        }
+        app.packets.clear();
+        let mut trigger = router_advertisement_fixture(trigger_frame, 3, 10);
+        trigger.timestamp = 4.0;
+        trigger.capture.as_mut().unwrap().timestamp.as_mut().unwrap().ticks = 4;
+        app.inject_packet(trigger);
+        wait(&mut app);
         app.stop_background_analysis().unwrap();
         app.packet_archive.as_mut().unwrap().finish().unwrap();
 
@@ -63,13 +76,13 @@ fn detected_router_change_is_saved_and_only_opted_in_evidence_is_archived() {
             .map(|row| serde_json::from_str(row).unwrap()).collect();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["alert"]["provenance"]["rule_id"], rule);
-        assert_eq!(rows[0]["alert"]["packet_refs"], serde_json::json!([1, 3]));
+        assert_eq!(rows[0]["alert"]["packet_refs"], serde_json::json!([1, trigger_frame]));
         let id = rows[0]["alert"]["id"].as_u64().unwrap();
         let mut reader = PacketArchive::open_readonly(&archive_path).unwrap();
         assert_eq!(reader.count().unwrap(), if selected { 2 } else { 0 });
         assert!(reader.packet_for_capture(&scope, 2).unwrap().is_none());
         let status = alert_evidence_availability(&mut reader, &log, &session, id, Some(&scope)).unwrap();
-        assert_eq!(status.frames.iter().map(|frame| frame.frame_number).collect::<Vec<_>>(), [1, 3]);
+        assert_eq!(status.frames.iter().map(|frame| frame.frame_number).collect::<Vec<_>>(), [1, trigger_frame]);
         assert!(status.frames.iter().all(|frame| frame.status == if selected { FrameStatus::Complete } else { FrameStatus::Missing }));
         if selected {
             let bundle = directory.path().join("evidence");

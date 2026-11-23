@@ -2,11 +2,13 @@ use super::*;
 use std::net::Ipv6Addr;
 
 const NDP_BINDING_WINDOW_SECS: f64 = 300.0;
+const MAX_ROUTER_EVIDENCE_BYTES: usize = 2_048;
 
 pub(super) struct RouterLink {
     mac: [u8; 6],
     order: (f64, u64),
     expires_at: f64,
+    evidence: Option<Box<Packet>>,
 }
 
 fn icmpv6_checksum_valid(inspection: &Ipv6Inspection<'_>) -> bool {
@@ -25,7 +27,7 @@ fn icmpv6_checksum_valid(inspection: &Ipv6Inspection<'_>) -> bool {
 impl SecurityEngine {
     // ─── IPv6 / Layer-2 Control Plane ───────────────────────────────────────
 
-    pub(super) fn check_ipv6_control_plane(&mut self, pkt: &Packet) {
+    pub(super) fn check_ipv6_control_plane(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
         let inspection = match parse_ipv6_inspection(&pkt.bytes) {
             Some(inspection) => inspection,
             None => return,
@@ -78,7 +80,7 @@ impl SecurityEngine {
         }
 
         if icmp_type == 134 {
-            self.track_router_advertisement(pkt, &inspection);
+            self.track_router_advertisement(pkt, &inspection, archive_rules);
         }
 
         if icmp_type == 136 {
@@ -95,7 +97,7 @@ impl SecurityEngine {
         }
     }
 
-    fn track_router_advertisement(&mut self, pkt: &Packet, inspection: &Ipv6Inspection<'_>) {
+    fn track_router_advertisement(&mut self, pkt: &Packet, inspection: &Ipv6Inspection<'_>, archive_rules: Option<&[String]>) {
         let data = inspection.transport;
         let now = pkt.timestamp;
         if !inspection.complete || inspection.fragmented || inspection.extension_count > 32
@@ -108,7 +110,8 @@ impl SecurityEngine {
             .filter(|address| *address != [0; 6] && address[0] & 1 == 0) else { return };
         let scope = service_scope(pkt);
         if is_ipv6_link_local(&inspection.source) && icmpv6_checksum_valid(inspection) {
-            self.track_default_router_link(pkt, inspection.source, mac, u16::from_be_bytes([data[6], data[7]]));
+            let retain = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "ipv6.ra_router_link_change"));
+            self.track_default_router_link(pkt, inspection.source, mac, u16::from_be_bytes([data[6], data[7]]), retain);
         }
         let key = (scope, mac);
         if self.router_advertisements.len() >= MAX_CONTROL_PLANE_IDENTITIES
@@ -165,7 +168,7 @@ impl SecurityEngine {
         }
     }
 
-    fn track_default_router_link(&mut self, pkt: &Packet, source: [u8; 16], mac: [u8; 6], lifetime: u16) {
+    fn track_default_router_link(&mut self, pkt: &Packet, source: [u8; 16], mac: [u8; 6], lifetime: u16, retain: bool) {
         let scope = service_scope(pkt);
         let key = (scope, source);
         let order = (pkt.timestamp, pkt.no);
@@ -178,6 +181,7 @@ impl SecurityEngine {
             if let Some(prior) = self.default_router_links.get_mut(&key) && prior.mac == mac {
                 prior.order = order;
                 prior.expires_at = pkt.timestamp;
+                prior.evidence = None;
             }
             return;
         }
@@ -189,8 +193,13 @@ impl SecurityEngine {
         }
         let previous = self.default_router_links.insert(key, RouterLink {
             mac, order, expires_at: pkt.timestamp + f64::from(lifetime),
+            evidence: (retain && crate::model::project::pinned_packet_cost(pkt) <= MAX_ROUTER_EVIDENCE_BYTES)
+                .then(|| Box::new(pkt.clone())),
         });
         if let Some(prior) = previous && prior.mac != mac && pkt.timestamp < prior.expires_at {
+            if retain && let Some(packet) = prior.evidence {
+                self.findings.retained_evidence.push(*packet);
+            }
             let source = Ipv6Addr::from(source);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
