@@ -7,7 +7,9 @@ usage() {
     printf '%s\n' 'Usage: packrat-watch-baseline.sh BEFORE.json AFTER.json' \
         '       packrat-watch-baseline.sh --record INTERFACE STATE.json OUTPUT.json' \
         'Recording requires a healthy live capture and publishes a private file without overwriting.' \
-        'Compares observed alert openings, not detector accuracy or total network activity.'
+        'Rate deltas require 300 comparable seconds and 1000 comparable packets in each capture by default.' \
+        'Override with PACKRAT_BASELINE_MIN_SECONDS and PACKRAT_BASELINE_MIN_PACKETS.' \
+        'Observed alert openings do not measure detector accuracy or total network activity.'
 }
 
 read_baseline() {
@@ -27,6 +29,13 @@ read_baseline() {
             and .healthy_seconds >= .healthy_intervals
             and .alert_comparable_intervals <= .healthy_intervals
             and .alert_comparable_packets <= .healthy_packets
+            and (if has("alert_comparable_seconds") then
+                  (.alert_comparable_seconds | count) and .alert_comparable_seconds <= .healthy_seconds
+                  and .alert_comparable_seconds >= .alert_comparable_intervals
+                  and (if .alert_comparable_intervals == 0 then .alert_comparable_seconds == 0
+                       elif .alert_comparable_intervals == .healthy_intervals then .alert_comparable_seconds == .healthy_seconds
+                       else .alert_comparable_seconds <= .healthy_seconds - (.healthy_intervals - .alert_comparable_intervals) end)
+                 else true end)
             and (if .alert_comparable_intervals == 0 then
                     .observed_openings == null and .alert_comparable_packets == 0
                  else .observed_openings | count end)
@@ -48,6 +57,8 @@ read_baseline() {
                    coverage_policy:(if $c.coverage_policy | IN("capture_loss_counters_v1","continuous_journal_v2") then $c.coverage_policy else null end),
                    first_record_at:$c.first_record_at,last_record_at:$c.last_record_at,
                    healthy_seconds:$c.healthy_seconds,excluded_intervals:$c.excluded_intervals,
+                   comparable_seconds:(if $c | has("alert_comparable_seconds") then $c.alert_comparable_seconds
+                       elif $c.alert_comparable_intervals == $c.healthy_intervals then $c.healthy_seconds else null end),
                    comparable_packets:$c.alert_comparable_packets,openings:$c.observed_openings,
                    openings_per_10000_packets:(if $c.coverage_policy == "continuous_journal_v2" and $c.alert_comparable_packets > 0
                        then $c.observed_openings * 10000 / $c.alert_comparable_packets else null end)}
@@ -98,10 +109,16 @@ if [[ ${1-} == --record ]]; then
     exit
 fi
 if (( $# != 2 )); then usage >&2; exit 2; fi
+min_seconds=${PACKRAT_BASELINE_MIN_SECONDS:-300}
+min_packets=${PACKRAT_BASELINE_MIN_PACKETS:-1000}
+if [[ ! $min_seconds =~ ^[1-9][0-9]{0,8}$ || ! $min_packets =~ ^[1-9][0-9]{0,8}$ ]]; then
+    printf '%s\n' 'Baseline minimums must be positive integers with at most nine digits.' >&2
+    exit 2
+fi
 
 before=$(read_baseline "$1")
 after=$(read_baseline "$2")
-printf '%s\n' "$before" "$after" | jq -cs '
+printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --argjson packets "$min_packets" '
     .[0] as $before | .[1] as $after
     | ($before.scope.capture_id == $after.scope.capture_id
         or $before.scope.session_id == $after.scope.session_id
@@ -118,9 +135,12 @@ printf '%s\n' "$before" "$after" | jq -cs '
            "coverage_policy_unverified"
          elif $before.openings_per_10000_packets == null or $after.openings_per_10000_packets == null then
            "insufficient_alert_coverage"
+         elif $before.comparable_seconds == null or $after.comparable_seconds == null then "comparable_duration_unverified"
+         elif ($before.comparable_seconds < $seconds or $after.comparable_seconds < $seconds
+               or $before.comparable_packets < $packets or $after.comparable_packets < $packets) then "thin_alert_coverage"
          else "separate_capture_windows" end) as $status
         | {record_type:"capture_build_comparison",status:$status,same_build:$same_build,
-           before:$before,after:$after,
+           before:$before,after:$after,comparison_minimums:{seconds:$seconds,packets:$packets},
            observed_rate_delta_per_10000_packets:(if $status == "separate_capture_windows"
                then $after.openings_per_10000_packets - $before.openings_per_10000_packets else null end)}
       end

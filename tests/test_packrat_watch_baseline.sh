@@ -24,10 +24,21 @@ jq '.build.scope = {capture_id:"b",session_id:"two"} | .coverage.scope = .build.
     | .coverage.last_record_at = "2026-11-23T11:02:00Z"
     | .coverage.observed_openings = 0' "$before" > "$after"
 
+unset PACKRAT_BASELINE_MIN_SECONDS PACKRAT_BASELINE_MIN_PACKETS
 bash "$tool" "$before" "$after" | jq -e '
+    .status == "thin_alert_coverage" and .observed_rate_delta_per_10000_packets == null
+    and .before.openings_per_10000_packets == 5 and .after.openings_per_10000_packets == 0
+    and .comparison_minimums == {seconds:300,packets:1000}' >/dev/null
+PACKRAT_BASELINE_MIN_SECONDS=60 PACKRAT_BASELINE_MIN_PACKETS=2000 bash "$tool" "$before" "$after" | jq -e '
     .status == "separate_capture_windows" and .same_build == false
     and .before.openings_per_10000_packets == 5 and .after.openings_per_10000_packets == 0
+    and .before.comparable_seconds == 60 and .after.comparable_seconds == 60
     and .observed_rate_delta_per_10000_packets == -5' >/dev/null
+PACKRAT_BASELINE_MIN_SECONDS=60 PACKRAT_BASELINE_MIN_PACKETS=2001 bash "$tool" "$before" "$after" | jq -e '
+    .status == "thin_alert_coverage" and .observed_rate_delta_per_10000_packets == null' >/dev/null
+for invalid in 0 01 -1 '3.5'; do
+    if PACKRAT_BASELINE_MIN_SECONDS="$invalid" bash "$tool" "$before" "$after" >/dev/null 2>&1; then exit 1; fi
+done
 bash "$tool" "$before" "$before" | jq -e '
     .status == "same_capture" and .same_build == true
     and .observed_rate_delta_per_10000_packets == null' >/dev/null
@@ -47,6 +58,14 @@ jq '.coverage.alert_comparable_intervals = 0 | .coverage.alert_comparable_packet
 bash "$tool" "$before" "$fixture" | jq -e '
     .status == "insufficient_alert_coverage" and .after.openings_per_10000_packets == null
     and .observed_rate_delta_per_10000_packets == null' >/dev/null
+jq '.coverage.healthy_intervals = 2 | .coverage.scoped_records = 3' "$after" > "$fixture"
+PACKRAT_BASELINE_MIN_SECONDS=30 bash "$tool" "$before" "$fixture" | jq -e '
+    .status == "comparable_duration_unverified" and .after.comparable_seconds == null
+    and .observed_rate_delta_per_10000_packets == null' >/dev/null
+jq '.coverage.alert_comparable_seconds = 30' "$fixture" > "$tmp/partial.json"
+PACKRAT_BASELINE_MIN_SECONDS=30 bash "$tool" "$before" "$tmp/partial.json" | jq -e '
+    .status == "separate_capture_windows" and .after.comparable_seconds == 30
+    and .observed_rate_delta_per_10000_packets == -5' >/dev/null
 
 reject() {
     if bash "$tool" "$before" "$fixture" > "$tmp/result" 2>/dev/null; then
@@ -61,6 +80,10 @@ reject
 jq '.coverage.observed_openings = 1.5' "$after" > "$fixture"
 reject
 jq '.coverage.healthy_seconds = 61' "$after" > "$fixture"
+reject
+jq '.coverage.alert_comparable_seconds = 30' "$after" > "$fixture"
+reject
+jq '.coverage.healthy_intervals = 2 | .coverage.scoped_records = 3 | .coverage.alert_comparable_seconds = 60' "$after" > "$fixture"
 reject
 jq '.build.observed_at = "2026-11-23T11:01:59Z"' "$after" > "$fixture"
 reject
@@ -117,7 +140,7 @@ record "$tmp/recorded"
 [[ $(stat -c %a -- "$tmp/recorded") == 600 ]]
 jq -e '.build.packets == 2515 and .coverage.observed_openings == 1
     and .coverage.coverage_policy == "continuous_journal_v2"
-    and .coverage.alert_comparable_packets == 2000' "$tmp/recorded" >/dev/null
+    and .coverage.alert_comparable_packets == 2000 and .coverage.alert_comparable_seconds == 60' "$tmp/recorded" >/dev/null
 bash "$tool" "$before" "$tmp/recorded" | jq -e '.status == "same_capture"' >/dev/null
 
 saved=$(sha256sum -- "$tmp/recorded")

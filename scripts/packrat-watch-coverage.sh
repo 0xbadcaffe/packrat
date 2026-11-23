@@ -117,6 +117,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        journal_discontinuities:([$pairs[] | select(. == "journal_discontinuity")] | length),
        healthy_seconds:([$healthy[].seconds] | add // 0), healthy_packets:([$healthy[].packets] | add // 0),
        alert_comparable_intervals:($comparable | length), alert_comparable_packets:$measured_packets,
+       alert_comparable_seconds:([$comparable[].seconds] | add // 0),
        alert_sample_gap_reported:any($sample[]; .alert_sample_gap == true),
        unobserved_alert_id_ranges:$alert_gaps[:64], unobserved_alert_id_ranges_truncated:($alert_gaps | length > 64),
        observed_openings:(if ($comparable | length) > 0 then $openings else null end),

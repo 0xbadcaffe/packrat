@@ -23,11 +23,11 @@ bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
     and .scoped_records==6 and .healthy_intervals==3 and .excluded_intervals==2
     and .journal_discontinuities==0
     and .healthy_seconds==180 and .healthy_packets==80 and .alert_comparable_intervals==2
-    and .alert_comparable_packets==60 and .observed_openings==2
+    and .alert_comparable_packets==60 and .alert_comparable_seconds==120 and .observed_openings==2
     and .unobserved_alert_id_ranges==[{first_id:7,last_id:7,recorded_at:"2023-11-14T22:16:20Z"}]
     and (.observed_openings_per_10000_packets > 333 and .observed_openings_per_10000_packets < 334)' >/dev/null
 bash "$coverage" <<< "$sample" | jq -e '.status=="insufficient_coverage" and .scope.session_id=="b-2"
-    and .observed_openings==null and .observed_openings_per_10000_packets==null' >/dev/null
+    and .alert_comparable_seconds==0 and .observed_openings==null and .observed_openings_per_10000_packets==null' >/dev/null
 bash "$coverage" </dev/null | jq -e '.status=="no_capture_records" and .scope==null' >/dev/null
 bash "$coverage" --capture-id missing --session a-1 <<< "$sample" |
     jq -e '.status=="no_capture_records" and .scope.capture_id=="missing"' >/dev/null
