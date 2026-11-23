@@ -180,6 +180,7 @@ pub struct SecurityEngine {
     fragment_states: HashMap<(ServiceScope, FragmentKey), FragmentState>,
     ipv4_fragment_evidence: crate::net::recent_evidence::RecentEvidence<1024, 120>,
     tcp_integrity: HashMap<(ServiceScope, TcpFlowKey), TcpIntegrityState>,
+    tcp_overlap_evidence: crate::net::recent_evidence::RecentEvidence<1024, 300>,
     scan_sources: HashMap<ScanSourceKey, SourceScanState>,
     syn_flood_targets: HashMap<SynTargetKey, SynFloodState>,
     ndp_bindings: HashMap<(ServiceScope, [u8; 16]), NdpObservation>,

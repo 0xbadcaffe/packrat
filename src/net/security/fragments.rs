@@ -263,7 +263,10 @@ impl SecurityEngine {
                 overlap = Some(conflict);
             }
             if !already_seen {
-                slices.remember_distinct(pkt.no, payload_sequence, segment.payload);
+                let remembered = slices.remember_distinct(pkt.no, payload_sequence, segment.payload);
+                if remembered && !state.overlap_alerted && archive_rules.is_some() {
+                    self.tcp_overlap_evidence.remember(pkt);
+                }
             }
         }
 
@@ -316,6 +319,11 @@ impl SecurityEngine {
             });
         }
         if let Some(conflict) = overlap {
+            if archive_rules.is_some()
+                && let Some(prior) = self.tcp_overlap_evidence.cited_packet(pkt, conflict.previous_frame)
+            {
+                self.findings.retained_evidence.push(prior.clone());
+            }
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,

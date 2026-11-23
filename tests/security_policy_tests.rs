@@ -281,6 +281,12 @@ mod ipv4_fragment_volume_cases;
 #[cfg(feature = "terminal-ui")]
 #[path = "security_policy/ipv4_fragment_archive_cases.rs"]
 mod ipv4_fragment_archive_cases;
+#[cfg(feature = "terminal-ui")]
+#[path = "security_policy/archive_fixture.rs"]
+mod archive_fixture;
+#[cfg(feature = "terminal-ui")]
+#[path = "security_policy/tcp_overlap_archive_cases.rs"]
+mod tcp_overlap_archive_cases;
 #[path = "security_policy/ipv4_discovery_cases.rs"]
 mod ipv4_discovery_cases;
 #[path = "security_policy/link_scope_cases.rs"]

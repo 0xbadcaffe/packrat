@@ -106,18 +106,19 @@ impl TcpPayloadHistory {
         self.slices.iter().any(|slice| slice.start == start && slice.data == payload)
     }
 
-    pub(super) fn remember_distinct(&mut self, packet_no: u64, start: u32, payload: &[u8]) {
+    pub(super) fn remember_distinct(&mut self, packet_no: u64, start: u32, payload: &[u8]) -> bool {
         if payload.is_empty() || payload.len() > MAX_TCP_EVIDENCE_BYTES_PER_DIRECTION {
-            return;
+            return false;
         }
         while self.slices.len() >= MAX_TCP_SLICES_PER_DIRECTION
             || payload.len() > MAX_TCP_EVIDENCE_BYTES_PER_DIRECTION - self.bytes
         {
-            let Some(oldest) = self.slices.pop_front() else { return };
+            let Some(oldest) = self.slices.pop_front() else { return false };
             self.bytes -= oldest.data.len();
         }
         self.bytes += payload.len();
         self.slices.push_back(FragmentSlice { packet_no, start, data: payload.to_vec() });
+        true
     }
 }
 

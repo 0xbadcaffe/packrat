@@ -32,6 +32,7 @@ impl SecurityEngine {
             fragment_states: HashMap::new(),
             ipv4_fragment_evidence: Default::default(),
             tcp_integrity: HashMap::new(),
+            tcp_overlap_evidence: Default::default(),
             scan_sources: HashMap::new(),
             syn_flood_targets: HashMap::new(),
             ndp_bindings: HashMap::new(),
@@ -74,6 +75,7 @@ impl SecurityEngine {
         self.fragment_states.clear();
         self.ipv4_fragment_evidence = Default::default();
         self.tcp_integrity.clear();
+        self.tcp_overlap_evidence = Default::default();
         self.scan_sources.clear();
         self.syn_flood_targets.clear();
         self.ndp_bindings.clear();
