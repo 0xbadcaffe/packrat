@@ -5,6 +5,35 @@ use crate::net::packet::Packet;
 const ENCRYPTED_ENTROPY_THRESHOLD: f64 = 7.2;
 // With n bytes, the highest possible Shannon entropy is log2(n).
 const MIN_BYTES_ABOVE_ENCRYPTED_ENTROPY: usize = 148;
+const STROBE_MIN_PACKETS: usize = 101;
+
+fn observe_strobe(window: &mut VecDeque<f64>, timestamp: f64) -> bool {
+    if !timestamp.is_finite() {
+        return window.len() == STROBE_MIN_PACKETS;
+    }
+    let newest = window.back().map_or(timestamp, |&last| last.max(timestamp));
+    let cutoff = newest - 1.0;
+    while window.front().is_some_and(|&time| time < cutoff) {
+        window.pop_front();
+    }
+
+    // Keeping only the 101 newest timestamps preserves the threshold test.
+    if timestamp >= cutoff {
+        if window.len() == STROBE_MIN_PACKETS {
+            if window.front().is_some_and(|&oldest| timestamp <= oldest) {
+                return true;
+            }
+            window.pop_front();
+        }
+        if timestamp == newest {
+            window.push_back(timestamp);
+        } else {
+            let position = window.partition_point(|&time| time <= timestamp);
+            window.insert(position, timestamp);
+        }
+    }
+    window.len() == STROBE_MIN_PACKETS
+}
 
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 pub struct FlowKey {
@@ -129,13 +158,7 @@ impl FlowTracker {
         if flow.pkt_sizes.len() >= 60 { flow.pkt_sizes.pop_front(); }
         flow.pkt_sizes.push_back(pkt.length);
 
-        // Strobe detection: count packets in last 1s
-        flow.strobe_window.push_back(pkt.timestamp);
-        let cutoff = pkt.timestamp - 1.0;
-        while flow.strobe_window.front().map(|&t| t < cutoff).unwrap_or(false) {
-            flow.strobe_window.pop_front();
-        }
-        flow.flags.strobe = flow.strobe_window.len() > 100;
+        flow.flags.strobe = observe_strobe(&mut flow.strobe_window, pkt.timestamp);
 
         flow.packets += 1;
         flow.bytes += pkt.length as u64;
@@ -403,3 +426,7 @@ fn extract_hassh(raw: &[u8]) -> Option<String> {
     let hassh_str = format!("{};{};{};{}", lists[0], lists[2], lists[4], lists[6].chars().take(100).collect::<String>());
     Some(format!("{:x}", md5::compute(hassh_str.as_bytes())))
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/flow_strobe_tests.rs"]
+mod strobe_tests;
