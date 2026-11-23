@@ -204,7 +204,7 @@ fn archive_cli_exports_latest_scoped_alert_with_provenance_and_missing_frames() 
     let manifest_bytes = std::fs::read(output.join("manifest.json")).unwrap();
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
     assert_eq!(manifest["alert"]["provenance"]["rule_id"], "scan.horizontal");
-    assert_eq!(manifest["alert"]["provenance"]["revision"], 13);
+    assert_eq!(manifest["alert"]["provenance"]["revision"], 14);
     assert_eq!(manifest["alert"]["hit_count"], 2);
     assert_eq!(manifest["capture"]["source_frame_numbers"], serde_json::json!([7]));
     assert_eq!(manifest["missing_frame_numbers"], serde_json::json!([8]));

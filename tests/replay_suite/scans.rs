@@ -42,31 +42,32 @@ fn write_observations(path: &Path, vary_host: bool, vary_port: bool, partial: bo
 fn write_scan_with_replies(path: &Path) {
     let mut capture = PcapNgWriter::create(path).unwrap();
     let mut frame = 0;
-    let mut write = |host, flags, acknowledgement: u32| {
+    let mut write = |host, flags, acknowledgement: u32, sequence: u32| {
         frame += 1;
         let reply = matches!(flags, 0x12 | 0x14);
-        let sequence = if flags == 0x18 { 101 } else { 100 };
         let payload: &[u8] = if flags == 0x18 { b"application data" } else { &[] };
         let mut raw = super::support::tcp(frame, sequence, flags, payload, reply).bytes;
         raw[if reply { 29 } else { 33 }] = host;
         raw[42..46].copy_from_slice(&acknowledgement.to_be_bytes());
         capture.write_packet(&parse_ethernet(&raw, frame, frame as f64 / 100.0)).unwrap();
     };
-    write(21, 0x02, 0);
-    write(21, 0x12, 101);
-    write(21, 0x12, 102); // Wrong acknowledgement.
-    write(22, 0x02, 0);
-    write(22, 0x14, 101);
-    write(21, 0x02, 0); // Identical retry must not replace the matched pair.
-    write(21, 0x18, 101); // The matching third leg also carries data.
+    write(21, 0x02, 0, 100);
+    write(21, 0x12, 101, 100);
+    write(21, 0x12, 102, 100); // Wrong acknowledgement.
+    write(22, 0x02, 0, 100);
+    write(22, 0x14, 101, 100);
+    write(21, 0x02, 0, 100); // Identical retry must not replace the matched pair.
+    write(21, 0x18, 101, 101); // The matching third leg also carries data.
     for host in 23..=32 {
-        write(host, 0x02, 0);
+        write(host, 0x02, 0, 100);
     }
-    write(32, 0x12, 101); // Retain a late SYN-ACK for the opening probe.
-    write(32, 0x12, 101); // The retransmission does not update the alert.
-    write(32, 0x18, 101); // Retain the matching final ACK with data.
-    write(33, 0x02, 0);
-    write(33, 0x12, 101); // This probe was never part of the alert.
+    write(32, 0x02, 0, 500); // New attempt to the same target was not part of the alert.
+    write(32, 0x12, 501, 700);
+    write(32, 0x12, 101, 100); // Retain the late SYN-ACK for the opening probe.
+    write(32, 0x12, 101, 100); // The retransmission does not update the alert.
+    write(32, 0x18, 101, 101); // Retain the matching final ACK with data.
+    write(33, 0x02, 0, 100);
+    write(33, 0x12, 101, 100); // This probe was never part of the alert.
     capture.flush().unwrap();
 }
 
@@ -144,12 +145,12 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
     assert_eq!(records.iter().map(|record| record["opening"].as_bool()).collect::<Vec<_>>(),
                [Some(true), Some(false), Some(false)]);
     let alerts: Vec<_> = records.iter().map(|record| &record["alert"]).collect();
-    assert_eq!(alerts[2]["provenance"]["revision"], 13);
+    assert_eq!(alerts[2]["provenance"]["revision"], 14);
     for field in ["id", "hit_count", "packet_no", "flow", "first_seen", "last_seen", "detail"] {
         assert_eq!(alerts[0][field], alerts[2][field], "{field}");
     }
     let mut evidence = alerts[0]["packet_refs"].as_array().unwrap().clone();
-    evidence.extend([json!(18), json!(20)]);
+    evidence.extend([json!(20), json!(22)]);
     assert_eq!(alerts[2]["packet_refs"], json!(evidence));
 }
 

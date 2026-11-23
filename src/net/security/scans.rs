@@ -1,6 +1,9 @@
 use super::*;
 use super::findings::IdsEvidenceUpdate;
 
+#[path = "scan_replies.rs"]
+mod scan_replies;
+
 #[derive(Debug)]
 pub(super) struct ScanProbe {
     timestamp: f64,
@@ -31,11 +34,19 @@ impl ScanTcpProbe {
     fn awaits_final_ack(&self) -> bool {
         self.syn_ack.is_some() && self.reset_ack.is_none() && self.final_ack.is_none()
     }
+
+    fn matches_syn(&self, other: &Self) -> bool {
+        self.source_port == other.source_port && self.sequence == other.sequence
+    }
 }
 
 impl ScanProbe {
     fn awaits_final_ack(&self) -> bool {
         self.tcp.as_ref().is_some_and(ScanTcpProbe::awaits_final_ack)
+    }
+
+    fn linked_to_alert(&self) -> bool {
+        self.tcp.is_some() && (self.vertical_opening.is_some() || self.horizontal_opening.is_some())
     }
 
     fn reply_evidence(&self, frame: u64) -> impl Iterator<Item = IdsEvidenceUpdate> {
@@ -239,62 +250,6 @@ impl SecurityEngine {
         }
     }
 
-    fn record_scan_reply(&mut self, pkt: &Packet, tcp: TcpSignal, reset: bool) {
-        let key = ScanSourceKey {
-            address: pkt.dst.clone(),
-            transport: "TCP",
-            scope: service_scope(pkt),
-        };
-        let Some(state) = self.scan_sources.get_mut(&key) else { return };
-        let Some(probe) = state.probes.iter_mut().find(|probe| {
-            probe.destination == pkt.src && probe.port == tcp.source_port
-                && (pkt.timestamp, pkt.no) > (probe.timestamp, probe.packet_no)
-                && pkt.timestamp - probe.timestamp <= SCAN_WINDOW_SECS
-        }) else { return };
-        let Some(attempt) = &mut probe.tcp else { return };
-        if attempt.source_port == tcp.destination_port && attempt.sequence.wrapping_add(1) == tcp.acknowledgement {
-            let was_pending = attempt.awaits_final_ack();
-            let newly_matched = if reset {
-                let new = attempt.reset_ack.is_none();
-                attempt.reset_ack.get_or_insert(pkt.no);
-                new
-            } else {
-                let new = attempt.syn_ack.is_none();
-                attempt.syn_ack.get_or_insert(ScanSynAck {
-                    order: (pkt.timestamp, pkt.no), sequence: tcp.sequence,
-                });
-                new
-            };
-            state.pending_final_acks += usize::from(attempt.awaits_final_ack());
-            state.pending_final_acks -= usize::from(was_pending);
-            if newly_matched {
-                self.findings.ids_evidence.extend(probe.reply_evidence(pkt.no));
-            }
-        }
-    }
-
-    fn record_scan_final_ack(&mut self, pkt: &Packet, tcp: TcpSignal) {
-        let Some(state) = self.scan_sources.get_mut(&scan_key(pkt, "TCP")) else { return };
-        if state.pending_final_acks == 0 {
-            return;
-        }
-        let Some(probe) = state.probes.iter_mut().find(|probe| {
-            probe.destination == pkt.dst && probe.port == tcp.destination_port
-                && pkt.timestamp - probe.timestamp <= SCAN_WINDOW_SECS
-        }) else { return };
-        let Some(attempt) = &mut probe.tcp else { return };
-        let Some(reply) = &attempt.syn_ack else { return };
-        if attempt.source_port == tcp.source_port && attempt.awaits_final_ack()
-            && (pkt.timestamp, pkt.no) > reply.order
-            && tcp.sequence == attempt.sequence.wrapping_add(1)
-            && tcp.acknowledgement == reply.sequence.wrapping_add(1)
-        {
-            attempt.final_ack = Some(pkt.no);
-            state.pending_final_acks -= 1;
-            self.findings.ids_evidence.extend(probe.reply_evidence(pkt.no));
-        }
-    }
-
     fn record_syn_arrival(
         &mut self,
         pkt: &Packet,
@@ -385,6 +340,11 @@ impl SourceScanState {
             return false;
         }
         let previous_len = self.probes.len();
+        self.linked_probes.retain(|probe| {
+            let keep = self.last_seen - probe.timestamp <= SCAN_WINDOW_SECS;
+            self.pending_final_acks -= usize::from(!keep && probe.awaits_final_ack());
+            keep
+        });
         self.probes.retain(|probe| {
             let keep = self.last_seen - probe.timestamp <= SCAN_WINDOW_SECS;
             if !keep {
@@ -401,23 +361,23 @@ impl SourceScanState {
             }
         }
         let tcp = tcp.map(|(source_port, sequence)| ScanTcpProbe { source_port, sequence, ..Default::default() });
+        if let Some(attempt) = &tcp
+            && self.linked_probes.iter().any(|prior| prior.destination == pkt.dst && prior.port == port
+                && prior.tcp.as_ref().is_some_and(|old| old.matches_syn(attempt)))
+        {
+            return false;
+        }
         if let Some(index) = self.probes.iter().position(|prior| {
             prior.destination == pkt.dst && prior.port == port
         }) {
             let probe = &mut self.probes[index];
             // An identical SYN retry is not a new attempt or a new evidence window.
-            if probe.tcp.as_ref().zip(tcp.as_ref()).is_some_and(|(old, new)| {
-                old.source_port == new.source_port && old.sequence == new.sequence
-            }) {
+            if probe.tcp.as_ref().zip(tcp.as_ref()).is_some_and(|(old, new)| old.matches_syn(new)) {
                 return false;
             }
             if (probe.timestamp, probe.packet_no) < (pkt.timestamp, pkt.no) {
-                self.pending_final_acks -= usize::from(probe.awaits_final_ack());
-                probe.timestamp = pkt.timestamp;
-                probe.packet_no = pkt.no;
-                probe.tcp = tcp;
-                probe.vertical_opening = None;
-                probe.horizontal_opening = None;
+                let old = std::mem::replace(probe, ScanProbe::new(pkt, port, tcp));
+                self.retain_linked_probe(old);
             }
             return false;
         }
@@ -426,10 +386,17 @@ impl SourceScanState {
                 .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp))
                 .map(|(index, _)| index).unwrap_or(0);
             let removed = self.probes.remove(oldest);
-            self.pending_final_acks -= usize::from(removed.awaits_final_ack());
+            self.retain_linked_probe(removed);
             prune_scan_latches(self, 1);
         }
-        self.probes.push(ScanProbe {
+        self.probes.push(ScanProbe::new(pkt, port, tcp));
+        true
+    }
+}
+
+impl ScanProbe {
+    fn new(pkt: &Packet, port: u16, tcp: Option<ScanTcpProbe>) -> Self {
+        Self {
             timestamp: pkt.timestamp,
             packet_no: pkt.no,
             destination: pkt.dst.clone(),
@@ -437,8 +404,7 @@ impl SourceScanState {
             tcp,
             vertical_opening: None,
             horizontal_opening: None,
-        });
-        true
+        }
     }
 }
 

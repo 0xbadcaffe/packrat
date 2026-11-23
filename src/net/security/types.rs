@@ -144,6 +144,7 @@ pub(super) struct ScanSourceKey {
 #[derive(Debug, Default)]
 pub(super) struct SourceScanState {
     pub(super) probes: Vec<ScanProbe>,
+    pub(super) linked_probes: std::collections::VecDeque<ScanProbe>,
     pub(super) pending_final_acks: usize,
     pub(super) vertical_alerted: HashSet<String>,
     pub(super) horizontal_alerted: HashSet<u16>,
