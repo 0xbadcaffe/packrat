@@ -533,4 +533,6 @@ source "$root/tests/support/watch_triage_counter_gap.bash"
 source "$root/tests/support/watch_triage_checkpoints.bash"
 # shellcheck source=tests/support/watch_triage_evidence_counts.bash
 source "$root/tests/support/watch_triage_evidence_counts.bash"
+# shellcheck source=tests/support/watch_triage_deadline.bash
+source "$root/tests/support/watch_triage_deadline.bash"
 printf '%s\n' 'Packrat triage watcher tests passed'

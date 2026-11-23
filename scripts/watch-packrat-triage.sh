@@ -329,8 +329,8 @@ sanitize() {
 }
 read_status() {
     local raw result status=0
-    # A bad or noisy child must not leak its output or grow the snapshot without bound.
-    raw=$(timeout --kill-after=2s "${deadline}s" "$@" 2>/dev/null | head -c 2097153) || status=$?
+    # Bound the reader too: a helper may still hold the pipe after the command exits.
+    raw=$(timeout --kill-after=2s "${deadline}s" bash -o pipefail -c '"$@" | head -c 2097153' triage "$@" 2>/dev/null) || status=$?
     if (( status == 124 || status == 137 )); then
         printf '%s\n' '{"status":"triage_timeout"}'
     # The triage command uses 1 for degraded reports and 2 for failed evidence reads.
