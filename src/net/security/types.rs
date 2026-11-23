@@ -1,5 +1,6 @@
 use super::*;
 use super::scans::ScanProbe;
+use super::behavior::VolumeEvidence;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct FragmentKey {
@@ -253,7 +254,7 @@ pub(super) struct ExfilState {
     pub(super) inbound_bytes: u64,
     pub(super) high_entropy_bytes: u64,
     pub(super) last_seen: f64,
-    pub(super) volume_alerted: bool,
+    pub(super) volume_alerted: Option<VolumeEvidence>,
     pub(super) entropy_alerted: bool,
     pub(super) outbound_frames: std::collections::VecDeque<(i64, u64)>,
     pub(super) inbound_frames: std::collections::VecDeque<(i64, u64)>,

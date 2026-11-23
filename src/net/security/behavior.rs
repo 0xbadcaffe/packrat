@@ -1,6 +1,12 @@
 use super::*;
 use super::fragments::TcpPayloadObservation;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum VolumeEvidence {
+    OneWay,
+    BothDirections,
+}
+
 fn sample_transfer_frame(frames: &mut std::collections::VecDeque<(i64, u64)>, minute: i64, frame: u64) {
     if frames.len() == 8 {
         frames.pop_front();
@@ -57,7 +63,9 @@ impl ExfilState {
             for frames in [&mut self.outbound_frames, &mut self.inbound_frames, &mut self.entropy_frames] {
                 frames.retain(|&(minute, _)| minute >= cutoff);
             }
-            self.volume_alerted &= self.outbound_bytes >= EXFIL_VOLUME_THRESHOLD / 2;
+            if self.outbound_bytes < EXFIL_VOLUME_THRESHOLD / 2 {
+                self.volume_alerted = None;
+            }
             self.entropy_alerted &= self.high_entropy_bytes >= EXFIL_ENTROPY_THRESHOLD / 2;
         }
         let index = if self.buckets.back().is_none_or(|bucket| bucket.minute < minute) {
@@ -158,19 +166,32 @@ impl SecurityEngine {
             let state = self.exfil_flows.entry(key).or_default();
             let Some(high_entropy_payload) = state.observe(pkt, outbound, may_have_new_payload) else { return };
 
-            let outbound_ratio = state.outbound_bytes as f64 / state.inbound_bytes.max(1) as f64;
-            if outbound
-                && !state.volume_alerted
-                && state.outbound_bytes >= EXFIL_VOLUME_THRESHOLD
-                && outbound_ratio >= 10.0
+            let volume = match state.inbound_bytes {
+                0 => Some(VolumeEvidence::OneWay),
+                received if u128::from(state.outbound_bytes) >= u128::from(received) * 10 => Some(VolumeEvidence::BothDirections),
+                _ => None,
+            };
+            if outbound && state.outbound_bytes >= EXFIL_VOLUME_THRESHOLD
+                && let Some(evidence) = volume
+                && Some(evidence) > state.volume_alerted
             {
-                state.volume_alerted = true;
+                state.volume_alerted = Some(evidence);
+                let (severity, comparison) = match evidence {
+                    VolumeEvidence::OneWay => (
+                        Severity::Medium, "no reverse bytes observed; asymmetry unverified".into(),
+                    ),
+                    VolumeEvidence::BothDirections => (
+                        Severity::High,
+                        format!("{:.1}:1 observed ratio across {} captured reverse bytes",
+                            state.outbound_bytes as f64 / state.inbound_bytes as f64, state.inbound_bytes),
+                    ),
+                };
                 alerts.push((
                     "Large asymmetric outbound transfer",
-                    Severity::High,
+                    severity,
                     format!(
-                        "{} to {}: {} captured outbound bytes with {:.1}:1 ratio in the rolling hour, excluding recognized outbound TCP payload retries; transfer intent unverified",
-                        pkt.src, pkt.dst, state.outbound_bytes, outbound_ratio
+                        "{} to {}: {} captured outbound bytes in the rolling hour, excluding recognized outbound TCP payload retries; {comparison}; transfer intent unverified",
+                        pkt.src, pkt.dst, state.outbound_bytes
                     ),
                     state.outbound_frames.iter().chain(&state.inbound_frames).map(|&(_, frame)| frame).collect::<Vec<_>>(),
                 ));

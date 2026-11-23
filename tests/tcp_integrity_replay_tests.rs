@@ -65,14 +65,27 @@ fn outbound_volume_replay_opens_on_new_data_not_tcp_retries() {
     let capture = fixture.path().join("transfer-retries.pcapng");
     let mut writer = PcapNgWriter::create(&capture).unwrap();
     let payload = vec![0; 60_000];
-    for frame in 1..=51 {
+    for frame in 1..=53 {
         let sequence = if frame <= 35 {
             60_000
         } else {
             frame as u32 * 60_000
         };
-        let mut bytes = packets::tcp(frame, sequence, 0x18, &payload).bytes;
+        let data = if frame == 52 {
+            b"return traffic".as_slice()
+        } else {
+            &payload
+        };
+        let mut bytes = packets::tcp(frame, sequence, 0x18, data).bytes;
         bytes[30..34].copy_from_slice(&[198, 51, 100, 10]);
+        if frame == 52 {
+            for offset in 0..4 {
+                bytes.swap(26 + offset, 30 + offset);
+            }
+            for offset in 0..2 {
+                bytes.swap(34 + offset, 36 + offset);
+            }
+        }
         writer
             .write_packet(&parse_ethernet(&bytes, frame, frame as f64))
             .unwrap();
@@ -90,17 +103,26 @@ fn outbound_volume_replay_opens_on_new_data_not_tcp_retries() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    let alert = String::from_utf8(output.stdout)
+    let alerts: Vec<_> = String::from_utf8(output.stdout)
         .unwrap()
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .find(|row| {
+        .filter(|row| {
             row["type"] == "alert"
                 && row["alert"]["provenance"]["rule_id"] == "traffic.asymmetric_outbound"
         })
-        .unwrap();
+        .map(|row| row["alert"].clone())
+        .collect();
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0]["id"], alerts[1]["id"]);
+    assert_eq!(alerts[0]["severity"], "MEDIUM");
+    assert_eq!(alerts[1]["severity"], "HIGH");
     assert_eq!(
-        alert["alert"]["packet_refs"],
+        alerts[0]["packet_refs"],
         json!([44, 45, 46, 47, 48, 49, 50, 51])
+    );
+    assert_eq!(
+        alerts[1]["packet_refs"],
+        json!([44, 45, 46, 47, 48, 49, 50, 51, 52, 53])
     );
 }
