@@ -68,6 +68,7 @@ fn alert_packet_metadata_is_scoped_and_has_no_packet_payload_or_comments() {
     assert_eq!(report["record_type"], "alert_packet_metadata");
     assert_eq!(report["capture_id"], "scope-a");
     assert_eq!(report["evidence_frame_set_sha256"].as_str().unwrap().len(), 64);
+    assert!(report.get("trigger_frame_number").is_none());
     let frames = report["frames"].as_array().unwrap();
     assert_eq!(frames.len(), 5);
     assert_eq!(frames[0]["packet"]["recorded_source"], "10.0.0.1");
@@ -93,9 +94,14 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
     let mut alert = center.items.remove(0);
     alert.capture_id = Some("scope-a".into());
     alert.packet_refs = (1..=7).collect();
-    std::fs::write(&log,
-        json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
-    ).unwrap();
+    let records: Vec<_> = [(1, 2), (2, 5), (3, 6), (4, 0)].into_iter().map(|(id, trigger)| {
+        let mut alert = alert.clone();
+        alert.id = id;
+        alert.packet_no = trigger;
+        alert.last_packet = trigger;
+        json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string()
+    }).collect();
+    std::fs::write(&log, records.join("\n")).unwrap();
     let make = |no, flags, reverse, vlan, interface| {
         let mut packet = packets::tcp(no, 100, flags, b"private payload");
         if reverse {
@@ -127,14 +133,18 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
     ]).unwrap();
     drop(archive);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
-        .arg(&path).arg("--alert-flow-summary").arg(&log).args(["session-a", "1", "--capture-id", "scope-a"])
-        .output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let text = String::from_utf8(output.stdout).unwrap();
-    assert!(!text.contains("private") && !text.contains("203.0.113.77"));
-    let report: Value = serde_json::from_str(&text).unwrap();
+    let run = |id| {
+        let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+            .arg(&path).arg("--alert-flow-summary").arg(&log).args(["session-a", id, "--capture-id", "scope-a"])
+            .output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(!text.contains("private") && !text.contains("203.0.113.77"));
+        serde_json::from_str::<Value>(&text).unwrap()
+    };
+    let report = run("1");
     assert_eq!(report["record_type"], "alert_flow_summary");
+    assert_eq!(report["trigger_frame"], json!({"frame_number":2,"status":"complete","transport_header_observed":true}));
     assert_eq!(report["referenced_frames"], 7);
     assert_eq!(report["missing_frames"], 1);
     assert_eq!(report["truncated_frames"], 1);
@@ -145,7 +155,9 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
     for flow in flows {
         assert_eq!(flow["section_id"], 2);
         assert_eq!(flow["evidence_frames"], 1);
-        if flow["vlan_id"] == 10 && flow["interface_id"] == 3 {
+        let matched_path = flow["vlan_id"] == 10 && flow["interface_id"] == 3;
+        assert_eq!(flow["contains_trigger_frame"], matched_path && flow["source"] == "10.0.0.2:80");
+        if matched_path {
             assert_eq!(flow["reverse_evidence_frames"], 1);
             if flow["source"] == "10.0.0.1:40000" {
                 assert_eq!(flow["initial_syn_frames"], 1);
@@ -157,6 +169,16 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
             assert_eq!(flow["reverse_evidence_frames"], 0);
             assert_eq!(flow["reset_frames"], 1);
         }
+    }
+    for (id, expected) in [
+        ("2", json!({"frame_number":5,"status":"missing","transport_header_observed":false})),
+        ("3", json!({"frame_number":6,"status":"truncated","transport_header_observed":false})),
+        ("4", Value::Null),
+    ] {
+        let report = run(id);
+        assert_eq!(report["trigger_frame"], expected);
+        assert!(report["directional_flows"].as_array().unwrap().iter()
+            .all(|flow| flow["contains_trigger_frame"] == false));
     }
 }
 

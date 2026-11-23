@@ -18,6 +18,8 @@ pub struct AlertPacketMetadata {
     capture_id: String,
     alert_id: u64,
     evidence_frame_set_sha256: String,
+    #[serde(skip)]
+    trigger_frame_number: Option<u64>,
     frames: Vec<FrameMetadata>,
 }
 
@@ -66,6 +68,7 @@ struct FlowKey {
 #[derive(Default, Serialize)]
 struct FlowCounts {
     evidence_frames: usize,
+    contains_trigger_frame: bool,
     initial_syn_frames: usize,
     syn_ack_frames: usize,
     reset_frames: usize,
@@ -83,6 +86,13 @@ struct DirectionalFlow {
 }
 
 #[derive(Serialize)]
+struct TriggerFrame {
+    frame_number: u64,
+    status: FrameStatus,
+    transport_header_observed: bool,
+}
+
+#[derive(Serialize)]
 pub struct AlertFlowSummary {
     record_type: &'static str,
     session_id: String,
@@ -96,6 +106,7 @@ pub struct AlertFlowSummary {
     length_unknown_frames: usize,
     retained_frames_without_flow: usize,
     max_vlan_tags: usize,
+    trigger_frame: Option<TriggerFrame>,
     directional_flows: Vec<DirectionalFlow>,
     limitation: &'static str,
 }
@@ -144,11 +155,20 @@ pub fn alert_flow_summary(
         referenced_frames: metadata.frames.len(), missing_frames: 0, unreadable_frames: 0,
         truncated_frames: 0, length_unknown_frames: 0, retained_frames_without_flow: 0,
         max_vlan_tags: MAX_EVIDENCE_VLAN_TAGS,
+        trigger_frame: None,
         directional_flows: Vec::new(),
         limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
     for frame in metadata.frames {
+        let is_trigger = metadata.trigger_frame_number == Some(frame.frame_number);
+        if is_trigger {
+            result.trigger_frame = Some(TriggerFrame {
+                frame_number: frame.frame_number,
+                status: frame.status,
+                transport_header_observed: frame.packet.as_ref().is_some_and(|packet| packet.flow.is_some()),
+            });
+        }
         match frame.status {
             FrameStatus::Missing => result.missing_frames += 1,
             FrameStatus::Unreadable => result.unreadable_frames += 1,
@@ -160,6 +180,7 @@ pub fn alert_flow_summary(
         let Some(flow) = packet.flow else { result.retained_frames_without_flow += 1; continue };
         let counts = flows.entry(flow).or_default();
         counts.evidence_frames += 1;
+        counts.contains_trigger_frame |= is_trigger;
         if let Some(flags) = packet.transport.and_then(|header| header.tcp_flags) {
             counts.initial_syn_frames += usize::from(flags & 0x17 == 0x02);
             counts.syn_ack_frames += usize::from(flags & 0x17 == 0x12);
@@ -194,6 +215,7 @@ pub fn alert_packet_metadata(
         capture_id: capture_id.to_owned(),
         alert_id,
         evidence_frame_set_sha256: evidence_frame_set_sha256(&frames),
+        trigger_frame_number: (alert.packet_no > 0).then_some(alert.packet_no),
         frames: frames
             .into_iter()
             .map(|frame_number| {
