@@ -298,6 +298,7 @@ fn offline_case_rebuilds_stream_and_dns_context_without_crossing_capture_scopes(
             let rendered = terminal.backend().to_string();
             assert!(rendered.contains("offline review"));
             assert!(rendered.contains("5 retained frames"));
+            assert!(rendered.contains("5 length unknown"));
             assert!(rendered.contains("Retained evidence subset | Capture: saved-capture"));
             app.worklist_next_packet();
             assert_eq!(app.active_investigation_packet().unwrap().no, 5);

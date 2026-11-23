@@ -2,6 +2,7 @@ use std::process::Command;
 
 use packrat_tui::analysis::alert_center::AlertCenter;
 use packrat_tui::model::project::SavedInvestigationItem;
+use packrat_tui::net::packet::CaptureMetadata;
 use packrat_tui::net::parser::parse_ethernet;
 use packrat_tui::storage::{packet_archive::PacketArchive, project_store};
 #[cfg(feature = "terminal-ui")]
@@ -27,7 +28,16 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
     let root = scratch.path();
     let path = root.join("archive");
     let mut archive = PacketArchive::open(&path).unwrap();
-    let packet = |n, byte| parse_ethernet(&[byte], n, n as f64);
+    let packet = |n, byte| {
+        let mut packet = parse_ethernet(&[byte], n, n as f64);
+        if n == 1 {
+            packet.capture = Some(CaptureMetadata {
+                timestamp: None, captured_length: 1, wire_length: 60, link_type: 1,
+                section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+            });
+        }
+        packet
+    };
     archive.append_scoped("previous", &[packet(1, 1), packet(2, 2), packet(4, 4)]).unwrap();
     archive.append_scoped("current", &[packet(2, 99), packet(3, 99)]).unwrap();
     drop(archive);
@@ -61,13 +71,16 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
     let result = run(Some("previous"));
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(), json!({
-        "retained_frames":2,"missing_frames":1,"unreadable_frames":1,"omitted_at_limit":0
+        "retained_frames":2,"truncated_frames":1,"length_unknown_frames":1,
+        "missing_frames":1,"unreadable_frames":1,"omitted_at_limit":0,
+        "trigger_frame":{"frame_number":2,"status":"length_unknown","included":true}
     }));
     let state = project_store::load(&output).unwrap();
     assert_eq!(state.alert_items[0].packet_refs, [1, 2, 3, 4]);
     assert_eq!(state.alert_items[0].capture_id.as_deref(), Some("previous"));
     assert_eq!(state.pinned_packets.iter().map(|p| (p.no, p.bytes[0])).collect::<Vec<_>>(), [(1, 1), (2, 2)]);
     assert!(state.pinned_packet_scopes.values().all(|id| id == "previous"));
+    assert!(state.metadata.description.as_deref().unwrap().contains("1 truncated, 1 length unknown"));
     assert_eq!(state.investigation_items[state.active_investigation.unwrap()], SavedInvestigationItem::Packet(2));
     assert_eq!(state.active_tab, 1);
     #[cfg(feature = "terminal-ui")]
@@ -75,4 +88,35 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
     let original = std::fs::read(&output).unwrap();
     assert!(!run(Some("current")).status.success());
     assert_eq!(std::fs::read(&output).unwrap(), original);
+}
+
+#[test]
+fn archive_project_opens_on_the_alert_when_its_trigger_is_missing() {
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("archive");
+    let log = scratch.path().join("alerts.jsonl");
+    let output = scratch.path().join("case.json");
+    let packet = parse_ethernet(&[0; 14], 1, 1.0);
+    let mut archive = PacketArchive::open(&path).unwrap();
+    archive.append_scoped("scope-a", &[packet.clone()]).unwrap();
+    archive.append_scoped("scope-b", &[parse_ethernet(&[0; 14], 2, 2.0)]).unwrap();
+    drop(archive);
+    let mut center = AlertCenter::default();
+    center.record(2, "IDS", "HIGH", "Saved alert", "fixture");
+    let mut alert = center.items.remove(0);
+    alert.capture_id = Some("scope-a".into());
+    alert.packet_refs = vec![1, 2];
+    std::fs::write(&log, json!({
+        "schema_version":1,"record_type":"alert","session_id":"s","alert":alert
+    }).to_string()).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&path).arg("--alert-project").arg(&log).args(["s", "1"]).arg(&output)
+        .args(["--capture-id", "scope-a"]).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["trigger_frame"], json!({"frame_number":2,"status":"missing","included":false}));
+    let state = project_store::load(&output).unwrap();
+    assert_eq!(state.investigation_items[state.active_investigation.unwrap()], SavedInvestigationItem::Alert(1));
+    assert_eq!(state.pinned_packets.iter().map(|packet| packet.no).collect::<Vec<_>>(), [1]);
+    assert!(state.metadata.description.as_deref().unwrap().contains("Trigger #2 not included"));
 }

@@ -99,7 +99,7 @@ pub fn draw_view(f: &mut Frame, app: &App) {
 
 fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
     let (cap_str, cap_color, traffic) = if app.offline_review() {
-        ("○ offline review", C_CYAN(), format!("  {} retained frames", app.retained_evidence_count()))
+        ("○ offline review", C_CYAN(), app.retained_evidence_label())
     } else {
         let (label, color) = if app.capturing { ("● capturing", C_GREEN()) } else { ("○ idle", C_FG3()) };
         (label, color, format!("  iface: {}  {} pkts  {} total", app.selected_iface, app.packets.len(), app.packet_counter))

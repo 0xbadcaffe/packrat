@@ -9,8 +9,26 @@ impl App {
         self.worklist.restored_packet_scopes.get(&frame).map(String::as_str)
     }
 
-    pub(crate) fn retained_evidence_count(&self) -> usize {
-        self.worklist.retained_packets.len()
+    pub(crate) fn retained_evidence_label(&self) -> String {
+        use crate::storage::alert_evidence::{FrameStatus, frame_status};
+        let packets = &self.worklist.retained_packets;
+        let mut text = format!("  {} retained frames", packets.len());
+        let (mut truncated, mut unknown, mut unreadable) = (0, 0, 0);
+        for packet in packets.values() {
+            match frame_status(packet) {
+                FrameStatus::Truncated => truncated += 1,
+                FrameStatus::LengthUnknown => unknown += 1,
+                FrameStatus::Unreadable => unreadable += 1,
+                _ => {}
+            }
+        }
+        for (count, label) in [(truncated, "truncated"), (unknown, "length unknown"), (unreadable, "unreadable")] {
+            if count > 0 {
+                use std::fmt::Write;
+                let _ = write!(text, " | {count} {label}");
+            }
+        }
+        text
     }
 
     // ─── Project save / load ──────────────────────────────────────────────────
