@@ -231,10 +231,10 @@ impl StreamAssembler {
         dns::observe(stream, from_a, source, destination)
     }
 
-    pub(crate) fn http_auth_candidate(&mut self, pkt: &Packet) -> Option<(String, bool, usize, u32)> {
+    pub(crate) fn http_auth_candidate(&mut self, pkt: &Packet) -> Option<(String, bool, usize, u32, Option<usize>)> {
         let source @ (80 | 443 | 8080) = pkt.src_port? else { return None };
         let destination = pkt.dst_port?;
-        let (_, payload) = tcp_payload_with_ack(pkt, (source, destination))?;
+        let (sequence, payload) = tcp_payload_with_ack(pkt, (source, destination))?;
         if payload.is_empty() {
             return None;
         }
@@ -249,14 +249,20 @@ impl StreamAssembler {
         let initial = syn?.wrapping_add(1);
         let previous = std::mem::replace(&mut stream.http_auth_examined[usize::from(from_a)], data.len());
         if stream.midstream || stream.reset || stream.has_gaps() || stream.provenance_truncated || stream.http_overlap_conflict
-            || data.len() <= previous || !data.starts_with(b"HTTP/1.")
-            || !data[previous.saturating_sub(3)..].windows(4).any(|bytes| bytes == b"\r\n\r\n")
-            || !data[previous.saturating_sub(16_384)..].windows(12)
-                .any(|bytes| matches!(bytes, b"HTTP/1.1 401" | b"HTTP/1.0 401"))
+            || !data.starts_with(b"HTTP/1.")
         {
             return None;
         }
-        Some((id, from_a, previous, initial))
+        let direct_offset = matches!(payload.first_chunk::<12>(), Some(b"HTTP/1.1 401" | b"HTTP/1.0 401"))
+            .then_some(sequence.wrapping_sub(initial) as usize).filter(|&offset| offset < data.len());
+        if direct_offset.is_none() && (data.len() <= previous
+            || !data[previous.saturating_sub(3)..].windows(4).any(|bytes| bytes == b"\r\n\r\n")
+            || !data[previous.saturating_sub(16_384)..].windows(12)
+                .any(|bytes| matches!(bytes, b"HTTP/1.1 401" | b"HTTP/1.0 401")))
+        {
+            return None;
+        }
+        Some((id, from_a, previous, initial, direct_offset))
     }
 
     pub(crate) fn observe_modbus(

@@ -33,11 +33,11 @@ impl AnalysisCore {
         let segmented_tls = self.streams.ingest_observing_tls(pkt);
         let modbus = self.streams.observe_modbus(pkt);
         let dns = self.streams.observe_tcp_dns(pkt);
-        let split_http_401 = self.observe_split_http_401(pkt);
+        let http_auth = self.observe_http_401(pkt);
         let retain_http_auth = self.alert_center.archive_evidence_rules.as_deref()
             .is_some_and(|rules| rules.iter().any(|rule| rule == "http.unauthorized_burst"));
         let findings = self.security.inspect_with_context(
-            pkt, modbus, segmented_tls.as_ref().map(|(selection, _)| *selection), dns, split_http_401,
+            pkt, modbus, segmented_tls.as_ref().map(|(selection, _)| *selection), dns, http_auth,
             self.alert_center.archive_evidence_rules.as_deref(),
         );
         let mut retained_evidence = findings.retained_evidence;

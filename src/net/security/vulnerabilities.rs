@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::stream::HttpAuthObservation;
 
 const AUTH_WINDOW_SECS: f64 = 30.0;
 const AUTH_BURST_THRESHOLD: usize = 5;
@@ -59,7 +60,7 @@ impl SecurityEngine {
 
     // ─── Repeated Service Observations ────────────────────────────────────────
 
-    pub(super) fn check_brute_force(&mut self, pkt: &Packet, split_http_401: Option<(u32, Vec<u64>)>) {
+    pub(super) fn check_brute_force(&mut self, pkt: &Packet, http_auth: HttpAuthObservation) {
         let (Some(server_port @ (21 | 80 | 443 | 445 | 8080)), Some(client_port)) =
             (pkt.src_port, pkt.dst_port)
         else {
@@ -73,13 +74,14 @@ impl SecurityEngine {
         let service = match server_port {
             21 if is_ftp_not_logged_in(payload) => "FTP",
             445 if smb_wire::is_smb2_logon_failure(payload) => "SMB",
-            80 | 443 | 8080 if is_http_unauthorized(payload) => "HTTP",
-            80 | 443 | 8080 => {
-                if let Some((sequence, frames)) = split_http_401 {
+            80 | 443 | 8080 => match http_auth {
+                HttpAuthObservation::Packet if is_http_unauthorized(payload) => "HTTP",
+                HttpAuthObservation::SplitHeader(sequence, frames) => {
                     self.record_service_observation(pkt, "HTTP", true, server_port, (client_port, sequence), frames);
+                    return;
                 }
-                return;
-            }
+                _ => return,
+            },
             _ => return,
         };
         self.record_service_observation(pkt, service, true, server_port, (client_port, sequence), Vec::new());

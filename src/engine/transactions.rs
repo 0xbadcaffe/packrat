@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::AnalysisCore;
 use crate::analysis::alert_center::MAX_ALERT_PACKET_REFS;
-use crate::analysis::stream::ReassembledStream;
+use crate::analysis::stream::{HttpAuthObservation, ReassembledStream};
 use crate::analysis::transactions::{
     HttpConversation, MessageState, MultiplexedConversation, reconstruct_http, reconstruct_http2,
 };
@@ -66,10 +66,11 @@ fn http_401_exchange_frames(
 }
 
 impl AnalysisCore {
-    pub(super) fn observe_split_http_401(&mut self, pkt: &crate::net::packet::Packet) -> Option<(u32, Vec<u64>)> {
-        let (id, from_a, previous, initial) = self.streams.http_auth_candidate(pkt)?;
-        let stream = self.streams.get(&id)?;
-        let conversation = self.http_transactions(&id)?;
+    pub(super) fn observe_http_401(&mut self, pkt: &crate::net::packet::Packet) -> HttpAuthObservation {
+        let Some((id, from_a, previous, initial, direct_offset)) = self.streams.http_auth_candidate(pkt)
+            else { return HttpAuthObservation::Packet; };
+        let (Some(stream), Some(conversation)) = (self.streams.get(&id), self.http_transactions(&id))
+            else { return HttpAuthObservation::Packet; };
         let mut candidates = conversation.transactions.iter().filter_map(|exchange| {
             let response = exchange.response.as_ref()?;
             if response.status != Some(401) || !response.headers_complete
@@ -89,8 +90,21 @@ impl AnalysisCore {
             }
             Some((initial.wrapping_add(u32::try_from(response.span.start).ok()?), frames))
         });
-        let result = candidates.next()?;
-        candidates.next().is_none().then_some(result)
+        if let Some((sequence, frames)) = candidates.next()
+            && candidates.next().is_none()
+        {
+            return HttpAuthObservation::SplitHeader(sequence, frames);
+        }
+        if let Some(offset) = direct_offset
+            && conversation.transactions.iter().filter_map(|exchange| exchange.response.as_ref()).any(|response| {
+                response.span.direction.from_a() == from_a && response.headers_complete
+                    && matches!(response.state, MessageState::Complete | MessageState::Incomplete)
+                    && (response.header_end..response.span.end).contains(&offset)
+            })
+        {
+            return HttpAuthObservation::ResponseBody;
+        }
+        HttpAuthObservation::Packet
     }
 
     pub(super) fn attach_http_401_exchanges(

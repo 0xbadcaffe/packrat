@@ -70,6 +70,12 @@ pub use wire::tcp_payload_offset;
 pub(crate) use wire::{tcp_complete_segment_payload, tcp_data_port_pair, tcp_payload_with_ack, tcp_port_pair, tcp_segment_payload};
 use wire::*;
 
+pub(crate) enum HttpAuthObservation {
+    Packet,
+    ResponseBody,
+    SplitHeader(u32, Vec<u64>),
+}
+
 // ─── Stream key ───────────────────────────────────────────────────────────────
 
 /// Canonical bi-directional flow key (lower endpoint first).

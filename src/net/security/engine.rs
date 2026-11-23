@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::stream::HttpAuthObservation;
 
 impl SecurityEngine {
     pub(crate) fn observe_saved_dns_context(&mut self, packet: &Packet, tcp: &crate::analysis::stream::DnsTcpObservation) {
@@ -122,12 +123,12 @@ impl SecurityEngine {
     /// Process a single packet through all detection engines.
     pub fn update(&mut self, pkt: &Packet) {
         self.update_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None,
-            crate::analysis::stream::DnsTcpObservation::Unanchored, None, None);
+            crate::analysis::stream::DnsTcpObservation::Unanchored, HttpAuthObservation::Packet, None);
     }
 
     fn update_with_context(&mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation,
         tls: Option<(u16, u16)>, dns: crate::analysis::stream::DnsTcpObservation,
-        split_http_401: Option<(u32, Vec<u64>)>, archive_rules: Option<&[String]>,
+        http_auth: HttpAuthObservation, archive_rules: Option<&[String]>,
     ) {
         self.findings = DetectionBatch::default();
         if pkt.capture.as_ref().is_some_and(|capture| !crate::net::parser::supports_capture_link_type(capture.link_type))
@@ -153,7 +154,7 @@ impl SecurityEngine {
         self.check_os_fingerprint(pkt);
         self.check_vuln(pkt);
         self.check_ftp_control(pkt);
-        self.check_brute_force(pkt, split_http_401);
+        self.check_brute_force(pkt, http_auth);
         self.check_http(pkt);
         self.check_tls(pkt, tls);
         self.check_dns_tunnel(pkt, &dns);
@@ -161,15 +162,15 @@ impl SecurityEngine {
 
     pub fn inspect(&mut self, pkt: &Packet) -> DetectionBatch {
         self.inspect_with_context(pkt, industrial_policy::ModbusObservation::Unanchored, None,
-            crate::analysis::stream::DnsTcpObservation::Unanchored, None, None)
+            crate::analysis::stream::DnsTcpObservation::Unanchored, HttpAuthObservation::Packet, None)
     }
 
     pub(crate) fn inspect_with_context(
         &mut self, pkt: &Packet, modbus: industrial_policy::ModbusObservation, tls: Option<(u16, u16)>,
-        dns: crate::analysis::stream::DnsTcpObservation, split_http_401: Option<(u32, Vec<u64>)>,
+        dns: crate::analysis::stream::DnsTcpObservation, http_auth: HttpAuthObservation,
         archive_rules: Option<&[String]>,
     ) -> DetectionBatch {
-        self.update_with_context(pkt, modbus, tls, dns, split_http_401, archive_rules);
+        self.update_with_context(pkt, modbus, tls, dns, http_auth, archive_rules);
         std::mem::take(&mut self.findings)
     }
 
