@@ -5,6 +5,7 @@ list_saved() {
 result=$(list_saved "$PACKRAT_TEST_LOG")
 jq -e '.record_type == "saved_capture_index" and .status == "saved"
     and .sampled_alerts == 6 and .sampled_unscoped_alerts == 2
+    and .sampled_unscoped_open_high_or_critical == 1
     and .alert_sample_limit == 512 and .alert_log_integrity.stopped_at_limit == false
     and (.captures | map(.session_id)) == ["1700000000-123","1700000000-432"]
     and (.captures | map(.sampled_alerts)) == [1,3]

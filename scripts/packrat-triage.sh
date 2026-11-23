@@ -11,7 +11,7 @@ usage() {
         '--saved reviews an explicit saved capture without consulting live health.' \
         '--saved reports saved_scope_not_observed when the supplied logs contain no matching alert records.' \
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
-        '--list-saved groups the latest 512 distinct saved alerts by session and capture; counts cover only that sample.' \
+        '--list-saved counts the latest 512 distinct alerts by capture and reports unresolved unscoped high/critical alerts separately.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'review_queue lists up to five unresolved CRITICAL or HIGH alerts (New, Reviewing, or Confirmed), even outside the recent list.' \
         'priority_sample_at_limit means older alerts may not have been reviewed.' \
@@ -189,14 +189,13 @@ report() {
              alert_log_integrity:.[3], socket_context_status:$socket}
     '
 }
-
 report_saved_index() {
     jq -c --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" "$unresolved_jq"'
         def scoped:
             (.session_id | type == "string" and test("\\A[A-Za-z0-9_-]{1,128}\\z"))
             and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
-        def seen:
-            numbers | select(isfinite and . > 0);
+        def seen: numbers | select(isfinite and . > 0);
+        def priority: .severity == "HIGH" or .severity == "CRITICAL";
         .integrity as $integrity
         | (.alerts | map(select(scoped))) as $scoped
         | {
@@ -206,9 +205,10 @@ report_saved_index() {
             previous_logs:$previous, alert_sample_limit:$limit,
             sampled_alerts:(.alerts | length),
             sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
+            sampled_unscoped_open_high_or_critical:([.alerts[] | select((scoped | not) and priority and unresolved)] | length),
             alert_log_integrity:$integrity,
             captures:($scoped | group_by([.session_id, .capture_id]) | map(
-              map(select(.severity == "HIGH" or .severity == "CRITICAL")) as $priority
+              map(select(priority)) as $priority
               | ($priority | map(select(unresolved))) as $open | {
                 session_id:.[0].session_id, capture_id:.[0].capture_id, sampled_alerts:length,
                 sampled_high_or_critical:($priority | length), sampled_open_high_or_critical:($open | length),
