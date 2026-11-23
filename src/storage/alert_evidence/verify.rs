@@ -67,10 +67,11 @@ pub fn verify_archived_alert_evidence(directory: &Path, archive: &Path, logs: Op
 }
 
 fn verify(directory: &Path, logs: Option<AlertLogs<'_>>, archive: Option<&Path>) -> Result<VerifiedEvidence> {
-    let (file, _) = open_regular(&directory.join(MANIFEST), MAX_MANIFEST_BYTES)?;
+    let (file, length) = open_regular(&directory.join(MANIFEST), MAX_MANIFEST_BYTES)?;
     let mut bytes = Vec::new();
-    file.take(MAX_MANIFEST_BYTES + 1).read_to_end(&mut bytes)?;
+    file.take(length + 1).read_to_end(&mut bytes)?;
     ensure!(bytes.len() as u64 <= MAX_MANIFEST_BYTES, "Evidence manifest exceeds size limit");
+    ensure!(bytes.len() as u64 == length, "Evidence manifest changed while it was read");
     let manifest: Manifest = serde_json::from_slice(&bytes).context("Decode evidence manifest")?;
     ensure!(manifest.schema_version == 1 && manifest.record_type == "packrat_alert_evidence",
         "Unsupported evidence manifest");
@@ -177,18 +178,34 @@ fn strict_order(frames: &[u64]) -> bool {
 }
 
 fn open_regular(path: &Path, max_bytes: u64) -> Result<(File, u64)> {
-    let metadata = std::fs::symlink_metadata(path).with_context(|| format!("Read {}", path.display()))?;
-    ensure!(metadata.is_file(), "Evidence input is not a regular file: {}", path.display());
-    let file = File::open(path).with_context(|| format!("Open {}", path.display()))?;
+    let expected = std::fs::symlink_metadata(path).with_context(|| format!("Read {}", path.display()))?;
+    ensure!(expected.is_file() && expected.len() <= max_bytes,
+        "Evidence input exceeds size or file type limits: {}", path.display());
+    let mut options = File::options();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // The directory entry can change after the metadata lookup.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path).with_context(|| format!("Open {}", path.display()))?;
     let metadata = file.metadata()?;
     ensure!(metadata.is_file() && metadata.len() <= max_bytes,
         "Evidence input exceeds size or file type limits: {}", path.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        ensure!((expected.dev(), expected.ino()) == (metadata.dev(), metadata.ino()),
+            "Evidence input was replaced while opening: {}", path.display());
+    }
+    ensure!(expected.len() == metadata.len(), "Evidence input changed while opening: {}", path.display());
     Ok((file, metadata.len()))
 }
 
 fn verify_capture(path: &Path, expected_hash: &str, expected_frames: usize) -> Result<()> {
     let (file, length) = open_regular(path, MAX_CAPTURE_BYTES)?;
-    let mut reader = HashedRead { input: file.take(MAX_CAPTURE_BYTES + 1), hash: Sha256::new(), bytes: 0 };
+    let mut reader = HashedRead { input: file.take(length + 1), hash: Sha256::new(), bytes: 0 };
     let count = crate::capture::pcapng::stream(&mut reader, |packet| {
         if packet.no > expected_frames as u64 {
             return Err("Evidence capture contains more packets than its frame mapping".into());
@@ -207,6 +224,10 @@ struct HashedRead<R> {
     hash: Sha256,
     bytes: u64,
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/storage_evidence_verification_files.rs"]
+mod tests;
 
 impl<R: Read> Read for HashedRead<R> {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
