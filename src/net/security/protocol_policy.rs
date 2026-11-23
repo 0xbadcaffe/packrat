@@ -236,7 +236,8 @@ impl SecurityEngine {
         });
     }
 
-    pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet, dns: &crate::analysis::stream::DnsTcpObservation) {
+    pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet, dns: &crate::analysis::stream::DnsTcpObservation, archive_rules: Option<&[String]>) {
+        let mut retained = std::collections::HashSet::new();
         for (id, finding) in self.dns_transactions.observe_stream(pkt, dns) {
             let (signature, severity) = match finding.kind {
                 DnsFindingKind::InvalidQuestionCount => ("DNS invalid question count", Severity::Low),
@@ -264,6 +265,22 @@ impl SecurityEngine {
                     ("DNS answer set changed at the same resolver", Severity::Medium)
                 }
             };
+            if let Some(rules) = archive_rules
+                && (matches!(severity, Severity::Critical) || rules.iter().any(|rule| {
+                    matches!((finding.kind, rule.as_str()),
+                        (DnsFindingKind::ChangedAnswerSet, "dns.changed_answers")
+                        | (DnsFindingKind::ChangedReply, "dns.changed_wire_reply"))
+                }))
+            {
+                for &frame in &finding.related_packets {
+                    if retained.len() == dns_evidence::MAX_DNS_EVIDENCE_PER_PACKET { break; }
+                    if let Some(packet) = self.dns_packet_evidence.supporting_packet(pkt, frame)
+                        && retained.insert(frame)
+                    {
+                        self.findings.retained_evidence.push(packet.clone());
+                    }
+                }
+            }
             let correlation_key = crate::analysis::dns_transactions::alert_correlation_key(pkt, &finding, id);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
@@ -276,6 +293,7 @@ impl SecurityEngine {
                 correlation_key: Some(correlation_key),
             });
         }
+        if archive_rules.is_some() { self.dns_packet_evidence.remember(pkt); }
     }
 }
 

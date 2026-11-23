@@ -47,6 +47,7 @@ impl SecurityEngine {
             ipv6_reassembled: 0,
             http_headers: HashMap::new(),
             dns_transactions: DnsTransactionTracker::default(),
+            dns_packet_evidence: Default::default(),
             cred_hit_count: 0,
         }
     }
@@ -84,6 +85,7 @@ impl SecurityEngine {
         self.ipv6_reassembled = 0;
         self.http_headers.clear();
         self.dns_transactions.clear();
+        self.dns_packet_evidence = Default::default();
         self.cred_hit_count = 0;
     }
 
@@ -145,7 +147,7 @@ impl SecurityEngine {
         self.check_ipv6_fragment_reassembly(pkt);
         self.check_http_request_smuggling(pkt);
         self.check_industrial_policy(pkt, modbus);
-        self.check_dns_transaction_integrity(pkt, &dns);
+        self.check_dns_transaction_integrity(pkt, &dns, archive_rules);
         self.check_ids(pkt);
         self.check_arp(pkt);
         self.check_os_fingerprint(pkt);

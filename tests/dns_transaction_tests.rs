@@ -18,6 +18,9 @@ mod nxdomain_evidence_tests;
 mod wire_bounds_tests;
 #[path = "dns_transaction/repeated_answer_tests.rs"]
 mod repeated_answer_tests;
+#[cfg(feature = "terminal-ui")]
+#[path = "dns_transaction/archive_evidence_tests.rs"]
+mod archive_evidence_tests;
 fn dns_packet(
     no: u64,
     response: bool,
