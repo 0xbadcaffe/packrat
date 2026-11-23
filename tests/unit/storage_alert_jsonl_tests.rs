@@ -63,12 +63,34 @@ fn identical_alerts_from_a_new_session_are_kept() {
         .unwrap()
         .append_alerts(&[alert(1, 1)])
         .unwrap();
-    AlertJsonlWriter::open(path.clone(), "session-b")
+    AlertJsonlWriter::open_session(path.clone(), "session-b", LogSession::Fresh)
         .unwrap()
         .append_alerts(&[alert(1, 1)])
         .unwrap();
 
     assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 2);
+}
+
+#[test]
+fn fresh_session_preserves_a_torn_tail_and_resuming_still_deduplicates() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let mut old_record = encode_alert_record("old-session", &alert(1, 1)).unwrap();
+    old_record.extend_from_slice(b"\n{\"alert\":");
+    write_private_log(&path, &old_record);
+
+    let mut writer = AlertJsonlWriter::open_session(path.clone(), "new-session", LogSession::Fresh).unwrap();
+    assert!(writer.latest_snapshots.is_empty());
+    assert!(writer.needs_separator);
+    writer.append_alerts(&[alert(1, 1)]).unwrap();
+    drop(writer);
+
+    let mut writer = AlertJsonlWriter::open(path.clone(), "new-session").unwrap();
+    writer.append_alerts(&[alert(1, 1), alert(2, 2)]).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(bytes.starts_with(&[old_record.as_slice(), b"\n"].concat()));
+    assert_eq!(read_log(&path).iter().map(|row| (row.session_id.as_str(), row.alert.hit_count)).collect::<Vec<_>>(),
+        [("old-session", 1), ("new-session", 1), ("new-session", 2)]);
 }
 
 #[test]

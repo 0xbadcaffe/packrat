@@ -14,6 +14,11 @@ const MAX_SAVED_ALERTS: usize = 4096;
 type SnapshotKey = (u64, Option<[u8; 32]>);
 type SnapshotDigest = [u8; 32];
 
+enum LogSession {
+    Fresh,
+    Resume,
+}
+
 pub struct AlertJsonlWriter {
     path: PathBuf,
     session_id: String,
@@ -105,18 +110,30 @@ pub fn new_session_id() -> String {
 
 impl AlertJsonlWriter {
     pub fn open_default() -> Result<Self, String> {
-        Self::open_default_for_session(&new_session_id())
+        Self::open_default_for_fresh_session(&new_session_id())
     }
 
     pub fn open_default_for_session(session_id: &str) -> Result<Self, String> {
-        let path = dirs_next::data_dir()
+        Self::open(Self::default_path()?, session_id)
+    }
+
+    /// Only use this immediately after creating a new session ID, never when retrying saving.
+    pub(crate) fn open_default_for_fresh_session(session_id: &str) -> Result<Self, String> {
+        Self::open_session(Self::default_path()?, session_id, LogSession::Fresh)
+    }
+
+    fn default_path() -> Result<PathBuf, String> {
+        Ok(dirs_next::data_dir()
             .ok_or("Packrat data directory is unavailable")?
             .join("packrat")
-            .join("alerts.jsonl");
-        Self::open(path, session_id)
+            .join("alerts.jsonl"))
     }
 
     pub(crate) fn open(path: PathBuf, session_id: &str) -> Result<Self, String> {
+        Self::open_session(path, session_id, LogSession::Resume)
+    }
+
+    fn open_session(path: PathBuf, session_id: &str, session: LogSession) -> Result<Self, String> {
         let parent = path
             .parent()
             .ok_or("Alert JSONL path has no parent directory")?;
@@ -125,7 +142,7 @@ impl AlertJsonlWriter {
 
         let mut file = open_alert_file(&path)?;
         let mut latest_snapshots = BTreeMap::new();
-        {
+        if matches!(session, LogSession::Resume) {
             let mut reader = BufReader::new(&mut file);
             let mut line = Vec::new();
             while next_alert_line(&mut reader, &mut line)

@@ -20,7 +20,7 @@ impl App {
             _ => AutomationMode::Off,
         };
         let alert_save_error = if preferences.save_alerts {
-            match crate::storage::alert_jsonl::AlertJsonlWriter::open_default_for_session(
+            match crate::storage::alert_jsonl::AlertJsonlWriter::open_default_for_fresh_session(
                 &alert_session_id,
             ) {
                 Ok(writer) => {
