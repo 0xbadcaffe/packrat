@@ -160,19 +160,24 @@ pub(super) fn run(
             }
         };
         let pending_alerts = core.alert_center.drain_pending_exports();
-        let write_result = core
-            .alert_jsonl_writer
-            .as_mut()
-            .map(|writer| writer.append_alerts(&pending_alerts));
-        if let Some(Err(error)) = write_result {
-            core.alert_save_error = Some(error);
-            core.alert_jsonl_writer = None;
-        }
+        let writer = if pending_alerts.is_empty() { None } else { core.alert_jsonl_writer.clone() };
         if dirty && sequence % 32 == 0 {
             publish(&core, monitor, generation, sequence, analyzed, skipped);
             dirty = false;
         }
         drop(core);
+        // Keep append ordering on this worker, but let readers inspect the core during file I/O.
+        if let Some(writer) = writer {
+            let result = writer.lock().map_err(|_| "Alert writer state poisoned".to_owned())
+                .and_then(|mut writer| writer.append_alerts(&pending_alerts));
+            if let Err(error) = result {
+                let mut core = shared.0.lock().map_err(|_| "Analysis state poisoned")?;
+                if core.alert_jsonl_writer.as_ref().is_some_and(|active| Arc::ptr_eq(active, &writer)) {
+                    core.alert_save_error = Some(error);
+                    core.alert_jsonl_writer = None;
+                }
+            }
+        }
         if !send(&output, event, &cancel) {
             break;
         }
@@ -182,6 +187,10 @@ pub(super) fn run(
     publish(&core, monitor, generation, sequence, analyzed, skipped);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/worker_alert_persistence_tests.rs"]
+mod tests;
 
 fn publish(
     core: &AnalysisCore,

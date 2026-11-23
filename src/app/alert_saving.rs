@@ -73,7 +73,7 @@ impl App {
                 Ok(writer)
             }) {
                 Ok(writer) => {
-                    core.alert_jsonl_writer = Some(writer);
+                    core.alert_jsonl_writer = Some(std::sync::Arc::new(std::sync::Mutex::new(writer)));
                     core.alert_save_error = None;
                 }
                 Err(error) => core.alert_save_error = Some(error),

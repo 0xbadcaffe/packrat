@@ -24,7 +24,7 @@ impl App {
                 &alert_session_id,
             ) {
                 Ok(writer) => {
-                    core.alert_jsonl_writer = Some(writer);
+                    core.alert_jsonl_writer = Some(std::sync::Arc::new(std::sync::Mutex::new(writer)));
                     None
                 }
                 Err(error) => {

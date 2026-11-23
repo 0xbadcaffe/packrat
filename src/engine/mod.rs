@@ -63,7 +63,7 @@ pub struct AnalysisCore {
     pub flow_tracker: FlowTracker,
     pub security: SecurityEngine,
     pub alert_center: AlertCenter,
-    pub(crate) alert_jsonl_writer: Option<crate::storage::alert_jsonl::AlertJsonlWriter>,
+    pub(crate) alert_jsonl_writer: Option<std::sync::Arc<std::sync::Mutex<crate::storage::alert_jsonl::AlertJsonlWriter>>>,
     pub(crate) alert_save_error: Option<String>,
     pub credentials: Vec<CredentialHit>,
     pub hosts: HostInventory,
