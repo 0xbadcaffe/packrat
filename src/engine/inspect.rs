@@ -43,6 +43,9 @@ impl AnalysisCore {
         let mut retained_evidence = findings.retained_evidence;
         for finding in &findings.ids {
             let alert = &finding.alert;
+            if alert.pkt_no == pkt.no {
+                self.flow_tracker.mark_ids_trigger(pkt, alert.signature);
+            }
             self.operator_graph.on_ids_alert(
                 alert.signature,
                 &alert.severity.to_string(),
@@ -61,7 +64,7 @@ impl AnalysisCore {
                 | "DNS answer set changed at the same resolver" | "DNS reply correlation ambiguous"
                 | "DNS reply without observed query" | "DNS invalid question count" | "DNS NXDOMAIN burst"
                 | "Oversized DNS TXT traffic" | "Direct external DNS resolver use" | "JNDI label in DNS query"
-                | "Horizontal host scan" | "Vertical port scan"
+                | "Horizontal host scan" | "Vertical port scan" | "SYN arrival spike"
                 | "Large asymmetric outbound transfer" | "High-entropy outbound transfer"
             ) {
                 AlertFlow::from_packet(pkt)

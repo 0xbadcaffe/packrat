@@ -1,5 +1,5 @@
 //! TCP/UDP flow tracker — RITA-style beacon scoring, JA3/HASSH, directionality, credentials.
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use crate::net::packet::Packet;
 
 const ENCRYPTED_ENTROPY_THRESHOLD: f64 = 7.2;
@@ -44,7 +44,7 @@ pub struct FlowFlags {
     pub strobe:      bool,   // same pair > 100 pkts/s
     #[allow(dead_code)]
     pub dns_tunnel:  bool,
-    pub tcp_anomaly: bool,   // XMAS / NULL / SYN+FIN
+    pub tcp_anomaly: bool,
 }
 
 pub struct Flow {
@@ -74,16 +74,12 @@ pub enum FlowSort { Bytes, Packets, Time, BeaconScore }
 
 pub struct FlowTracker {
     pub flows:    HashMap<FlowKey, Flow>,
-    scan_seen:    HashMap<String, HashSet<(String, u16)>>,
-    syn_seen:     HashMap<String, VecDeque<f64>>,  // for SYN-flood detection
 }
 
 impl FlowTracker {
     pub fn new() -> Self {
         Self {
             flows: HashMap::new(),
-            scan_seen: HashMap::new(),
-            syn_seen: HashMap::new(),
         }
     }
 
@@ -177,32 +173,18 @@ impl FlowTracker {
                 flow.hassh = Some(hassh);
             }
         }
+    }
 
-        // Scan detection
-        let dst_entry = self.scan_seen.entry(pkt.src.clone()).or_default();
-        dst_entry.insert((pkt.dst.clone(), pkt.dst_port.unwrap_or(0)));
-        if dst_entry.len() >= 5 {
-            for f in self.flows.values_mut() {
-                if f.key.ep1.0 == pkt.src || f.key.ep2.0 == pkt.src {
-                    f.flags.scan = true;
-                }
-            }
-        }
-
-        // SYN flood: >50 SYNs from same src in 1s window
-        if pkt.protocol == "TCP" {
-            // Check for SYN flag (byte 13 of TCP header, bit 1)
-            if pkt.bytes.len() >= 34 && pkt.bytes[33] & 0x02 != 0 && pkt.bytes[33] & 0xFC == 0 {
-                let syn_w = self.syn_seen.entry(pkt.src.clone()).or_default();
-                syn_w.push_back(pkt.timestamp);
-                let cutoff2 = pkt.timestamp - 1.0;
-                while syn_w.front().map(|&t| t < cutoff2).unwrap_or(false) { syn_w.pop_front(); }
-                if syn_w.len() > 50 {
-                    if let Some(f) = self.flows.get_mut(&key) {
-                        f.flags.tcp_anomaly = true;
-                    }
-                }
-            }
+    pub(crate) fn mark_ids_trigger(&mut self, pkt: &Packet, signature: &str) {
+        let (scan, tcp_anomaly) = match signature {
+            "Horizontal host scan" | "Vertical port scan" => (true, false),
+            "SYN arrival spike" | "Malformed TCP header" | "Illegal TCP flag combination"
+            | "TCP stealth scan probe" | "TCP payload after reset" | "Conflicting TCP retransmission" => (false, true),
+            _ => return,
+        };
+        if let Some(flow) = self.flows.get_mut(&FlowKey::from_packet(pkt)) {
+            flow.flags.scan |= scan;
+            flow.flags.tcp_anomaly |= tcp_anomaly;
         }
     }
 
@@ -219,8 +201,6 @@ impl FlowTracker {
 
     pub fn clear(&mut self) {
         self.flows.clear();
-        self.scan_seen.clear();
-        self.syn_seen.clear();
     }
 }
 

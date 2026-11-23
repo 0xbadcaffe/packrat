@@ -337,8 +337,8 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                     lines.push(Line::from(vec![
                         Span::styled("  ⚑ SCAN   ", Style::default().fg(C_RED()).add_modifier(Modifier::BOLD)),
                         Span::styled(
-                            format!("{}  → ≥5 distinct destinations",
-                                flow.key.ep1.0),
+                            format!("{}:{} ↔ {}:{}  scan alert trigger",
+                                flow.key.ep1.0, flow.key.ep1.1, flow.key.ep2.0, flow.key.ep2.1),
                             Style::default().fg(C_FG2()),
                         ),
                     ]));
