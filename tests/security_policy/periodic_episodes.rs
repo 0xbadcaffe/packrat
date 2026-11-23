@@ -3,6 +3,33 @@ use packrat_tui::{analysis::alert_center::AlertDisposition, engine::AnalysisCore
 use super::periodic_datagram;
 
 #[test]
+fn reverse_traffic_does_not_hide_a_new_periodic_episode() {
+    let mut core = AnalysisCore::default();
+    let forward = |frame, time| periodic_datagram(frame, time, 120, 50000, false);
+    for index in 0..7 {
+        core.analyze(&forward(index + 1, index as f64 * 10.0));
+    }
+    let first = &core.alert_center.items[0];
+    let (id, scope) = (first.id, first.capture_id.clone());
+    assert!(core.alert_center.set_disposition(id, scope.as_deref(), AlertDisposition::Benign));
+
+    for (frame, time) in [(8, 1_000.0), (9, 2_750.0), (10, 3_650.0)] {
+        core.analyze(&periodic_datagram(frame, time, 100, 50000, true));
+    }
+    core.analyze(&forward(11, 3_670.0));
+    core.analyze(&forward(12, 3_640.0)); // A late frame from before the new episode.
+    for index in 0..6 {
+        core.analyze(&forward(index + 13, 3_680.0 + index as f64 * 10.0));
+    }
+    let alerts = &core.alert_center.items;
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0].disposition, AlertDisposition::Benign);
+    assert_eq!(alerts[0].packet_refs, [1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(alerts[1].disposition, AlertDisposition::New);
+    assert_eq!(alerts[1].packet_refs, [11, 13, 14, 15, 16, 17, 18]);
+}
+
+#[test]
 fn a_periodic_burst_after_idle_expiry_keeps_its_own_evidence_and_review_state() {
     let mut core = AnalysisCore::default();
     let make = |frame, time| periodic_datagram(frame, time, 120, 50000, false);

@@ -1,6 +1,35 @@
 use super::*;
 use super::fragments::TcpPayloadObservation;
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct BehaviorFlowKey {
+    first: (String, u16),
+    second: (String, u16),
+    transport: &'static str,
+    scope: ServiceScope,
+}
+
+#[derive(Debug)]
+pub(super) struct BeaconSample {
+    pub(super) timestamp: f64,
+    pub(super) size: u32,
+    packet_no: u64,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct BeaconState {
+    directions: [Vec<BeaconSample>; 2],
+    pub(super) last_seen: f64,
+    episode: Option<BeaconEpisode>,
+    rearmed_at: Option<f64>,
+}
+
+#[derive(Debug)]
+struct BeaconEpisode {
+    direction: usize,
+    last_seen: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum VolumeEvidence {
     OneWay,
@@ -134,7 +163,7 @@ impl SecurityEngine {
             return;
         }
         self.beacon_flows.retain(|_, state| {
-            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
+            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= BEACON_WINDOW_SECS
         });
         self.exfil_flows.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
@@ -274,14 +303,26 @@ impl SecurityEngine {
         }
         let state = self.beacon_flows.entry(key).or_default();
         state.last_seen = state.last_seen.max(pkt.timestamp);
-        if state.alerted {
+        if state.rearmed_at.is_some_and(|at| pkt.timestamp < at) {
             return;
+        }
+        if let Some(episode) = &mut state.episode {
+            if pkt.timestamp - episode.last_seen > BEACON_WINDOW_SECS {
+                state.episode = None;
+                state.directions.iter_mut().for_each(Vec::clear);
+                state.rearmed_at = Some(pkt.timestamp);
+            } else {
+                if direction == episode.direction {
+                    episode.last_seen = episode.last_seen.max(pkt.timestamp);
+                }
+                return;
+            }
         }
         let samples = &mut state.directions[direction];
         if samples.last().is_some_and(|sample| pkt.timestamp <= sample.timestamp) {
             return;
         }
-        samples.retain(|sample| pkt.timestamp - sample.timestamp <= 3600.0);
+        samples.retain(|sample| pkt.timestamp - sample.timestamp <= BEACON_WINDOW_SECS);
         if samples.len() == 32 {
             samples.remove(0);
         }
@@ -301,7 +342,7 @@ impl SecurityEngine {
         } else {
             return;
         };
-        state.alerted = true;
+        state.episode = Some(BeaconEpisode { direction, last_seen: pkt.timestamp });
         let related_packets = evidence[..evidence.len() - 1]
             .iter()
             .map(|sample| sample.packet_no)

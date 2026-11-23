@@ -211,28 +211,6 @@ pub(super) struct TcpSignal {
     pub(super) complete: bool,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct BehaviorFlowKey {
-    pub(super) first: (String, u16),
-    pub(super) second: (String, u16),
-    pub(super) transport: &'static str,
-    pub(super) scope: ServiceScope,
-}
-
-#[derive(Debug)]
-pub(super) struct BeaconSample {
-    pub(super) timestamp: f64,
-    pub(super) size: u32,
-    pub(super) packet_no: u64,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct BeaconState {
-    pub(super) directions: [Vec<BeaconSample>; 2],
-    pub(super) last_seen: f64,
-    pub(super) alerted: bool,
-}
-
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(super) enum TransferTransport {
     Tcp,

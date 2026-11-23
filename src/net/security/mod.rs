@@ -47,6 +47,7 @@ const MAX_SCAN_STATES: usize = 512;
 const RA_FLOOD_THRESHOLD: usize = 20;
 const MAX_CONTROL_PLANE_IDENTITIES: usize = 1024;
 const BEACON_MIN_SAMPLES: usize = 7;
+const BEACON_WINDOW_SECS: f64 = 3600.0;
 const EXFIL_VOLUME_THRESHOLD: u64 = 1_000_000;
 const EXFIL_ENTROPY_THRESHOLD: u64 = 256_000;
 const LATERAL_TARGET_THRESHOLD: usize = 8;
@@ -124,6 +125,7 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
 
 mod admin_fanout;
 mod behavior;
+use behavior::{BeaconSample, BeaconState, BehaviorFlowKey};
 mod control_plane;
 mod dns;
 mod engine;
