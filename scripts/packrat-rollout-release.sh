@@ -15,7 +15,7 @@ identify_capture_build() {
     installed_hash=$(sha256sum -- "$installed") || return 1
     running=${running%% *} installed_hash=${installed_hash%% *}
     [[ $running =~ ^[0-9a-f]{64}$ && $running == "$installed_hash" ]] || return 1
-    progress=$(capture_progress_sample "$main_session" "$health_addr" true) || return 1
+    progress=$(capture_progress_sample "$main_session" "$health_addr" false) || return 1
     read -r packets scope <<< "$progress"
     [[ $packets =~ ^(0|[1-9][0-9]{0,15})$ ]] || return 1
     jq -e --arg scope "$scope" '($scope == (.capture_run_id + ":" + .capture_id))' <<< "$before" >/dev/null || return 1
@@ -52,19 +52,21 @@ triage_watcher_ready() {
         | select((($code == 0 and .status == "current") or ($code == 1 and $drops > 0
             and .status == "triage_unhealthy" and .historical_drop_total == $drops))
             and .capture_id == $scope.capture_id and .session_id == $scope.alert_session_id
-            and ($gap_free == 0 or .packet_counter_gap != true)
+            and ($gap_free == 0 or .packet_counter_gap == false)
             and ($archive == "" or (.poll_started_at | type == "number" and . > $after))
             and ($require_journal == 0 or (.journal_status == "current" and .journal_pending_events == 0)))
-        | if .packets == null then "legacy" else .packets | select(counter) end
+        | if .packets == null and $gap_free == 0 then "legacy" else .packets | select(counter) end
     ' <<< "$check") || return 1
     [[ $packets != legacy ]] || return 0
     # The watcher sample can lag, but must not be ahead of live telemetry in the same scope.
     curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$health_addr/health" |
-        jq -se --argjson scope "$1" --argjson packets "$packets" '
+        jq -se --argjson scope "$1" --argjson packets "$packets" --argjson gap_free "$gap_free" '
         length == 1 and (.[0] | .service == "packrat" and .status == "ok"
             and .telemetry_fresh == true and .capture_active == true
             and .capture_id == $scope.capture_id and .capture_run_id == $scope.capture_run_id
             and .alert_session_id == $scope.alert_session_id
+            and ($gap_free == 0 or (.pcap_buffer_drops == 0 and .capture_queue_full_packets == 0
+                and .capture_truncated_frames == 0))
             and (.packets_total | type == "number" and floor == . and . <= 9007199254740991 and . >= $packets))
     ' >/dev/null
 }

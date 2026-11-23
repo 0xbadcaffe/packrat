@@ -13,7 +13,7 @@
         if [[ -f $scratch/raced ]]; then jq -c '.capture_id="restarted"' <<<"$stamp"; else printf '%s\n' "$stamp"; fi
     }
     capture_progress_sample() {
-        [[ $* == "$main_session $health_addr true" ]] || return 1
+        [[ $* == "$main_session $health_addr false" ]] || return 1
         printf '%s\n' "100 ${capture_sample_scope:-run-a:capture-a}"
     }
     alert_watcher_ready() { [[ $1 == "$stamp" && ${watcher_ok:-yes} == yes ]]; }

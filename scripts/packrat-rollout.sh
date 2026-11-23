@@ -79,7 +79,8 @@ capture_health_sample() {
             and (.alert_save_failed | not)
             and .capture_link_decodable != false
             and (.pcap_buffer_drops | type == "number" and . >= 0 and . <= 4294967295 and floor == .)
-            and (if $fresh then .pcap_buffer_drops == 0 and scoped
+            and (if $fresh then .pcap_buffer_drops == 0 and .capture_queue_full_packets == 0
+                 and .capture_truncated_frames == 0 and scoped
                  else .capture_interface == null or .capture_interface == $interface end)
             and ($archive == "" or (.archive_enabled == true and .archive_paused == false
                 and (if $evidence_only then .archive_alert_evidence_only == true
@@ -167,8 +168,8 @@ alert_watcher_ready() {
               and $sample.alert_watcher_open_log_required == true
               and $sample.alert_log_identity == $identity
               and $sample.alert_watcher_log == $log and $sample.alert_log_storage == "private")
-            | if $allow == 0 or (.issues == [] and .pcap_buffer_drops == 0) then 0
-              elif .issues == ["pcap_buffer_drops"] and .pcap_buffer_drops_delta == 0
+            | if .issues == [] and .pcap_buffer_drops == 0 then 0
+              elif $allow == 1 and .issues == ["pcap_buffer_drops"] and .pcap_buffer_drops_delta == 0
               then .pcap_buffer_drops | select(type == "number" and . > 0 and . <= 4294967295 and floor == .)
               else empty end
         ' 2>/dev/null); then
@@ -180,6 +181,7 @@ alert_watcher_ready() {
             .alert_session_id == $scope.alert_session_id and .pcap_buffer_drops == $drops and
             .status == "ok" and .telemetry_fresh == true and .capture_active == true
         ' >/dev/null; then return 1; fi
+    if [[ ${3:-0} == 1 && -z $triage_state ]] && ! capture_health_sample "$health_addr" true >/dev/null; then return 1; fi
     latest_identity=$(primary_alert_log_identity) && [[ $latest_identity == "$identity" ]] &&
         triage_watcher_ready "$capture_stamp" "$drops" "${3:-0}"
 }
@@ -370,6 +372,11 @@ rollout() {
     fi
     if [[ $stage_size != 0 ]]; then
         error "Staging recorded alert data; review the staging alert log before retrying. Current capture not stopped."
+        retire_bridge || error "Inspect $bridge_session before retrying"
+        return 1
+    fi
+    if ! capture_health_sample "$stage_health_addr" true >/dev/null; then
+        error "Staging capture no longer has loss-free telemetry; current capture not stopped"
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi
