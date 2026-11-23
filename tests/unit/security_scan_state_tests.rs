@@ -57,8 +57,52 @@ fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
     assert!(finding.alert.detail.contains("matched replies at alert time: SYN-ACK=1, RST-ACK=1"));
     assert!(finding.alert.detail.contains("matched final ACKs=1; missing ACKs do not prove failure"));
     assert_eq!(finding.related_packets, [2, 6, 14, 8, 9, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
+    assert!(engine.scan_sources.values().all(|state| state.pending_final_acks == 0));
     engine.update(&tcp_frame(25, 12, 0x12, 0, 40_000, 10));
     assert!(!engine.findings.ids.iter().any(|f| f.alert.signature == "Horizontal host scan"));
+}
+
+#[test]
+fn pending_scan_acks_are_removed_by_probe_replacement_expiration_and_eviction() {
+    for change in ["replace", "expire", "evict", "reset"] {
+        let mut engine = SecurityEngine::default();
+        let mut probe = parse_ethernet(&[], 1, 1.0);
+        probe.src = "192.0.2.1".into();
+        probe.dst = "198.51.100.1".into();
+        let key = scan_key(&probe, "TCP");
+        engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)));
+        let mut reply = probe.clone();
+        std::mem::swap(&mut reply.src, &mut reply.dst);
+        reply.no = 2;
+        let signal = TcpSignal {
+            flags: 0x12, sequence: 200, acknowledgement: 101,
+            source_port: 443, destination_port: 40_000, complete: true,
+        };
+        engine.record_scan_reply(&reply, signal, false);
+        engine.record_scan_reply(&reply, signal, false);
+        assert_eq!(engine.scan_sources[&key].pending_final_acks, 1);
+
+        probe.no = 3;
+        match change {
+            "reset" => {
+                reply.no = 3;
+                engine.record_scan_reply(&reply, signal, true);
+            }
+            "expire" => {
+                probe.timestamp += SCAN_WINDOW_SECS + 1.0;
+                engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 101)));
+            }
+            "evict" => {
+                probe.timestamp = 2.0;
+                for index in 0..MAX_SCAN_PROBES_PER_SOURCE {
+                    engine.record_scan_probe(&probe, 1_000 + index as u16, "TCP", Some((40_000, 101)));
+                    probe.no += 1;
+                }
+            }
+            _ => engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 101))),
+        }
+        assert_eq!(engine.scan_sources[&key].pending_final_acks, 0, "{change}");
+    }
 }
 
 #[test]

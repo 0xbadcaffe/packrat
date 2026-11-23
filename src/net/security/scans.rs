@@ -24,6 +24,18 @@ struct ScanSynAck {
     sequence: u32,
 }
 
+impl ScanTcpProbe {
+    fn awaits_final_ack(&self) -> bool {
+        self.syn_ack.is_some() && self.reset_ack.is_none() && self.final_ack.is_none()
+    }
+}
+
+impl ScanProbe {
+    fn awaits_final_ack(&self) -> bool {
+        self.tcp.as_ref().is_some_and(ScanTcpProbe::awaits_final_ack)
+    }
+}
+
 impl SecurityEngine {
     // ─── Scan and Flood Correlation ─────────────────────────────────────────
 
@@ -31,8 +43,11 @@ impl SecurityEngine {
         if !pkt.timestamp.is_finite() {
             return;
         }
+        let mut has_pending_final_ack = false;
         self.scan_sources.retain(|_, state| {
-            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= SCAN_WINDOW_SECS
+            let active = pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= SCAN_WINDOW_SECS;
+            has_pending_final_ack |= active && state.pending_final_acks != 0;
+            active
         });
         self.syn_flood_targets.retain(|_, state| {
             pkt.timestamp < state.last_seen
@@ -110,7 +125,7 @@ impl SecurityEngine {
                 }
             } else if control == (SYN | ACK) || control == (RST | ACK) {
                 self.record_scan_reply(pkt, signal, control == (RST | ACK));
-            } else if control == ACK {
+            } else if control == ACK && has_pending_final_ack {
                 self.record_scan_final_ack(pkt, signal);
             }
             self.record_admin_tcp(pkt, signal);
@@ -222,6 +237,7 @@ impl SecurityEngine {
         }) else { return };
         let Some(attempt) = &mut probe.tcp else { return };
         if attempt.source_port == tcp.destination_port && attempt.sequence.wrapping_add(1) == tcp.acknowledgement {
+            let was_pending = attempt.awaits_final_ack();
             if reset {
                 attempt.reset_ack.get_or_insert(pkt.no);
             } else {
@@ -229,23 +245,29 @@ impl SecurityEngine {
                     order: (pkt.timestamp, pkt.no), sequence: tcp.sequence,
                 });
             }
+            state.pending_final_acks += usize::from(attempt.awaits_final_ack());
+            state.pending_final_acks -= usize::from(was_pending);
         }
     }
 
     fn record_scan_final_ack(&mut self, pkt: &Packet, tcp: TcpSignal) {
         let Some(state) = self.scan_sources.get_mut(&scan_key(pkt, "TCP")) else { return };
+        if state.pending_final_acks == 0 {
+            return;
+        }
         let Some(probe) = state.probes.iter_mut().find(|probe| {
             probe.destination == pkt.dst && probe.port == tcp.destination_port
                 && pkt.timestamp - probe.timestamp <= SCAN_WINDOW_SECS
         }) else { return };
         let Some(attempt) = &mut probe.tcp else { return };
         let Some(reply) = &attempt.syn_ack else { return };
-        if attempt.source_port == tcp.source_port && attempt.reset_ack.is_none()
+        if attempt.source_port == tcp.source_port && attempt.awaits_final_ack()
             && (pkt.timestamp, pkt.no) > reply.order
             && tcp.sequence == attempt.sequence.wrapping_add(1)
             && tcp.acknowledgement == reply.sequence.wrapping_add(1)
         {
-            attempt.final_ack.get_or_insert(pkt.no);
+            attempt.final_ack = Some(pkt.no);
+            state.pending_final_acks -= 1;
         }
     }
 
@@ -339,7 +361,13 @@ impl SourceScanState {
             return false;
         }
         let previous_len = self.probes.len();
-        self.probes.retain(|probe| self.last_seen - probe.timestamp <= SCAN_WINDOW_SECS);
+        self.probes.retain(|probe| {
+            let keep = self.last_seen - probe.timestamp <= SCAN_WINDOW_SECS;
+            if !keep {
+                self.pending_final_acks -= usize::from(probe.awaits_final_ack());
+            }
+            keep
+        });
         if self.probes.len() < previous_len {
             // Rearm after most of the burst expires, not on every threshold crossing.
             let minimum = SCAN_UNIQUE_THRESHOLD.div_ceil(2);
@@ -360,6 +388,7 @@ impl SourceScanState {
                 return false;
             }
             if (probe.timestamp, probe.packet_no) < (pkt.timestamp, pkt.no) {
+                self.pending_final_acks -= usize::from(probe.awaits_final_ack());
                 probe.timestamp = pkt.timestamp;
                 probe.packet_no = pkt.no;
                 probe.tcp = tcp;
@@ -370,7 +399,8 @@ impl SourceScanState {
             let oldest = self.probes.iter().enumerate()
                 .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp))
                 .map(|(index, _)| index).unwrap_or(0);
-            self.probes.remove(oldest);
+            let removed = self.probes.remove(oldest);
+            self.pending_final_acks -= usize::from(removed.awaits_final_ack());
             prune_scan_latches(self, 1);
         }
         self.probes.push(ScanProbe {
