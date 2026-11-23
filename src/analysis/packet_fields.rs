@@ -62,6 +62,7 @@ struct TransportLayout {
     offset: usize,
     payload_offset: usize,
     end: usize,
+    fragmented: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
@@ -90,6 +91,9 @@ pub(crate) fn captured_transport_header(packet: &Packet) -> Option<CapturedTrans
         return None;
     }
     let transport = transport_layout(bytes, ethernet)?;
+    if transport.fragmented {
+        return None;
+    }
     let source = read_u16(bytes, transport.offset)?;
     let destination = read_u16(bytes, transport.offset + 2)?;
     let tcp_flags = (transport.protocol == 6).then(|| bytes[transport.offset + 13]);
@@ -299,6 +303,7 @@ fn add_ipv6_fields(bytes: &[u8], ip: usize, fields: &mut Vec<PacketField>) {
 
 fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
     let ip = eth.payload_offset;
+    let mut fragmented = false;
     let (protocol, offset, end) = match eth.ether_type {
         0x0800 => {
             if bytes.len() < ip + 20 || bytes[ip] >> 4 != 4 {
@@ -307,7 +312,9 @@ fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
             let ihl = ((bytes[ip] & 0x0f) as usize) * 4;
             let offset = ip + ihl;
             let end = ip.checked_add(read_u16(bytes, ip + 2)? as usize)?;
-            if ihl < 20 || end < offset || end > bytes.len() || read_u16(bytes, ip + 6)? & 0x1fff != 0 { return None; }
+            let fragment = read_u16(bytes, ip + 6)?;
+            if ihl < 20 || end < offset || end > bytes.len() || fragment & 0x1fff != 0 { return None; }
+            fragmented = fragment & 0x2000 != 0;
             (bytes[ip + 9], offset, end)
         }
         0x86dd => {
@@ -323,7 +330,9 @@ fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
                 let length = match protocol {
                     0 | 43 | 60 if header.len() >= 2 => (usize::from(header[1]) + 1) * 8,
                     44 if header.len() >= 8 => {
-                        if u16::from_be_bytes([header[2], header[3]]) & 0xfff8 != 0 { return None; }
+                        let fragment = u16::from_be_bytes([header[2], header[3]]);
+                        if fragment & 0xfff8 != 0 { return None; }
+                        fragmented |= fragment & 1 != 0;
                         8
                     }
                     _ => break,
@@ -345,11 +354,11 @@ fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
         17 if offset + 8 <= end => {
             let length = read_u16(bytes, offset + 4)? as usize;
             if length < 8 || offset + length > end { return None; }
-            return Some(TransportLayout { protocol, offset, payload_offset: offset + 8, end: offset + length });
+            return Some(TransportLayout { protocol, offset, payload_offset: offset + 8, end: offset + length, fragmented });
         }
         _ => return None,
     };
-    Some(TransportLayout { protocol, offset, payload_offset, end })
+    Some(TransportLayout { protocol, offset, payload_offset, end, fragmented })
 }
 
 fn add_tcp_fields(bytes: &[u8], tcp: usize, fields: &mut Vec<PacketField>) {

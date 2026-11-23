@@ -258,3 +258,71 @@ fn alert_flow_summary_distinguishes_full_vlan_stacks_and_bounds_depth() {
         assert_eq!(flow["reverse_evidence_frames"], u8::from(flow["vlan_stack"] == matching_stack));
     }
 }
+
+#[test]
+fn archive_does_not_assign_flow_identity_to_incomplete_ip_fragments() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive");
+    let log = root.path().join("alerts.jsonl");
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "HIGH", "Saved alert", "fixture");
+    let mut alert = center.items.remove(0);
+    alert.capture_id = Some("scope-a".into());
+    alert.packet_refs = (1..=4).collect();
+    alert.flow = Some(AlertFlow {
+        transport: AlertTransport::Tcp,
+        source: "10.0.0.1:40000".parse().unwrap(),
+        destination: "10.0.0.2:80".parse().unwrap(),
+    });
+    std::fs::write(&log,
+        json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
+    ).unwrap();
+
+    let mut v4 = packets::tcp(1, 100, 0x18, b"data");
+    v4.bytes[20..22].copy_from_slice(&0x2000_u16.to_be_bytes());
+    let make_v6 = |no, fragment_field: u16| {
+        let mut packet = packets::tcp(no, 100, 0x18, b"data");
+        let mut ip6_with_fragment = [0u8; 48];
+        ip6_with_fragment[0] = 0x60;
+        ip6_with_fragment[4..6].copy_from_slice(&32_u16.to_be_bytes());
+        ip6_with_fragment[6] = 44;
+        ip6_with_fragment[8..24].copy_from_slice(&"2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap().octets());
+        ip6_with_fragment[24..40].copy_from_slice(&"2001:db8::2".parse::<std::net::Ipv6Addr>().unwrap().octets());
+        ip6_with_fragment[40] = 6;
+        ip6_with_fragment[42..44].copy_from_slice(&fragment_field.to_be_bytes());
+        packet.bytes[12..14].copy_from_slice(&0x86dd_u16.to_be_bytes());
+        packet.bytes.splice(14..34, ip6_with_fragment);
+        packet
+    };
+    let mut frames = [v4, make_v6(2, 1), make_v6(3, 8), make_v6(4, 0)];
+    for packet in &mut frames {
+        let length = packet.bytes.len() as u32;
+        packet.capture = Some(CaptureMetadata {
+            timestamp: None, captured_length: length, wire_length: length, link_type: 1,
+            section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+        });
+    }
+    for packet in &frames[..2] {
+        assert!(packrat_tui::analysis::packet_fields::extract_fields(packet)
+            .iter().any(|field| field.path == "tcp.dstport"));
+    }
+    let mut archive = PacketArchive::open(&path).unwrap();
+    archive.append_scoped("scope-a", &frames).unwrap();
+    drop(archive);
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&path).arg("--alert-flow-summary").arg(&log).args(["session-a", "1", "--capture-id", "scope-a"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["trigger_tuple_status"], "trigger_header_unavailable");
+    assert_eq!(report["retained_frames_without_flow"], 3);
+    assert_eq!(report["unassigned_frames"], json!([
+        {"frame_number":1,"status":"complete"},
+        {"frame_number":2,"status":"complete"},
+        {"frame_number":3,"status":"complete"}
+    ]));
+    let flows = report["directional_flows"].as_array().unwrap();
+    assert_eq!(flows.len(), 1);
+    assert_eq!(flows[0]["source"], "[2001:db8::1]:40000");
+    assert_eq!(flows[0]["frames"], json!([{"frame_number":4,"status":"complete"}]));
+}
