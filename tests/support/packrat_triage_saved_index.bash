@@ -9,8 +9,8 @@ jq -e '.record_type == "saved_capture_index" and .status == "saved"
     and (.captures | map(.session_id)) == ["1700000000-123","1700000000-432"]
     and (.captures | map(.sampled_alerts)) == [1,3]
     and (.captures | map(.sampled_high_or_critical)) == [1,3]
-    and (.captures | map(.sampled_open_high_or_critical)) == [0,2]
-    and (.captures | map(.next_review_alert_id)) == [null,3]
+    and (.captures | map(.sampled_open_high_or_critical)) == [1,2]
+    and (.captures | map(.next_review_alert_id)) == [1,3]
     and .captures[1].first_seen == 10 and .captures[1].last_seen == 22
     and (tostring | contains("not in index") | not)' <<< "$result" >/dev/null
 result=$(PACKRAT_TEST_ALERT_COUNT=512 list_saved "$PACKRAT_TEST_LOG")

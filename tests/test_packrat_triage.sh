@@ -97,10 +97,10 @@ mock_archive() {
              last_seen:1700000000,
              flow:{transport:"tcp",source:"192.0.2.1:4321",destination:"192.0.2.2:443"}} as $valid
             | if $queue == "yes" then [
-                  ($valid + {alert_id:46,severity:"CRITICAL",disposition:"Benign"}),
+                  ({Benign:46,Contained:47,Closed:48} | to_entries[] | $valid + {alert_id:.value,severity:"CRITICAL",disposition:.key}),
                   ($valid + {alert_id:45,severity:"CRITICAL",disposition:"New",evidence_frame_count:0}),
                   ($valid + {alert_id:44,severity:"HIGH",disposition:"New"}),
-                  ($valid + {severity:"CRITICAL",disposition:"Reviewing"}),
+                  ($valid + {severity:"CRITICAL",disposition:"Confirmed"}),
                   ($valid + {alert_id:41,severity:"CRITICAL",disposition:"New"})
               ] elif $queue == "many" then [range(60;53;-1) | $valid + {alert_id:.,severity:"HIGH",disposition:"New"}]
                 elif $queue == "configured" then [
@@ -260,8 +260,8 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
     result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
     jq -e '.evidence_selection == "automatic" and .evidence_status.alert_id == 42
         and [.evidence_checks[].alert_id] == [42,41,44]
-        and [.alerts[].packet_evidence_status] == ["not_checked","no_references","partial","partial","partial"]
-        and .open_priority_alerts_in_sample == 4 and [.review_queue[].alert_id] == [45,42,41,44]
+        and [.alerts[].packet_evidence_status] == ["not_checked","not_checked","not_checked","no_references","partial","partial","partial"]
+        and .open_priority_alerts_in_sample == 4 and [.review_queue[].alert_id] == [45,42,41,44] and .review_queue[1].disposition=="Confirmed"
         and [.review_queue[].next_evidence_step] == ["corroborate_with_host_or_service_logs",
             "inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames"]' \
         <<< "$result" >/dev/null

@@ -13,7 +13,7 @@ usage() {
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
         '--list-saved groups the latest 512 distinct saved alerts by session and capture; counts cover only that sample.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
-        'review_queue lists up to five open CRITICAL or HIGH alerts from up to 512 distinct matching alerts, even outside the recent list.' \
+        'review_queue lists up to five unresolved CRITICAL or HIGH alerts (New, Reviewing, or Confirmed), even outside the recent list.' \
         'priority_sample_at_limit means older alerts may not have been reviewed.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
@@ -134,11 +134,11 @@ load_state() {
                              else 360 end)}
     '
 }
-
+unresolved_jq='def unresolved: .disposition == "New" or .disposition == "Reviewing" or .disposition == "Confirmed";'
 report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
         --argjson query_limit "$query_limit" --argjson rules "$archive_rules" \
-        --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" --arg selection "$evidence_selection" '
+        --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" --arg selection "$evidence_selection" "$unresolved_jq"'
         def packet_evidence($checks):
             .alert_id as $id | (first($checks[] | select(.alert_id == $id)) // null) as $evidence |
             if .alert_id == $evidence.alert_id and $evidence.status == "checked" then
@@ -170,7 +170,7 @@ report() {
         | (if $alerts == null then null else [
             ("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | $alerts | to_entries[]
             | (.key < $limit) as $recent | .value
-            | select(.severity == $severity and (.disposition == "New" or .disposition == "Reviewing"))
+            | select(.severity == $severity and unresolved)
             | ($severity == "MEDIUM" or $severity == "LOW") as $opt_in
             | select(($opt_in | not) or (.rule_id as $rule | any($rules[]; . == $rule)))
             | .packet_evidence_status = packet_evidence($evidence)
@@ -191,7 +191,7 @@ report() {
 }
 
 report_saved_index() {
-    jq -c --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" '
+    jq -c --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" "$unresolved_jq"'
         def scoped:
             (.session_id | type == "string" and test("\\A[A-Za-z0-9_-]{1,128}\\z"))
             and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
@@ -209,7 +209,7 @@ report_saved_index() {
             alert_log_integrity:$integrity,
             captures:($scoped | group_by([.session_id, .capture_id]) | map(
               map(select(.severity == "HIGH" or .severity == "CRITICAL")) as $priority
-              | ($priority | map(select(.disposition == "New" or .disposition == "Reviewing"))) as $open | {
+              | ($priority | map(select(unresolved))) as $open | {
                 session_id:.[0].session_id, capture_id:.[0].capture_id, sampled_alerts:length,
                 sampled_high_or_critical:($priority | length), sampled_open_high_or_critical:($open | length),
                 next_review_alert_id:($open | map(select(.alert_id | type == "number" and . >= 1 and . <= 999999999999999 and floor == .))
@@ -423,9 +423,9 @@ if jq -e '.health | .archive_enabled == true and (.archive_paused | type == "boo
             type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z")))
         then .archive_evidence_rules else [] end' <<< "$state")
     if [[ $auto_evidence == 1 ]]; then
-        candidates=$(jq -r --argjson rules "$archive_rules" '
+        candidates=$(jq -r --argjson rules "$archive_rules" "$unresolved_jq"'
         limit(5; ("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | .[]
-            | select(.severity == $severity and (.disposition == "New" or .disposition == "Reviewing")
+            | select(.severity == $severity and unresolved
                 and ($severity == "CRITICAL" or $severity == "HIGH"
                     or (.rule_id as $rule | any($rules[]; . == $rule)))
                 and (.evidence_frame_count | type == "number" and . >= 1 and . <= 131 and floor == .))
