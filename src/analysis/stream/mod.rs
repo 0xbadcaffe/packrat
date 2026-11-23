@@ -179,6 +179,7 @@ pub struct ReassembledStream {
     modbus_offset: Option<usize>,
     tls_prefix_checked: [bool; 2],
     dns_offsets: [Option<usize>; 2],
+    http_auth_examined: [usize; 2],
 }
 
 impl ReassembledStream {

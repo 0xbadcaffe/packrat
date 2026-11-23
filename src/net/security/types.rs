@@ -441,6 +441,7 @@ pub(super) struct AuthObservation {
     pub(super) packet_no: u64,
     pub(super) transport_token: (u16, u32),
     pub(super) http_stream: Option<String>,
+    pub(super) related_frames: Vec<u64>,
 }
 
 // ─── HTTP Record ──────────────────────────────────────────────────────────────

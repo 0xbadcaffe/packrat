@@ -59,7 +59,7 @@ impl SecurityEngine {
 
     // ─── Repeated Service Observations ────────────────────────────────────────
 
-    pub(super) fn check_brute_force(&mut self, pkt: &Packet) {
+    pub(super) fn check_brute_force(&mut self, pkt: &Packet, split_http_401: Option<(u32, Vec<u64>)>) {
         let (Some(server_port @ (21 | 80 | 443 | 445 | 8080)), Some(client_port)) =
             (pkt.src_port, pkt.dst_port)
         else {
@@ -74,9 +74,15 @@ impl SecurityEngine {
             21 if is_ftp_not_logged_in(payload) => "FTP",
             445 if smb_wire::is_smb2_logon_failure(payload) => "SMB",
             80 | 443 | 8080 if is_http_unauthorized(payload) => "HTTP",
+            80 | 443 | 8080 => {
+                if let Some((sequence, frames)) = split_http_401 {
+                    self.record_service_observation(pkt, "HTTP", true, server_port, (client_port, sequence), frames);
+                }
+                return;
+            }
             _ => return,
         };
-        self.record_service_observation(pkt, service, true, server_port, (client_port, sequence));
+        self.record_service_observation(pkt, service, true, server_port, (client_port, sequence), Vec::new());
     }
 
     pub(super) fn record_service_observation(
@@ -86,6 +92,7 @@ impl SecurityEngine {
         response: bool,
         port: u16,
         token: (u16, u32),
+        related_frames: Vec<u64>,
     ) {
         let (client, server) = if response { (&pkt.dst, &pkt.src) } else { (&pkt.src, &pkt.dst) };
         let key = BfKey {
@@ -135,6 +142,7 @@ impl SecurityEngine {
             timestamp: now,
             packet_no: pkt.no,
             transport_token: token,
+            related_frames,
             http_stream: if service == "HTTP" {
                 crate::analysis::stream::StreamKey::from_packet(pkt).map(|key| key.id())
             } else {
@@ -154,13 +162,19 @@ impl SecurityEngine {
             if self.brute_force.len() >= MAX_ENTRIES {
                 self.brute_force.remove(0);
             }
+            let mut packet_refs: Vec<_> = window.observations.iter().map(|entry| entry.packet_no).collect();
+            for frame in window.observations.iter().flat_map(|entry| &entry.related_frames) {
+                if !packet_refs.contains(frame) {
+                    packet_refs.push(*frame);
+                }
+            }
             let alert = BruteForceAlert {
                 src_ip: key.src,
                 dst_ip: key.dst,
                 port,
                 attempts: window.observations.len(),
                 service,
-                packet_refs: window.observations.iter().map(|entry| entry.packet_no).collect(),
+                packet_refs,
                 http_streams: window.observations.iter().filter_map(|entry| {
                     Some((entry.packet_no, entry.http_stream.clone()?))
                 }).collect(),

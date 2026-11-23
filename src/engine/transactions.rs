@@ -58,6 +58,33 @@ fn http_401_exchange_frames(
 }
 
 impl AnalysisCore {
+    pub(super) fn observe_split_http_401(&mut self, pkt: &crate::net::packet::Packet) -> Option<(u32, Vec<u64>)> {
+        let (id, from_a, previous, initial) = self.streams.http_auth_candidate(pkt)?;
+        let stream = self.streams.get(&id)?;
+        let conversation = self.http_transactions(&id)?;
+        let mut candidates = conversation.transactions.iter().filter_map(|exchange| {
+            let response = exchange.response.as_ref()?;
+            if response.status != Some(401) || !response.headers_complete
+                || !matches!(response.state, MessageState::Complete | MessageState::Incomplete)
+                || response.header_end <= previous || response.span.direction.from_a() != from_a
+                || exchange.request.state != MessageState::Complete
+            {
+                return None;
+            }
+            let frames = stream.packet_numbers(from_a, response.span.start, response.header_end);
+            let first = *frames.first()?;
+            if !(2..=16).contains(&frames.len()) || !frames.contains(&pkt.no)
+                || exchange.request.packet_numbers.is_empty()
+                || exchange.request.packet_numbers.iter().any(|&frame| frame == 0 || frame >= first)
+            {
+                return None;
+            }
+            Some((initial.wrapping_add(u32::try_from(response.span.start).ok()?), frames))
+        });
+        let result = candidates.next()?;
+        candidates.next().is_none().then_some(result)
+    }
+
     pub(super) fn attach_http_401_exchanges(
         &self, samples: &[(u64, String)], packet_refs: &mut Vec<u64>,
     ) -> usize {

@@ -321,7 +321,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the receiving application uses an affected library. Corroborate with application and outbound connection logs before escalating.",
         ),
         (
-            "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 11, DirectObservation,
+            "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 12, DirectObservation,
             "Compare the distinct 401 responses with application logs; check expected challenges.",
         ),
         (

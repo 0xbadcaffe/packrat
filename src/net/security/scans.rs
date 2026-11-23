@@ -130,7 +130,7 @@ impl SecurityEngine {
                 self.record_syn_arrival(pkt, destination_port, source_port, sequence);
                 if destination_port == 22 && control == SYN {
                     self.record_service_observation(
-                        pkt, "SSH", false, destination_port, (source_port, sequence),
+                        pkt, "SSH", false, destination_port, (source_port, sequence), Vec::new(),
                     );
                 }
             } else if control == (SYN | ACK) || control == (RST | ACK) {

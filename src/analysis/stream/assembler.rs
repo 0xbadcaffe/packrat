@@ -225,6 +225,34 @@ impl StreamAssembler {
         dns::observe(stream, from_a, source, destination)
     }
 
+    pub(crate) fn http_auth_candidate(&mut self, pkt: &Packet) -> Option<(String, bool, usize, u32)> {
+        let source @ (80 | 443 | 8080) = pkt.src_port? else { return None };
+        let destination = pkt.dst_port?;
+        let (_, payload) = tcp_payload_with_ack(pkt, (source, destination))?;
+        if payload.is_empty() {
+            return None;
+        }
+        let id = StreamKey::from_packet(pkt)?.id();
+        let stream = self.streams.get_mut(&id)?;
+        let from_a = format!("{}:{source}", pkt.src) == stream.key.ep_a;
+        let (syn, data) = if from_a {
+            (stream.client_initial_syn, &stream.client_data)
+        } else {
+            (stream.server_initial_syn, &stream.server_data)
+        };
+        let initial = syn?.wrapping_add(1);
+        let previous = std::mem::replace(&mut stream.http_auth_examined[usize::from(from_a)], data.len());
+        if stream.midstream || stream.reset || stream.has_gaps() || stream.provenance_truncated
+            || data.len() <= previous || !data.starts_with(b"HTTP/1.")
+            || !data[previous.saturating_sub(3)..].windows(4).any(|bytes| bytes == b"\r\n\r\n")
+            || !data[previous.saturating_sub(16_384)..].windows(12)
+                .any(|bytes| matches!(bytes, b"HTTP/1.1 401" | b"HTTP/1.0 401"))
+        {
+            return None;
+        }
+        Some((id, from_a, previous, initial))
+    }
+
     pub(crate) fn observe_modbus(
         &mut self, pkt: &Packet,
     ) -> crate::analysis::industrial_policy::ModbusObservation {
