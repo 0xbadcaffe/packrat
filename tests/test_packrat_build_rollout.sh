@@ -63,11 +63,33 @@ chmod +x -- "$PACKRAT_BUILD_ROLLOUT"
 
 shopt -s nullglob
 assert_clean() {
-    local -a stages=("$HOME/.cache"/packrat-native-source.*)
-    [[ ${#stages[@]} == 0 && -f $HOME/.cache/alert-evidence ]]
+    local -a temporary=("$HOME/.cache"/packrat-native-source.* "$HOME/.cache"/packrat-native-upload.*)
+    [[ ${#temporary[@]} == 0 && -f $HOME/.cache/alert-evidence ]]
 }
 bash "$wrapper" --check wlan1 <"$scratch/source.tar"
 assert_clean
+digest=$(sha256sum <"$scratch/source.tar")
+PACKRAT_BUILD_EXPECT_SHA256=${digest%% *} bash "$wrapper" --check wlan1 <"$scratch/source.tar"
+assert_clean
+for invalid in not-a-digest "${digest:0:63}"; do
+    if PACKRAT_BUILD_EXPECT_SHA256="$invalid" bash "$wrapper" --deploy wlan1 <"$scratch/source.tar" 2>"$scratch/error"; then exit 1; fi
+    grep -Fq 'must be a lowercase SHA-256 digest' "$scratch/error"
+    assert_clean
+done
+for bad in empty truncated oversized; do
+    case $bad in
+        empty) touch "$scratch/bad.tar" ;;
+        truncated) head -c 512 "$scratch/source.tar" >"$scratch/bad.tar" ;;
+        oversized) truncate -s "$((64 * 1024 * 1024 + 1))" "$scratch/bad.tar" ;;
+    esac
+    if PACKRAT_BUILD_EXPECT_SHA256=${digest%% *} bash "$wrapper" --deploy wlan1 <"$scratch/bad.tar" 2>"$scratch/error"; then exit 1; fi
+    if [[ $bad == oversized ]]; then
+        grep -Fq 'exceeds the 64 MiB verification limit' "$scratch/error"
+    else
+        grep -Fq 'does not match the expected digest' "$scratch/error"
+    fi
+    assert_clean
+done
 bash "$wrapper" --deploy wlan1 --enable-alert-evidence <"$scratch/source.tar"
 assert_clean
 for mode in --check --deploy; do
@@ -98,7 +120,7 @@ assert_clean
     if bash "$wrapper" --deploy wlan1 <"$scratch/source.tar" 2>/dev/null; then exit 1; fi
 ) 8>"$HOME/.cache/packrat-native-build.lock"
 assert_clean
-diff -u <(printf '%s\n' build '--check wlan1 ' build '--deploy wlan1 --enable-alert-evidence' \
+diff -u <(printf '%s\n' build '--check wlan1 ' build '--check wlan1 ' build '--deploy wlan1 --enable-alert-evidence' \
     build-archive '--check wlan1 --companions-only' build-archive '--deploy wlan1 --companions-only' \
     build build '--deploy wlan1 ') "$TEST_TRACE"
 printf '%s\n' 'Packrat native build and rollout tests passed'

@@ -5,6 +5,7 @@ set -euo pipefail
 if (( $# < 2 || $# > 3 )) || [[ $1 != --check && $1 != --deploy ]] ||
    [[ ! $2 =~ ^[A-Za-z0-9_.-]+$ || ( $# == 3 && $3 != --enable-alert-evidence && $3 != --archive-only ) ]]; then
     printf '%s\n' 'Usage: git archive REV | bash packrat-build-rollout.sh --check|--deploy INTERFACE [--enable-alert-evidence|--archive-only]' >&2
+    printf '%s\n' 'Set PACKRAT_BUILD_EXPECT_SHA256 to verify the trusted archive before extraction (64 MiB maximum).' >&2
     exit 2
 fi
 
@@ -14,12 +15,18 @@ export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$cache/packrat-native-build/target"
 export CARGO_INCREMENTAL=0
 jobs=${PACKRAT_BUILD_JOBS:-3}
 minimum_free_mib=${PACKRAT_BUILD_MIN_FREE_MIB:-2048}
+expected_sha256=${PACKRAT_BUILD_EXPECT_SHA256:-}
+archive_limit=$((64 * 1024 * 1024))
 if [[ $rollout != /* || ! -x $rollout || $CARGO_TARGET_DIR != /* || ! $jobs =~ ^[1-9][0-9]?$ ]]; then
     printf '%s\n' 'Build requires an executable absolute rollout path, an absolute Cargo target path, and 1-99 build jobs.' >&2
     exit 2
 fi
 if [[ ! $minimum_free_mib =~ ^[1-9][0-9]{0,5}$ ]]; then
     printf '%s\n' 'PACKRAT_BUILD_MIN_FREE_MIB must be a positive number of MiB (default: 2048).' >&2
+    exit 2
+fi
+if [[ -n $expected_sha256 && ! $expected_sha256 =~ ^[0-9a-f]{64}$ ]]; then
+    printf '%s\n' 'PACKRAT_BUILD_EXPECT_SHA256 must be a lowercase SHA-256 digest.' >&2
     exit 2
 fi
 
@@ -41,10 +48,28 @@ for path in "$cache" "$CARGO_TARGET_DIR"; do
 done
 
 stage=$(mktemp -d -- "$cache/packrat-native-source.XXXXXXXX")
-trap 'rm -rf -- "$stage"' EXIT
+upload=''
+trap 'rm -rf -- "$stage"; if [[ -n $upload ]]; then rm -f -- "$upload"; fi' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-tar --extract --file=- --directory="$stage" --no-same-owner --no-same-permissions
+archive=-
+if [[ -n $expected_sha256 ]]; then
+    upload=$(mktemp -- "$cache/packrat-native-upload.XXXXXXXX")
+    head -c "$((archive_limit + 1))" >"$upload"
+    archive_bytes=$(stat -c '%s' -- "$upload")
+    if (( archive_bytes > archive_limit )); then
+        printf '%s\n' 'Source archive exceeds the 64 MiB verification limit; capture unchanged.' >&2
+        exit 1
+    fi
+    digest=$(sha256sum <"$upload")
+    if [[ ${digest%% *} != "$expected_sha256" ]]; then
+        printf '%s\n' 'Source archive SHA-256 does not match the expected digest; capture unchanged.' >&2
+        exit 1
+    fi
+    archive=$upload
+fi
+tar --extract --file="$archive" --directory="$stage" --no-same-owner --no-same-permissions
+if [[ -n $upload ]]; then rm -f -- "$upload"; upload=''; fi
 [[ -f $stage/Cargo.toml && -f $stage/Cargo.lock ]]
 binaries=(packrat packrat-analyze packrat-archive)
 if [[ ${3-} == --archive-only ]]; then binaries=(packrat-archive); fi
