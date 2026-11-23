@@ -131,18 +131,6 @@ report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
         --argjson query_limit "$query_limit" --argjson rules "$archive_rules" \
         --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" --arg selection "$evidence_selection" "$unresolved_jq"'
-        def packet_evidence($checks):
-            .alert_id as $id | (first($checks[] | select(.alert_id == $id)) // null) as $evidence |
-            if .alert_id == $evidence.alert_id and $evidence.status == "checked" then
-                if all($evidence.frames[]; .status == "complete") then "complete"
-                elif any($evidence.frames[]; .status == "complete" or .status == "truncated" or .status == "length_unknown")
-                then "partial"
-                else "unavailable" end
-            elif .evidence_frame_count == 0 then "no_references"
-            elif .alert_id == $evidence.alert_id then
-                ($evidence.status | {alert_evidence_changed:"changed_during_review",unavailable:"check_failed",
-                    timed_out:"check_timed_out",deferred:"check_deferred"}[.] // "not_checked")
-            else "not_checked" end;
         def live_archive:
             if $status != "current" and $status != "degraded" then "unknown"
             elif .health.archive_enabled == false then "disabled"
@@ -156,19 +144,31 @@ report() {
             elif . == "no_references" then "corroborate_with_host_or_service_logs"
             elif . == "check_failed" or . == "changed_during_review" or . == "check_timed_out" or . == "check_deferred" then "retry_evidence_check"
             else "verify_frame_availability" end;
+        def with_evidence($checks):
+            .alert_id as $id | (first($checks[] | select(.alert_id == $id)) // null) as $evidence
+            | (if $evidence.status == "checked" then $evidence.frames | group_by(.status)
+               | map({key:.[0].status,value:length}) | from_entries else null end) as $counts
+            | (if $counts.complete == ($evidence.frames | length) and $counts != null then "complete"
+               elif $counts.complete or $counts.truncated or $counts.length_unknown then "partial"
+               elif $counts != null then "unavailable" elif .evidence_frame_count == 0 then "no_references"
+               else (($evidence.status // "") | {alert_evidence_changed:"changed_during_review",unavailable:"check_failed",
+                     timed_out:"check_timed_out",deferred:"check_deferred"}[.] // "not_checked") end) as $availability
+            | . + {packet_evidence_status:$availability,evidence_availability:$counts,
+                 next_evidence_step:(if $counts.unreadable then "check_archive_integrity"
+                   else $availability | evidence_step end)};
         .[1] as $alerts
         | (.[2] // []) as $evidence
         | (if $alerts == null then null else $alerts[:$limit] |
-            map(.packet_evidence_status = packet_evidence($evidence) | .next_evidence_step = (.packet_evidence_status | evidence_step)) end) as $sample
+            map(with_evidence($evidence)) end) as $sample
         | (if $alerts == null then null else [
             ("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | $alerts | to_entries[]
             | (.key < $limit) as $recent | .value
             | select(.severity == $severity and unresolved)
             | ($severity == "MEDIUM" or $severity == "LOW") as $opt_in
             | select(($opt_in | not) or (.rule_id as $rule | any($rules[]; . == $rule)))
-            | .packet_evidence_status = packet_evidence($evidence)
+            | with_evidence($evidence)
             | {alert_id,title,rule_id,revision,severity,disposition,hit_count,confidence,verify,packet_evidence_status,evidence_frame_count,evidence_frame_set_sha256,
-               archive_rule:$opt_in,in_recent_alerts:$recent,next_evidence_step:(.packet_evidence_status | evidence_step)}
+               archive_rule:$opt_in,in_recent_alerts:$recent,evidence_availability,next_evidence_step}
           ] end) as $review
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
              live_packet_archive:(.[0] | live_archive),

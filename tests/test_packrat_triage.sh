@@ -179,7 +179,8 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
     result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e '.status == "current" and .evidence_status == {status:"checked",alert_id:42,in_recent_alerts:true,
         frames:[{frame_number:1,status:"truncated"},{frame_number:2,status:"missing"}]}
-        and .alerts[0].packet_evidence_status == "partial"' <<< "$result" >/dev/null
+        and .alerts[0].packet_evidence_status == "partial"
+        and .alerts[0].evidence_availability == {truncated:1,missing:1}' <<< "$result" >/dev/null
     for frame_level in complete partial unavailable; do
         case $frame_level in
             complete) frames='["complete","complete"]' ;;
@@ -187,7 +188,11 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
             unavailable) frames='["missing","unreadable"]' ;;
         esac
         result=$(PACKRAT_TEST_FRAME_STATUSES="$frames" bash "$triage" "$health" "$PACKRAT_TEST_LOG")
-        jq -e --arg level "$frame_level" '.alerts[0].packet_evidence_status == $level' <<< "$result" >/dev/null
+        jq -e --arg level "$frame_level" --argjson frames "$frames" '
+            ($frames | group_by(.) | map({key:.[0],value:length}) | from_entries) as $counts
+            | .alerts[0] | .packet_evidence_status == $level and .evidence_availability == $counts
+                and (.next_evidence_step == "check_archive_integrity") == ($counts.unreadable != null)
+        ' <<< "$result" >/dev/null
     done
     result=$(bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
     jq -e '.status == "saved" and .health == null and .evidence_status.status == "checked"
@@ -197,6 +202,7 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
     [[ $status == 2 ]]
     jq -e '.status == "current" and .alerts[0].alert_id == 42
         and .alerts[0].packet_evidence_status == "changed_during_review" and .alerts[0].next_evidence_step == "retry_evidence_check"
+        and .alerts[0].evidence_availability == null
         and .evidence_status == {status:"alert_evidence_changed",alert_id:42,frames:null}' <<< "$result" >/dev/null
     status=0
     result=$(PACKRAT_TEST_ALERT_COUNT=0 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
@@ -439,7 +445,7 @@ for evidence_status in complete partial unavailable; do
     case $evidence_status in
         complete) frames='["complete","complete"]'; step=inspect_retained_frames ;;
         partial) frames='["truncated","missing"]'; step=inspect_retained_and_recover_missing_frames ;;
-        unavailable) frames='["missing","unreadable"]'; step=locate_original_capture ;;
+        unavailable) frames='["missing","missing"]'; step=locate_original_capture ;;
     esac
     result=$(PACKRAT_TEST_FRAME_STATUSES="$frames" PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" saved_alert 42 "$PACKRAT_TEST_LOG")
     jq -e --arg expected "$evidence_status" --arg step "$step" '.status == "saved" and .live_packet_archive == "unknown"

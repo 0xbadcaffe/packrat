@@ -94,6 +94,13 @@ while IFS= read -r candidate; do
         if (( rc == 124 || rc == 137 )); then status=check_timed_out; fi
         if (( rc <= 2 && ${#raw} <= 1048576 )); then
             verdict=$(jq -ces --argjson selected "$candidate" '
+                def valid_counts:
+                    if .packet_evidence_status | IN("complete","partial","unavailable") then
+                        (.evidence_availability | type == "object" and length > 0
+                            and all(to_entries[]; (.key | IN("complete","truncated","missing","length_unknown","unreadable"))
+                                and (.value | numbers | . >= 1 and . <= 131 and floor == .))
+                            and ([.[]] | add) == $selected.evidence_frame_count)
+                    else .evidence_availability == null end;
                 select(length == 1) | .[0] | select(.record_type == "capture_triage" and .mode == "saved")
                 | if .status == "saved_alert_not_observed" then
                     {packet_evidence_status:"changed_during_review",next_evidence_step:"refresh_saved_index"}
@@ -101,9 +108,9 @@ while IFS= read -r candidate; do
                     | if ({session_id,capture_id,alert_id,rule_id,revision,confidence,severity,disposition,
                             last_seen,evidence_frame_count,evidence_frame_set_sha256} != $selected) then
                         {packet_evidence_status:"changed_during_review",next_evidence_step:"refresh_saved_index"}
-                      elif (.packet_evidence_status | strings | test("\\A[a-z_]{1,48}\\z")) and
+                      elif valid_counts and (.packet_evidence_status | strings | test("\\A[a-z_]{1,48}\\z")) and
                            (.next_evidence_step | strings | test("\\A[a-z_]{1,64}\\z")) then
-                        {packet_evidence_status,next_evidence_step}
+                        {packet_evidence_status,next_evidence_step,evidence_availability}
                       else null end
                   else null end' <<< "$raw") || verdict='null'
         fi

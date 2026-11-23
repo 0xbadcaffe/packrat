@@ -38,17 +38,20 @@ fi
     $5 == "$TEST_DIR/alerts.jsonl" && $6 == "$TEST_DIR/previous.jsonl" ]]
 printf '%s\n' "$4" >> "$TEST_DIR/checks"
 if [[ ${TEST_MODE:-normal} == timed ]]; then sleep 20; fi
+counts=null
 case $4 in
-    1) status=complete step=inspect_retained_frames ;;
-    2) status=unavailable step=locate_original_capture ;;
-    3) status=complete step=inspect_retained_frames; base=$(jq '.evidence_frame_set_sha256=("a"*64)' <<< "$base") ;;
+    1) status=complete step=inspect_retained_frames counts='{"complete":2}' ;;
+    2) status=unavailable step=check_archive_integrity counts='{"missing":1,"unreadable":1}' ;;
+    3) status=complete step=inspect_retained_frames counts='{"complete":2}'; base=$(jq '.evidence_frame_set_sha256=("a"*64)' <<< "$base") ;;
     4) printf '%s\n' '{"record_type":"capture_triage","mode":"saved","status":"saved_alert_not_observed"}'; exit 1 ;;
     5) status=check_failed step=retry_evidence_check ;;
-    6|7) status=partial step=inspect_retained_and_recover_missing_frames ;;
+    6|7) status=partial step=inspect_retained_and_recover_missing_frames counts='{"truncated":1,"missing":1}' ;;
 esac
-jq -nc --arg session "$2" --arg capture "$3" --argjson id "$4" --arg status "$status" --arg step "$step" --argjson base "$base" '
+if [[ ${TEST_MODE:-normal} == invalid_counts && $4 == 1 ]]; then counts='{"complete":1}'; fi
+jq -nc --arg session "$2" --arg capture "$3" --argjson id "$4" --arg status "$status" --arg step "$step" \
+    --argjson base "$base" --argjson counts "$counts" '
     {record_type:"capture_triage",mode:"saved",status:"saved",alerts:[$base + {session_id:$session,capture_id:$capture,alert_id:$id,
-      packet_evidence_status:$status,next_evidence_step:$step,detail:"private detail"}],
+      packet_evidence_status:$status,next_evidence_step:$step,evidence_availability:$counts,detail:"private detail"}],
       evidence_checks:[{frames:[{status:"complete",bytes:[5,7]}],path:"private path"}]}'
 if [[ $status == check_failed ]]; then exit 2; fi
 STUB
@@ -64,9 +67,13 @@ run_review | jq -e '
         legacy_rule_hint:"dns.competing_responders",next_evidence_step:"locate_original_capture_or_host_logs"}]
     and [.findings[].packet_evidence_status] ==
         ["complete","unavailable","changed_during_review","changed_during_review","check_failed"]
+    and .findings[0].evidence_availability == {complete:2}
+    and .findings[1].evidence_availability == {missing:1,unreadable:1}
+    and .findings[1].next_evidence_step == "check_archive_integrity"
     and .findings[2].next_evidence_step == "refresh_saved_index"
     and (tostring | contains("private") | not) and all(.findings[]; has("evidence_frame_set_sha256") | not)' >/dev/null
 [[ $(wc -l < "$dir/checks") == 5 ]]
+TEST_MODE=invalid_counts run_review | jq -e '.findings[0].packet_evidence_status == "check_failed"' >/dev/null
 : > "$dir/checks"
 TEST_MODE=bounded run_review --review-offset 5 | jq -e '
     .review_offset == 5 and .next_review_offset == null and (.sample_scan_complete | not)
