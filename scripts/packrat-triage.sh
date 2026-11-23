@@ -11,7 +11,7 @@ usage() {
         '--saved reviews an explicit saved capture without consulting live health.' \
         '--saved reports saved_scope_not_observed when the supplied logs contain no matching alert records.' \
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
-        '--list-saved counts the latest 512 distinct alerts by capture and reports unresolved unscoped high/critical alerts separately.' \
+        '--list-saved ranks up to five scoped findings from the latest 512 distinct alerts and counts unscoped findings separately.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'review_queue lists up to five unresolved CRITICAL or HIGH alerts (New, Reviewing, or Confirmed), even outside the recent list.' \
         'priority_sample_at_limit means older alerts may not have been reviewed.' \
@@ -196,8 +196,11 @@ report_saved_index() {
             and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
         def seen: numbers | select(isfinite and . > 0);
         def priority: .severity == "HIGH" or .severity == "CRITICAL";
+        def valid_alert_id: .alert_id | type == "number" and . >= 1 and . <= 999999999999999 and floor == .;
+        def review_rank: [(.severity == "CRITICAL"), ((.last_seen | seen) // 0), .session_id, .capture_id, .alert_id];
         .integrity as $integrity
         | (.alerts | map(select(scoped))) as $scoped
+        | ($scoped | map(select(priority and unresolved and valid_alert_id)) | sort_by(review_rank) | reverse) as $review
         | {
             record_type:"saved_capture_index",
             status:(if $integrity.invalid_records == 0 and $integrity.oversized_records == 0
@@ -206,14 +209,15 @@ report_saved_index() {
             sampled_alerts:(.alerts | length),
             sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
             sampled_unscoped_open_high_or_critical:([.alerts[] | select((scoped | not) and priority and unresolved)] | length),
+            review_shortlist_truncated:($review | length > 5),
+            review_shortlist:($review[:5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,confidence,evidence_frame_count,last_seen})),
             alert_log_integrity:$integrity,
             captures:($scoped | group_by([.session_id, .capture_id]) | map(
               map(select(priority)) as $priority
               | ($priority | map(select(unresolved))) as $open | {
                 session_id:.[0].session_id, capture_id:.[0].capture_id, sampled_alerts:length,
                 sampled_high_or_critical:($priority | length), sampled_open_high_or_critical:($open | length),
-                next_review_alert_id:($open | map(select(.alert_id | type == "number" and . >= 1 and . <= 999999999999999 and floor == .))
-                    | max_by([(.severity == "CRITICAL"), ((.last_seen | seen) // 0), .alert_id]) | .alert_id),
+                next_review_alert_id:($open | map(select(valid_alert_id)) | max_by(review_rank) | .alert_id),
                 first_seen:([.[].first_seen | seen] | min),
                 last_seen:([.[].last_seen | seen] | max)
             }) | sort_by([-(.last_seen // 0), .session_id, .capture_id]))
@@ -254,7 +258,6 @@ with_socket_context() {
 fresh() {
     jq -e '.age_seconds >= 0 and .age_seconds <= .max_age_seconds' <<< "$state" >/dev/null
 }
-
 match_log() {
     local expected
     if ! expected=$(jq -er '.health.alert_watcher_log | strings | select(startswith("/") and test("[[:cntrl:]]") == false)' <<< "$state"); then
@@ -266,7 +269,6 @@ match_log() {
         return 1
     fi
 }
-
 verify_watch_identity() {
     jq -e --arg identity "$1" '
         .health | if .alert_watcher_open_log_required == true or $required then
@@ -279,7 +281,6 @@ verify_watch_identity() {
         return 1
     }
 }
-
 previous_log_stamps() {
     local path stamp
     for path in "${previous_logs[@]}"; do
@@ -288,7 +289,6 @@ previous_log_stamps() {
         printf '%s\n' "$stamp"
     done
 }
-
 check_evidence() {
     local response expected
     local -a evidence_args
