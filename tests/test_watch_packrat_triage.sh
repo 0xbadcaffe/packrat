@@ -362,7 +362,7 @@ done
 
 state="$scratch/queue-updates.json"
 backlog=$(jq -c '.[0] as $base | [2,7,8,9,10 | $base + {alert_id:.,in_recent_alerts:(.==9),disposition:"New",hit_count:1}]' <<<"$queue")
-live current 80 "$backlog" "$(jq -c '. + [.[0] | . + {alert_id:6}, . + {alert_id:8}, . + {alert_id:10}]' <<<"$medium")" >"$report"
+live current 80 "$backlog" "$(jq -c '. + [.[0] | . + {alert_id:6,disposition:"Benign"}, . + {alert_id:8}, . + {alert_id:10}]' <<<"$medium")" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 bash "$watch" --once "$state" -- printf '%s\n' 'invalid triage output' >/dev/null
 backlog=$(jq -c '[.[0] + {disposition:"Reviewing",hit_count:2}, .[3] + {hit_count:2}, .[0] + {alert_id:6,hit_count:2}, .[0] + {alert_id:11}]' <<<"$backlog")
@@ -379,7 +379,7 @@ kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
 jq -se 'length==1 and (.[0].alert_changes | .updated==
-    [{alert_id:2,fields:["hit_count","disposition"]},{alert_id:6,fields:["severity"]},{alert_id:8,fields:["disposition"]},
+    [{alert_id:2,fields:["hit_count","disposition"]},{alert_id:6,fields:["severity","disposition"]},{alert_id:8,fields:["disposition"]},
      {alert_id:10,fields:["disposition"]}] and .newly_observed==[]
     and .review_queue_exits==[{alert_id:7,disposition:null,outcome:"not_in_sample"},
      {alert_id:8,disposition:"Closed",outcome:"resolved"},{alert_id:10,disposition:"Confirmed",outcome:"still_in_recent_sample"}]

@@ -11,6 +11,7 @@ fn alert(hit_count: u64, packet_no: u64) -> AlertItem {
         detail: format!("Observed packet {packet_no}"),
         disposition: AlertDisposition::New,
         priority: 80,
+        reviewed_priority: None,
         recommendation: None,
         correlation_key: "flow-1".into(),
         hit_count,

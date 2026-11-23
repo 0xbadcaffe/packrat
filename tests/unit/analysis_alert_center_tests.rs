@@ -19,6 +19,56 @@ fn deduplicates_findings_and_preserves_disposition() {
 }
 
 #[test]
+fn stronger_priority_with_new_evidence_reopens_only_resolved_findings() {
+    for (previous, expected) in [
+        (AlertDisposition::Benign, AlertDisposition::New),
+        (AlertDisposition::Closed, AlertDisposition::New),
+        (AlertDisposition::Contained, AlertDisposition::New),
+        (AlertDisposition::Reviewing, AlertDisposition::Reviewing),
+        (AlertDisposition::Confirmed, AlertDisposition::Confirmed),
+    ] {
+        let mut center = AlertCenter { automation_mode: AutomationMode::Watch, ..Default::default() };
+        center.capture_id = Some("lab-capture".into());
+        center.record_correlated(1, 1.0, "IDS", "MEDIUM", "Finding", "first", "flow");
+        let id = center.items[0].id;
+        center.set_disposition(id, Some("lab-capture"), previous);
+        center.drain_pending_exports();
+        assert!(center.drain_pending_pins().is_empty());
+        assert!(!center.record_correlated(2, 2.0, "IDS", "MEDIUM", "Finding", "repeat", "flow"));
+        assert_eq!(center.items[0].disposition, previous);
+        assert!(!center.record_correlated(3, 3.0, "IDS", "HIGH", "Finding", "stronger", "flow"));
+        let rows = center.drain_pending_exports();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].disposition, previous);
+        assert_eq!(rows[1].disposition, expected);
+        assert_eq!(rows[1].severity, "HIGH");
+        assert_eq!(rows[1].id, id);
+        assert_eq!(rows[1].hit_count, 3);
+        assert_eq!(rows[1].packet_refs, [1, 2, 3]);
+        assert_eq!(center.drain_pending_pins(), [id]);
+    }
+}
+
+#[test]
+fn a_priority_increase_without_new_packet_evidence_preserves_the_review_decision() {
+    let mut center = AlertCenter::default();
+    center.record_correlated(1, 1.0, "IDS", "HIGH", "Finding", "first", "flow");
+    let id = center.items[0].id;
+    assert!(center.set_disposition(id, None, AlertDisposition::Benign));
+    center.record_correlated(1, 1.0, "IDS", "CRITICAL", "Finding", "same frame", "flow");
+    assert_eq!(center.items[0].severity, "CRITICAL");
+    assert_eq!(center.items[0].disposition, AlertDisposition::Benign);
+    assert_eq!(center.items[0].packet_refs, [1]);
+    let restored = serde_json::from_slice(&serde_json::to_vec(&center.items).unwrap()).unwrap();
+    center.restore(restored, AutomationMode::Off);
+    center.record_correlated(2, 2.0, "IDS", "HIGH", "Finding", "same priority reviewed", "flow");
+    assert_eq!(center.items[0].disposition, AlertDisposition::Benign);
+    center.record_correlated(3, 3.0, "IDS", "CRITICAL", "Finding", "new stronger evidence", "flow");
+    assert_eq!(center.items[0].disposition, AlertDisposition::New);
+    assert_eq!(center.items[0].reviewed_priority, None);
+}
+
+#[test]
 fn correlation_keys_keep_distinct_conversations_separate() {
     let mut center = AlertCenter::default();
     assert!(center.record_correlated(1, 1.0, "IDS", "HIGH", "Probe", "first host", "host-a"));

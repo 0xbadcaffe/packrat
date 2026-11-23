@@ -11,7 +11,6 @@ pub(crate) const MAX_ALERT_PACKET_REFS: usize = 128;
 pub(crate) const CREDENTIAL_ALERT_DETAIL: &str =
     "Possible cleartext credential material observed; value omitted from the alert.";
 const EARLY_ALERT_PACKET_REFS: usize = 8;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum AutomationMode {
     #[default]
@@ -97,6 +96,8 @@ pub struct AlertItem {
     pub detail: String,
     pub disposition: AlertDisposition,
     pub priority: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_priority: Option<u8>,
     pub recommendation: Option<String>,
     #[serde(default)]
     pub correlation_key: String,
@@ -318,6 +319,7 @@ impl AlertCenter {
                 let priority = priority_for(&severity);
                 let became_high = item.priority < AUTOMATIC_EVIDENCE_PRIORITY
                     && priority >= AUTOMATIC_EVIDENCE_PRIORITY;
+                item.reopen_for_escalation(priority, evidence_changed);
                 if priority > item.priority {
                     item.priority = priority;
                     item.severity = severity;
@@ -346,6 +348,7 @@ impl AlertCenter {
             detail,
             disposition: AlertDisposition::New,
             priority,
+            reviewed_priority: None,
             recommendation,
             correlation_key,
             hit_count: 1,
@@ -415,7 +418,6 @@ impl AlertCenter {
     pub fn drain_pending_exports(&mut self) -> Vec<AlertItem> {
         std::mem::take(&mut self.pending_exports)
     }
-
     pub fn set_disposition(&mut self, id: u64, capture_id: Option<&str>, disposition: AlertDisposition) -> bool {
         let Some(item) = self.items.iter_mut().find(|item| {
             item.id == id && item.capture_id.as_deref() == capture_id
@@ -424,6 +426,7 @@ impl AlertCenter {
         };
         if item.disposition != disposition {
             item.disposition = disposition;
+            item.reviewed_priority = disposition.is_resolved().then_some(item.priority);
             self.pending_exports.push(item.clone());
         }
         true
