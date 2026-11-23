@@ -292,6 +292,8 @@ read_health() {
                                  then . else null end) as $drops |
         ($h.capture_truncated_frames | if type == "number" and . >= 0 and . <= 9007199254740991
                                       and floor == . then . else null end) as $truncated |
+        ($h.capture_queue_full_packets | if type == "number" and . >= 0 and . <= 9007199254740991
+                                      and floor == . then . else null end) as $queue_full |
         ($h.packets_total | if type == "number" and . >= 0 and . <= 9007199254740991 and floor == .
                             then . else null end) as $packets |
         ($h.capture_queue | if type == "object" and (.depth | type == "number")
@@ -346,6 +348,8 @@ read_health() {
             pcap_buffer_drops_delta: counter_delta($drops; $baseline.drops),
             capture_truncated_frames: (if $usable then $truncated else null end),
             capture_truncated_frames_delta: counter_delta($truncated; $baseline.truncated),
+            capture_queue_full_packets: (if $usable then $queue_full else null end),
+            capture_queue_full_packets_delta: counter_delta($queue_full; $baseline.queue_full),
             capture_queue: $queue,
             alert_saving: ($h.alert_saving // false),
             alert_watcher_alive: (if $pipeline == false or $source == false or $context == false then false else $watcher end),
@@ -424,6 +428,7 @@ read_health() {
             next_baseline: {
                 drops: next_counter($drops; $baseline.drops),
                 truncated: next_counter($truncated; $baseline.truncated),
+                queue_full: next_counter($queue_full; $baseline.queue_full),
                 packets: (
                     if $has_counter
                     then {run:$run,capture:$capture,total:$packets,last_progress:$last_progress}
@@ -453,9 +458,9 @@ publish_state() {
 while :; do
     if ! state=$(read_health); then
         state=$(jq -cn --argjson baseline "$baseline" '
-            {issues:["monitor_input_error"],next_baseline:{drops:$baseline.drops,truncated:$baseline.truncated,packets:null}}')
+            {issues:["monitor_input_error"],next_baseline:($baseline // {} | .packets=null)}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .archive_enabled, .archive_paused, .archive_pause_reason, .archive_alert_evidence_only, .archive_evidence_rules]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .capture_queue_full_packets, .archive_enabled, .archive_paused, .archive_pause_reason, .archive_alert_evidence_only, .archive_evidence_rules]' <<< "$state") || exit 2
     event=
     if "$once"; then
         event=sample

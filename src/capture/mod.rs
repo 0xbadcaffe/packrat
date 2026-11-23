@@ -15,6 +15,7 @@ pub(crate) struct CaptureStats {
     dropped: AtomicU64,
     link_type: AtomicU64,
     truncated_frames: AtomicU64,
+    queue_full_packets: AtomicU64,
 }
 
 impl Default for CaptureStats {
@@ -23,6 +24,7 @@ impl Default for CaptureStats {
             dropped: AtomicU64::new(u64::MAX),
             link_type: AtomicU64::new(u64::MAX),
             truncated_frames: AtomicU64::new(0),
+            queue_full_packets: AtomicU64::new(0),
         }
     }
 }
@@ -51,6 +53,11 @@ impl CaptureStats {
 
     fn dropped(&self) -> Option<u32> {
         u32::try_from(self.dropped.load(Ordering::Relaxed)).ok()
+    }
+
+    #[cfg(feature = "real-capture")]
+    pub(crate) fn observe_queue_full(&self) {
+        self.queue_full_packets.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -97,6 +104,10 @@ impl CaptureTask {
 
     pub fn truncated_frames(&self) -> Option<u64> {
         self.link_type().map(|_| self.stats.truncated_frames.load(Ordering::Relaxed))
+    }
+
+    pub fn queue_full_packets(&self) -> Option<u64> {
+        self.link_type().map(|_| self.stats.queue_full_packets.load(Ordering::Relaxed))
     }
 
     pub fn result(&mut self) -> Option<Result<(), String>> {

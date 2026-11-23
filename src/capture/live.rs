@@ -49,19 +49,13 @@ impl CaptureSource for LiveCapture {
                         interface_name: Some(self.iface.clone()),
                         comments: Vec::new(),
                     };
-                    let mut pkt = parse_captured(raw.data, counter + 1, metadata)?;
+                    let pkt = parse_captured(raw.data, counter + 1, metadata)?;
                     counter += 1;
-                    loop {
-                        match tx.try_send(pkt) {
-                            Ok(()) => break,
-                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return Ok(()),
-                            Err(tokio::sync::mpsc::error::TrySendError::Full(pending)) => {
-                                if stop.load(Ordering::Acquire) { return Ok(()); }
-                                pkt = pending;
-                                sample_drops(&mut cap, &stats, &mut next_stats);
-                                std::thread::sleep(std::time::Duration::from_millis(1));
-                            }
-                        }
+                    if !send_with_backpressure(&tx, pkt, &stop, &stats, || {
+                        sample_drops(&mut cap, &stats, &mut next_stats);
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }) {
+                        return Ok(());
                     }
                 }
             }
@@ -72,6 +66,33 @@ impl CaptureSource for LiveCapture {
             }
             Ok(())
         })
+    }
+}
+
+#[cfg(feature = "real-capture")]
+fn send_with_backpressure<T>(
+    tx: &Sender<T>, mut packet: T, stop: &std::sync::atomic::AtomicBool,
+    stats: &CaptureStats, mut wait_for_space: impl FnMut(),
+) -> bool {
+    use tokio::sync::mpsc::error::TrySendError;
+
+    let mut counted = false;
+    loop {
+        match tx.try_send(packet) {
+            Ok(()) => return true,
+            Err(TrySendError::Closed(_)) => return false,
+            Err(TrySendError::Full(pending)) => {
+                if !counted {
+                    stats.observe_queue_full();
+                    counted = true;
+                }
+                if stop.load(Ordering::Acquire) {
+                    return false;
+                }
+                packet = pending;
+                wait_for_space();
+            }
+        }
     }
 }
 

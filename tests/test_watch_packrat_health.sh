@@ -408,7 +408,7 @@ PACKRAT_HEALTH_HEARTBEAT=-1 bash "$watch" --once >/dev/null 2>&1 || status=$?
 samples=$(jq -cn '
     def sample($id;$drops):
         {status:"ok",telemetry_fresh:true,capture_active:true,alert_saving:true,
-         capture_run_id:$id,pcap_buffer_drops:$drops};
+         capture_run_id:$id,pcap_buffer_drops:$drops,capture_queue_full_packets:($drops*2)};
     "000000000000000a" as $a | "000000000000000b" as $b |
     [
         sample($a;4), sample($a;4), sample($a;7),
@@ -420,7 +420,7 @@ PACKRAT_FAKE_STEPS=8 PACKRAT_FAKE_SAMPLES="$samples" bash "$watch" | jq -se '
     length == 7
     and map(.pcap_buffer_drops) == [4, 7, null, 12, 20, 1, 3]
     and map(.pcap_buffer_drops_delta) == [null, 3, null, 5, null, null, 2]
-    and .[2].issues == ["health_unreachable"]
+    and map(.capture_queue_full_packets_delta) == [null,6,null,10,null,null,4] and .[2].issues == ["health_unreachable"]
     and all(.[]; has("next_baseline") | not)
 ' >/dev/null
 

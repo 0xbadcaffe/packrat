@@ -27,6 +27,7 @@ live() {
         record_type:"capture_triage", status:$status,
         health:{capture_id:"a", alert_session_id:"1-2", capture_interface:"wlan1", issues:[],
             packets_total:$packets, pcap_buffer_drops:0, alert_saving:true, capture_truncated_frames:0,
+            capture_queue_full_packets:8,capture_queue_full_packets_delta:3,
             capture_link_type:1, capture_link_decodable:true, disk_free_mib:2048,
             archive_enabled:true,archive_alert_evidence_only:true,
             archive_evidence_rules:["traffic.periodic_fixed_size"],
@@ -52,6 +53,7 @@ check_status "$state" current 0
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .journal_status=="not_checked" and .journal_pending_events==0
     and .link_type==1 and .link_decodable and .truncated_frames==0 and .disk_free_mib==2048
+    and .capture_queue_full_packets==8 and .capture_queue_full_packets_delta==3
     and .review_queue[0].packet_evidence_status=="partial"
     and .archive_mode=="alert_evidence" and .archive_rule_ids==["traffic.periodic_fixed_size"]
     and .archive_usage=={frames:1,max_frames:100,payload_bytes:1024,max_payload_bytes:65536}

@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn a_full_queue_counts_the_packet_once_without_dropping_or_reordering_it() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let stats = CaptureStats::default();
+    assert!(send_with_backpressure(&tx, 1, &stop, &stats, || panic!("queue was empty")));
+    let mut retries = 0;
+    assert!(send_with_backpressure(&tx, 2, &stop, &stats, || {
+        retries += 1;
+        if retries == 3 { assert_eq!(rx.try_recv().unwrap(), 1); }
+    }));
+    assert_eq!(retries, 3);
+    assert_eq!(rx.try_recv().unwrap(), 2);
+    assert_eq!(stats.queue_full_packets.load(Ordering::Relaxed), 1);
+}
+
+#[test]
 fn missing_capture_device_returns_an_error_without_panicking() {
     let source = LiveCapture {
         iface: "packrat-device-that-does-not-exist".into(),

@@ -182,6 +182,7 @@ impl App {
             capture_queue: queue,
             pcap_buffer_drops: self.pcap_buffer_drops(),
             capture_truncated_frames: self.capture_handle.as_ref().and_then(crate::capture::CaptureTask::truncated_frames),
+            capture_queue_full_packets: self.capture_handle.as_ref().and_then(crate::capture::CaptureTask::queue_full_packets),
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),
             alert_save_failed: self.save_alerts && core.alert_save_error.is_some(),
             archive_enabled: self.packet_archive.is_some(),

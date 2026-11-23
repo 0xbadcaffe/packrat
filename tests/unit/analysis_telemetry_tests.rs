@@ -14,9 +14,11 @@ fn metrics_do_not_report_unknown_loss_as_zero() {
     assert!(unknown.contains("packrat_capture_pcap_stats_available 0"));
     assert!(!unknown.contains("packrat_capture_pcap_buffer_drops"));
     assert!(!unknown.contains("packrat_capture_truncated_frames_total"));
+    assert!(!unknown.contains("packrat_capture_queue_full_packets_total"));
     let known = TelemetrySnapshot {
         pcap_buffer_drops: Some(0),
         capture_truncated_frames: Some(2),
+        capture_queue_full_packets: Some(17),
         alert_saving: true,
         archive_enabled: true,
         archive_paused: true,
@@ -25,6 +27,7 @@ fn metrics_do_not_report_unknown_loss_as_zero() {
     assert!(known.contains("packrat_capture_pcap_stats_available 1"));
     assert!(known.contains("packrat_capture_pcap_buffer_drops 0"));
     assert!(known.contains("packrat_capture_truncated_frames_total 2"));
+    assert!(known.contains("packrat_capture_queue_full_packets_total 17"));
     assert!(known.contains("packrat_alert_saving 1"));
     assert!(known.contains("packrat_archive_paused 1"));
 }
@@ -56,6 +59,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
         alert_session_id: Some("1000000-42".into()),
         pcap_buffer_drops: Some(9),
         capture_truncated_frames: Some(2),
+        capture_queue_full_packets: Some(17),
         alert_save_failed: true,
         archive_enabled: true,
         archive_paused: true,
@@ -78,6 +82,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert_eq!(health()["alert_session_id"], "1000000-42");
     assert_eq!(health()["pcap_buffer_drops"], 9);
     assert_eq!(health()["capture_truncated_frames"], 2);
+    assert_eq!(health()["capture_queue_full_packets"], 17);
     assert_eq!(health()["alert_saving"], false);
     assert_eq!(health()["alert_save_failed"], true);
     assert_eq!(health()["archive_paused"], true);

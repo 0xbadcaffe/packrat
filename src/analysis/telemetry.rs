@@ -43,6 +43,7 @@ pub struct TelemetrySnapshot {
     pub capture_queue: CaptureQueueTelemetry,
     pub pcap_buffer_drops: Option<u32>,
     pub capture_truncated_frames: Option<u64>,
+    pub capture_queue_full_packets: Option<u64>,
     pub alert_saving: bool,
     pub alert_save_failed: bool,
     pub archive_enabled: bool,
@@ -128,6 +129,11 @@ impl TelemetrySnapshot {
                 "# TYPE packrat_capture_truncated_frames_total counter\npackrat_capture_truncated_frames_total {truncated}\n"
             ));
         }
+        if let Some(packets) = self.capture_queue_full_packets {
+            metrics.push_str(&format!(
+                "# TYPE packrat_capture_queue_full_packets_total counter\npackrat_capture_queue_full_packets_total {packets}\n"
+            ));
+        }
         for (name, value) in [
             ("capture_queue_depth", self.capture_queue.depth),
             ("capture_queue_capacity", self.capture_queue.capacity),
@@ -194,6 +200,7 @@ impl TelemetryHub {
             "capture_queue": snapshot.capture_queue,
             "pcap_buffer_drops": snapshot.pcap_buffer_drops,
             "capture_truncated_frames": snapshot.capture_truncated_frames,
+            "capture_queue_full_packets": snapshot.capture_queue_full_packets,
             "alert_saving": snapshot.alert_saving,
             "alert_save_failed": snapshot.alert_save_failed,
             "archive_enabled": snapshot.archive_enabled,

@@ -258,6 +258,8 @@ sanitize() {
             link_decodable:(.health.capture_link_decodable | flag),
             issues:(.health.issues | if type == "array" then .[:64] | map(token | select(. != null)) | unique else null end),
             packets:(.health.packets_total | counter), buffer_drops:(.health.pcap_buffer_drops | counter),
+            capture_queue_full_packets:(.health.capture_queue_full_packets | counter),
+            capture_queue_full_packets_delta:(.health.capture_queue_full_packets_delta | counter),
             truncated_frames:(.health.capture_truncated_frames | counter),
             alert_saving:(.health.alert_saving | flag), archive:(.live_packet_archive | token),
             archive_mode:(.health | archive_mode),
@@ -402,7 +404,7 @@ while :; do
     snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")
     if "$once"; then publish_snapshot not_checked; printf '%s\n' "$snapshot"; break; fi
     key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id,
-        .last_observed, .buffer_drops_delta)' <<< "$snapshot")
+        .last_observed, .buffer_drops_delta, .capture_queue_full_packets_delta)' <<< "$snapshot")
     if [[ $key != "$previous" ]]; then
         event=$(jq -c 'del(.last_observed)' <<< "$event")
         if [[ $journal_enabled == 1 ]]; then
