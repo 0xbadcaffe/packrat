@@ -2,15 +2,25 @@ use super::*;
 use crate::engine::PacketAnalysis;
 
 fn router_advertisement_fixture(frame: u64, host: u8, vlan: u16) -> Packet {
+    ipv6_control_fixture(frame, host, vlan, &[134, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0])
+}
+
+fn ipv6_control_fixture(frame: u64, host: u8, vlan: u16, message: &[u8]) -> Packet {
     use crate::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
 
     let mut bytes = vec![0x33, 0x33, 0, 0, 0, 1, 2, 0, 0, 0, 0, host, 0x81, 0];
     bytes.extend(vlan.to_be_bytes());
-    bytes.extend([0x86, 0xdd, 0x60, 0, 0, 0, 0, 16, 58, 255]);
+    bytes.extend([0x86, 0xdd, 0x60, 0, 0, 0]);
+    bytes.extend((message.len() as u16).to_be_bytes());
+    bytes.extend([58, 255]);
     for address in ["fe80::1", "ff02::1"] {
         bytes.extend(address.parse::<std::net::Ipv6Addr>().unwrap().octets());
     }
-    bytes.extend([134, 0, 0x7b, 0xf3, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0]);
+    bytes.extend(message);
+    let sum = bytes[26..].chunks_exact(2).map(|word| u32::from(u16::from_be_bytes([word[0], word[1]])))
+        .sum::<u32>() + message.len() as u32 + 58;
+    let fold = (sum >> 16) + (sum & 0xffff);
+    bytes[60..62].copy_from_slice(&(!(((fold >> 16) + (fold & 0xffff)) as u16)).to_be_bytes());
     let mut packet = crate::net::parser::parse_ethernet(&bytes, frame, frame as f64);
     let length = bytes.len() as u32;
     packet.capture = Some(CaptureMetadata {
@@ -144,6 +154,66 @@ fn opted_in_router_burst_archives_supporting_frames_after_history_eviction() {
         for frame in (1..=19).chain([trigger]) {
             assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), selected);
         }
+    }
+}
+
+#[test]
+fn opted_in_neighbor_binding_archives_the_prior_valid_claim_after_history_eviction() {
+    use crate::storage::packet_archive::{ArchiveLimits, ArchiveWorker, PacketArchive};
+
+    let wait = |app: &mut App| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !app.analysis_idle() {
+            app.poll_analysis();
+            assert!(std::time::Instant::now() < deadline, "background analysis did not finish");
+            std::thread::yield_now();
+        }
+    };
+    let rule = "ipv6.ndp_binding_change";
+    let claim = |frame, time, vlan, claimed_host| {
+        let mut message = vec![136, 0, 0, 0, 0, 0, 0, 0];
+        message.extend("2001:db8::5".parse::<std::net::Ipv6Addr>().unwrap().octets());
+        message.extend([2, 1, 2, 0, 0, 0, 0, claimed_host]);
+        let mut packet = ipv6_control_fixture(frame, 1, vlan, &message);
+        packet.timestamp = time as f64;
+        packet.capture.as_mut().unwrap().timestamp.as_mut().unwrap().ticks = time;
+        packet
+    };
+    for selected in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("archive");
+        let mut app = App::new_for_test();
+        let archive = ArchiveWorker::open_alert_evidence(&path, ArchiveLimits::default()).unwrap();
+        app.set_packet_archive_with_rules(archive, selected.then(|| rule.into()).into_iter().collect()).unwrap();
+        let scope = app.capture_id.clone().unwrap();
+        app.start_background_analysis().unwrap();
+        let prior = claim(1, 1, 10, 1);
+        app.inject_packet(prior.clone());
+        app.inject_packet(claim(2, 2, 20, 2));
+        let mut invalid = claim(3, 3, 10, 3);
+        invalid.bytes[60] ^= 1;
+        app.inject_packet(invalid);
+        wait(&mut app);
+        let trigger = crate::engine::worker::WorkerLimits::default().history_packets as u64 + 6;
+        for no in 4..trigger {
+            app.inject_packet(crate::net::parser::parse_ethernet(&[0; 14], no, 3.0));
+            wait(&mut app);
+        }
+        app.packets.clear();
+        app.inject_packet(claim(trigger, 4, 10, 4));
+        wait(&mut app);
+        app.stop_background_analysis().unwrap();
+        app.packet_archive.as_mut().unwrap().finish().unwrap();
+
+        let alert = app.core.try_read().unwrap().unwrap().alert_center.items.iter()
+            .find(|alert| alert.provenance.as_ref().is_some_and(|p| p.rule_id == rule)).cloned().unwrap();
+        assert_eq!(alert.packet_refs, [1, trigger]);
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { 2 } else { 0 });
+        assert!(archive.packet_for_capture(&scope, 2).unwrap().is_none());
+        assert!(archive.packet_for_capture(&scope, 3).unwrap().is_none());
+        assert_eq!(archive.packet_for_capture(&scope, 1).unwrap().map(|packet| packet.bytes), selected.then_some(prior.bytes));
+        assert_eq!(archive.packet_for_capture(&scope, trigger).unwrap().is_some(), selected);
     }
 }
 

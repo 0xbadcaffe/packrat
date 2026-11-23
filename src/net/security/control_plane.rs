@@ -142,7 +142,7 @@ impl SecurityEngine {
         }
 
         if icmp_type == 136 {
-            self.track_neighbor_advertisement(pkt, &inspection);
+            self.track_neighbor_advertisement(pkt, &inspection, archive_rules);
         }
 
         for (signature, severity, detail) in alerts {
@@ -286,7 +286,7 @@ impl SecurityEngine {
         }
     }
 
-    fn track_neighbor_advertisement(&mut self, pkt: &Packet, inspection: &Ipv6Inspection<'_>) {
+    fn track_neighbor_advertisement(&mut self, pkt: &Packet, inspection: &Ipv6Inspection<'_>, archive_rules: Option<&[String]>) {
         let data = inspection.transport;
         if !inspection.complete || inspection.fragmented || inspection.extension_count > 32
             || inspection.hop_limit != 255 || !pkt.timestamp.is_finite() || data.len() < 24 || data[1] != 0
@@ -304,7 +304,7 @@ impl SecurityEngine {
         if !icmpv6_checksum_valid(inspection) { return; }
         let scope = service_scope(pkt);
         let key = (scope, target);
-        let previous = self.ndp_bindings.get(&key).copied();
+        let previous = self.ndp_bindings.get(&key);
         if previous.is_some_and(|entry| {
             entry.frame == pkt.no
                 || !observation_precedes((entry.timestamp, entry.frame), (pkt.timestamp, pkt.no))
@@ -315,10 +315,20 @@ impl SecurityEngine {
             self.ndp_bindings.retain(|_, entry| pkt.timestamp - entry.timestamp <= NDP_BINDING_WINDOW_SECS);
             if self.ndp_bindings.len() >= MAX_CONTROL_PLANE_IDENTITIES { return; }
         }
-        self.ndp_bindings.insert(key, NdpObservation { mac, timestamp: pkt.timestamp, frame: pkt.no });
+        let retain = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "ipv6.ndp_binding_change"));
+        let previous = self.ndp_bindings.insert(key, NdpObservation {
+            mac,
+            timestamp: pkt.timestamp,
+            frame: pkt.no,
+            evidence: (retain && crate::model::project::pinned_packet_cost(pkt) <= MAX_ROUTER_EVIDENCE_BYTES)
+                .then(|| Box::new(pkt.clone())),
+        });
         if let Some(previous) = previous
             && previous.mac != mac && pkt.timestamp - previous.timestamp <= NDP_BINDING_WINDOW_SECS
         {
+            if retain && let Some(packet) = previous.evidence {
+                self.findings.retained_evidence.push(*packet);
+            }
             let target = Ipv6Addr::from(target);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {

@@ -329,11 +329,11 @@ pub(super) struct ArpObservation {
     pub(super) frame: u64,
 }
 
-#[derive(Clone, Copy)]
 pub(super) struct NdpObservation {
     pub(super) mac: [u8; 6],
     pub(super) timestamp: f64,
     pub(super) frame: u64,
+    pub(super) evidence: Option<Box<Packet>>,
 }
 
 #[derive(Hash, PartialEq, Eq)]
