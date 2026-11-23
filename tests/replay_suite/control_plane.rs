@@ -107,7 +107,8 @@ fn router_advertisement_burst_replay_excludes_bad_checksums_from_evidence() {
             if count != 0 {
                 let frames: Vec<_> = (1..=19).chain([21]).collect();
                 case["opening_frames"] = json!({(rule):[21]});
-                case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":21,"frames":frames}]);
+                case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":21,"frames":frames,
+                    "classification":{"severity":"MEDIUM","confidence":"correlated","revision":2}}]);
             }
             case
         })

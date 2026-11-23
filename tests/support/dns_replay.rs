@@ -91,7 +91,8 @@ fn early_alternate_resolver_does_not_mask_later_answer_changes() {
             "opening_frames": {(unexpected): [2], (competing): [3]},
             "opening_evidence": [
                 {"rule_id": unexpected, "opening_frame": 2, "frames": [1, 2]},
-                {"rule_id": competing, "opening_frame": 3, "frames": [1, 2, 3]}
+                {"rule_id": competing, "opening_frame": 3, "frames": [1, 2, 3],
+                 "classification":{"severity":"CRITICAL","confidence":"correlated","revision":7}}
             ]
         });
         if has_change {

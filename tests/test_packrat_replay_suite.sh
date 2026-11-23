@@ -38,7 +38,8 @@ packrat-analyze() {
             [[ $# == 4 && $1 == --expect-alert-frame && $2 == scan.horizontal=12 && $3 == -- ]] || return 2
             verdict=passed; opened=1; rules='{"scan.horizontal":1}'
             local evidence='{"type":"alert","schema_version":1,"alert":{"hit_count":1,"packet_no":12,
-                "first_packet":12,"last_packet":12,"packet_refs":[9,2,9],"provenance":{"rule_id":"scan.horizontal"}}}'
+                "first_packet":12,"last_packet":12,"packet_refs":[9,2,9],"severity":"MEDIUM",
+                "provenance":{"rule_id":"scan.horizontal","revision":14,"confidence":"heuristic"}}}'
             case ${PACKRAT_TEST_EVIDENCE:-normal} in
                 missing) : ;;
                 duplicate) printf '%s\n' "$evidence" "$evidence" ;;
@@ -185,6 +186,27 @@ bash "$suite" "$manifest" | jq -e '
         rule_id:"scan.horizontal",opening_frame:12,expected_frames:[2,9,12],observed_frames:[2,9,12],
         matching_openings:1,passed:true
     }' >/dev/null
+classified=$(jq -c '.cases[0].opening_evidence[0].classification = {severity:"MEDIUM",confidence:"heuristic",revision:14}' <<< "$evidence_case")
+printf '%s\n' "$classified" >"$manifest"
+bash "$suite" "$manifest" | jq -e '
+    .passed == 1 and (.cases[0].evidence_checks[0].classification |
+    .passed and .observed == {severity:"MEDIUM",confidence:"heuristic",revision:14} and .expected == .observed)' >/dev/null
+for mismatch in '.severity="HIGH"' '.confidence="correlated"' '.revision=15'; do
+    jq -c ".cases[0].opening_evidence[0].classification |= ($mismatch)" <<< "$classified" > "$manifest"
+    status=0
+    result=$(bash "$suite" "$manifest") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.failed == 1 and (.cases[0].evidence_checks[0] | (.classification.passed | not)
+        and (.passed | not) and .expected_frames == .observed_frames)' <<< "$result" >/dev/null
+done
+for invalid_class in '{}' '{"revision":0}' '{"severity":"medium"}' '{"confidence":"guess"}' '{"unexpected":true}'; do
+    jq -c --argjson classification "$invalid_class" '.cases[0].opening_evidence[0].classification = $classification' \
+        <<< "$evidence_case" > "$manifest"
+    status=0
+    bash "$suite" "$manifest" >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
+done
+printf '%s\n' "$evidence_case" >"$manifest"
 for sample_type in changed missing duplicate; do
     status=0
     result=$(PACKRAT_TEST_EVIDENCE="$sample_type" bash "$suite" "$manifest") || status=$?

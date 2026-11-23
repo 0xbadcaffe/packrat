@@ -28,8 +28,10 @@ fn delayed_auth_retries_do_not_open_a_new_burst() {
             "expect_counts":{(rule):2},
             "opening_frames":{(rule):[5,15]},
             "opening_evidence":[
-                {"rule_id":rule,"opening_frame":5,"frames":[1,2,3,4,5]},
-                {"rule_id":rule,"opening_frame":15,"frames":[11,12,13,14,15]}
+                {"rule_id":rule,"opening_frame":5,"frames":[1,2,3,4,5],
+                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":13}},
+                {"rule_id":rule,"opening_frame":15,"frames":[11,12,13,14,15],
+                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":13}}
             ]
         }]
     });

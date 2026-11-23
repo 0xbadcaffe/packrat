@@ -7,6 +7,7 @@ usage() {
         'Example: {"version":1,"cases":[{"name":"baseline","capture":"baseline.pcapng","expect_counts":{"scan.horizontal":0}}]}' \
         'Use opening_frames to label exact frames, for example {"scan.horizontal":[12]}.' \
         'Use opening_evidence to check exact supporting frames: [{"rule_id":"scan.horizontal","opening_frame":12,"frames":[2,12]}].' \
+        'An opening_evidence entry may include classification with severity, confidence, and/or revision.' \
         'Use expect_snapshots to also check the total number of openings and updates in a case.' \
         'Set "allow_truncated":true only for a case intentionally replaying partial frames.' \
         'Use "single_tag_interfaces":["access1"] to apply an exact interface-name VLAN policy during a case.' \
@@ -37,6 +38,11 @@ if ! validated=$(head -c 65537 -- "$1" | jq -Rces '
     def frame: count and . > 0;
     def frame_list: type == "array" and length > 0
         and all(.[]; frame) and (unique | length) == length;
+    def classification:
+        type == "object" and length > 0 and all(keys[]; IN("severity","confidence","revision"))
+        and ((has("severity") | not) or (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW")))
+        and ((has("confidence") | not) or (.confidence | IN("heuristic","correlated","direct_observation")))
+        and ((has("revision") | not) or (.revision | frame and . <= 65535));
     def valid_case:
         . as $case |
         type == "object" and (.name | text(128)) and (.capture | text(1024))
@@ -51,6 +57,7 @@ if ! validated=$(head -c 65537 -- "$1" | jq -Rces '
             | type == "array" and length <= 64
             and all(.[]; type == "object" and (.rule_id | type == "string")
                 and (.opening_frame | frame) and (.frames | frame_list and length <= 131)
+                and ((has("classification") | not) or (.classification | classification))
                 and (.opening_frame as $opening | (.frames | index($opening)) != null
                     and (($case.opening_frames[.rule_id] // []) | index($opening)) != null))
             and (map([.rule_id,.opening_frame]) | unique | length) == length)
@@ -80,6 +87,10 @@ replay_case() {
                        all([.first_packet,.packet_no,.last_packet][]; ordinal)
                     then [.first_packet,.packet_no,.last_packet,.packet_refs[]] | map(select(. > 0)) | unique
                     else null end;
+                def classification:
+                    {severity:(.severity | if IN("CRITICAL","HIGH","MEDIUM","LOW") then . else null end),
+                     confidence:(.provenance.confidence | if IN("heuristic","correlated","direct_observation") then . else null end),
+                     revision:(.provenance.revision | if ordinal and . >= 1 and . <= 65535 then . else null end)};
                 ($label.opening_evidence // [] | map(key(.rule_id; .opening_frame))) as $keys |
                 reduce inputs as $row ({summary:null, summaries:0, evidence:{}};
                 if $row.type == "summary" then
@@ -91,7 +102,7 @@ replay_case() {
                     and ($row.alert.packet_no | ordinal)
                 then key($row.alert.provenance.rule_id; $row.alert.packet_no) as $key
                      | if ($keys | index($key)) != null then
-                         .evidence[$key] |= if . == null then {matches:1, frames:($row.alert | frames)}
+                         .evidence[$key] |= if . == null then {matches:1, frames:($row.alert | frames), classification:($row.alert | classification)}
                                            else {matches:(.matches + 1), frames:null} end
                        else . end
                 else . end)') || status=$?
@@ -115,6 +126,12 @@ replay_case() {
             | {rule_id, opening_frame, expected_frames:$expected, observed_frames:$match.frames,
                matching_openings:($match.matches // 0),
                passed:($match.matches == 1 and $match.frames == $expected)}
+            | if $spec | has("classification") then
+                ($spec.classification | keys) as $keys
+                | ($match.classification | if . == null then null else with_entries(select(.key as $key | $keys | index($key) != null)) end) as $observed
+                | .classification = {expected:$spec.classification,observed:$observed,passed:($observed == $spec.classification)}
+                | .passed = (.passed and .classification.passed)
+              else . end
         )) as $evidence_checks |
         (if $status > 1 or $replay.summaries != 1 then "inconclusive"
          elif $evaluation == "failed" then "failed"
