@@ -1,5 +1,5 @@
 use super::*;
-use crate::analysis::alert_center::AlertDisposition;
+use crate::analysis::alert_center::{AlertDisposition, AlertTransport};
 
 pub struct AppView<'a> {
     app: &'a App,
@@ -160,6 +160,16 @@ impl AppView<'_> {
                                 .unwrap_or_else(|| "Not recorded".into()),
                         ),
                         ("Packet".into(), format!("#{}", alert.packet_no)),
+                        (
+                            "Trigger flow".into(),
+                            alert.flow.map_or_else(|| "Not recorded".into(), |flow| {
+                                let transport = match flow.transport {
+                                    AlertTransport::Tcp => "TCP",
+                                    AlertTransport::Udp => "UDP",
+                                };
+                                format!("{transport} {} -> {}", flow.source, flow.destination)
+                            }),
+                        ),
                         (
                             "Capture ID".into(),
                             alert.capture_id.as_deref().unwrap_or("Unscoped").into(),

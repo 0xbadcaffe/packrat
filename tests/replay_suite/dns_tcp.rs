@@ -238,4 +238,17 @@ fn tcp_dns_replay_preserves_framing_transport_scope_and_evidence() {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["passed"], 4);
     assert_eq!(output.stdout, run_suite(&manifest).stdout);
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+        .arg("--alerts-only")
+        .arg(root.join("out-of-order-mismatch.pcapng"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let alert = String::from_utf8(output.stdout).unwrap().lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .find(|record| record["type"] == "alert").unwrap();
+    assert_eq!(alert["alert"]["flow"], json!({
+        "transport":"tcp", "source":"10.0.0.53:53", "destination":"10.0.0.5:40000",
+    }));
 }

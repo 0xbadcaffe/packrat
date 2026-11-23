@@ -51,7 +51,11 @@ impl AnalysisCore {
                 | "Industrial state-changing command" | "Critical industrial control command"
                 | "Cleartext HTTP Basic authorization"
                 | "Anonymous FTP login accepted"
-                | "DNS tunnel behavior"
+                | "DNS tunnel behavior" | "Conflicting DNS responses" | "Unexpected DNS responder"
+                | "DNS transaction question mismatch" | "DNS reply changed at the same resolver"
+                | "DNS answer set changed at the same resolver" | "DNS reply correlation ambiguous"
+                | "DNS reply without observed query" | "DNS invalid question count" | "DNS NXDOMAIN burst"
+                | "Oversized DNS TXT traffic" | "Direct external DNS resolver use" | "JNDI label in DNS query"
                 | "Horizontal host scan" | "Vertical port scan"
                 | "Large asymmetric outbound transfer" | "High-entropy outbound transfer"
             ) {

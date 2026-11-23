@@ -140,6 +140,10 @@ fn reply_without_observed_query_is_a_visibility_alert_not_an_incident() {
     }).expect("missing query visibility alert");
     assert_eq!(alert.severity, "LOW");
     assert_eq!(alert.packet_refs, [1]);
+    let flow = alert.flow.unwrap();
+    assert_eq!(flow.transport, packrat_tui::analysis::alert_center::AlertTransport::Udp);
+    assert_eq!(flow.source, "10.0.0.53:53".parse().unwrap());
+    assert_eq!(flow.destination, "10.0.0.5:40000".parse().unwrap());
     assert!(alert.detail.contains("no matching query retained"));
     let rule = alert.provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "dns.unmatched_response");
@@ -389,6 +393,7 @@ fn ambiguous_reply_does_not_consume_candidate_queries() {
     let conflict = by_rule("dns.competing_responders");
     assert_eq!(conflict.severity, "CRITICAL");
     assert_eq!(conflict.packet_refs, [1, 4, 6]);
+    assert_eq!(conflict.flow.unwrap().source, "10.0.0.55:53".parse().unwrap());
 }
 
 #[test]
