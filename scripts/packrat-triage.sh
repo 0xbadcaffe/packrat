@@ -220,7 +220,6 @@ report_saved_index() {
           }
     ' <<< "$history"
 }
-
 with_socket_context() {
     local snapshots
     [[ -f $socket_file && ! -L $socket_file ]] || return 1
@@ -235,7 +234,7 @@ with_socket_context() {
             | select(.session_id == $alert.session_id and .capture_id == $alert.capture_id
                 and .alert_id == $alert.alert_id and .flow == $alert.flow and .flow.transport == "tcp"
                 and (.alert_last_seen | type == "number" and isfinite and . > 0)
-                and ($alert.last_seen | type == "number" and . >= $seen));
+                and $alert.last_seen == $seen);
         map(. as $alert
             | ([$snapshots[] | snapshot($alert)
                 | .alert_last_seen as $when
@@ -247,7 +246,8 @@ with_socket_context() {
                     and (.pid | type == "number" and floor == . and . >= 1 and . <= 4294967295)
                     and ((try (.observed_at | fromdateiso8601) catch null)
                         | . != null and . >= ($when | floor) and . <= ($when | floor) + 8))
-                | {status,observed_at,local,peer,process,pid,alert_last_seen:$when} + (if .tcp_state == "ESTAB" or .tcp_state == "SYN-SENT" then {tcp_state} else {} end)] | last) as $context
+                | {status,observed_at,local,peer,process,pid,alert_last_seen:$when} + (if .tcp_state == "ESTAB" or .tcp_state == "SYN-SENT" then {tcp_state} else {} end)]
+                | if (map([.local,.peer,.process,.pid]) | unique | length)==1 then max_by(.observed_at) else null end) as $context
             | if $context == null then . else . + {socket_context:$context} end)
     ' <<< "$alerts"
 }
