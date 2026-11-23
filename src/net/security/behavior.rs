@@ -2,9 +2,15 @@ use super::*;
 use super::fragments::TcpPayloadObservation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum VolumeEvidence {
+enum VolumeEvidence {
     OneWay,
     BothDirections,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct VolumeEpisode {
+    opening_frame: u64,
+    evidence: VolumeEvidence,
 }
 
 fn sample_transfer_frame(frames: &mut std::collections::VecDeque<(i64, u64)>, minute: i64, frame: u64) {
@@ -64,7 +70,7 @@ impl ExfilState {
                 frames.retain(|&(minute, _)| minute >= cutoff);
             }
             if self.outbound_bytes < EXFIL_VOLUME_THRESHOLD / 2 {
-                self.volume_alerted = None;
+                self.volume_episode = None;
             }
             self.entropy_alerted &= self.high_entropy_bytes >= EXFIL_ENTROPY_THRESHOLD / 2;
         }
@@ -173,9 +179,10 @@ impl SecurityEngine {
             };
             if outbound && state.outbound_bytes >= EXFIL_VOLUME_THRESHOLD
                 && let Some(evidence) = volume
-                && Some(evidence) > state.volume_alerted
+                && state.volume_episode.is_none_or(|episode| evidence > episode.evidence)
             {
-                state.volume_alerted = Some(evidence);
+                let opening_frame = state.volume_episode.map_or(pkt.no, |episode| episode.opening_frame);
+                state.volume_episode = Some(VolumeEpisode { opening_frame, evidence });
                 let (severity, comparison) = match evidence {
                     VolumeEvidence::OneWay => (
                         Severity::Medium, "no reverse bytes observed; asymmetry unverified".into(),
@@ -194,6 +201,7 @@ impl SecurityEngine {
                         pkt.src, pkt.dst, state.outbound_bytes
                     ),
                     state.outbound_frames.iter().chain(&state.inbound_frames).map(|&(_, frame)| frame).collect::<Vec<_>>(),
+                    Some(opening_frame),
                 ));
             }
             if high_entropy_payload
@@ -210,23 +218,29 @@ impl SecurityEngine {
                         pkt.src, pkt.dst, state.high_entropy_bytes
                     ),
                     state.entropy_frames.iter().map(|&(_, frame)| frame).collect::<Vec<_>>(),
+                    None,
                 ));
             }
         } else {
             return;
         }
 
-        for (signature, severity, detail, mut related_packets) in alerts {
+        for (signature, severity, detail, mut related_packets, episode) in alerts {
             related_packets.retain(|&frame| frame != pkt.no);
             related_packets.sort_unstable();
             related_packets.dedup();
+            let mut correlation_key = format!(
+                "{:?}:{transport:?}:[{}]>[{}]:{}",
+                service_scope(pkt), pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)
+            );
+            if let Some(opening_frame) = episode {
+                use std::fmt::Write as _;
+                let _ = write!(correlation_key, ":episode:{opening_frame}");
+            }
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert { pkt_no: pkt.no, signature, severity, detail },
                 related_packets,
-                correlation_key: Some(format!(
-                    "{:?}:{transport:?}:[{}]>[{}]:{}",
-                    service_scope(pkt), pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)
-                )),
+                correlation_key: Some(correlation_key),
             });
         }
     }
