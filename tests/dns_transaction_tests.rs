@@ -16,6 +16,8 @@ mod jndi_label_tests;
 mod nxdomain_evidence_tests;
 #[path = "dns_transaction/wire_bounds_tests.rs"]
 mod wire_bounds_tests;
+#[path = "dns_transaction/repeated_answer_tests.rs"]
+mod repeated_answer_tests;
 fn dns_packet(
     no: u64,
     response: bool,

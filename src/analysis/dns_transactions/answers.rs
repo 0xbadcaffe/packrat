@@ -9,6 +9,12 @@ pub(super) struct AnswerFingerprint {
     pub(super) digest: Option<[u8; 32]>,
 }
 
+impl AnswerFingerprint {
+    pub(super) fn same_answers(&self, other: &Self) -> bool {
+        self.rcode == other.rcode && self.digest.is_some() && self.digest == other.digest
+    }
+}
+
 pub(super) fn answer_fingerprint(message: &DnsMessage<'_>) -> Option<AnswerFingerprint> {
     let rcode = record_wire::summarize_response(message, false)?.rcode;
     Some(AnswerFingerprint { rcode, digest: answer_digest(message) })

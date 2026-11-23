@@ -19,6 +19,7 @@ pub(super) struct RecentResponse {
 pub(super) struct AlternateResponse {
     pub(super) evidence: DnsReplyEvidence,
     fingerprint: [u8; 32],
+    answer_fingerprint: Option<answers::AnswerFingerprint>,
 }
 
 #[derive(Debug)]
@@ -75,12 +76,12 @@ impl RecentResponse {
             return ReplyOutcome::Repeat;
         }
         if query.question != message.question {
-            self.retain(packet, message, fingerprint, false);
+            self.retain(packet, message, fingerprint, false, None);
             return ReplyOutcome::Finding(question_mismatch(query, message));
         }
         let Some(baseline) = &self.baseline else {
             self.baseline = Some(ComparisonBaseline::new(packet, message));
-            self.retain(packet, message, fingerprint, true);
+            self.retain(packet, message, fingerprint, true, None);
             return ReplyOutcome::Inspect(None);
         };
 
@@ -90,7 +91,7 @@ impl RecentResponse {
             if promote {
                 self.baseline = Some(ComparisonBaseline::new(packet, message));
             }
-            self.retain(packet, message, fingerprint, promote);
+            self.retain(packet, message, fingerprint, promote, None);
             return if promote && query.server == packet.src {
                 ReplyOutcome::Inspect(None)
             } else {
@@ -98,21 +99,31 @@ impl RecentResponse {
             };
         }
 
-        let (kind, detail) = if baseline.resolver != packet.src {
+        let (kind, detail, answer_fingerprint) = if baseline.resolver != packet.src {
             (
                 DnsFindingKind::ConflictingResponse,
                 format!("competing replies from {} and {}", baseline.resolver, packet.src),
+                None,
             )
         } else {
+            let answer = answers::answer_fingerprint(message);
+            if answer.as_ref().is_some_and(|current| {
+                self.alternates.iter().any(|reply| {
+                    reply.evidence.resolver == packet.src
+                        && reply.answer_fingerprint.as_ref().is_some_and(|prior| prior.same_answers(current))
+                })
+            }) {
+                return ReplyOutcome::Repeat;
+            }
             let (kind, difference) = match (
                 baseline.answer_fingerprint.as_ref(),
-                answers::answer_fingerprint(message),
+                answer.as_ref(),
             ) {
                 (Some(before), Some(after)) if before.rcode != after.rcode => (
                     DnsFindingKind::ChangedAnswerSet,
                     format!("a different response code ({} to {})", before.rcode, after.rcode),
                 ),
-                (Some(before), Some(after)) if before.digest.is_some() && before.digest == after.digest => {
+                (Some(before), Some(after)) if before.same_answers(after) => {
                     return ReplyOutcome::Repeat;
                 }
                 (Some(before), Some(after)) if before.digest.is_some() && after.digest.is_some() => (
@@ -124,7 +135,7 @@ impl RecentResponse {
                     "different reply bytes; answer comparison unavailable".into(),
                 ),
             };
-            (kind, format!("{difference} from resolver {}", baseline.resolver))
+            (kind, format!("{difference} from resolver {}", baseline.resolver), answer)
         };
         let mut related_packets = vec![query.packet_no, baseline.packet];
         append_evidence(&mut related_packets, &baseline.frames);
@@ -140,7 +151,7 @@ impl RecentResponse {
         if expected_resolver_arrived {
             self.baseline = Some(ComparisonBaseline::new(packet, message));
         }
-        self.retain(packet, message, fingerprint, expected_resolver_arrived);
+        self.retain(packet, message, fingerprint, expected_resolver_arrived, answer_fingerprint);
         if expected_resolver_arrived {
             ReplyOutcome::Inspect(Some(finding))
         } else {
@@ -154,6 +165,7 @@ impl RecentResponse {
         message: &DnsMessage<'_>,
         fingerprint: [u8; 32],
         first_match: bool,
+        answer_fingerprint: Option<answers::AnswerFingerprint>,
     ) {
         if self.first.packet == packet.no
             || self.alternates.iter().any(|reply| reply.evidence.packet == packet.no)
@@ -170,6 +182,7 @@ impl RecentResponse {
         self.alternates.push(AlternateResponse {
             evidence: DnsReplyEvidence::from_reply(packet, message),
             fingerprint,
+            answer_fingerprint,
         });
     }
 }

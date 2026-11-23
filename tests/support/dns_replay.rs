@@ -23,7 +23,7 @@ fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool)
     let mut capture = PcapNgWriter::create(path).unwrap();
     for frame in 1..=5 {
         let response = frame != 1;
-        let equivalent_variation = frame == 3 && rr_type == 1;
+        let equivalent_variation = matches!(frame, 3 | 5) && rr_type == 1;
         let mut dns = vec![
             0,
             49,
