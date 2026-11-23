@@ -133,6 +133,62 @@ fn periodic_archive_retains_only_the_matched_run_after_worker_history_rolls_over
 }
 
 #[test]
+fn opted_in_entropy_alert_archives_only_its_eight_samples_after_history_rollover() {
+    use packrat_tui::engine::worker::WorkerLimits;
+    use packrat_tui::net::parser::parse_ethernet;
+    use packrat_tui::storage::packet_archive::{ArchiveLimits, ArchiveWorker, PacketArchive};
+
+    let rule = "traffic.high_entropy_outbound";
+    let payload: Vec<_> = (0..=255_u8).cycle().take(1_280).collect();
+    let sample = |frame, segment, vlan, timestamp| {
+        let mut bytes = packets::tcp(frame, segment * 1_280, 0x18, &payload).bytes;
+        bytes[30..34].copy_from_slice(&[192, 0, 2, 20]);
+        bytes[36..38].copy_from_slice(&443_u16.to_be_bytes());
+        bytes.splice(12..12, [0x81, 0, 0, vlan]);
+        parse_ethernet(&bytes, frame, timestamp)
+    };
+    for selected in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("archive");
+        let mut app = App::new_for_test();
+        let archive = ArchiveWorker::open_alert_evidence(&path, ArchiveLimits::default()).unwrap();
+        app.set_packet_archive_with_rules(archive, selected.then(|| rule.into()).into_iter().collect()).unwrap();
+        app.start_background_analysis().unwrap();
+        for no in 1..=199 {
+            app.inject_packet(sample(no, no as u32, 10, 1.0));
+            drain(&mut app);
+        }
+        app.inject_packet(sample(200, 200, 20, 2.0));
+        drain(&mut app);
+        let trigger = WorkerLimits::default().history_packets as u64 + 202;
+        for no in 201..trigger {
+            app.inject_packet(parse_ethernet(&[0; 14], no, 2.0));
+            drain(&mut app);
+        }
+        app.packets.clear();
+        app.inject_packet(sample(trigger, 200, 10, 3.0));
+        drain(&mut app);
+        app.stop_background_analysis().unwrap();
+        app.packet_archive.as_mut().unwrap().finish().unwrap();
+
+        let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
+            alert.provenance.as_ref().is_some_and(|p| p.rule_id == rule)).cloned()).unwrap().unwrap();
+        let expected = (193..=199).chain([trigger]).collect::<Vec<_>>();
+        assert_eq!(alert.packet_refs, expected);
+        assert_eq!(alert.severity, "MEDIUM");
+        let scope = alert.capture_id.unwrap();
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { 8 } else { 0 });
+        for frame in expected {
+            assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), selected);
+        }
+        for frame in [192, 200] {
+            assert!(archive.packet_for_capture(&scope, frame).unwrap().is_none());
+        }
+    }
+}
+
+#[test]
 fn asynchronous_packets_keep_display_and_analysis_counts_in_agreement() {
     let mut app = App::new_for_test();
     app.start_background_analysis().unwrap();

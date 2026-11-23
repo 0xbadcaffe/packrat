@@ -2,8 +2,9 @@ use super::*;
 use super::fragments::TcpPayloadObservation;
 use std::collections::VecDeque;
 
-const MAX_PERIODIC_FRAME_COST: usize = 2 * 1024;
+const MAX_CANDIDATE_FRAME_COST: usize = 2 * 1024;
 const MAX_PERIODIC_DIRECTION_COST: usize = 16 * 1024;
+const MAX_TRANSFER_SAMPLE_FRAMES: usize = 8;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct BehaviorFlowKey {
@@ -38,7 +39,7 @@ struct BeaconDirection {
 impl BeaconDirection {
     fn remember(&mut self, packet: &Packet) {
         let cost = crate::model::project::pinned_packet_cost(packet);
-        let fits = cost <= MAX_PERIODIC_FRAME_COST;
+        let fits = cost <= MAX_CANDIDATE_FRAME_COST;
         let oldest = self.samples.first().map_or(packet.timestamp, |sample| sample.timestamp);
         while self.retained.front().is_some_and(|(prior, _)| prior.timestamp < oldest)
             || (fits && self.retained_cost + cost > MAX_PERIODIC_DIRECTION_COST)
@@ -71,8 +72,15 @@ pub(super) struct VolumeEpisode {
     evidence: VolumeEvidence,
 }
 
+#[derive(Debug)]
+pub(super) struct EntropySample {
+    minute: i64,
+    frame: u64,
+    evidence: Option<Box<Packet>>,
+}
+
 fn sample_transfer_frame(frames: &mut std::collections::VecDeque<(i64, u64)>, minute: i64, frame: u64) {
-    if frames.len() == 8 {
+    if frames.len() == MAX_TRANSFER_SAMPLE_FRAMES {
         frames.pop_front();
     }
     frames.push_back((minute, frame));
@@ -101,7 +109,7 @@ fn transfer_transport(packet: &Packet) -> TransferTransport {
 }
 
 impl ExfilState {
-    fn observe(&mut self, packet: &Packet, outbound: bool, count_payload: bool) -> Option<bool> {
+    fn observe(&mut self, packet: &Packet, outbound: bool, count_payload: bool, retain_entropy: bool) -> Option<bool> {
         if !packet.timestamp.is_finite() {
             return None;
         }
@@ -124,9 +132,10 @@ impl ExfilState {
             expired = true;
         }
         if expired {
-            for frames in [&mut self.outbound_frames, &mut self.inbound_frames, &mut self.entropy_frames] {
+            for frames in [&mut self.outbound_frames, &mut self.inbound_frames] {
                 frames.retain(|&(minute, _)| minute >= cutoff);
             }
+            self.entropy_frames.retain(|sample| sample.minute >= cutoff);
             if self.outbound_bytes < EXFIL_VOLUME_THRESHOLD / 2 {
                 self.volume_episode = None;
             }
@@ -161,7 +170,14 @@ impl ExfilState {
                     high_entropy_payload = true;
                     bucket.entropy = bucket.entropy.saturating_add(payload_bytes);
                     self.high_entropy_bytes = self.high_entropy_bytes.saturating_add(payload_bytes);
-                    sample_transfer_frame(&mut self.entropy_frames, minute, packet.no);
+                    if self.entropy_frames.len() == MAX_TRANSFER_SAMPLE_FRAMES {
+                        self.entropy_frames.pop_front();
+                    }
+                    self.entropy_frames.push_back(EntropySample {
+                        minute, frame: packet.no,
+                        evidence: (retain_entropy && crate::model::project::pinned_packet_cost(packet) <= MAX_CANDIDATE_FRAME_COST)
+                            .then(|| Box::new(packet.clone())),
+                    });
                 }
             }
         } else {
@@ -228,7 +244,8 @@ impl SecurityEngine {
                 evict_oldest_exfil(&mut self.exfil_flows);
             }
             let state = self.exfil_flows.entry(key).or_default();
-            let Some(high_entropy_payload) = state.observe(pkt, outbound, may_have_new_payload) else { return };
+            let retain_entropy = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "traffic.high_entropy_outbound"));
+            let Some(high_entropy_payload) = state.observe(pkt, outbound, may_have_new_payload, retain_entropy) else { return };
 
             let volume = match state.inbound_bytes {
                 0 => Some(VolumeEvidence::OneWay),
@@ -268,6 +285,10 @@ impl SecurityEngine {
                 && u128::from(state.high_entropy_bytes) * 5 >= u128::from(state.outbound_payload_bytes) * 4
             {
                 state.entropy_alerted = true;
+                if retain_entropy {
+                    self.findings.retained_evidence.extend(state.entropy_frames.iter()
+                        .filter(|sample| sample.frame != pkt.no).filter_map(|sample| sample.evidence.as_deref().cloned()));
+                }
                 alerts.push((
                     "High-entropy outbound transfer",
                     Severity::Medium,
@@ -275,7 +296,7 @@ impl SecurityEngine {
                         "{} to {}: {} high-entropy outbound transport payload bytes in the rolling hour; encryption or compression is possible, and exfiltration is unverified",
                         pkt.src, pkt.dst, state.high_entropy_bytes
                     ),
-                    state.entropy_frames.iter().map(|&(_, frame)| frame).collect::<Vec<_>>(),
+                    state.entropy_frames.iter().map(|sample| sample.frame).collect::<Vec<_>>(),
                     pkt.no,
                 ));
             }

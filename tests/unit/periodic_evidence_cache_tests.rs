@@ -14,7 +14,7 @@ fn periodic_candidates_respect_frame_and_direction_byte_budgets() {
     assert!(window.retained_cost <= MAX_PERIODIC_DIRECTION_COST);
 
     let mut pkt = crate::net::parser::parse_ethernet(&[0; 14], 33, 33.0);
-    pkt.bytes.resize(MAX_PERIODIC_FRAME_COST + 1, 0);
+    pkt.bytes.resize(MAX_CANDIDATE_FRAME_COST + 1, 0);
     window.samples[0].timestamp = 31.0;
     window.remember(&pkt);
     assert_eq!(window.retained.front().unwrap().0.no, 31);
