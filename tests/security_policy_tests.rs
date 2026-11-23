@@ -168,6 +168,17 @@ fn ipv6_control_packet(
     packet("ICMPv6", 0, "", bytes).with_number_and_timestamp(no, no as f64)
 }
 
+fn checked_router_advertisement(no: u64, mac: [u8; 6], source: [u8; 16], hop_limit: u8, icmp: &[u8]) -> Packet {
+    let mut packet = ipv6_control_packet(no, mac, source, hop_limit, icmp);
+    assert_eq!(&icmp[2..4], &[0, 0]);
+    let mut sum = packet.bytes[22..54].chunks(2).chain(icmp.chunks(2))
+        .map(|word| u32::from(u16::from_be_bytes([word[0], word.get(1).copied().unwrap_or(0)])))
+        .sum::<u32>() + icmp.len() as u32 + 58;
+    while sum > 0xffff { sum = (sum >> 16) + (sum & 0xffff); }
+    packet.bytes[56..58].copy_from_slice(&(!(sum as u16)).to_be_bytes());
+    packet
+}
+
 fn neighbor_advertisement(target: [u8; 16], mac: [u8; 6]) -> Vec<u8> {
     let mut icmp = vec![0_u8; 32];
     icmp[0] = 136;

@@ -9,13 +9,7 @@ fn router_link_packet(no: u64, time: f64, vlan: u16, host: u8, lifetime: u16) ->
     data[0] = 134;
     data[6..8].copy_from_slice(&lifetime.to_be_bytes());
     let source = "fe80::1".parse::<Ipv6Addr>().unwrap().octets();
-    let mut packet = ipv6_control_packet(no, [2, 1, 2, 3, 4, host], source, 255, &data);
-    let sum = packet.bytes[22..54].chunks_exact(2).chain(data.chunks_exact(2))
-        .map(|word| u32::from(u16::from_be_bytes([word[0], word[1]])))
-        .sum::<u32>() + data.len() as u32 + 58;
-    let folded = (sum >> 16) + (sum & 0xffff);
-    let checksum = !(((folded >> 16) + (folded & 0xffff)) as u16);
-    packet.bytes[56..58].copy_from_slice(&checksum.to_be_bytes());
+    let mut packet = checked_router_advertisement(no, [2, 1, 2, 3, 4, host], source, 255, &data);
     packet.timestamp = time;
     packet.vlan_id = Some(vlan);
     packet
@@ -107,7 +101,7 @@ fn router_advertisement_rate_keeps_only_scoped_valid_samples() {
         let mut data = vec![0; 16];
         data[0] = 134;
         data.extend(options);
-        let mut packet = ipv6_control_packet(no, [2, 1, 2, 3, 4, 5], source, hop, &data);
+        let mut packet = checked_router_advertisement(no, [2, 1, 2, 3, 4, 5], source, hop, &data);
         packet.vlan_id = Some(vlan);
         packet.timestamp = no as f64 / 1000.0;
         packet
@@ -122,11 +116,14 @@ fn router_advertisement_rate_keeps_only_scoped_valid_samples() {
     let mut duplicate = make(37, 10, 255, &[]);
     duplicate.timestamp = 0.041;
     core.analyze(&duplicate);
+    let mut invalid_checksum = make(42, 10, 255, &[]);
+    invalid_checksum.bytes[56] ^= 1;
+    core.analyze(&invalid_checksum);
     assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
 
-    core.analyze(&make(42, 10, 255, &[]));
+    core.analyze(&make(43, 10, 255, &[]));
     let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
-    assert_eq!(alert.packet_refs, (1..=37).step_by(2).chain([42]).collect::<Vec<_>>());
+    assert_eq!(alert.packet_refs, (1..=37).step_by(2).chain([43]).collect::<Vec<_>>());
     assert_eq!(alert.severity, "MEDIUM");
     assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "ipv6.ra_rate_burst");
     assert!(alert.detail.contains("routing impact unverified"));

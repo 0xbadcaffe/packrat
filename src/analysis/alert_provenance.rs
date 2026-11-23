@@ -125,7 +125,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify router interface configuration and check whether endpoints ignored the advertisement.",
         ),
         (
-            "IDS", "IPv6 router advertisement flood", "ipv6.ra_rate_burst", 1, Correlated,
+            "IDS", "IPv6 router advertisement flood", "ipv6.ra_rate_burst", 2, Correlated,
             "Compare the retained advertisements with the approved router inventory and verify endpoint router selection.",
         ),
         (

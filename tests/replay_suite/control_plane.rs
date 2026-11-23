@@ -25,6 +25,17 @@ fn router_solicitation(vlan: u16, hop_limit: u8) -> Vec<u8> {
     frame
 }
 
+fn router_advertisement(vlan: u16, host: u8) -> Vec<u8> {
+    let mut frame = ethernet([0x33, 0x33, 0, 0, 0, 1], vlan, 0x86dd);
+    frame[11] = host;
+    frame.extend([0x60, 0, 0, 0, 0, 16, 58, 255]);
+    for address in ["fe80::1", "ff02::1"] {
+        frame.extend(address.parse::<std::net::Ipv6Addr>().unwrap().octets());
+    }
+    frame.extend([134, 0, 0x7b, 0xf3, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0]);
+    frame
+}
+
 fn configuration_bpdu(vlan: u16, flags: u8) -> Vec<u8> {
     let mut frame = ethernet([1, 0x80, 0xc2, 0, 0, 0], vlan, 38);
     frame.extend([0x42, 0x42, 3, 0, 0, 0, 0, flags]);
@@ -53,13 +64,7 @@ fn default_router_link_replay_keeps_both_frames_on_one_vlan() {
         let mut writer = PcapNgWriter::create(&root.join(&capture)).unwrap();
         for (index, &(vlan, host)) in observations.iter().enumerate() {
             let no = index as u64 + 1;
-            let mut frame = ethernet([0x33, 0x33, 0, 0, 0, 1], vlan, 0x86dd);
-            frame[11] = host;
-            frame.extend([0x60, 0, 0, 0, 0, 16, 58, 255]);
-            for address in ["fe80::1", "ff02::1"] {
-                frame.extend(address.parse::<std::net::Ipv6Addr>().unwrap().octets());
-            }
-            frame.extend([134, 0, 0x7b, 0xf3, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0]);
+            let frame = router_advertisement(vlan, host);
             writer.write_packet(&parse_ethernet(&frame, no, no as f64)).unwrap();
         }
         writer.flush().unwrap();
@@ -78,6 +83,40 @@ fn default_router_link_replay_keeps_both_frames_on_one_vlan() {
         String::from_utf8_lossy(&output.stderr));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["passed"], 3);
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn router_advertisement_burst_replay_excludes_bad_checksums_from_evidence() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "ipv6.ra_rate_burst";
+    let cases: Vec<_> = [("below-threshold", 20), ("burst", 21)]
+        .into_iter()
+        .map(|(name, end)| {
+            let file = format!("{name}.pcapng");
+            let mut writer = PcapNgWriter::create(&root.join(&file)).unwrap();
+            for no in 1..=end {
+                let mut frame = router_advertisement(10, 1);
+                if no == 20 { frame[18 + 40 + 2] ^= 1; }
+                writer.write_packet(&parse_ethernet(&frame, no, no as f64 / 100.0)).unwrap();
+            }
+            writer.flush().unwrap();
+            let count = usize::from(end == 21);
+            let mut case = json!({"name":name,"capture":file,"expect_counts":{(rule):count},"expect_snapshots":count});
+            if count != 0 {
+                let frames: Vec<_> = (1..=19).chain([21]).collect();
+                case["opening_frames"] = json!({(rule):[21]});
+                case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":21,"frames":frames}]);
+            }
+            case
+        })
+        .collect();
+    let manifest = root.join("router-burst.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr));
 }
 
 #[test]

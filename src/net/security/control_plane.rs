@@ -137,7 +137,9 @@ impl SecurityEngine {
         let Some(mac) = ethernet_source_mac(&pkt.bytes)
             .filter(|address| *address != [0; 6] && address[0] & 1 == 0) else { return };
         let scope = service_scope(pkt);
-        if is_ipv6_link_local(&inspection.source) && icmpv6_checksum_valid(inspection) {
+        let link_local = is_ipv6_link_local(&inspection.source);
+        if link_local {
+            if !icmpv6_checksum_valid(inspection) { return; }
             let retain = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "ipv6.ra_router_link_change"));
             self.track_default_router_link(pkt, inspection.source, mac, u16::from_be_bytes([data[6], data[7]]), retain);
         }
@@ -153,7 +155,7 @@ impl SecurityEngine {
         if now - state.last_seen > 1.0 { *state = RouterAdvertisementState::default(); }
         state.last_seen = now;
 
-        if !is_ipv6_link_local(&inspection.source) {
+        if !link_local {
             if !state.invalid_source_alerted {
                 state.invalid_source_alerted = true;
                 let source = Ipv6Addr::from(inspection.source);
@@ -186,7 +188,7 @@ impl SecurityEngine {
                     signature: "IPv6 router advertisement flood",
                     severity: Severity::Medium,
                     detail: format!(
-                        "Observed {RA_FLOOD_THRESHOLD} Router Advertisements from {} within one second in one capture scope; routing impact unverified",
+                        "Observed {RA_FLOOD_THRESHOLD} checksum-valid Router Advertisements from {} within one second in one capture scope; routing impact unverified",
                         format_mac(mac),
                     ),
                 },
