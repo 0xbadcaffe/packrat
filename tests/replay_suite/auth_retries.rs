@@ -86,3 +86,35 @@ fn auth_replay_distinguishes_status_lines_from_body_text_at_segment_boundaries()
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
 }
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn auth_replay_measures_ordered_gap_filled_and_unavailable_response_evidence() {
+    use super::support::{AuthResponseDelivery::*, write_coalesced_auth_capture};
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "http.unauthorized_burst";
+    let cases: Vec<_> = [
+        ("ordered", Ordered),
+        ("gap-filled", GapFilled),
+        ("prefix-missing", PrefixMissing),
+    ].into_iter().map(|(name, delivery)| {
+        let file = format!("{name}.pcapng");
+        if let Some(trigger) = write_coalesced_auth_capture(&root.join(&file), delivery) {
+            json!({"name":name,"capture":file,"expect_snapshots":1,
+                "expect_counts":{(rule):1},"opening_frames":{(rule):[trigger]},
+                "opening_evidence":[{"rule_id":rule,"opening_frame":trigger,"frames":(3..=trigger).collect::<Vec<_>>(),
+                    "classification":{"severity":"MEDIUM","confidence":"direct_observation"}}]})
+        } else {
+            json!({"name":name,"capture":file,"expect_snapshots":0,"expect_counts":{(rule):0}})
+        }
+    }).collect();
+    let manifest = root.join("auth-stream-coverage.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let baseline = std::env::var("PACKRAT_REPLAY_BASELINE_ANALYZER").ok();
+    let output = super::run_suite_with_baseline(&manifest, baseline.as_deref());
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    if baseline.is_some() {
+        println!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+}

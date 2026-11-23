@@ -99,31 +99,13 @@ fn split_401_bursts_use_only_complete_scoped_headers_and_keep_each_frame() {
 fn coalesced_401_headers_keep_distinct_observations_and_unique_frames(#[case] out_of_order: bool) {
     let scratch = tempfile::tempdir().unwrap();
     let capture = scratch.path().join("coalesced-401.pcapng");
-    let request = b"GET /status HTTP/1.1\r\nHost: example.test\r\n\r\n";
-    let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
-    let mut writer = PcapNgWriter::create(&capture).unwrap();
-    writer.write_packet(&support::tcp(1, 100, 0x02, &[], false)).unwrap();
-    writer.write_packet(&support::tcp(2, 500, 0x12, &[], true)).unwrap();
-    for index in 0..5 {
-        writer.write_packet(&support::tcp(
-            3 + u64::from(index), 101 + index * request.len() as u32, 0x18, request, false,
-        )).unwrap();
-    }
-    let coalesced = response.repeat(5);
-    let trigger = if out_of_order {
-        let split = 7;
-        let later_sequence = 501 + split as u32;
-        writer.write_packet(&support::tcp(8, later_sequence, 0x18, &coalesced[split..], true)).unwrap();
-        writer.write_packet(&support::tcp(9, 501, 0x18, &coalesced[..split], true)).unwrap();
-        writer.write_packet(&support::tcp(10, later_sequence, 0x18, &coalesced[split..], true)).unwrap();
-        9
+    use support::AuthResponseDelivery::*;
+    let delivery = if out_of_order {
+        GapFilled
     } else {
-        for frame in [8, 9] {
-            writer.write_packet(&support::tcp(frame, 501, 0x18, &coalesced, true)).unwrap();
-        }
-        8
+        Ordered
     };
-    writer.flush().unwrap();
+    let trigger = support::write_coalesced_auth_capture(&capture, delivery).unwrap();
 
     let rule = "http.unauthorized_burst";
     let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
