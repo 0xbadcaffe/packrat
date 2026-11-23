@@ -1,4 +1,5 @@
 use super::*;
+use super::fragments::TcpPayloadObservation;
 
 fn sample_transfer_frame(frames: &mut std::collections::VecDeque<(i64, u64)>, minute: i64, frame: u64) {
     if frames.len() == 8 {
@@ -103,7 +104,7 @@ impl ExfilState {
 impl SecurityEngine {
     // ─── C2 Beacon and Exfiltration Correlation ─────────────────────────────
 
-    pub(super) fn check_beacon_and_exfiltration(&mut self, pkt: &Packet, no_new_tcp_payload: bool) {
+    pub(super) fn check_beacon_and_exfiltration(&mut self, pkt: &Packet, tcp_payload: TcpPayloadObservation) {
         if !pkt.timestamp.is_finite() {
             return;
         }
@@ -124,7 +125,8 @@ impl SecurityEngine {
         self.exfil_flows.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
         });
-        if !no_new_tcp_payload {
+        let may_have_new_payload = tcp_payload == TcpPayloadObservation::UnknownOrNew;
+        if may_have_new_payload {
             self.check_periodic_traffic(pkt);
         }
         let mut alerts = Vec::new();
@@ -133,12 +135,16 @@ impl SecurityEngine {
         let transport;
         if source_internal != destination_internal {
             let outbound = source_internal;
+            transport = transfer_transport(pkt);
+            // Observed reverse traffic remains in the baseline; removing it would inflate the ratio.
+            if outbound && matches!(transport, TransferTransport::Tcp) && tcp_payload == TcpPayloadObservation::Repeat {
+                return;
+            }
             let (internal, external) = if outbound {
                 (pkt.src.clone(), pkt.dst.clone())
             } else {
                 (pkt.dst.clone(), pkt.src.clone())
             };
-            transport = transfer_transport(pkt);
             let key = ExfilKey {
                 internal,
                 external,
@@ -150,7 +156,7 @@ impl SecurityEngine {
                 evict_oldest_exfil(&mut self.exfil_flows);
             }
             let state = self.exfil_flows.entry(key).or_default();
-            let Some(high_entropy_payload) = state.observe(pkt, outbound, !no_new_tcp_payload) else { return };
+            let Some(high_entropy_payload) = state.observe(pkt, outbound, may_have_new_payload) else { return };
 
             let outbound_ratio = state.outbound_bytes as f64 / state.inbound_bytes.max(1) as f64;
             if outbound
@@ -163,7 +169,7 @@ impl SecurityEngine {
                     "Large asymmetric outbound transfer",
                     Severity::High,
                     format!(
-                        "{} to {}: {} captured outbound bytes with {:.1}:1 ratio in the rolling hour",
+                        "{} to {}: {} captured outbound bytes with {:.1}:1 ratio in the rolling hour, excluding recognized outbound TCP payload retries; transfer intent unverified",
                         pkt.src, pkt.dst, state.outbound_bytes, outbound_ratio
                     ),
                     state.outbound_frames.iter().chain(&state.inbound_frames).map(|&(_, frame)| frame).collect::<Vec<_>>(),

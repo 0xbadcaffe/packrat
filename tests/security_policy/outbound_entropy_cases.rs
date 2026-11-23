@@ -39,7 +39,7 @@ fn outbound_tcp(frame: u64, payload: &[u8]) -> Packet {
 #[rstest]
 #[case(false)]
 #[case(true)]
-fn repeated_tcp_bytes_do_not_accumulate_entropy_evidence(#[case] resegmented: bool) {
+fn repeated_tcp_bytes_do_not_accumulate_outbound_evidence(#[case] resegmented: bool) {
     let mut core = packrat_tui::engine::AnalysisCore::default();
     let data: Vec<_> = (0..60_000).map(|index| (index * 73 % 256) as u8).collect();
     core.analyze(&outbound_tcp(1, &data));
@@ -59,7 +59,7 @@ fn repeated_tcp_bytes_do_not_accumulate_entropy_evidence(#[case] resegmented: bo
     assert!(
         alerts
             .iter()
-            .any(|alert| alert.title == "Large asymmetric outbound transfer")
+            .all(|alert| alert.title != "Large asymmetric outbound transfer")
     );
     assert!(
         alerts
@@ -67,7 +67,7 @@ fn repeated_tcp_bytes_do_not_accumulate_entropy_evidence(#[case] resegmented: bo
             .all(|alert| alert.title != "High-entropy outbound transfer")
     );
 
-    for frame in 36..=39 {
+    for frame in 36..=51 {
         core.analyze(&outbound_tcp(frame, &data));
     }
     let alert = core
@@ -79,6 +79,10 @@ fn repeated_tcp_bytes_do_not_accumulate_entropy_evidence(#[case] resegmented: bo
     assert_eq!(alert.packet_refs, [1, 36, 37, 38, 39]);
     assert_eq!(alert.severity, "MEDIUM");
     assert!(alert.detail.contains("exfiltration is unverified"));
+    let volume = core.alert_center.items.iter().find(|alert| alert.title == "Large asymmetric outbound transfer").unwrap();
+    assert_eq!(volume.packet_refs, (44..=51).collect::<Vec<_>>());
+    assert_eq!(volume.first_packet, 51);
+    assert!(volume.detail.contains("excluding recognized outbound TCP payload retries"));
 }
 
 #[test]
@@ -107,7 +111,7 @@ fn detects_large_high_entropy_outbound_transfer() {
             .any(|alert| alert.signature == "High-entropy outbound transfer")
     );
     for (rule, severity, revision, frames) in [
-        ("traffic.asymmetric_outbound", "HIGH", 4, (10..=17).collect::<Vec<_>>()),
+        ("traffic.asymmetric_outbound", "HIGH", 5, (10..=17).collect::<Vec<_>>()),
         ("traffic.high_entropy_outbound", "MEDIUM", 6, (1..=5).collect()),
     ] {
         let alert = core
@@ -133,6 +137,22 @@ fn detects_large_high_entropy_outbound_transfer() {
             "Heuristic"
         );
     }
+}
+
+#[test]
+fn retries_in_the_reverse_direction_still_count_toward_the_volume_baseline() {
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    let payload = vec![0; 60_000];
+    let mut reverse = outbound_tcp(1, &payload).bytes;
+    for offset in 0..4 { reverse.swap(26 + offset, 30 + offset); }
+    for offset in 0..2 { reverse.swap(34 + offset, 36 + offset); }
+    for no in 1..=4 {
+        core.analyze(&packrat_tui::net::parser::parse_ethernet(&reverse, no, no as f64 / 10.0));
+    }
+    for no in 5..=21 {
+        core.analyze(&outbound_tcp(no, &payload));
+    }
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != "Large asymmetric outbound transfer"));
 }
 
 #[test]

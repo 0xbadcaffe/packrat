@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TcpPayloadObservation {
+    UnknownOrNew,
+    Empty,
+    Repeat,
+}
+
 impl SecurityEngine {
     // ─── IPv4 Fragment Integrity ────────────────────────────────────────────
 
@@ -110,12 +117,12 @@ impl SecurityEngine {
 
     // ─── TCP Integrity / Evasion ────────────────────────────────────────────
 
-    /// Returns true for a complete TCP segment verified to have no new payload.
-    pub(super) fn check_tcp_integrity(&mut self, pkt: &Packet) -> bool {
+    pub(super) fn check_tcp_integrity(&mut self, pkt: &Packet) -> TcpPayloadObservation {
+        use TcpPayloadObservation::{Empty, Repeat, UnknownOrNew};
         if !pkt.timestamp.is_finite() ||
             pkt.capture.as_ref().is_some_and(|meta| !crate::net::parser::supports_capture_link_type(meta.link_type))
         {
-            return false;
+            return UnknownOrNew;
         }
         let segment = match parse_ipv4_tcp_frame(&pkt.bytes).or_else(|| parse_ipv6_tcp_frame(&pkt.bytes)) {
             Some(TcpFrame::Segment(segment)) => segment,
@@ -126,9 +133,9 @@ impl SecurityEngine {
                     severity: Severity::High,
                     detail: format!("{reason} from {} to {}", pkt.src, pkt.dst),
                 });
-                return false;
+                return UnknownOrNew;
             }
-            None => return false,
+            None => return UnknownOrNew,
         };
 
         const FIN: u8 = 0x01;
@@ -148,7 +155,7 @@ impl SecurityEngine {
         }
 
         if !segment.complete {
-            return false;
+            return UnknownOrNew;
         }
         let scope = service_scope(pkt);
         let key = (scope, segment.key.clone());
@@ -172,7 +179,7 @@ impl SecurityEngine {
 
         let state = self.tcp_integrity.entry(key).or_default();
         if state.started_at.is_some_and(|start| pkt.timestamp < start) {
-            return segment.payload.is_empty();
+            return if segment.payload.is_empty() { Empty } else { UnknownOrNew };
         }
         let in_time_order = observation_precedes(
             (state.last_seen, state.last_seen_frame), (pkt.timestamp, pkt.no),
@@ -290,7 +297,7 @@ impl SecurityEngine {
                 )),
             });
         }
-        segment.payload.is_empty() || already_seen
+        if segment.payload.is_empty() { Empty } else if already_seen { Repeat } else { UnknownOrNew }
     }
 }
 
