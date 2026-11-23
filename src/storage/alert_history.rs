@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::{collections::HashSet, fs::{File, OpenOptions}, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}};
 
 use crate::analysis::alert_center::{AlertDisposition, AlertFlow, CREDENTIAL_ALERT_DETAIL, MAX_ALERT_PACKET_REFS};
-use crate::analysis::alert_provenance::EvidenceConfidence;
+use crate::analysis::alert_provenance::{EvidenceConfidence, legacy_rule_hint};
 use super::alert_jsonl::{ExistingAlertRecord, MAX_ALERT_LINE};
 use super::alert_evidence::evidence_frame_set_sha256;
 use super::packet_archive::valid_capture_id;
@@ -72,6 +72,8 @@ pub struct AlertHistoryEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flow: Option<AlertFlow>,
     pub rule_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_rule_hint: Option<&'static str>,
     pub revision: Option<u16>,
     pub confidence: Option<EvidenceConfidence>,
     pub verify: Option<String>,
@@ -237,6 +239,11 @@ fn filtered_alerts_report(
             let first_reviewed_unix_ms = alert.first_reviewed_unix_ms.filter(|&timestamp| timestamp != 0);
             let first_review_delay_ms = first_reviewed_unix_ms.zip(first_saved_unix_ms)
                 .and_then(|(reviewed, saved)| reviewed.checked_sub(saved));
+            let legacy_rule_hint = if alert.capture_id.is_none() && alert.provenance.is_none() {
+                legacy_rule_hint(&alert.source, &alert.title)
+            } else {
+                None
+            };
             latest.push(AlertHistoryEntry {
                 session_id: record.session_id,
                 capture_id: alert.capture_id,
@@ -255,6 +262,7 @@ fn filtered_alerts_report(
                 evidence_frame_set_sha256: evidence_frame_set_sha256(&evidence_frames),
                 flow: alert.flow,
                 rule_id: alert.provenance.as_ref().map(|rule| limited(&rule.rule_id, 128)),
+                legacy_rule_hint,
                 revision: alert.provenance.as_ref().map(|rule| rule.revision),
                 confidence: alert.provenance.as_ref().map(|rule| rule.confidence),
                 verify: alert.provenance.as_ref().map(|rule| limited(&rule.verification_hint, 240)),

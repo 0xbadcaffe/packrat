@@ -24,6 +24,9 @@ if [[ $1 == --list-saved ]]; then
         (if $mode == "empty" then 0 else 7 end) as $eligible |
         {record_type:"saved_capture_index",status:"saved",sampled_alerts:12,
          sampled_unscoped_open_high_or_critical:3,sample_scan_complete:($mode != "bounded"),
+         unscoped_review_queue:[{session_id:$session,alert_id:9,severity:"CRITICAL",disposition:"Reviewing",
+           capture_id:"private scope",title:"private title",
+           legacy_rule_hint:"dns.competing_responders",next_evidence_step:"private suggestion"}],
          review_eligible_in_sample:$eligible,review_offset:$offset,
          review_shortlist_truncated:($eligible > $offset + 5),
          next_review_offset:(if $eligible > $offset + 5 then $offset + 5 else null end),
@@ -56,6 +59,9 @@ run_review | jq -e '
     .record_type == "saved_alert_evidence_review" and .index_status == "saved"
     and .sampled_unscoped_open_high_or_critical == 3 and .review_shortlist_truncated and .sample_scan_complete
     and .review_offset == 0 and .next_review_offset == 5 and .review_eligible_in_sample == 7
+    and .unscoped_review_queue == [{
+        session_id:"session-a",alert_id:9,severity:"CRITICAL",disposition:"Reviewing",last_seen:null,
+        legacy_rule_hint:"dns.competing_responders",next_evidence_step:"locate_original_capture_or_host_logs"}]
     and [.findings[].packet_evidence_status] ==
         ["complete","unavailable","changed_during_review","changed_during_review","check_failed"]
     and .findings[2].next_evidence_step == "refresh_saved_index"

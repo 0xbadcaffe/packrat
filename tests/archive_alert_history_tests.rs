@@ -45,6 +45,48 @@ fn review_latency_uses_only_usable_timings_in_the_requested_latest_sample() {
 }
 
 #[test]
+fn legacy_rule_hint_does_not_infer_provenance_or_match_titles_from_other_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("alerts.jsonl");
+    let mut file = std::fs::File::create(&log).unwrap();
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "CRITICAL", "Conflicting DNS responses", "fixture");
+    let original = center.items.remove(0);
+    for (id, source, scoped, versioned) in [
+        (1, "IDS", false, false),
+        (2, "OTHER", false, false),
+        (3, "IDS", true, false),
+        (4, "IDS", false, true),
+    ] {
+        let mut alert = original.clone();
+        alert.id = id;
+        alert.source = source.into();
+        alert.capture_id = scoped.then(|| "a".repeat(32));
+        if !versioned {
+            alert.provenance = None;
+        }
+        writeln!(file, "{}", json!({"schema_version":1,"record_type":"alert",
+            "session_id":"legacy","alert":alert})).unwrap();
+    }
+    drop(file);
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--alerts").arg(&log).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let rows: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows.len(), 4);
+    for alert in rows {
+        if alert["alert_id"] == 1 {
+            assert_eq!(alert["legacy_rule_hint"], "dns.competing_responders");
+            for key in ["capture_id", "rule_id", "revision", "confidence", "verify"] {
+                assert!(alert[key].is_null(), "{key}");
+            }
+        } else {
+            assert!(alert.get("legacy_rule_hint").is_none());
+        }
+    }
+}
+
+#[test]
 fn saved_alert_history_omits_legacy_credentials_without_rewriting_the_log() {
     let directory = tempfile::tempdir().unwrap();
     let log = directory.path().join("alerts.jsonl");

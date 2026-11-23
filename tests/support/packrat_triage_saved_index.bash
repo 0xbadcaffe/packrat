@@ -7,6 +7,9 @@ jq -e '.record_type == "saved_capture_index" and .status == "saved"
     and .review_latency == null
     and .sampled_alerts == 6 and .sampled_unscoped_alerts == 2
     and .sampled_unscoped_open_high_or_critical == 1
+    and .unscoped_review_queue == [{
+        session_id:"1700000000-432",alert_id:1,severity:"HIGH",disposition:"New",last_seen:20,
+        legacy_rule_hint:"dns.competing_responders",next_evidence_step:"locate_original_capture_or_host_logs"}]
     and .alert_sample_limit == 512 and .alert_log_integrity.stopped_at_limit == false
     and .sample_scan_complete and .review_eligible_in_sample == 3 and .review_offset == 0 and .next_review_offset == null
     and (.captures | map(.session_id)) == ["1700000000-123","1700000000-432"]
@@ -32,7 +35,7 @@ jq -e '.review_shortlist_truncated and .next_review_offset == 5 and .review_elig
     and [.review_shortlist[].alert_id]==[7,6,5,4,3]' <<<"$result" >/dev/null
 PACKRAT_TEST_ALERT_COUNT=7 PACKRAT_TEST_OPEN_PRIORITY=1 list_saved --review-offset 5 "$PACKRAT_TEST_LOG" |
     jq -e '.review_offset == 5 and .next_review_offset == null and (.review_shortlist_truncated | not)
-        and [.review_shortlist[].alert_id] == [2,1]' >/dev/null
+        and .unscoped_review_queue == [] and [.review_shortlist[].alert_id] == [2,1]' >/dev/null
 PACKRAT_TEST_ALERT_COUNT=7 PACKRAT_TEST_OPEN_PRIORITY=1 list_saved --review-offset 10 "$PACKRAT_TEST_LOG" |
     jq -e '.review_offset == 10 and .review_eligible_in_sample == 7 and .review_shortlist == []' >/dev/null
 for offset in 512 005 -1 bad; do

@@ -339,10 +339,18 @@ pub(super) const RULES: &[RuleDefinition] = {
     ]
 };
 
-pub(super) fn lookup(source: &str, title: &str) -> Option<AlertProvenance> {
+fn matching_rule(source: &str, title: &str) -> Option<&'static RuleDefinition> {
     RULES
         .iter()
         .find(|&&(namespace, signature, ..)| namespace == source && signature == title)
+}
+
+pub(crate) fn legacy_rule_hint(source: &str, title: &str) -> Option<&'static str> {
+    matching_rule(source, title).map(|rule| rule.2)
+}
+
+pub(super) fn lookup(source: &str, title: &str) -> Option<AlertProvenance> {
+    matching_rule(source, title)
         .map(|&(_, _, rule_id, revision, confidence, hint)| AlertProvenance {
             rule_id: rule_id.into(),
             revision,

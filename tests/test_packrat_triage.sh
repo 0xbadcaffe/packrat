@@ -88,7 +88,8 @@ mock_archive() {
             | [$base, ($base + {alert_id:2,first_seen:12,last_seen:22,severity:"HIGH",disposition:"Benign"}),
                ($base + {alert_id:3,first_seen:13,last_seen:19,severity:"CRITICAL",disposition:"Reviewing"}),
                ($base + {session_id:"1700000000-123",last_seen:30,severity:"CRITICAL",disposition:"Confirmed"}),
-               ($base + {capture_id:null}), ($base + {capture_id:"legacy",disposition:"Benign"})]
+               ($base + {capture_id:null,rule_id:null,revision:null,legacy_rule_hint:"dns.competing_responders"}),
+               ($base + {capture_id:"legacy",disposition:"Benign"})]
         '
     else
         jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" --arg queue "${PACKRAT_TEST_AUTO_QUEUE:-}" \

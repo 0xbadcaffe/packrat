@@ -43,18 +43,22 @@ rc=0
 raw=$(triage_with_budget "$budget" --list-saved "${offset_args[@]}" "$@") || rc=$?
 if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --argjson offset "$offset" '
     def count: type == "number" and . >= 0 and . <= 512 and floor == .;
-    def valid_entry:
+    def valid_reference:
         type == "object" and (.session_id | strings | test("\\A[A-Za-z0-9_-]{1,128}\\z"))
-        and (.capture_id | strings | test("\\A[0-9a-f]{32}\\z"))
         and (.alert_id | numbers | . >= 1 and . <= 999999999999999 and floor == .)
+        and (.disposition == "New" or .disposition == "Reviewing" or .disposition == "Confirmed")
+        and (.severity == "HIGH" or .severity == "CRITICAL");
+    def valid_entry: valid_reference
+        and (.capture_id | strings | test("\\A[0-9a-f]{32}\\z"))
         and (.evidence_frame_set_sha256 | strings | test("\\A[0-9a-f]{64}\\z"))
         and (.evidence_frame_count | numbers | . >= 0 and . <= 131 and floor == .)
         and (.rule_id == null or (.rule_id | strings | test("\\A[a-z0-9_.-]{1,128}\\z")))
         and (.revision == null or (.revision | numbers | . >= 1 and . <= 65535 and floor == .))
         and (.confidence == null or .confidence == "heuristic" or .confidence == "correlated" or .confidence == "direct_observation")
-        and (.disposition == "New" or .disposition == "Reviewing" or .disposition == "Confirmed")
-        and (.last_seen | numbers | isfinite)
-        and (.severity == "HIGH" or .severity == "CRITICAL");
+        and (.last_seen | numbers | isfinite);
+    def unscoped_reference: valid_reference
+        and (.legacy_rule_hint == null or (.legacy_rule_hint | strings | test("\\A[a-z0-9_.-]{1,128}\\z")))
+        and (.last_seen == null or (.last_seen | numbers | isfinite and . > 0));
     if length == 1 then .[0] else error("Expected one saved capture index") end
     | select(.record_type == "saved_capture_index" and (.status == "saved" or .status == "saved_log_degraded")
         and .review_offset == $offset and (.sampled_alerts | count)
@@ -65,9 +69,12 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --argjson offset "$off
     | select((.review_shortlist | type == "array" and length == $page_length
               and all(.[]; valid_entry))
         and .review_shortlist_truncated == ($eligible > $offset + 5)
-        and .next_review_offset == (if $eligible > $offset + 5 then $offset + 5 else null end))
+        and .next_review_offset == (if $eligible > $offset + 5 then $offset + 5 else null end)
+        and (.unscoped_review_queue | type == "array" and length <= 5 and all(.[]; unscoped_reference)))
     | {index_status:.status,sampled_alerts,sampled_unscoped_open_high_or_critical,sample_scan_complete,
        review_offset,review_eligible_in_sample,review_shortlist_truncated,next_review_offset,
+       unscoped_review_queue:(.unscoped_review_queue | map({session_id,alert_id,severity,disposition,last_seen,
+             legacy_rule_hint,next_evidence_step:"locate_original_capture_or_host_logs"})),
        review_shortlist:(.review_shortlist | map({session_id,capture_id,alert_id,rule_id,revision,confidence,
                                                severity,disposition,last_seen,evidence_frame_count,evidence_frame_set_sha256}))}
 ' <<< "$raw"); then

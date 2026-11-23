@@ -10,7 +10,7 @@ usage() {
         '--saved reviews an explicit saved capture without consulting live health.' \
         '--saved reports saved_scope_not_observed when the supplied logs contain no matching alert records.' \
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
-        '--list-saved ranks five scoped findings per page within a bounded sample; use immutable logs across pages.' \
+        '--list-saved ranks five scoped findings per page; unscoped hints are not packet links. Use immutable logs across pages.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'review_queue lists up to five unresolved CRITICAL or HIGH alerts (New, Reviewing, or Confirmed), even outside the recent list.' \
         'priority_sample_at_limit means older alerts may not have been reviewed.' \
@@ -33,8 +33,7 @@ if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
 mode=live target_alert='' review_offset=0
 if [[ ${1-} == --saved-alert ]]; then
     if (( $# < 5 || $# > 13 )) || [[ ! $4 =~ ^[1-9][0-9]{0,14}$ ]]; then usage >&2; exit 2; fi
-    target_alert=$4
-    set -- --saved "$2" "$3" "${@:5}"
+    target_alert=$4; set -- --saved "$2" "$3" "${@:5}"
 fi
 if [[ ${1-} == --saved ]]; then
     if (( $# < 4 || $# > 12 )) ||
@@ -49,12 +48,10 @@ elif [[ ${1-} == --list-saved ]]; then
         shift 2
     fi
     if (( $# < 1 || $# > 9 )); then usage >&2; exit 2; fi
-    mode=list_saved alert_log=$1
-    shift
+    mode=list_saved alert_log=$1; shift
 else
     if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
-    health_file=$1 alert_log=$2
-    shift 2
+    health_file=$1 alert_log=$2; shift 2
 fi
 alert_limit=50 query_limit=512
 limit_args=(--limit "$query_limit")
@@ -187,15 +184,14 @@ report() {
 }
 report_saved_index() {
     jq -c --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" --argjson offset "$review_offset" "$unresolved_jq"'
-        def scoped:
-            (.session_id | type == "string" and test("\\A[A-Za-z0-9_-]{1,128}\\z"))
-            and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
+        def valid_session: .session_id | type == "string" and test("\\A[A-Za-z0-9_-]{1,128}\\z");
+        def scoped: valid_session and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
         def seen: numbers | select(isfinite and . > 0);
         def priority: .severity == "HIGH" or .severity == "CRITICAL";
         def valid_alert_id: .alert_id | type == "number" and . >= 1 and . <= 999999999999999 and floor == .;
         def review_rank: [(.severity == "CRITICAL"), ((.last_seen | seen) // 0), .session_id, .capture_id, .alert_id];
         .integrity as $integrity
-        | (.alerts | map(select(scoped))) as $scoped
+        | (.alerts | map(select(scoped))) as $scoped | [.alerts[] | select((scoped | not) and priority and unresolved)] as $unscoped
         | ($scoped | map(select(priority and unresolved and valid_alert_id)) | sort_by(review_rank) | reverse) as $review
         | {
             record_type:"saved_capture_index",
@@ -204,7 +200,12 @@ report_saved_index() {
             previous_logs:$previous, alert_sample_limit:$limit,
             sampled_alerts:(.alerts | length),
             sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
-            sampled_unscoped_open_high_or_critical:([.alerts[] | select((scoped | not) and priority and unresolved)] | length),
+            sampled_unscoped_open_high_or_critical:($unscoped | length),
+            unscoped_review_queue:($unscoped | map(select(valid_session and valid_alert_id))
+                | sort_by([(.severity == "CRITICAL"), ((.last_seen | seen) // 0), .session_id, .alert_id]) | reverse | .[:5]
+                | map({session_id,alert_id,severity,disposition,last_seen:((.last_seen | seen) // null),
+                       legacy_rule_hint:(.legacy_rule_hint | strings | select(test("\\A[a-z0-9_.-]{1,128}\\z"))) // null,
+                       next_evidence_step:"locate_original_capture_or_host_logs"})),
             sample_scan_complete:($integrity.invalid_records == 0 and $integrity.oversized_records == 0
                 and $integrity.stopped_at_limit == false and $integrity.stopped_at_scan_budget != true),
             review_offset:$offset, review_eligible_in_sample:($review | length),
