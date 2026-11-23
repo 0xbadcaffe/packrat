@@ -1,4 +1,4 @@
-//! Nearby saved alerts with a matching recorded transport tuple.
+//! Nearby saved alerts with a matching trigger transport tuple.
 
 use std::{
     collections::HashSet,
@@ -10,10 +10,14 @@ use anyhow::{Result, ensure};
 use serde::Serialize;
 
 use super::{
+    alert_evidence::{FrameStatus, frame_status},
     alert_history::{AlertHistoryIntegrity, scan_alert_records},
-    packet_archive::valid_capture_id,
+    packet_archive::{PacketArchive, valid_capture_id},
 };
-use crate::analysis::alert_center::{AlertDisposition, AlertFlow, AlertItem};
+use crate::analysis::{
+    alert_center::{AlertDisposition, AlertFlow, AlertItem, AlertTransport},
+    packet_fields::captured_transport_header,
+};
 
 const WINDOW_SECONDS: u64 = 300;
 const SCAN_BYTES: NonZeroU64 = NonZeroU64::new(8 * 1024 * 1024).unwrap();
@@ -28,6 +32,8 @@ pub struct RelatedAlertReport {
     anchor_alert_id: u64,
     anchor_flow: Option<AlertFlow>,
     anchor_trigger_time: Option<f64>,
+    anchor_source: Option<&'static str>,
+    anchor_frame: Option<u64>,
     trigger_window_seconds: u64,
     sampled_alerts: usize,
     scan_complete: bool,
@@ -125,11 +131,18 @@ fn snapshot(alert: &AlertItem, flow: AlertFlow, time: f64) -> TriggerSnapshot {
 }
 
 pub fn related_alerts(
+    previous: &[PathBuf], active: &Path, session: &str, capture: &str, anchor_id: u64,
+) -> Result<RelatedAlertReport> {
+    related_alerts_with_evidence(previous, active, session, capture, anchor_id, None)
+}
+
+pub fn related_alerts_with_evidence(
     previous: &[PathBuf],
     active: &Path,
     session: &str,
     capture: &str,
     anchor_id: u64,
+    evidence_archive: Option<&Path>,
 ) -> Result<RelatedAlertReport> {
     ensure!(
         anchor_id > 0 && valid_capture_id(session) && valid_capture_id(capture),
@@ -151,7 +164,7 @@ pub fn related_alerts(
         let flow = alert.flow.filter(|&flow| usable_flow(flow));
         let time = trigger_time(&alert);
         if alert.id == anchor_id {
-            anchor = Some((flow, time));
+            anchor = Some((flow, time, alert.packet_no));
         } else if let Some((flow, time)) = flow.zip(time) {
             candidates.push(snapshot(&alert, flow, time));
         }
@@ -160,7 +173,17 @@ pub fn related_alerts(
     let scan_complete = integrity.invalid_records == 0
         && integrity.oversized_records == 0
         && !integrity.stopped_at_scan_budget;
-    let (anchor_flow, trigger) = anchor.unwrap_or_default();
+    let (mut anchor_flow, mut trigger, packet_no) = anchor.unwrap_or_default();
+    let mut anchor_source = anchor_flow.zip(trigger).map(|_| "recorded_alert");
+    let mut anchor_frame = None;
+    if anchor_source.is_none() && packet_no > 0 && let Some(path) = evidence_archive
+        && let Some((flow, time)) = retained_trigger(path, capture, packet_no)?
+    {
+        anchor_flow = Some(flow);
+        trigger = Some(time);
+        anchor_source = Some("retained_trigger_frame");
+        anchor_frame = Some(packet_no);
+    }
     let status = if anchor.is_none() {
         "anchor_not_in_sample"
     } else if anchor_flow.is_none() || trigger.is_none() {
@@ -193,12 +216,35 @@ pub fn related_alerts(
         anchor_alert_id: anchor_id,
         anchor_flow,
         anchor_trigger_time: trigger.filter(|_| anchor_flow.is_some()),
+        anchor_source,
+        anchor_frame,
         trigger_window_seconds: WINDOW_SECONDS,
         sampled_alerts,
         scan_complete,
         integrity,
         matching_alerts_in_sample,
         matches,
-        limitation: "Recorded tuple matches do not establish the same connection, VLAN, interface, process, or incident.",
+        limitation: "Tuple matches use only sampled alerts and do not establish the same connection, VLAN, interface, process, or incident.",
     })
+}
+
+fn retained_trigger(path: &Path, capture: &str, frame: u64) -> Result<Option<(AlertFlow, f64)>> {
+    let mut archive = PacketArchive::open_readonly(path).map_err(anyhow::Error::msg)?;
+    let packet = archive.packet_for_capture(capture, frame).map_err(anyhow::Error::msg)?;
+    Ok(packet.and_then(|packet| {
+        let time = packet.timestamp;
+        if !time.is_finite() || time <= 0.0
+            || !matches!(frame_status(&packet), FrameStatus::Complete | FrameStatus::Truncated)
+        {
+            return None;
+        }
+        let wire = captured_transport_header(&packet)?;
+        let transport = match wire.protocol {
+            6 => AlertTransport::Tcp,
+            17 => AlertTransport::Udp,
+            _ => return None,
+        };
+        let flow = AlertFlow { transport, source: wire.source, destination: wire.destination };
+        usable_flow(flow).then_some((flow, time))
+    }))
 }

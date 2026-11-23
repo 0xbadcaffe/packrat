@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("       packrat-archive DIRECTORY --alert-project ALERT_LOG SESSION_ID ALERT_ID OUTPUT_JSON --capture-id CAPTURE_ID [--previous-log PATH]...\nOpen the resulting JSON with packrat --project OUTPUT_JSON. It contains packet bytes.\nAlert evidence bundles count all omitted frames as missing and identify unreadable and unknown-length frames separately.");
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
         println!("       packrat-archive DIRECTORY --alert-flow-summary ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nGroups cited frame numbers by TCP/UDP direction and reports unassigned references without exporting packet bytes.");
-        println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nSearches up to 8 MiB for the latest saved triggers and returns up to 32 nearby tuple matches; does not identify a connection.");
+        println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]... [--evidence-archive DIRECTORY]\nSearches up to 8 MiB and returns up to 32 nearby tuple matches. An optional archive can supply the exact retained trigger when the log lacks a usable tuple or time.");
         println!("       packrat-archive --alerts ALERT_LOG --alert-range FIRST..LAST --session SESSION_ID --capture-id CAPTURE_ID --report-integrity [--scan-bytes BYTES] [--limit N] [--previous-log PATH]...\nSelects matching IDs before applying the result limit. Repeat --alert-range up to 64 times; the default scan budget is 8 MiB.");
         return Ok(());
     };
@@ -217,6 +217,7 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
     let mut alert_id = None;
     let mut ranges = Vec::new();
     let mut related_to = None;
+    let mut evidence_archive = None;
     let mut scan_bytes = None;
     let mut previous = Vec::new();
     let mut report_integrity = false;
@@ -237,6 +238,7 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
             }
             "--alert-range" => return Err("Too many alert ID ranges".into()),
             "--related-to" if related_to.is_none() => related_to = Some(value.parse()?),
+            "--evidence-archive" if evidence_archive.is_none() => evidence_archive = Some(PathBuf::from(value)),
             "--limit" if limit.is_none() => limit = Some(value.parse()?),
             "--scan-bytes" if scan_bytes.is_none() => scan_bytes = Some(value.parse()?),
             "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(PathBuf::from(value)),
@@ -248,13 +250,14 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
         if alert_id.is_some() || !ranges.is_empty() || limit.is_some() || scan_bytes.is_some() || report_integrity {
             return Err("--related-to uses its own bounded scan and cannot be combined with other query options".into());
         }
-        let report = packrat_tui::storage::alert_related::related_alerts(
+        let report = packrat_tui::storage::alert_related::related_alerts_with_evidence(
             &previous, std::path::Path::new(&log), session.as_deref().ok_or("--related-to requires --session")?,
-            capture.as_deref().ok_or("--related-to requires --capture-id")?, anchor,
+            capture.as_deref().ok_or("--related-to requires --capture-id")?, anchor, evidence_archive.as_deref(),
         )?;
         println!("{}", serde_json::to_string(&report)?);
         return Ok(());
     }
+    if evidence_archive.is_some() { return Err("--evidence-archive requires --related-to".into()); }
     if scan_bytes.is_some() && (!report_integrity || alert_id.is_some()) {
         return Err("--scan-bytes requires --report-integrity and cannot be combined with --alert-id".into());
     }

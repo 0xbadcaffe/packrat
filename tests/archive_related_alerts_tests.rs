@@ -3,6 +3,9 @@ use std::{io::Write, path::Path, process::Command};
 use packrat_tui::analysis::alert_center::{AlertCenter, AlertFlow, AlertTransport};
 use serde_json::{Value, json};
 
+#[path = "support/packets.rs"]
+mod packets;
+
 const SCOPE: &[&str] = &["--session", "session-a", "--capture-id", "capture-a"];
 
 fn record(id: u64, time: f64, flow: Option<AlertFlow>, session: &str, capture: &str) -> Value {
@@ -156,6 +159,54 @@ fn reports_missing_scope_or_tuple_without_implying_no_related_alerts() {
             .status
             .success()
     );
+}
+
+#[test]
+fn related_search_recovers_only_the_exact_archived_trigger_in_the_same_capture() {
+    use packrat_tui::{net::packet::CaptureMetadata, storage::packet_archive::PacketArchive};
+    let mut log = tempfile::NamedTempFile::new().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let archive_path = folder.path().join("archive");
+    let mut archive = PacketArchive::open(&archive_path).unwrap();
+    let mut packet = packets::tcp(1, 100, 0x02, b"Private payload");
+    let size = packet.bytes.len() as u32;
+    packet.timestamp = 800.0;
+    packet.capture = Some(CaptureMetadata {
+        timestamp: None, captured_length: size, wire_length: size, link_type: 1,
+        section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+    });
+    let mut unreadable = packet.clone();
+    unreadable.no = 3;
+    unreadable.capture.as_mut().unwrap().captured_length = 1;
+    archive.append_scoped("capture-a", &[packet.clone(), unreadable]).unwrap();
+    packet.no = 2;
+    archive.append_scoped("capture-b", &[packet]).unwrap();
+    drop(archive);
+
+    let matching = AlertFlow { source: "10.0.0.1:40000".parse().unwrap(),
+        destination: "10.0.0.2:80".parse().unwrap(), ..flow() };
+    for (id, frame, time, tuple) in [(1, 1, 1300., None), (2, 2, 800., None), (3, 3, 800., None),
+        (4, 4, 801., Some(matching)), (5, 5, 1300., Some(matching))] {
+        let mut row = record(id, time, tuple, "session-a", "capture-a");
+        row["alert"]["packet_no"] = json!(frame);
+        writeln!(log, "{row}").unwrap();
+    }
+    assert_eq!(run(log.path(), "1", &[])["status"], "anchor_tuple_or_time_unavailable");
+    let args = ["--evidence-archive", archive_path.to_str().unwrap()];
+    let report = run(log.path(), "1", &args);
+    assert_eq!(report["status"], "sampled");
+    assert_eq!(report["anchor_source"], "retained_trigger_frame");
+    assert_eq!(report["anchor_frame"], 1);
+    assert_eq!(report["anchor_flow"], json!(matching));
+    assert_eq!(report["anchor_trigger_time"], 800.0);
+    assert_eq!(report["matching_alerts_in_sample"], 1);
+    assert_eq!(report["matches"][0]["alert_id"], 4);
+    for id in ["2", "3"] {
+        let report = run(log.path(), id, &args);
+        assert_eq!(report["status"], "anchor_tuple_or_time_unavailable");
+        assert!(report["anchor_source"].is_null());
+    }
+    assert_eq!(run(log.path(), "4", &["--evidence-archive", "/no-archive-needed"])["anchor_source"], "recorded_alert");
 }
 
 #[test]
