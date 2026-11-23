@@ -3,6 +3,25 @@ use std::net::Ipv6Addr;
 
 const NDP_BINDING_WINDOW_SECS: f64 = 300.0;
 
+pub(super) struct RouterLink {
+    mac: [u8; 6],
+    order: (f64, u64),
+    expires_at: f64,
+}
+
+fn icmpv6_checksum_valid(inspection: &Ipv6Inspection<'_>) -> bool {
+    let sum_words = |bytes: &[u8]| bytes.chunks(2).map(|word| {
+        u64::from(u16::from_be_bytes([word[0], word.get(1).copied().unwrap_or(0)]))
+    }).sum::<u64>();
+    let length = inspection.transport.len() as u32;
+    let mut sum = sum_words(&inspection.source) + sum_words(&inspection.destination)
+        + sum_words(&length.to_be_bytes()) + 58 + sum_words(inspection.transport);
+    while sum > 0xffff {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    sum == 0xffff
+}
+
 impl SecurityEngine {
     // ─── IPv6 / Layer-2 Control Plane ───────────────────────────────────────
 
@@ -88,6 +107,9 @@ impl SecurityEngine {
         let Some(mac) = ethernet_source_mac(&pkt.bytes)
             .filter(|address| *address != [0; 6] && address[0] & 1 == 0) else { return };
         let scope = service_scope(pkt);
+        if is_ipv6_link_local(&inspection.source) && icmpv6_checksum_valid(inspection) {
+            self.track_default_router_link(pkt, inspection.source, mac, u16::from_be_bytes([data[6], data[7]]));
+        }
         let key = (scope, mac);
         if self.router_advertisements.len() >= MAX_CONTROL_PLANE_IDENTITIES
             && !self.router_advertisements.contains_key(&key)
@@ -139,6 +161,47 @@ impl SecurityEngine {
                 },
                 related_packets,
                 correlation_key: Some(format!("{scope:?}:{mac:?}:{}", pkt.no)),
+            });
+        }
+    }
+
+    fn track_default_router_link(&mut self, pkt: &Packet, source: [u8; 16], mac: [u8; 6], lifetime: u16) {
+        let scope = service_scope(pkt);
+        let key = (scope, source);
+        let order = (pkt.timestamp, pkt.no);
+        if let Some(prior) = self.default_router_links.get(&key)
+            && (prior.order.1 == pkt.no || !observation_precedes(prior.order, order))
+        {
+            return;
+        }
+        if lifetime == 0 {
+            if let Some(prior) = self.default_router_links.get_mut(&key) && prior.mac == mac {
+                prior.order = order;
+                prior.expires_at = pkt.timestamp;
+            }
+            return;
+        }
+        if self.default_router_links.len() >= MAX_CONTROL_PLANE_IDENTITIES
+            && !self.default_router_links.contains_key(&key)
+        {
+            self.default_router_links.retain(|_, prior| prior.expires_at > pkt.timestamp);
+            if self.default_router_links.len() >= MAX_CONTROL_PLANE_IDENTITIES { return; }
+        }
+        let previous = self.default_router_links.insert(key, RouterLink {
+            mac, order, expires_at: pkt.timestamp + f64::from(lifetime),
+        });
+        if let Some(prior) = previous && prior.mac != mac && pkt.timestamp < prior.expires_at {
+            let source = Ipv6Addr::from(source);
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "IPv6 default router Ethernet source changed",
+                    severity: Severity::Medium,
+                    detail: format!("Default-router advertisements for {source} arrived from {} and then {} before the earlier advertised lifetime expired; endpoint route changes were not verified",
+                        format_mac(prior.mac), format_mac(mac)),
+                },
+                related_packets: vec![prior.order.1],
+                correlation_key: Some(format!("{scope:?}:{source}:{}", prior.order.1)),
             });
         }
     }

@@ -39,6 +39,44 @@ fn configuration_bpdu(vlan: u16, flags: u8) -> Vec<u8> {
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn default_router_link_replay_keeps_both_frames_on_one_vlan() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "ipv6.ra_router_link_change";
+    let mut cases = Vec::new();
+    for (name, second_vlan, openings) in [("same-vlan", 10, vec![2]), ("other-vlan", 20, vec![])] {
+        let capture = format!("{name}.pcapng");
+        let mut writer = PcapNgWriter::create(&root.join(&capture)).unwrap();
+        for (no, vlan, host) in [(1, 10, 1), (2, second_vlan, 2)] {
+            let mut frame = ethernet([0x33, 0x33, 0, 0, 0, 1], vlan, 0x86dd);
+            frame[11] = host;
+            frame.extend([0x60, 0, 0, 0, 0, 16, 58, 255]);
+            for address in ["fe80::1", "ff02::1"] {
+                frame.extend(address.parse::<std::net::Ipv6Addr>().unwrap().octets());
+            }
+            frame.extend([134, 0, 0x7b, 0xf3, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0]);
+            writer.write_packet(&parse_ethernet(&frame, no, no as f64)).unwrap();
+        }
+        writer.flush().unwrap();
+        let mut case = json!({"name":name,"capture":capture,"expect_counts":{(rule):openings.len()},
+            "expect_snapshots":openings.len()});
+        if !openings.is_empty() {
+            case["opening_frames"] = json!({(rule):openings});
+            case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":2,"frames":[1,2]}]);
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("router-link.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], 2);
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn control_plane_replay_attributes_only_supported_indications_to_their_frames() {
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();

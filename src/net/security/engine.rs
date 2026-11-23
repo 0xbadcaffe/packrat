@@ -34,6 +34,7 @@ impl SecurityEngine {
             syn_flood_targets: HashMap::new(),
             ndp_bindings: HashMap::new(),
             router_advertisements: HashMap::new(),
+            default_router_links: HashMap::new(),
             lldp_chassis: HashMap::new(),
             beacon_flows: HashMap::new(),
             exfil_flows: HashMap::new(),
@@ -69,6 +70,7 @@ impl SecurityEngine {
         self.syn_flood_targets.clear();
         self.ndp_bindings.clear();
         self.router_advertisements.clear();
+        self.default_router_links.clear();
         self.lldp_chassis.clear();
         self.beacon_flows.clear();
         self.exfil_flows.clear();

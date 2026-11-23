@@ -129,6 +129,10 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the retained advertisements with the approved router inventory and verify endpoint router selection.",
         ),
         (
+            "IDS", "IPv6 default router Ethernet source changed", "ipv6.ra_router_link_change", 1, Correlated,
+            "Compare both advertisements with the switch-port inventory and planned router failover. Check endpoint default routes before attributing impact.",
+        ),
+        (
             "IDS", "DNS tunnel behavior", "dns.high_entropy_query_burst", 4, Heuristic,
             "Compare the retained queries with expected DNS clients and resolver logs; investigate the originating process before concluding that data was transferred.",
         ),

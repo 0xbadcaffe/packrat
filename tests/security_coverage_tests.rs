@@ -9,6 +9,10 @@ struct CoverageGroup {
 
 const COVERAGE: &[CoverageGroup] = &[
     CoverageGroup {
+        signatures: &["IPv6 default router Ethernet source changed"],
+        positive_test: "default_router_link_change_requires_scoped_active_advertisements",
+    },
+    CoverageGroup {
         signatures: &["DNS tunnel behavior"],
         positive_test: "dns_tunnel_lead_requires_distinct_scoped_wire_queries",
     },
@@ -225,6 +229,7 @@ const TEST_SOURCES: &str = concat!(
     include_str!("security_policy/cases_1.rs"),
     include_str!("security_policy/cases_2.rs"),
     include_str!("security_policy/outbound_entropy_cases.rs"),
+    include_str!("security_policy/ndp_binding_cases.rs"),
     include_str!("security_policy/cases_3.rs"),
     include_str!("security_policy/dhcp_cases.rs"),
     include_str!("security_policy/tcp_reset_cases.rs"),
