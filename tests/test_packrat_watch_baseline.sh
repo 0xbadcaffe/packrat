@@ -11,7 +11,7 @@ jq -nc '{
     build:{record_type:"verified_capture_build",interface:"wlan1",sha256:("a"*64),
            scope:{capture_id:"a",session_id:"one"},capture_run_id:"run-a",
            packets:2500,observed_at:"2026-11-23T11:02:00Z"},
-    coverage:{record_type:"capture_coverage_report",status:"sampled",
+    coverage:{record_type:"capture_coverage_report",status:"sampled",coverage_policy:"capture_loss_counters_v1",
               scope:{capture_id:"a",session_id:"one"},
               first_record_at:"2026-11-23T11:00:00Z",last_record_at:"2026-11-23T11:01:00Z",
               scoped_records:2,healthy_intervals:1,excluded_intervals:0,healthy_seconds:60,
@@ -38,6 +38,10 @@ bash "$tool" "$after" "$before" | jq -e '
 jq '.build.interface = "eth0"' "$after" > "$fixture"
 bash "$tool" "$before" "$fixture" | jq -e '
     .status == "different_interfaces" and .observed_rate_delta_per_10000_packets == null' >/dev/null
+jq 'del(.coverage.coverage_policy)' "$before" > "$fixture"
+bash "$tool" "$fixture" "$after" | jq -e '
+    .status == "coverage_policy_unverified" and .before.coverage_policy == null
+    and .observed_rate_delta_per_10000_packets == null' >/dev/null
 jq '.coverage.alert_comparable_intervals = 0 | .coverage.alert_comparable_packets = 0
     | .coverage.observed_openings = null' "$after" > "$fixture"
 bash "$tool" "$before" "$fixture" | jq -e '
@@ -99,7 +103,7 @@ jq -c '.build' "$before" > "$tmp/build-before"
 jq '.packets += 15 | .observed_at = "2026-11-23T11:02:01Z"' "$tmp/build-before" > "$tmp/build-after"
 jq -nc '
     {record_type:"capture_triage_watch",status:"current",capture_id:"a",session_id:"one",
-     updated_at:"2026-11-23T11:00:00Z",buffer_drops:0,packets:100,
+     updated_at:"2026-11-23T11:00:00Z",buffer_drops:0,packets:100,capture_queue_full_packets:0,truncated_frames:0,
      packet_counter_gap:false,healthy_capture_since:1,alert_sample_gap:false,
      highest_observed_alert_id:0,checkpoint:true} as $initial
     | $initial, ($initial | .updated_at = "2026-11-23T11:01:00Z" | .packets = 2100

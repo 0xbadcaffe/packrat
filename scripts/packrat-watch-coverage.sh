@@ -39,10 +39,16 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
              and ($ids | type == "array" and all(.[]; counter and . > $low and . <= $high) and . == unique)
              and $high - $low == ($ids | length)
           then $ids | length else null end;
+    def no_capture_loss_between($earlier; $later):
+        all([$earlier.capture_queue_full_packets, $later.capture_queue_full_packets,
+             $earlier.truncated_frames, $later.truncated_frames][]; counter)
+        and $earlier.capture_queue_full_packets == $later.capture_queue_full_packets
+        and $earlier.truncated_frames == $later.truncated_frames;
     def pair($earlier; $later):
         if ($earlier | healthy) and ($later | healthy)
             and $earlier.healthy_capture_since == $later.healthy_capture_since
             and $later.tick > $earlier.tick and $later.packets >= $earlier.packets
+            and no_capture_loss_between($earlier; $later)
         then {seconds:($later.tick - $earlier.tick), packets:($later.packets - $earlier.packets),
               observed_openings:observed_openings($earlier; $later)} else null end;
     if utf8bytelength > 2097152 then error("Journal exceeds the 2 MiB input limit") else . end
@@ -58,7 +64,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
     | ($healthy | map(select(.observed_openings != null))) as $comparable
     | ([$comparable[].packets] | add // 0) as $measured_packets
     | ([$comparable[].observed_openings] | add // 0) as $openings
-    | {record_type:"capture_coverage_report",
+    | {record_type:"capture_coverage_report",coverage_policy:"capture_loss_counters_v1",
        status:(if ($sample | length) == 0 then "no_capture_records"
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
        scope:$key, journal_tail_status:$all[-1].status,
