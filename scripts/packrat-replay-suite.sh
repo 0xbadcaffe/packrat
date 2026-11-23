@@ -13,7 +13,7 @@ usage() {
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
         'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.' \
         'A capture that changes during replay is marked inconclusive, even without a baseline.' \
-        'Set PACKRAT_REPLAY_BASELINE_ANALYZER to an older analyzer command or executable path to compare results.'
+        'Set PACKRAT_REPLAY_BASELINE_ANALYZER to compare analyzers; deltas require matching packet coverage.'
 }
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
@@ -81,9 +81,9 @@ replay_case() {
                     then [.first_packet,.packet_no,.last_packet,.packet_refs[]] | map(select(. > 0)) | unique
                     else null end;
                 ($label.opening_evidence // [] | map(key(.rule_id; .opening_frame))) as $keys |
-                reduce inputs as $row ({summary:null, evidence:{}};
+                reduce inputs as $row ({summary:null, summaries:0, evidence:{}};
                 if $row.type == "summary" then
-                    .summary = ($row | {packets,analyzed,skipped,truncated_frames,allow_truncated,
+                    .summaries += 1 | .summary = ($row | {packets,analyzed,skipped,truncated_frames,allow_truncated,
                         alerts_opened,alert_snapshots,rule_counts,alert_expectations})
                 elif ($keys | length) > 0 and $row.type == "alert" and $row.schema_version == 1
                     and (if $row | has("opening") then $row.opening == true else $row.alert.hit_count == 1 end)
@@ -116,7 +116,8 @@ replay_case() {
                matching_openings:($match.matches // 0),
                passed:($match.matches == 1 and $match.frames == $expected)}
         )) as $evidence_checks |
-        (if $evaluation == "failed" then "failed"
+        (if $status > 1 or $replay.summaries != 1 then "inconclusive"
+         elif $evaluation == "failed" then "failed"
          elif $evaluation != "passed" or $status != 0 or ($strict and $unregistered == null) then "inconclusive"
          elif $snapshot_check != null and ($snapshot_check.observed | type) != "number" then "inconclusive"
          elif $snapshot_check != null and $snapshot_check.expected != $snapshot_check.observed then "failed"
@@ -182,6 +183,11 @@ while IFS= read -r label; do
         reference=$(replay_case "$baseline")
         after=$(capture_stamp) || after=
         candidate=$(jq -c --argjson reference "$reference" --arg before "$stamp" --arg after "$after" '
+            def packet_coverage:
+                def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+                .summary | {packets,analyzed,skipped,truncated_frames} | if all(.[]; count)
+                    and .packets > 0 and .analyzed + .skipped == .packets and .truncated_frames <= .packets
+                then . else null end;
             def difference($candidate; $baseline):
                 if ($candidate | type) == "number" and ($baseline | type) == "number"
                 then $candidate - $baseline else null end;
@@ -192,11 +198,16 @@ while IFS= read -r label; do
                         (($candidate[$rule] // 0) - ($baseline[$rule] // 0)) as $delta
                         | if $delta == 0 then . else .[$rule] = $delta end)
                 else null end;
-            .baseline = $reference
+            (packet_coverage) as $candidate_coverage | ($reference | packet_coverage) as $baseline_coverage
+            | .baseline = $reference
             | if $before == "" or $before != $after then
                 .verdict = "inconclusive" | .score = null | .comparison = "capture_unstable" | .capture_check = "unstable"
               elif .score == null or $reference.score == null then
                 .comparison = "inconclusive"
+              elif $candidate_coverage == null or $baseline_coverage == null then
+                .comparison = "replay_coverage_unverified"
+              elif $candidate_coverage != $baseline_coverage then
+                .comparison = "replay_coverage_mismatch"
               else
                 .comparison = "comparable"
                 | .delta = ({

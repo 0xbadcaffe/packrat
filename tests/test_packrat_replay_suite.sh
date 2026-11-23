@@ -13,7 +13,7 @@ touch -- "$scratch/counts.pcap"
 touch -- "$scratch/evidence.pcap"
 
 packrat-analyze() {
-    local verdict opened=0 rules='{}'
+    local verdict opened=0 rules='{}' summary
     local checks='[]' frames='[]'
     case ${*: -1} in
         "$PACKRAT_TEST_DIRECTORY/benign fixture.pcap")
@@ -53,12 +53,17 @@ packrat-analyze() {
         *) return 2 ;;
     esac
     printf '%s\n' '{"type":"alert","payload":"not in the suite report"}'
-    jq -cn --arg verdict "$verdict" --argjson opened "$opened" --argjson rules "$rules" \
+    summary=$(jq -cn --arg verdict "$verdict" --argjson opened "$opened" --argjson rules "$rules" \
         --argjson snapshots "${PACKRAT_TEST_SNAPSHOTS:-null}" \
         --argjson checks "$checks" --argjson frames "$frames" '
-        {type:"summary",packets:20,alerts_opened:$opened,alert_snapshots:$snapshots,rule_counts:$rules,
+        {type:"summary",packets:20,analyzed:20,skipped:0,truncated_frames:0,alerts_opened:$opened,alert_snapshots:$snapshots,rule_counts:$rules,
             alert_expectations:{verdict:$verdict,checks:$checks,frame_checks:$frames}}
-    '
+    ')
+    printf '%s\n' "$summary"
+    case ${PACKRAT_TEST_CANDIDATE:-} in
+        duplicate_summary) printf '%s\n' "$summary" ;;
+        interrupted) return 2 ;;
+    esac
     [[ $verdict == passed ]]
 }
 export -f packrat-analyze
@@ -74,9 +79,13 @@ packrat-baseline() {
         unavailable) return 2 ;;
         record) touch -- "$PACKRAT_TEST_DIRECTORY/baseline-called" ;;
     esac
-    printf '%s\n' '{"type":"summary","alerts_opened":1,"rule_counts":{"scan.horizontal":1},
+    printf '%s\n' '{"type":"summary","packets":20,"analyzed":20,"skipped":0,"truncated_frames":0,"alerts_opened":1,"rule_counts":{"scan.horizontal":1},
         "alert_expectations":{"verdict":"failed","checks":[{"rule_id":"scan.horizontal","expected":0,"observed":1}]}}' |
-        jq -c .
+        jq -c --arg mode "${PACKRAT_TEST_BASELINE:-}" '
+            if $mode == "different_coverage" then .analyzed -= 1 | .skipped += 1
+            elif $mode == "unverified_coverage" then del(.truncated_frames)
+            elif $mode == "invalid_coverage" then .analyzed = 19
+            else . end'
     return 1
 }
 export -f packrat-baseline
@@ -100,6 +109,18 @@ jq -e '
 
 jq -c '.cases = [.cases[0]]' <<< "$sample" >"$manifest"
 bash "$suite" "$manifest" | jq -e '.total == 1 and .passed == 1' >/dev/null
+for mode in duplicate_summary interrupted; do
+    status=0
+    result=$(PACKRAT_TEST_CANDIDATE="$mode" bash "$suite" "$manifest") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.inconclusive == 1 and .cases[0].score == null' <<< "$result" >/dev/null
+done
+scored_failure="$scratch/scored-failure.json"
+jq -c '.cases = [.cases[1]]' <<< "$sample" > "$scored_failure"
+status=0
+result=$(PACKRAT_TEST_CANDIDATE=interrupted bash "$suite" "$scored_failure") || status=$?
+[[ $status == 1 ]]
+jq -e '.inconclusive == 1 and .failed == 0 and .cases[0].score == null' <<< "$result" >/dev/null
 (
     # shellcheck disable=SC2329 # Exported to the replay script.
     stat() {
@@ -141,7 +162,7 @@ PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline bash "$suite" "$shifted" |
     jq -e '.comparable == 1 and .cases[0].delta.alerts_opened == 0
         and .cases[0].delta.unregistered_alerts == 0
         and .cases[0].delta.rule_openings == {"scan.horizontal":-1,"scan.vertical":1}' >/dev/null
-for mode in unstable unavailable; do
+for mode in unstable unavailable different_coverage unverified_coverage invalid_coverage; do
     status=0
     result=$(PACKRAT_TEST_BASELINE="$mode" PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline \
         bash "$suite" "$manifest") || status=$?
@@ -149,7 +170,9 @@ for mode in unstable unavailable; do
     jq -e --arg mode "$mode" '
         .comparable == 0 and (.cases[0] | (.delta == null)
           and if $mode == "unstable" then .comparison == "capture_unstable" and .score == null
-              else .comparison == "inconclusive" and .verdict == "passed" end)
+              elif $mode == "unavailable" then .comparison == "inconclusive" and .verdict == "passed"
+              elif $mode == "different_coverage" then .comparison == "replay_coverage_mismatch" and .verdict == "passed"
+              else .comparison == "replay_coverage_unverified" and .verdict == "passed" end)
     ' <<< "$result" >/dev/null
 done
 
