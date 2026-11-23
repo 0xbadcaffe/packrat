@@ -15,24 +15,26 @@ date() {
     [[ $* == '-u +%s' ]] || return 2
     printf '%s\n' 1700000000
 }
-
 mock_archive() {
     printf '%s\n' called >"$PACKRAT_TEST_CALL"
     if [[ ${2-} == --alert-status || ${1-} == --project-alert-status ]]; then
+        local id=42
         if [[ $1 == --project-alert-status ]]; then
             [[ $2 == "$PACKRAT_TRIAGE_PROJECT" && $3 == "$PACKRAT_TEST_LOG" &&
                $4 == 1700000000-432 && $5 == 00000000000000000000000000000001 && $6 == 42 ]] || return 2
         else
-            [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 42 --capture-id 00000000000000000000000000000001${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
+            if [[ ${PACKRAT_TEST_AUTO_QUEUE:-} == yes || ${PACKRAT_TEST_AUTO_QUEUE:-} == many ]]; then id=$5; fi
+            [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 $id --capture-id 00000000000000000000000000000001${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
         fi
+        [[ $id != "${PACKRAT_TEST_EVIDENCE_FAIL_ID:-}" ]] || return 2
         if [[ ${PACKRAT_TEST_EVIDENCE_RESTART:-0} == 1 ]]; then
             jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
             mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
         fi
         jq -cn --arg capture "${PACKRAT_TEST_EVIDENCE_SCOPE:-00000000000000000000000000000001}" \
-            --arg drift "${PACKRAT_TEST_EVIDENCE_DRIFT:-0}" \
+            --arg drift "${PACKRAT_TEST_EVIDENCE_DRIFT:-0}" --argjson id "$id" \
             --argjson statuses "${PACKRAT_TEST_FRAME_STATUSES:-[\"truncated\",\"missing\"]}" '
-            {session_id:"1700000000-432",capture_id:$capture,alert_id:42,
+            {session_id:"1700000000-432",capture_id:$capture,alert_id:$id,
              evidence_frame_set_sha256:($drift * 64),
              frames:($statuses | to_entries | map({frame_number:(.key + 1),status:.value,bytes:[0,1]}))}'
         return
@@ -100,7 +102,8 @@ mock_archive() {
                   ($valid + {alert_id:44,severity:"HIGH",disposition:"New"}),
                   ($valid + {severity:"CRITICAL",disposition:"Reviewing"}),
                   ($valid + {alert_id:41,severity:"CRITICAL",disposition:"New"})
-              ] elif $queue == "configured" then [
+              ] elif $queue == "many" then [range(60;53;-1) | $valid + {alert_id:.,severity:"HIGH",disposition:"New"}]
+                elif $queue == "configured" then [
                   ($valid + {alert_id:43,severity:"MEDIUM",disposition:"New",rule_id:"traffic.periodic_fixed_size"}),
                   ($valid + {severity:"MEDIUM",disposition:"Reviewing",rule_id:"tcp.payload_after_observed_reset"})
               ] elif $queue == "backlog" then
@@ -122,7 +125,8 @@ packrat-archive() {
 }
 
 timeout() {
-    [[ $# -gt 3 && $1 == --kill-after=2s && $2 == "${PACKRAT_TEST_TIMEOUT_SECONDS:-10}s" ]] || return 2
+    [[ $# -gt 3 && $1 == --kill-after=2s && $2 =~ ^[1-9][0-9]*s$ ]] || return 2
+    (( ${2%s} <= ${PACKRAT_TEST_TIMEOUT_SECONDS:-10} )) || return 2
     shift 2
     if [[ -n ${PACKRAT_TEST_TIMEOUT_STATUS:-} ]]; then
         printf '%s\n' '[{"alert_id":999}]'
@@ -255,11 +259,16 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
     jq -c '.archive_enabled = true | .archive_paused = false' <<< "$sample" >"$health"
     result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
     jq -e '.evidence_selection == "automatic" and .evidence_status.alert_id == 42
-        and [.alerts[].packet_evidence_status] == ["not_checked","no_references","not_checked","partial","not_checked"]
+        and [.evidence_checks[].alert_id] == [42,41,44]
+        and [.alerts[].packet_evidence_status] == ["not_checked","no_references","partial","partial","partial"]
         and .open_priority_alerts_in_sample == 4 and [.review_queue[].alert_id] == [45,42,41,44]
         and [.review_queue[].next_evidence_step] == ["corroborate_with_host_or_service_logs",
-            "inspect_retained_and_recover_missing_frames","verify_frame_availability","verify_frame_availability"]' \
+            "inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames"]' \
         <<< "$result" >/dev/null
+    PACKRAT_TEST_AUTO_QUEUE=many run_auto | jq -e '[.evidence_checks[].alert_id] == [60,59,58,57,56]
+        and [.alerts[] | select(.packet_evidence_status=="not_checked") | .alert_id] == [55,54]' >/dev/null
+    status=0; result=$(PACKRAT_TEST_AUTO_QUEUE=yes PACKRAT_TEST_EVIDENCE_FAIL_ID=41 run_auto) || status=$?
+    jq -e --arg status "$status" '$status=="2" and [.evidence_checks[]|[.alert_id,.status]] == [[42,"checked"],[41,"unavailable"],[44,"checked"]]' <<< "$result" >/dev/null
     result=$(PACKRAT_TEST_ALERT_COUNT=0 run_auto)
     jq -e '.evidence_selection == "automatic" and .evidence_status == null and .alerts == []
         and .open_priority_alerts_in_sample == 0 and .review_queue == []' <<< "$result" >/dev/null

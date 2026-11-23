@@ -37,6 +37,7 @@ live() {
         priority_sample_at_limit:false, has_more_alerts:($alerts | length > 50),
         alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_limit:false,detail:"private context"},
         evidence_status:{alert_id:9,status:"checked",frames:[{bytes:"private payload"}]},
+        evidence_checks:[{alert_id:9,status:"checked",frames:[{bytes:"private payload"}]}],
         review_queue:($queue | map(. + {title:"private detail", bytes:[1,2], verify:"private advice"})),
         alerts:($alerts | map(. + {detail:"private payload", flow:{src:"10.2.3.4"}, last_seen:$packets}))
     }'
@@ -56,6 +57,7 @@ jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .archive_usage=={frames:1,max_frames:100,payload_bytes:1024,max_payload_bytes:65536}
     and .archive_near_limit==false
     and .evidence_check=={alert_id:9,status:"checked"}
+    and .evidence_checks==[{alert_id:9,status:"checked"}]
     and .recent_alerts==[{alert_id:9,severity:"MEDIUM",rule_id:"test.medium",disposition:"New",hit_count:1,packet_evidence_status:"partial"}]
     and .recent_alerts_at_limit==false and .has_older_alerts==false
     and .max_age_seconds==62

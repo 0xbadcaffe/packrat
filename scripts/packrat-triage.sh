@@ -21,7 +21,7 @@ usage() {
         'PACKRAT_TRIAGE_MAX_AGE overrides the freshness limit in seconds.' \
         'PACKRAT_TRIAGE_READ_TIMEOUT sets the alert log read deadline in seconds (default: 10).' \
         'Set PACKRAT_TRIAGE_ARCHIVE or PACKRAT_TRIAGE_PROJECT, plus PACKRAT_TRIAGE_EVIDENCE_ALERT_ID, to check one alert.' \
-        'In live mode, PACKRAT_TRIAGE_AUTO_EVIDENCE=1 with PACKRAT_TRIAGE_ARCHIVE checks one open alert.' \
+        'In live mode, PACKRAT_TRIAGE_AUTO_EVIDENCE=1 with PACKRAT_TRIAGE_ARCHIVE checks up to five open alerts in one read-timeout budget.' \
         'Automatic checks prefer CRITICAL, then HIGH, then only MEDIUM/LOW rules named in the active selective archive policy.' \
         'Within a severity, selects the newest eligible alert with frame references.' \
         '--saved-alert uses its explicit ID when an evidence source is supplied without PACKRAT_TRIAGE_EVIDENCE_ALERT_ID.' \
@@ -104,8 +104,7 @@ if [[ $auto_evidence != 0 && $auto_evidence != 1 ]] ||
     exit 2
 fi
 evidence_selection=off
-if [[ -n $evidence_id ]]; then evidence_selection=explicit; fi
-if [[ $auto_evidence == 1 ]]; then evidence_selection=automatic; fi
+if [[ -n $evidence_id ]]; then evidence_selection=explicit; elif [[ $auto_evidence == 1 ]]; then evidence_selection=automatic; fi
 if [[ -n $archive || -n $project || -n $evidence_id ]]; then
     evidence_path=${archive:-$project}
     if [[ ( -n $archive && -n $project ) || $evidence_path != /* ||
@@ -140,7 +139,8 @@ report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
         --argjson query_limit "$query_limit" --argjson rules "$archive_rules" \
         --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" --arg selection "$evidence_selection" '
-        def packet_evidence($evidence):
+        def packet_evidence($checks):
+            .alert_id as $id | (first($checks[] | select(.alert_id == $id)) // null) as $evidence |
             if .alert_id == $evidence.alert_id and $evidence.status == "checked" then
                 if all($evidence.frames[]; .status == "complete") then "complete"
                 elif any($evidence.frames[]; .status == "complete" or .status == "truncated" or .status == "length_unknown")
@@ -164,7 +164,7 @@ report() {
             elif . == "check_failed" or . == "changed_during_review" then "retry_evidence_check"
             else "verify_frame_availability" end;
         .[1] as $alerts
-        | .[2] as $evidence
+        | (.[2] // []) as $evidence
         | (if $alerts == null then null else $alerts[:$limit] |
             map(. + {packet_evidence_status:packet_evidence($evidence)}) end) as $sample
         | (if $alerts == null then null else [
@@ -185,7 +185,7 @@ report() {
              open_archive_rule_alerts_in_sample:(if $review == null then null else $review | map(select(.archive_rule)) | length end),
              review_queue_truncated:(if $review == null then null else ($review | length) > 5 end),
              review_queue:(if $review == null then null else $review[:5] end),
-             evidence_selection:$selection, evidence_status:$evidence,
+             evidence_selection:$selection, evidence_status:$evidence[0], evidence_checks:$evidence,
              alert_log_integrity:.[3], socket_context_status:$socket}
     '
 }
@@ -297,7 +297,7 @@ check_evidence() {
     else
         evidence_args=("$archive" --alert-status "$1" "$session" "$evidence_id" --capture-id "$capture")
     fi
-    response=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
+    response=$(timeout --kill-after=2s "${2}s" packrat-archive \
         "${evidence_args[@]}" "${previous_args[@]}") || return 1
     expected=$(jq -c --argjson id "$evidence_id" --argjson limit "$alert_limit" '
         {match:(first(.alerts[] | select(.alert_id == $id) |
@@ -415,31 +415,35 @@ if [[ -n $socket_file ]]; then
         socket_status=unavailable
     fi
 fi
-evidence=null evidence_failed=false archive_available=false
+evidence='[]' evidence_failed=false evidence_ids=()
+if [[ -n $evidence_id ]]; then evidence_ids+=("$evidence_id"); fi
 if jq -e '.health | .archive_enabled == true and (.archive_paused | type == "boolean")' <<< "$state" >/dev/null; then
     archive_rules=$(jq -c '.health | if .archive_alert_evidence_only == true and
         (.archive_evidence_rules | type == "array" and length <= 16 and all(.[];
             type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z")))
         then .archive_evidence_rules else [] end' <<< "$state")
-    archive_available=true
-fi
-if [[ $auto_evidence == 1 ]] && "$archive_available"; then
-    evidence_id=$(jq -r --argjson rules "$archive_rules" '
-        first(("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | .[]
+    if [[ $auto_evidence == 1 ]]; then
+        candidates=$(jq -r --argjson rules "$archive_rules" '
+        limit(5; ("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | .[]
             | select(.severity == $severity and (.disposition == "New" or .disposition == "Reviewing")
                 and ($severity == "CRITICAL" or $severity == "HIGH"
                     or (.rule_id as $rule | any($rules[]; . == $rule)))
                 and (.evidence_frame_count | type == "number" and . >= 1 and . <= 131 and floor == .))
             | .alert_id | select(type == "number" and . >= 1 and . <= 999999999999999 and floor == .))
-          // empty
-    ' <<< "$alerts")
-fi
-if [[ -n $evidence_id ]]; then
-    if ! evidence=$(check_evidence "$alert_log"); then
-        evidence=$(jq -cn --argjson id "$evidence_id" '{status:"unavailable",alert_id:$id,frames:null}')
+        ' <<< "$alerts")
+        if [[ -n $candidates ]]; then mapfile -t evidence_ids <<< "$candidates"; fi
     fi
-    if ! jq -e '.status == "checked"' <<< "$evidence" >/dev/null; then evidence_failed=true; fi
 fi
+evidence_deadline=$((SECONDS + read_timeout))
+for evidence_id in "${evidence_ids[@]}"; do
+    remaining=$((evidence_deadline - SECONDS))
+    if (( remaining <= 0 )); then break; fi
+    if ! check=$(check_evidence "$alert_log" "$remaining"); then
+        check=$(jq -cn --argjson id "$evidence_id" '{status:"unavailable",alert_id:$id,frames:null}')
+    fi
+    if ! jq -e '.status == "checked"' <<< "$check" >/dev/null; then evidence_failed=true; fi
+    evidence=$(jq -c --argjson check "$check" '. + [$check]' <<< "$evidence")
+done
 if [[ $mode == live ]]; then
     if ! latest=$(load_state "$health_file"); then
         report health_recheck_failed
@@ -471,18 +475,14 @@ if ! latest_stamps=$(previous_log_stamps) || [[ $latest_stamps != "$previous_sta
     report previous_log_changed
     exit 1
 fi
-if [[ $mode == live ]]; then verify_watch_identity "$latest_identity" || exit 1; fi
+[[ $mode != live ]] || verify_watch_identity "$latest_identity" || exit 1
 if [[ $mode == list_saved ]]; then
     index=$(report_saved_index)
     printf '%s\n' "$index"
     if jq -e '.status == "saved"' <<< "$index" >/dev/null; then exit 0; else exit 1; fi
 fi
-clean_status=current
-degraded_status=degraded
-if [[ $mode == saved ]]; then
-    clean_status=saved
-    degraded_status=saved_log_degraded
-fi
+clean_status=current degraded_status=degraded
+if [[ $mode == saved ]]; then clean_status=saved degraded_status=saved_log_degraded; fi
 if { [[ $mode == saved ]] || jq -e '.health.issues == []' <<< "$state" >/dev/null; } &&
    jq -e '.invalid_records == 0 and .oversized_records == 0 and .stopped_at_scan_budget != true' <<< "$integrity" >/dev/null; then
     if [[ $mode == saved ]] && jq -e 'length == 0' <<< "$alerts" >/dev/null; then

@@ -278,6 +278,9 @@ sanitize() {
             priority_sample_at_limit:(.priority_sample_at_limit | flag),
             evidence_check:(.evidence_status | if type == "object" then
                 {alert_id:(.alert_id | counter), status:(.status | token)} else null end),
+            evidence_checks:(.evidence_checks | if type == "array" then .[:5] | map(objects
+                | {alert_id:(.alert_id | counter), status:(.status | token)} | select(.alert_id > 0 and .status != null))
+                else null end),
             recent_alerts_at_limit:(.alerts | if type == "array" then length > 50 else null end),
             has_older_alerts:(.has_more_alerts | flag),
             recent_alerts:(.alerts | if type == "array" then .[:50] | map(objects
