@@ -4,11 +4,19 @@ set -euo pipefail
 export LC_ALL=C
 
 usage() {
-    printf '%s\n' 'Usage: packrat-review-backlog.sh ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
-        'Review up to five saved priority alerts. PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
+    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-offset N] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
+        'Review five saved priority alerts per page. Use immutable logs across pages.' \
+        'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
 
 if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
+offset=0 offset_args=()
+if [[ ${1-} == --review-offset ]]; then
+    offset=${2-}
+    if [[ ! $offset =~ ^(0|[1-9][0-9]{0,2})$ ]] || (( offset >= 512 )); then usage >&2; exit 2; fi
+    offset_args=(--review-offset "$offset")
+    shift 2
+fi
 if (( $# < 2 || $# > 10 )) || [[ $1 != /* || ! -d $1 ]]; then usage >&2; exit 2; fi
 budget=${PACKRAT_BACKLOG_TIMEOUT:-15}
 if [[ ! $budget =~ ^[1-9][0-9]{0,2}$ ]] || (( budget > 120 )); then
@@ -32,8 +40,9 @@ triage_with_budget() {
 }
 
 rc=0
-raw=$(triage_with_budget "$budget" --list-saved "$@") || rc=$?
-if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces '
+raw=$(triage_with_budget "$budget" --list-saved "${offset_args[@]}" "$@") || rc=$?
+if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --argjson offset "$offset" '
+    def count: type == "number" and . >= 0 and . <= 512 and floor == .;
     def valid_entry:
         type == "object" and (.session_id | strings | test("\\A[A-Za-z0-9_-]{1,128}\\z"))
         and (.capture_id | strings | test("\\A[0-9a-f]{32}\\z"))
@@ -48,8 +57,17 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces '
         and (.severity == "HIGH" or .severity == "CRITICAL");
     if length == 1 then .[0] else error("Expected one saved capture index") end
     | select(.record_type == "saved_capture_index" and (.status == "saved" or .status == "saved_log_degraded")
-        and (.review_shortlist | type == "array" and length <= 5 and all(.[]; valid_entry)))
-    | {index_status:.status,sampled_alerts,sampled_unscoped_open_high_or_critical,review_shortlist_truncated,
+        and .review_offset == $offset and (.sampled_alerts | count)
+        and (.sample_scan_complete | type == "boolean")
+        and (.review_eligible_in_sample | count) and .review_eligible_in_sample <= .sampled_alerts)
+    | .review_eligible_in_sample as $eligible
+    | ([0, ([5, ($eligible - $offset)] | min)] | max) as $page_length
+    | select((.review_shortlist | type == "array" and length == $page_length
+              and all(.[]; valid_entry))
+        and .review_shortlist_truncated == ($eligible > $offset + 5)
+        and .next_review_offset == (if $eligible > $offset + 5 then $offset + 5 else null end))
+    | {index_status:.status,sampled_alerts,sampled_unscoped_open_high_or_critical,sample_scan_complete,
+       review_offset,review_eligible_in_sample,review_shortlist_truncated,next_review_offset,
        review_shortlist:(.review_shortlist | map({session_id,capture_id,alert_id,rule_id,revision,confidence,
                                                severity,disposition,last_seen,evidence_frame_count,evidence_frame_set_sha256}))}
 ' <<< "$raw"); then

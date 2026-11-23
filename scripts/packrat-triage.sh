@@ -4,13 +4,13 @@ usage() {
     printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --saved SESSION_ID CAPTURE_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --saved-alert SESSION_ID CAPTURE_ID ALERT_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
-        '       packrat-triage --list-saved ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
+        '       packrat-triage --list-saved [--review-offset N] ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         'Supply up to eight immutable previous logs, oldest first.' \
         'Live mode scans up to 8 MiB of alert history and reports when that budget limits coverage.' \
         '--saved reviews an explicit saved capture without consulting live health.' \
         '--saved reports saved_scope_not_observed when the supplied logs contain no matching alert records.' \
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
-        '--list-saved ranks up to five scoped findings and reports review timing coverage over the latest 512 distinct alerts.' \
+        '--list-saved ranks five scoped findings per page within a bounded sample; use immutable logs across pages.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'review_queue lists up to five unresolved CRITICAL or HIGH alerts (New, Reviewing, or Confirmed), even outside the recent list.' \
         'priority_sample_at_limit means older alerts may not have been reviewed.' \
@@ -30,28 +30,27 @@ usage() {
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
 }
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
-mode=live target_alert=''
+mode=live target_alert='' review_offset=0
 if [[ ${1-} == --saved-alert ]]; then
-    if (( $# < 5 || $# > 13 )) ||
-       [[ ! $4 =~ ^[1-9][0-9]{0,14}$ ]]; then
-        usage >&2; exit 2
-    fi
+    if (( $# < 5 || $# > 13 )) || [[ ! $4 =~ ^[1-9][0-9]{0,14}$ ]]; then usage >&2; exit 2; fi
     target_alert=$4
     set -- --saved "$2" "$3" "${@:5}"
 fi
 if [[ ${1-} == --saved ]]; then
     if (( $# < 4 || $# > 12 )) ||
-       [[ ! $2 =~ ^[A-Za-z0-9_-]{1,128}$ || ! $3 =~ ^[0-9a-f]{32}$ ]]; then
-        usage >&2; exit 2
-    fi
-    mode=saved
-    session=$2 capture=$3 alert_log=$4
+       [[ ! $2 =~ ^[A-Za-z0-9_-]{1,128}$ || ! $3 =~ ^[0-9a-f]{32}$ ]]; then usage >&2; exit 2; fi
+    mode=saved session=$2 capture=$3 alert_log=$4
     shift 4
 elif [[ ${1-} == --list-saved ]]; then
-    if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
-    mode=list_saved
-    alert_log=$2
-    shift 2
+    shift
+    if [[ ${1-} == --review-offset ]]; then
+        review_offset=${2-}
+        if [[ ! $review_offset =~ ^(0|[1-9][0-9]{0,2})$ ]] || (( review_offset >= 512 )); then usage >&2; exit 2; fi
+        shift 2
+    fi
+    if (( $# < 1 || $# > 9 )); then usage >&2; exit 2; fi
+    mode=list_saved alert_log=$1
+    shift
 else
     if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
     health_file=$1 alert_log=$2
@@ -187,7 +186,7 @@ report() {
     '
 }
 report_saved_index() {
-    jq -c --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" "$unresolved_jq"'
+    jq -c --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" --argjson offset "$review_offset" "$unresolved_jq"'
         def scoped:
             (.session_id | type == "string" and test("\\A[A-Za-z0-9_-]{1,128}\\z"))
             and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
@@ -206,8 +205,12 @@ report_saved_index() {
             sampled_alerts:(.alerts | length),
             sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
             sampled_unscoped_open_high_or_critical:([.alerts[] | select((scoped | not) and priority and unresolved)] | length),
-            review_shortlist_truncated:($review | length > 5),
-            review_shortlist:($review[:5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,revision,confidence,evidence_frame_count,evidence_frame_set_sha256,last_seen})),
+            sample_scan_complete:($integrity.invalid_records == 0 and $integrity.oversized_records == 0
+                and $integrity.stopped_at_limit == false and $integrity.stopped_at_scan_budget != true),
+            review_offset:$offset, review_eligible_in_sample:($review | length),
+            review_shortlist_truncated:($review | length > $offset + 5),
+            next_review_offset:(if ($review | length) > $offset + 5 then $offset + 5 else null end),
+            review_shortlist:($review[$offset:$offset + 5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,revision,confidence,evidence_frame_count,evidence_frame_set_sha256,last_seen})),
             alert_log_integrity:$integrity, review_latency:((.review_latency | objects | {sampled_alerts,measured_alerts,unmeasured_alerts,min_ms,median_ms,max_ms}) // null),
             captures:($scoped | group_by([.session_id, .capture_id]) | map(
               map(select(priority)) as $priority
@@ -371,14 +374,10 @@ read_status=0
 raw_alerts=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
     --alerts "$alert_log" "${scope_args[@]}" \
     "${limit_args[@]}" --report-integrity "${previous_args[@]}") || read_status=$?
-if (( read_status == 124 )); then
-    report alert_log_read_timeout
-    exit 2
-fi
-if (( read_status == 137 )); then
-    report alert_log_read_interrupted
-    exit 2
-fi
+case $read_status in
+    124) report alert_log_read_timeout; exit 2 ;;
+    137) report alert_log_read_interrupted; exit 2 ;;
+esac
 if (( read_status != 0 )) || ! history=$(jq -cse --argjson limit "$query_limit" '
     def count: type == "number" and isfinite and floor == . and . >= 0;
     select(length == 1) | .[0] | objects

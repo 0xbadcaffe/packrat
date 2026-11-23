@@ -16,13 +16,19 @@ base='{"rule_id":"scan.horizontal","revision":7,"confidence":"heuristic","severi
        "disposition":"New","last_seen":42,"evidence_frame_count":2,
        "evidence_frame_set_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}'
 if [[ $1 == --list-saved ]]; then
-    [[ $# == 3 && $2 == "$TEST_DIR/alerts.jsonl" && $3 == "$TEST_DIR/previous.jsonl" ]]
-    jq -nc --arg session "$session" --arg capture "$capture" --argjson base "$base" --arg mode "${TEST_MODE:-normal}" '
+    shift
+    offset=0
+    if [[ $1 == --review-offset ]]; then offset=$2; shift 2; fi
+    [[ $# == 2 && $1 == "$TEST_DIR/alerts.jsonl" && $2 == "$TEST_DIR/previous.jsonl" ]]
+    jq -nc --arg session "$session" --arg capture "$capture" --argjson base "$base" --arg mode "${TEST_MODE:-normal}" --argjson offset "$offset" '
+        (if $mode == "empty" then 0 else 7 end) as $eligible |
         {record_type:"saved_capture_index",status:"saved",sampled_alerts:12,
-         sampled_unscoped_open_high_or_critical:3,review_shortlist_truncated:true,
-         review_shortlist:[range(1;(if $mode == "extra" then 7 else 6 end))
-           | $base + {session_id:$session,capture_id:$capture,alert_id:.}]}
-        | if $mode == "empty" then .review_shortlist = [] else . end'
+         sampled_unscoped_open_high_or_critical:3,sample_scan_complete:($mode != "bounded"),
+         review_eligible_in_sample:$eligible,review_offset:$offset,
+         review_shortlist_truncated:($eligible > $offset + 5),
+         next_review_offset:(if $eligible > $offset + 5 then $offset + 5 else null end),
+         review_shortlist:[range($offset + 1;[($eligible + 1),($offset + (if $mode == "extra" then 7 else 6 end))] | min)
+           | $base + {session_id:$session,capture_id:$capture,alert_id:.}]}'
     exit
 fi
 [[ $1 == --saved-alert && $2 == "$session" && $3 == "$capture" &&
@@ -35,6 +41,7 @@ case $4 in
     3) status=complete step=inspect_retained_frames; base=$(jq '.evidence_frame_set_sha256=("a"*64)' <<< "$base") ;;
     4) printf '%s\n' '{"record_type":"capture_triage","mode":"saved","status":"saved_alert_not_observed"}'; exit 1 ;;
     5) status=check_failed step=retry_evidence_check ;;
+    6|7) status=partial step=inspect_retained_and_recover_missing_frames ;;
 esac
 jq -nc --arg session "$2" --arg capture "$3" --argjson id "$4" --arg status "$status" --arg step "$step" --argjson base "$base" '
     {record_type:"capture_triage",mode:"saved",status:"saved",alerts:[$base + {session_id:$session,capture_id:$capture,alert_id:$id,
@@ -43,16 +50,25 @@ jq -nc --arg session "$2" --arg capture "$3" --argjson id "$4" --arg status "$st
 if [[ $status == check_failed ]]; then exit 2; fi
 STUB
 run_review() {
-    PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=13 "$dir/packrat-review-backlog" "$dir" "$dir/alerts.jsonl" "$dir/previous.jsonl"
+    PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=13 "$dir/packrat-review-backlog" "$@" "$dir" "$dir/alerts.jsonl" "$dir/previous.jsonl"
 }
 run_review | jq -e '
     .record_type == "saved_alert_evidence_review" and .index_status == "saved"
-    and .sampled_unscoped_open_high_or_critical == 3 and .review_shortlist_truncated
+    and .sampled_unscoped_open_high_or_critical == 3 and .review_shortlist_truncated and .sample_scan_complete
+    and .review_offset == 0 and .next_review_offset == 5 and .review_eligible_in_sample == 7
     and [.findings[].packet_evidence_status] ==
         ["complete","unavailable","changed_during_review","changed_during_review","check_failed"]
     and .findings[2].next_evidence_step == "refresh_saved_index"
     and (tostring | contains("private") | not) and all(.findings[]; has("evidence_frame_set_sha256") | not)' >/dev/null
 [[ $(wc -l < "$dir/checks") == 5 ]]
+: > "$dir/checks"
+TEST_MODE=bounded run_review --review-offset 5 | jq -e '
+    .review_offset == 5 and .next_review_offset == null and (.sample_scan_complete | not)
+    and [.findings[].alert_id] == [6,7] and all(.findings[]; .packet_evidence_status == "partial")' >/dev/null
+[[ $(cat "$dir/checks") == $'6\n7' ]]
+: > "$dir/checks"
+run_review --review-offset 10 | jq -e '.sample_scan_complete and .findings == []' >/dev/null
+[[ ! -s $dir/checks ]]
 : > "$dir/checks"
 TEST_MODE=empty run_review | jq -e '.findings == []' >/dev/null
 [[ ! -s $dir/checks ]]
