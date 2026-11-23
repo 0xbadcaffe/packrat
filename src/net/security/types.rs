@@ -43,16 +43,17 @@ impl FragmentState {
         })
     }
 
-    pub(super) fn remember(&mut self, packet_no: u64, offset: u32, payload: &[u8]) {
+    pub(super) fn remember(&mut self, packet_no: u64, offset: u32, payload: &[u8]) -> bool {
         if payload.is_empty()
             || self.slices.len() >= MAX_FRAGMENTS_PER_DATAGRAM
             || payload.len() > MAX_FRAGMENT_EVIDENCE_BYTES.saturating_sub(self.retained_bytes)
             || self.slices.iter().any(|slice| slice.start == offset && slice.data == payload)
         {
-            return;
+            return false;
         }
         self.retained_bytes += payload.len();
         self.slices.push(FragmentSlice { packet_no, start: offset, data: payload.to_vec() });
+        true
     }
 }
 

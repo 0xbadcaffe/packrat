@@ -10,7 +10,7 @@ pub(super) enum TcpPayloadObservation {
 impl SecurityEngine {
     // ─── IPv4 Fragment Integrity ────────────────────────────────────────────
 
-    pub(super) fn check_ipv4_fragments(&mut self, pkt: &Packet) {
+    pub(super) fn check_ipv4_fragments(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
         let fragment = match parse_ipv4_fragment(&pkt.bytes) {
             Some(fragment) => fragment,
             None => return,
@@ -70,11 +70,21 @@ impl SecurityEngine {
             state.overlap_alerted = true;
             Some(frame)
         } else { None };
-        if !fragment.malformed_length {
-            state.remember(pkt.no, fragment.offset, fragment.payload);
-        }
+        let compare = !fragment.malformed_length && state.remember(pkt.no, fragment.offset, fragment.payload);
+        let offsets_before = state.offset_frames.len();
+        let burst = state.observe_offset(pkt.no, &fragment);
+        let counted = state.offset_frames.len() > offsets_before;
+        let retain_burst = counted && archive_rules.is_some_and(|rules| {
+            rules.iter().any(|rule| rule == "ipv4.fragment_observation_burst")
+        });
+        let retain_current = archive_rules.is_some() && ((compare && !state.overlap_alerted) || retain_burst);
 
-        if let Some(related_packets) = state.observe_offset(pkt.no, &fragment) {
+        if let Some(related_packets) = burst {
+            if retain_burst {
+                self.findings.retained_evidence.extend(related_packets.iter().filter_map(|&frame| {
+                    self.ipv4_fragment_evidence.cited_packet(pkt, frame).cloned()
+                }));
+            }
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
@@ -99,6 +109,9 @@ impl SecurityEngine {
             });
         }
         if let Some(frame) = conflict {
+            if archive_rules.is_some() && let Some(prior) = self.ipv4_fragment_evidence.cited_packet(pkt, frame) {
+                self.findings.retained_evidence.push(prior.clone());
+            }
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
@@ -112,6 +125,9 @@ impl SecurityEngine {
                 related_packets: vec![frame],
                 correlation_key: Some(format!("{key:?}")),
             });
+        }
+        if retain_current {
+            self.ipv4_fragment_evidence.remember(pkt);
         }
     }
 

@@ -178,6 +178,7 @@ pub struct SecurityEngine {
     bf_windows: HashMap<BfKey, BfWindow>,
     dns_tunnel: dns::DnsTunnelTracker,
     fragment_states: HashMap<(ServiceScope, FragmentKey), FragmentState>,
+    ipv4_fragment_evidence: crate::net::recent_evidence::RecentEvidence<1024, 120>,
     tcp_integrity: HashMap<(ServiceScope, TcpFlowKey), TcpIntegrityState>,
     scan_sources: HashMap<ScanSourceKey, SourceScanState>,
     syn_flood_targets: HashMap<SynTargetKey, SynFloodState>,

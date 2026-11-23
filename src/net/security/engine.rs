@@ -30,6 +30,7 @@ impl SecurityEngine {
             bf_windows: HashMap::new(),
             dns_tunnel: Default::default(),
             fragment_states: HashMap::new(),
+            ipv4_fragment_evidence: Default::default(),
             tcp_integrity: HashMap::new(),
             scan_sources: HashMap::new(),
             syn_flood_targets: HashMap::new(),
@@ -71,6 +72,7 @@ impl SecurityEngine {
         self.bf_windows.clear();
         self.dns_tunnel.clear();
         self.fragment_states.clear();
+        self.ipv4_fragment_evidence = Default::default();
         self.tcp_integrity.clear();
         self.scan_sources.clear();
         self.syn_flood_targets.clear();
@@ -143,7 +145,7 @@ impl SecurityEngine {
         {
             return;
         }
-        self.check_ipv4_fragments(pkt);
+        self.check_ipv4_fragments(pkt, archive_rules);
         let tcp_payload = self.check_tcp_integrity(pkt, archive_rules);
         self.check_scan_activity(pkt);
         self.check_ipv6_control_plane(pkt, archive_rules);
