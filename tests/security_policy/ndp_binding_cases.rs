@@ -9,7 +9,7 @@ fn router_link_packet(no: u64, time: f64, vlan: u16, host: u8, lifetime: u16) ->
     data[0] = 134;
     data[6..8].copy_from_slice(&lifetime.to_be_bytes());
     let source = "fe80::1".parse::<Ipv6Addr>().unwrap().octets();
-    let mut packet = checked_router_advertisement(no, [2, 1, 2, 3, 4, host], source, 255, &data);
+    let mut packet = checksummed_ipv6_control_packet(no, [2, 1, 2, 3, 4, host], source, 255, &data);
     packet.timestamp = time;
     packet.vlan_id = Some(vlan);
     packet
@@ -101,7 +101,7 @@ fn router_advertisement_rate_keeps_only_scoped_valid_samples() {
         let mut data = vec![0; 16];
         data[0] = 134;
         data.extend(options);
-        let mut packet = checked_router_advertisement(no, [2, 1, 2, 3, 4, 5], source, hop, &data);
+        let mut packet = checksummed_ipv6_control_packet(no, [2, 1, 2, 3, 4, 5], source, hop, &data);
         packet.vlan_id = Some(vlan);
         packet.timestamp = no as f64 / 1000.0;
         packet
@@ -138,7 +138,7 @@ fn ndp_binding_changes_keep_scoped_recent_valid_claims_and_both_frames() {
         let mac = [2, 1, 2, 3, 4, host];
         let mut data = neighbor_advertisement(target, mac);
         mutate(&mut data);
-        let mut packet = ipv6_control_packet(no, mac, target, hop_limit, &data);
+        let mut packet = checksummed_ipv6_control_packet(no, mac, target, hop_limit, &data);
         packet.vlan_id = Some(vlan);
         packet.timestamp = time;
         packet
@@ -154,6 +154,9 @@ fn ndp_binding_changes_keep_scoped_recent_valid_claims_and_both_frames() {
     ] {
         core.analyze(&pkt);
     }
+    let mut invalid_checksum = make(11, 7.5, 10, 11, 255, |_| {});
+    invalid_checksum.bytes[56] ^= 1;
+    core.analyze(&invalid_checksum);
     assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
 
     core.analyze(&make(8, 8.0, 10, 8, 255, |_| {}));
@@ -177,7 +180,7 @@ fn ndp_binding_changes_accept_later_frames_at_the_same_time() {
     let mut core = AnalysisCore::default();
     for (no, host) in [(1, 1), (2, 2), (1, 3), (3, 4)] {
         let mac = [2, 1, 2, 3, 4, host];
-        let mut packet = ipv6_control_packet(no, mac, target, 255, &neighbor_advertisement(target, mac));
+        let mut packet = checksummed_ipv6_control_packet(no, mac, target, 255, &neighbor_advertisement(target, mac));
         packet.timestamp = 1.0;
         core.analyze(&packet);
     }

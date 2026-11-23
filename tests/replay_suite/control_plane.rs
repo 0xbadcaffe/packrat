@@ -36,6 +36,24 @@ fn router_advertisement(vlan: u16, host: u8) -> Vec<u8> {
     frame
 }
 
+fn neighbor_advertisement(claimed_host: u8, valid_checksum: bool) -> Vec<u8> {
+    let mut frame = ethernet([0x33, 0x33, 0, 0, 0, 1], 10, 0x86dd);
+    frame.extend([0x60, 0, 0, 0, 0, 32, 58, 255]);
+    for address in ["fe80::1", "ff02::1"] {
+        frame.extend(address.parse::<std::net::Ipv6Addr>().unwrap().octets());
+    }
+    frame.extend([136, 0, 0, 0, 0, 0, 0, 0]);
+    frame.extend("2001:db8::5".parse::<std::net::Ipv6Addr>().unwrap().octets());
+    frame.extend([2, 1, 2, 0, 0, 0, 0, claimed_host]);
+    let sum = frame[26..].chunks_exact(2).map(|word| u32::from(u16::from_be_bytes([word[0], word[1]])))
+        .sum::<u32>() + 32 + 58;
+    let fold = (sum >> 16) + (sum & 0xffff);
+    let mut checksum = !(((fold >> 16) + (fold & 0xffff)) as u16);
+    if !valid_checksum { checksum ^= 1; }
+    frame[60..62].copy_from_slice(&checksum.to_be_bytes());
+    frame
+}
+
 fn configuration_bpdu(vlan: u16, flags: u8) -> Vec<u8> {
     let mut frame = ethernet([1, 0x80, 0xc2, 0, 0, 0], vlan, 38);
     frame.extend([0x42, 0x42, 3, 0, 0, 0, 0, flags]);
@@ -114,6 +132,39 @@ fn router_advertisement_burst_replay_excludes_bad_checksums_from_evidence() {
         })
         .collect();
     let manifest = root.join("router-burst.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn neighbor_binding_replay_excludes_bad_checksum_claims_without_replacing_the_baseline() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "ipv6.ndp_binding_change";
+    let cases: Vec<_> = [("bad-checksum-only", 2), ("valid-change-after-bad-checksum", 3)]
+        .into_iter()
+        .map(|(name, end)| {
+            let file = format!("{name}.pcapng");
+            let mut writer = PcapNgWriter::create(&root.join(&file)).unwrap();
+            for no in 1..=end {
+                let frame = neighbor_advertisement(no as u8, no != 2);
+                writer.write_packet(&parse_ethernet(&frame, no, no as f64)).unwrap();
+            }
+            writer.flush().unwrap();
+            let count = usize::from(end == 3);
+            let mut case = json!({"name":name,"capture":file,"expect_counts":{(rule):count},"expect_snapshots":count});
+            if count != 0 {
+                case["opening_frames"] = json!({(rule):[3]});
+                case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":3,"frames":[1,3],
+                    "classification":{"severity":"MEDIUM","confidence":"correlated","revision":3}}]);
+            }
+            case
+        })
+        .collect();
+    let manifest = root.join("neighbor-binding.json");
     std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout),

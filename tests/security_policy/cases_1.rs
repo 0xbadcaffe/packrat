@@ -404,7 +404,7 @@ fn detects_invalid_ipv6_neighbor_discovery_and_binding_change() {
         64,
         &neighbor_advertisement(target, [0, 1, 2, 3, 4, 5]),
     ));
-    security.update(&ipv6_control_packet(
+    security.update(&checksummed_ipv6_control_packet(
         2,
         [0, 1, 2, 3, 4, 6],
         source,
@@ -412,7 +412,7 @@ fn detects_invalid_ipv6_neighbor_discovery_and_binding_change() {
         &neighbor_advertisement(target, [0, 1, 2, 3, 4, 6]),
     ));
     assert!(!security.ids_alerts.iter().any(|alert| alert.signature == "IPv6 neighbor binding changed"));
-    security.update(&ipv6_control_packet(
+    security.update(&checksummed_ipv6_control_packet(
         3, [0, 1, 2, 3, 4, 5], source, 255,
         &neighbor_advertisement(target, [0, 1, 2, 3, 4, 5]),
     ));
@@ -454,7 +454,7 @@ fn detects_invalid_and_flooded_router_advertisements() {
     let link_local = "fe80::1".parse::<std::net::Ipv6Addr>().unwrap().octets();
     for index in 20..40_u64 {
         let mut packet =
-            checked_router_advertisement(index + 1, [0, 1, 2, 3, 4, 5], link_local, 255, &ra);
+            checksummed_ipv6_control_packet(index + 1, [0, 1, 2, 3, 4, 5], link_local, 255, &ra);
         packet.timestamp = index as f64 / 1000.0;
         security.update(&packet);
     }

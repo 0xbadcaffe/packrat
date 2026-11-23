@@ -168,7 +168,7 @@ fn ipv6_control_packet(
     packet("ICMPv6", 0, "", bytes).with_number_and_timestamp(no, no as f64)
 }
 
-fn checked_router_advertisement(no: u64, mac: [u8; 6], source: [u8; 16], hop_limit: u8, icmp: &[u8]) -> Packet {
+fn checksummed_ipv6_control_packet(no: u64, mac: [u8; 6], source: [u8; 16], hop_limit: u8, icmp: &[u8]) -> Packet {
     let mut packet = ipv6_control_packet(no, mac, source, hop_limit, icmp);
     assert_eq!(&icmp[2..4], &[0, 0]);
     let mut sum = packet.bytes[22..54].chunks(2).chain(icmp.chunks(2))

@@ -301,6 +301,7 @@ impl SecurityEngine {
             return;
         }
         let Some(mac) = ndp_target_link_layer_address(&data[24..]) else { return };
+        if !icmpv6_checksum_valid(inspection) { return; }
         let scope = service_scope(pkt);
         let key = (scope, target);
         let previous = self.ndp_bindings.get(&key).copied();
@@ -325,7 +326,7 @@ impl SecurityEngine {
                     signature: "IPv6 neighbor binding changed",
                     severity: Severity::Medium,
                     detail: format!(
-                        "Neighbor Advertisements for {target} claimed {} and then {}; endpoint cache change was not verified",
+                        "Checksum-valid Neighbor Advertisements for {target} claimed {} and then {}; endpoint cache change was not verified",
                         format_mac(previous.mac), format_mac(mac),
                     ),
                 },
