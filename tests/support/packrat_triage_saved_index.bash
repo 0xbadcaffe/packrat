@@ -4,6 +4,7 @@ list_saved() {
 }
 result=$(list_saved "$PACKRAT_TEST_LOG")
 jq -e '.record_type == "saved_capture_index" and .status == "saved"
+    and .review_rule == null
     and .review_latency == null
     and .sampled_alerts == 6 and .sampled_unscoped_alerts == 2
     and .sampled_unscoped_open_high_or_critical == 1
@@ -38,6 +39,16 @@ PACKRAT_TEST_ALERT_COUNT=7 PACKRAT_TEST_OPEN_PRIORITY=1 list_saved --review-offs
         and .unscoped_review_queue == [] and [.review_shortlist[].alert_id] == [2,1]' >/dev/null
 PACKRAT_TEST_ALERT_COUNT=7 PACKRAT_TEST_OPEN_PRIORITY=1 list_saved --review-offset 10 "$PACKRAT_TEST_LOG" |
     jq -e '.review_offset == 10 and .review_eligible_in_sample == 7 and .review_shortlist == []' >/dev/null
+extra='[{"alert_id":4,"severity":"MEDIUM","last_seen":25}, {"alert_id":5,"severity":"LOW","last_seen":26},
+        {"alert_id":6,"severity":"MEDIUM","rule_id":"other.rule"}, {"alert_id":7,"severity":"MEDIUM","capture_id":null},
+        {"alert_id":8,"severity":"MEDIUM","disposition":"Benign"}]'
+PACKRAT_TEST_INDEX_EXTRA="$extra" list_saved --review-rule test.rule "$PACKRAT_TEST_LOG" | jq -e '
+    .review_rule == "test.rule" and .review_eligible_in_sample == 5
+    and [.review_shortlist[] | [.alert_id,.severity]] == [[1,"CRITICAL"],[3,"CRITICAL"],[1,"HIGH"],[4,"MEDIUM"],[5,"LOW"]]
+    and .sampled_unscoped_open_high_or_critical == 1' >/dev/null
+PACKRAT_TEST_INDEX_EXTRA="$extra" list_saved --review-rule other.rule --review-offset 1 "$PACKRAT_TEST_LOG" | jq -e '
+    .review_rule == "other.rule" and .review_eligible_in_sample == 1 and .review_shortlist == []' >/dev/null
+if list_saved --review-rule 'bad rule' "$PACKRAT_TEST_LOG" >/dev/null 2>&1; then exit 1; fi
 for offset in 512 005 -1 bad; do
     status=0
     list_saved --review-offset "$offset" "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?

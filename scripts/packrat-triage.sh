@@ -4,16 +4,13 @@ usage() {
     printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --saved SESSION_ID CAPTURE_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --saved-alert SESSION_ID CAPTURE_ID ALERT_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
-        '       packrat-triage --list-saved [--review-offset N] ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
+        '       packrat-triage --list-saved [--review-rule RULE_ID] [--review-offset N] ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         'Supply up to eight immutable previous logs, oldest first.' \
         'Live mode scans up to 8 MiB of alert history and reports when that budget limits coverage.' \
-        '--saved reviews an explicit saved capture without consulting live health.' \
-        '--saved reports saved_scope_not_observed when the supplied logs contain no matching alert records.' \
+        '--saved does not consult live health; an unmatched scope reports saved_scope_not_observed.' \
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
-        '--list-saved ranks five scoped findings per page; unscoped hints are not packet links. Use immutable logs across pages.' \
-        'has_more_alerts indicates that older matching alerts were omitted.' \
+        '--list-saved ranks five scoped priority findings per page, or only a named rule at any severity. Use immutable logs across pages.' \
         'review_queue lists up to five unresolved CRITICAL or HIGH alerts (New, Reviewing, or Confirmed), even outside the recent list.' \
-        'priority_sample_at_limit means older alerts may not have been reviewed.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
         'Set PACKRAT_ALERT_LOG in the health watcher to identify the expected log.' \
         'Strict watcher mode rejects a live log whose file identity has not been verified by the watcher.' \
@@ -30,7 +27,7 @@ usage() {
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
 }
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
-mode=live target_alert='' review_offset=0
+mode=live target_alert='' review_offset=0 review_rule=''
 if [[ ${1-} == --saved-alert ]]; then
     if (( $# < 5 || $# > 13 )) || [[ ! $4 =~ ^[1-9][0-9]{0,14}$ ]]; then usage >&2; exit 2; fi
     target_alert=$4; set -- --saved "$2" "$3" "${@:5}"
@@ -42,6 +39,10 @@ if [[ ${1-} == --saved ]]; then
     shift 4
 elif [[ ${1-} == --list-saved ]]; then
     shift
+    if [[ ${1-} == --review-rule ]]; then
+        review_rule=${2-}; shift 2 || { usage >&2; exit 2; }
+        [[ $review_rule =~ ^[a-z0-9][a-z0-9_.-]{0,127}$ ]] || { usage >&2; exit 2; }
+    fi
     if [[ ${1-} == --review-offset ]]; then
         review_offset=${2-}
         if [[ ! $review_offset =~ ^(0|[1-9][0-9]{0,2})$ ]] || (( review_offset >= 512 )); then usage >&2; exit 2; fi
@@ -183,23 +184,23 @@ report() {
     '
 }
 report_saved_index() {
-    jq -c --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" --argjson offset "$review_offset" "$unresolved_jq"'
+    jq -c --arg rule "$review_rule" --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" --argjson offset "$review_offset" "$unresolved_jq"'
         def valid_session: .session_id | type == "string" and test("\\A[A-Za-z0-9_-]{1,128}\\z");
         def scoped: valid_session and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
         def seen: numbers | select(isfinite and . > 0);
-        def priority: .severity == "HIGH" or .severity == "CRITICAL";
+        def priority: .severity | IN("HIGH","CRITICAL");
         def valid_alert_id: .alert_id | type == "number" and . >= 1 and . <= 999999999999999 and floor == .;
-        def review_rank: [(.severity == "CRITICAL"), ((.last_seen | seen) // 0), .session_id, .capture_id, .alert_id];
+        def selected: if $rule == "" then priority else .rule_id == $rule and (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW")) end;
+        def review_rank: [({LOW:0,MEDIUM:1,HIGH:2,CRITICAL:3}[.severity]), ((.last_seen | seen) // 0), .session_id, .capture_id, .alert_id];
         .integrity as $integrity
         | (.alerts | map(select(scoped))) as $scoped | [.alerts[] | select((scoped | not) and priority and unresolved)] as $unscoped
-        | ($scoped | map(select(priority and unresolved and valid_alert_id)) | sort_by(review_rank) | reverse) as $review
+        | ($scoped | map(select(selected and unresolved and valid_alert_id)) | sort_by(review_rank) | reverse) as $review
         | {
             record_type:"saved_capture_index",
             status:(if $integrity.invalid_records == 0 and $integrity.oversized_records == 0
                 and $integrity.stopped_at_scan_budget != true then "saved" else "saved_log_degraded" end),
             previous_logs:$previous, alert_sample_limit:$limit,
-            sampled_alerts:(.alerts | length),
-            sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
+            sampled_alerts:(.alerts | length), sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
             sampled_unscoped_open_high_or_critical:($unscoped | length),
             unscoped_review_queue:($unscoped | map(select(valid_session and valid_alert_id))
                 | sort_by([(.severity == "CRITICAL"), ((.last_seen | seen) // 0), .session_id, .alert_id]) | reverse | .[:5]
@@ -208,7 +209,7 @@ report_saved_index() {
                        next_evidence_step:"locate_original_capture_or_host_logs"})),
             sample_scan_complete:($integrity.invalid_records == 0 and $integrity.oversized_records == 0
                 and $integrity.stopped_at_limit == false and $integrity.stopped_at_scan_budget != true),
-            review_offset:$offset, review_eligible_in_sample:($review | length),
+            review_rule:(if $rule == "" then null else $rule end), review_offset:$offset, review_eligible_in_sample:($review | length),
             review_shortlist_truncated:($review | length > $offset + 5),
             next_review_offset:(if ($review | length) > $offset + 5 then $offset + 5 else null end),
             review_shortlist:($review[$offset:$offset + 5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,revision,confidence,evidence_frame_count,evidence_frame_set_sha256,last_seen})),
@@ -219,8 +220,7 @@ report_saved_index() {
                 session_id:.[0].session_id, capture_id:.[0].capture_id, sampled_alerts:length,
                 sampled_high_or_critical:($priority | length), sampled_open_high_or_critical:($open | length),
                 next_review_alert_id:($open | map(select(valid_alert_id)) | max_by(review_rank) | .alert_id),
-                first_seen:([.[].first_seen | seen] | min),
-                last_seen:([.[].last_seen | seen] | max)
+                first_seen:([.[].first_seen | seen] | min), last_seen:([.[].last_seen | seen] | max)
             }) | sort_by([-(.last_seen // 0), .session_id, .capture_id]))
           }
     ' <<< "$history"

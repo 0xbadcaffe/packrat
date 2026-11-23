@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
-# Check saved priority findings against a packet archive without exporting frames.
+# Check saved findings against a packet archive without exporting frames.
 set -euo pipefail
 export LC_ALL=C
 
 usage() {
-    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-offset N] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
-        'Review five saved priority alerts per page. Use immutable logs across pages.' \
+    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-rule RULE_ID] [--review-offset N] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
+        'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
 
 if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
-offset=0 offset_args=()
+offset=0 rule='' index_args=()
+if [[ ${1-} == --review-rule ]]; then
+    rule=${2-}
+    [[ $rule =~ ^[a-z0-9][a-z0-9_.-]{0,127}$ ]] || { usage >&2; exit 2; }
+    index_args+=(--review-rule "$rule")
+    shift 2
+fi
 if [[ ${1-} == --review-offset ]]; then
     offset=${2-}
     if [[ ! $offset =~ ^(0|[1-9][0-9]{0,2})$ ]] || (( offset >= 512 )); then usage >&2; exit 2; fi
-    offset_args=(--review-offset "$offset")
+    index_args+=(--review-offset "$offset")
     shift 2
 fi
 if (( $# < 2 || $# > 10 )) || [[ $1 != /* || ! -d $1 ]]; then usage >&2; exit 2; fi
@@ -40,15 +46,16 @@ triage_with_budget() {
 }
 
 rc=0
-raw=$(triage_with_budget "$budget" --list-saved "${offset_args[@]}" "$@") || rc=$?
-if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --argjson offset "$offset" '
+raw=$(triage_with_budget "$budget" --list-saved "${index_args[@]}" "$@") || rc=$?
+if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --argjson offset "$offset" '
     def count: type == "number" and . >= 0 and . <= 512 and floor == .;
     def valid_reference:
         type == "object" and (.session_id | strings | test("\\A[A-Za-z0-9_-]{1,128}\\z"))
         and (.alert_id | numbers | . >= 1 and . <= 999999999999999 and floor == .)
-        and (.disposition == "New" or .disposition == "Reviewing" or .disposition == "Confirmed")
-        and (.severity == "HIGH" or .severity == "CRITICAL");
-    def valid_entry: valid_reference
+        and (.disposition == "New" or .disposition == "Reviewing" or .disposition == "Confirmed");
+    def priority: .severity == "HIGH" or .severity == "CRITICAL";
+    def selected: if $rule == "" then priority else .rule_id == $rule and (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW")) end;
+    def valid_entry: valid_reference and selected
         and (.capture_id | strings | test("\\A[0-9a-f]{32}\\z"))
         and (.evidence_frame_set_sha256 | strings | test("\\A[0-9a-f]{64}\\z"))
         and (.evidence_frame_count | numbers | . >= 0 and . <= 131 and floor == .)
@@ -56,11 +63,12 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --argjson offset "$off
         and (.revision == null or (.revision | numbers | . >= 1 and . <= 65535 and floor == .))
         and (.confidence == null or .confidence == "heuristic" or .confidence == "correlated" or .confidence == "direct_observation")
         and (.last_seen | numbers | isfinite);
-    def unscoped_reference: valid_reference
+    def unscoped_reference: valid_reference and priority
         and (.legacy_rule_hint == null or (.legacy_rule_hint | strings | test("\\A[a-z0-9_.-]{1,128}\\z")))
         and (.last_seen == null or (.last_seen | numbers | isfinite and . > 0));
     if length == 1 then .[0] else error("Expected one saved capture index") end
     | select(.record_type == "saved_capture_index" and (.status == "saved" or .status == "saved_log_degraded")
+        and .review_rule == (if $rule == "" then null else $rule end)
         and .review_offset == $offset and (.sampled_alerts | count)
         and (.sample_scan_complete | type == "boolean")
         and (.review_eligible_in_sample | count) and .review_eligible_in_sample <= .sampled_alerts)
@@ -72,13 +80,13 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --argjson offset "$off
         and .next_review_offset == (if $eligible > $offset + 5 then $offset + 5 else null end)
         and (.unscoped_review_queue | type == "array" and length <= 5 and all(.[]; unscoped_reference)))
     | {index_status:.status,sampled_alerts,sampled_unscoped_open_high_or_critical,sample_scan_complete,
-       review_offset,review_eligible_in_sample,review_shortlist_truncated,next_review_offset,
+       review_rule,review_offset,review_eligible_in_sample,review_shortlist_truncated,next_review_offset,
        unscoped_review_queue:(.unscoped_review_queue | map({session_id,alert_id,severity,disposition,last_seen,
              legacy_rule_hint,next_evidence_step:"locate_original_capture_or_host_logs"})),
        review_shortlist:(.review_shortlist | map({session_id,capture_id,alert_id,rule_id,revision,confidence,
                                                severity,disposition,last_seen,evidence_frame_count,evidence_frame_set_sha256}))}
 ' <<< "$raw"); then
-    printf '%s\n' 'Could not read the bounded saved-priority index.' >&2
+    printf '%s\n' 'Could not read the bounded saved-alert index.' >&2
     exit 1
 fi
 

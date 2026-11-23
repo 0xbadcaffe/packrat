@@ -15,14 +15,19 @@ session=session-a capture=00000000000000000000000000000001
 base='{"rule_id":"scan.horizontal","revision":7,"confidence":"heuristic","severity":"HIGH",
        "disposition":"New","last_seen":42,"evidence_frame_count":2,
        "evidence_frame_set_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}'
+if [[ ${TEST_MODE:-normal} == by_rule || ${TEST_MODE:-normal} == wrong_rule ]]; then
+    base=$(jq -c '. + {rule_id:"ipv6.ra_router_link_change",severity:"MEDIUM"}' <<< "$base")
+fi
 if [[ $1 == --list-saved ]]; then
     shift
-    offset=0
+    offset=0 rule=''
+    if [[ $1 == --review-rule ]]; then rule=$2; shift 2; fi
     if [[ $1 == --review-offset ]]; then offset=$2; shift 2; fi
     [[ $# == 2 && $1 == "$TEST_DIR/alerts.jsonl" && $2 == "$TEST_DIR/previous.jsonl" ]]
-    jq -nc --arg session "$session" --arg capture "$capture" --argjson base "$base" --arg mode "${TEST_MODE:-normal}" --argjson offset "$offset" '
-        (if $mode == "empty" then 0 else 7 end) as $eligible |
+    jq -nc --arg session "$session" --arg capture "$capture" --argjson base "$base" --arg mode "${TEST_MODE:-normal}" --argjson offset "$offset" --arg rule "$rule" '
+        (if $mode == "empty" then 0 elif $rule != "" then 1 else 7 end) as $eligible |
         {record_type:"saved_capture_index",status:"saved",sampled_alerts:12,
+         review_rule:(if $rule == "" then null else $rule end),
          sampled_unscoped_open_high_or_critical:3,sample_scan_complete:($mode != "bounded"),
          unscoped_review_queue:[{session_id:$session,alert_id:9,severity:"CRITICAL",disposition:"Reviewing",
            capture_id:"private scope",title:"private title",
@@ -84,6 +89,13 @@ run_review --review-offset 10 | jq -e '.sample_scan_complete and .findings == []
 [[ ! -s $dir/checks ]]
 : > "$dir/checks"
 TEST_MODE=empty run_review | jq -e '.findings == []' >/dev/null
+[[ ! -s $dir/checks ]]
+TEST_MODE=by_rule run_review --review-rule ipv6.ra_router_link_change | jq -e '
+    .review_rule == "ipv6.ra_router_link_change" and .review_eligible_in_sample == 1
+    and [.findings[] | [.rule_id,.severity,.packet_evidence_status]] == [["ipv6.ra_router_link_change","MEDIUM","complete"]]' >/dev/null
+[[ $(cat "$dir/checks") == 1 ]]
+: > "$dir/checks"
+if TEST_MODE=wrong_rule run_review --review-rule other.rule >/dev/null 2>&1; then exit 1; fi
 [[ ! -s $dir/checks ]]
 if TEST_MODE=extra run_review >"$dir/output" 2>/dev/null; then exit 1; fi
 [[ ! -s $dir/output && ! -s $dir/checks ]]
