@@ -66,7 +66,7 @@ jobs:
           shellcheck -x scripts/packrat-rollout.sh tests/test_packrat_rollout.sh tests/test_packrat_rollout_release.sh
           bash tests/test_packrat_rollout.sh
           bash tests/test_packrat_rollout_release.sh
-          shellcheck scripts/packrat-build-rollout.sh tests/test_packrat_build_rollout.sh
+          shellcheck -x scripts/packrat-build-rollout.sh tests/test_packrat_build_rollout.sh
           bash tests/test_packrat_build_rollout.sh
 
       - name: cargo check
