@@ -153,6 +153,23 @@ jq -cn '
 jq -se 'map(.reason) == ["stale_snapshot","stale_snapshot"] and map(.rejected) == [1,2]' \
     "$scratch/errors" >/dev/null
 
+jq -cn '
+    {schema_version:1,record_type:"alert",session_id:"legacy",alert:{
+      id:99,source:"CREDENTIAL",severity:"HIGH",hit_count:1,disposition:"New",packet_refs:[4],
+      title:"private credential title",detail:"private credential value",
+      provenance:{rule_id:"private credential label",revision:2,verification_hint:"private credential hint"}}} as $original
+    | $original,
+      ($original | .alert.detail = "private changed value" | .alert.title = "private changed title"),
+      ($original | .alert.disposition = "Reviewing")
+' | bash "$watch" 2>"$scratch/credential-errors" | jq -se '
+    map(.event) == ["first_seen","updated"] and .[1].changes == ["disposition"]
+    and all(.[]; .source == "CREDENTIAL" and .severity == "HIGH" and .evidence_frame_count == 1
+        and .title == "Possible cleartext credential material" and (.detail | contains("value omitted"))
+        and .rule_id == null and .verify == null)
+    and (tostring | contains("private") | not)
+' >/dev/null
+[[ ! -s $scratch/credential-errors ]]
+
 status=0
 PACKRAT_WATCH_MAX_ALERTS=0 bash "$watch" </dev/null >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]

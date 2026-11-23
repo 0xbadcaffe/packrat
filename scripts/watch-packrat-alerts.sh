@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     printf '%s\n' 'Usage: bash watch-packrat-alerts.sh < alerts.jsonl' \
         'Reads Packrat JSONL from stdin and emits first sightings, existing findings, and changed snapshots.' \
-        'Notifications include update reasons and time since the latest observed packet.' \
+        'Notifications include update reasons and time since the latest observed packet; credential text is omitted.' \
         'Rejected alert input is counted and reported to stderr without its contents.' \
         'Older hit counts for a known capture-scoped alert are rejected as stale snapshots.' \
         'PACKRAT_WATCH_MAX_ALERTS sets the in-memory alert history (default: 1024).'
@@ -76,15 +76,17 @@ exec jq --unbuffered -cRn --argjson limit "$limit" '
         | select(($a.id | positive_counter) != null)
         | select($a.capture_id == null or ($a.capture_id | identifier))
         | evidence($a) as $frames
-        | (if ($a.provenance | type) == "object" then $a.provenance else {} end) as $rule
+        | ($a.source == "CREDENTIAL") as $credential
+        | (if ($credential | not) and ($a.provenance | type) == "object" then $a.provenance else {} end) as $rule
         | {
             session_id,
             alert_id: $a.id,
             source: ($a.source | text(64)),
             severity: ($a.severity | text(16)),
             disposition: ($a.disposition | text(24)),
-            title: ($a.title | text(160)),
-            detail: ($a.detail | text(512)),
+            title: (if $credential then "Possible cleartext credential material" else ($a.title | text(160)) end),
+            detail: (if $credential then "Possible cleartext credential material observed; value omitted from the alert."
+                     else ($a.detail | text(512)) end),
             hits: ($a.hit_count | counter),
             packet_no: ($a.packet_no | positive_counter),
             last_packet: ($a.last_packet | counter),
