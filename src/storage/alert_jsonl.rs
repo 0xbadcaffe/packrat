@@ -10,6 +10,8 @@ use crate::analysis::alert_center::{AlertItem, CREDENTIAL_ALERT_DETAIL};
 
 pub(super) const MAX_ALERT_LINE: usize = 1_048_576;
 const MAX_SAVED_ALERTS: usize = 4096;
+const MAX_EXPORTED_DESCRIPTION: usize = 32 * 1024;
+const MAX_EXPORTED_LABEL: usize = 4 * 1024;
 
 type SnapshotKey = (u64, Option<[u8; 32]>);
 type SnapshotDigest = [u8; 32];
@@ -75,17 +77,40 @@ fn snapshot_key(alert: &AlertItem) -> SnapshotKey {
     )
 }
 
+fn clip_exported_text(text: &mut String, max_bytes: usize) {
+    const MARKER: &str = "[Truncated] ";
+    if text.len() > max_bytes {
+        let mut end = max_bytes - MARKER.len();
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+        text.insert_str(0, MARKER);
+    }
+}
+
 fn encode_alert_record(session_id: &str, alert: &AlertItem) -> Result<Vec<u8>, String> {
-    let redacted = (alert.source == "CREDENTIAL" && alert.detail != CREDENTIAL_ALERT_DETAIL).then(|| {
+    let redact = alert.source == "CREDENTIAL" && alert.detail != CREDENTIAL_ALERT_DETAIL;
+    let bounded = (redact || alert.detail.len() > MAX_EXPORTED_DESCRIPTION
+        || alert.title.len() > MAX_EXPORTED_LABEL
+        || alert.recommendation.as_ref().is_some_and(|text| text.len() > MAX_EXPORTED_LABEL)).then(|| {
         let mut copy = alert.clone();
-        copy.detail = CREDENTIAL_ALERT_DETAIL.into();
+        if redact {
+            copy.detail = CREDENTIAL_ALERT_DETAIL.into();
+        } else {
+            clip_exported_text(&mut copy.detail, MAX_EXPORTED_DESCRIPTION);
+        }
+        clip_exported_text(&mut copy.title, MAX_EXPORTED_LABEL);
+        if let Some(text) = &mut copy.recommendation {
+            clip_exported_text(text, MAX_EXPORTED_LABEL);
+        }
         copy
     });
     serde_json::to_vec(&AlertRecord {
         schema_version: 1,
         record_type: "alert",
         session_id,
-        alert: redacted.as_ref().unwrap_or(alert),
+        alert: bounded.as_ref().unwrap_or(alert),
     })
     .map_err(|error| format!("Serialize alert JSONL record: {error}"))
 }

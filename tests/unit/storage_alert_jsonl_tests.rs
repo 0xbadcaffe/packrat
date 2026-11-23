@@ -73,6 +73,30 @@ fn credential_snapshots_are_redacted_and_deduplicated_on_reopen() {
 }
 
 #[test]
+fn bounded_display_text_keeps_scoped_identity_and_deduplicates_on_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let mut long = alert(2, 3);
+    long.capture_id = Some("capture-a".into());
+    long.title = "\u{1f50d}".repeat(MAX_EXPORTED_LABEL);
+    long.detail = "\0".repeat(MAX_EXPORTED_DESCRIPTION * 6);
+    long.recommendation = Some("\u{1f50d}".repeat(MAX_EXPORTED_LABEL));
+    for _ in 0..2 {
+        let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+        writer.backfill(std::slice::from_ref(&long), &[]).unwrap();
+    }
+    let records = read_log(&path);
+    assert_eq!(records.len(), 1);
+    let saved = &records[0].alert;
+    assert_eq!(saved.capture_id, long.capture_id);
+    assert_eq!(saved.correlation_key, long.correlation_key);
+    assert_eq!(saved.packet_refs, long.packet_refs);
+    assert!(saved.title.starts_with("[Truncated] ") && saved.title.len() <= MAX_EXPORTED_LABEL);
+    assert!(saved.detail.starts_with("[Truncated] ") && saved.detail.len() <= MAX_EXPORTED_DESCRIPTION);
+    assert!(saved.recommendation.as_ref().unwrap().starts_with("[Truncated] "));
+}
+
+#[test]
 fn identical_alerts_from_a_new_session_are_kept() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("alerts.jsonl");

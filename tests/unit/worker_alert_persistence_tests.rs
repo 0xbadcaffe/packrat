@@ -48,25 +48,47 @@ fn alert_writes_do_not_hold_the_analysis_core_lock() {
 }
 
 #[test]
-fn a_failed_append_disables_saving_without_losing_the_in_memory_alert() {
+fn oversized_descriptions_do_not_block_subsequent_alerts() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("alerts.jsonl");
     let worker = AnalysisWorker::spawn(core_with_writer(&path), WorkerLimits::default()).unwrap();
     worker
         .try_update(1, |core| {
             core.alert_center
-                .record(1, "IDS", "HIGH", "Observed", "x".repeat(1_048_576));
+                .record(1, "IDS", "HIGH", "Observed", "\u{1f50d}\0".repeat(150_000));
+            core.alert_center.record(2, "IDS", "HIGH", "Later", "ordinary alert");
             Ok(())
         })
         .unwrap();
     let core = worker.finish(|_| ()).unwrap();
+    assert!(core.alert_jsonl_writer.is_some());
+    assert!(core.alert_save_error.is_none());
+    assert_eq!(core.alert_center.items[0].detail.len(), 750_000);
+    let records: Vec<serde_json::Value> = std::fs::read_to_string(path).unwrap()
+        .lines().map(|row| serde_json::from_str(row).unwrap()).collect();
+    assert_eq!(records.len(), 2);
+    assert!(records[0]["alert"]["detail"].as_str().unwrap().starts_with("[Truncated] "));
+    assert_eq!(records[0]["alert"]["packet_refs"], serde_json::json!([1]));
+    assert_eq!(records[1]["alert"]["detail"], "ordinary alert");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_append_disables_saving_without_losing_the_in_memory_alert() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("alerts.jsonl");
+    let core = core_with_writer(&path);
+    let renamed = dir.path().join("previous.jsonl");
+    std::fs::rename(&path, &renamed).unwrap();
+    std::os::unix::fs::symlink(&renamed, &path).unwrap();
+    let worker = AnalysisWorker::spawn(core, WorkerLimits::default()).unwrap();
+    worker.try_update(1, |core| {
+        core.alert_center.record(1, "IDS", "HIGH", "Observed", "normal detail");
+        Ok(())
+    }).unwrap();
+    let core = worker.finish(|_| ()).unwrap();
     assert!(core.alert_jsonl_writer.is_none());
-    assert!(
-        core.alert_save_error
-            .as_deref()
-            .unwrap()
-            .contains("export size limit")
-    );
+    assert!(core.alert_save_error.is_some());
     assert_eq!(core.alert_center.items.len(), 1);
     assert_eq!(std::fs::metadata(path).unwrap().len(), 0);
 }
