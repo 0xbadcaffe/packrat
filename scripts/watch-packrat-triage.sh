@@ -22,7 +22,7 @@ usage() {
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
-        'alert_sample_gap warns that a burst may have exceeded the recent-alert sample; review saved history.' \
+        'alert_sample_gap warns that the watcher may have missed alerts in a bounded sample; review saved history.' \
         'Continuous mode journals sanitized changes in STATE.json.events.jsonl and one 1 MiB rotation (PACKRAT_TRIAGE_WATCH_JOURNAL=0 disables this).' \
         'History emits retained journal events oldest first, or asks to retry if the journal changes during the read.' \
         'Supervision retries unexpected exits with backoff; configuration errors stop the supervisor.' \
@@ -372,19 +372,20 @@ while :; do
                $prior.capture_id == .capture_id and $prior.session_id == .session_id) as $comparable
             | ([.recent_alerts[]?.alert_id] | max // 0) as $seen
             | ([$prior.highest_observed_alert_id, ($prior.recent_alerts | map(.alert_id)? | max)] | max // 0) as $high
+            | (.recent_alerts_at_limit == true or .has_older_alerts == true) as $truncated
+            | ([.recent_alerts[]?.alert_id | select(. > $high)] | unique) as $new_ids
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
                 buffer_drops_delta:(if $comparable and .buffer_drops != null and $prior.buffer_drops != null
                     and .buffer_drops >= $prior.buffer_drops then .buffer_drops - $prior.buffer_drops else null end),
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
                 alert_sample_gap: if observed | not then null elif $comparable then
-                    $prior.alert_sample_gap == true or (
-                        (.recent_alerts_at_limit == true or .has_older_alerts == true) and
-                        (([.recent_alerts[].alert_id] | min // 0) - $high > 1))
-                else false end,
+                    $prior.alert_sample_gap == true or
+                        ($truncated and ($seen - $high > ($new_ids | length)))
+                else $truncated end,
                 alert_changes: if $comparable then
                     ($prior | alert_index) as $before
                     | {
-                        newly_observed: [.recent_alerts[] | select(.alert_id > $high) | .alert_id],
+                        newly_observed: $new_ids,
                         updated: [
                             ($now | alert_index | [.[]] | sort_by(.alert_id))[] as $item
                             | $before[$item.alert_id | tostring] as $old | select($old != null)

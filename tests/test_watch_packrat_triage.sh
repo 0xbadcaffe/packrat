@@ -339,6 +339,27 @@ watch_pid=''
 jq -e '.alert_sample_gap and .highest_observed_alert_id==65 and .buffer_drops_delta==null' "$state" >/dev/null
 jq -se 'length==1 and .[0].alert_changes.newly_observed==[range(16;66)]' "$scratch/stale-events" >/dev/null
 
+state="$scratch/bounded-sample.json"
+live current 75 '[]' "$bulk" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '.alert_sample_gap and .highest_observed_alert_id==65' "$state" >/dev/null
+
+# A new scope starts without a gap when its sample is complete.
+live current 76 '[]' "$medium" | jq '.health.capture_id="second"' >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '.alert_sample_gap==false and .highest_observed_alert_id==9' "$state" >/dev/null
+for newest in 11 13; do
+    expected=false
+    if [[ $newest == 13 ]]; then expected=true; fi
+    # An older alert can remain recent after another hit, despite the omitted records.
+    sample=$(jq -c --argjson id "$newest" '. + [.[0] + {alert_id:10}, .[0] + {alert_id:$id}]' <<<"$medium")
+    live current 77 '[]' "$sample" | jq '.health.capture_id="second" | .has_more_alerts=true' >"$report"
+    bash "$watch" --once "$state" -- cat "$report" >/dev/null
+    jq -e --argjson id "$newest" --argjson expected "$expected" '
+        .has_older_alerts and .recent_alerts[0].alert_id==9 and
+        .highest_observed_alert_id==$id and .alert_sample_gap==$expected' "$state" >/dev/null
+done
+
 state="$scratch/queue-updates.json"
 backlog=$(jq -c '[.[0] + {alert_id:2,in_recent_alerts:false,disposition:"New",hit_count:1},
     .[0] + {alert_id:9,in_recent_alerts:true,disposition:"New",hit_count:1}]' <<<"$queue")
