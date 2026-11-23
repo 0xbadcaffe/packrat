@@ -7,6 +7,39 @@ installed_archive=/usr/local/bin/packrat-archive
 companion_tools=(analyzer archive)
 companion_update_selected() { [[ -n $analyzer_candidate || -n $archive_candidate ]]; }
 
+identify_capture_build() {
+    local before after pid running installed_hash progress packets scope timestamp
+    before=$(primary_capture_stamp) || return 1
+    pid=$(jq -er '.pid | strings | select(test("\\A[1-9][0-9]*\\z"))' <<< "$before") || return 1
+    running=$(sudo -n sha256sum -- "/proc/$pid/exe") || return 1
+    installed_hash=$(sha256sum -- "$installed") || return 1
+    running=${running%% *} installed_hash=${installed_hash%% *}
+    [[ $running =~ ^[0-9a-f]{64}$ && $running == "$installed_hash" ]] || return 1
+    progress=$(capture_progress_sample "$main_session" "$health_addr" true) || return 1
+    read -r packets scope <<< "$progress"
+    [[ $packets =~ ^(0|[1-9][0-9]{0,15})$ ]] || return 1
+    jq -e --arg scope "$scope" '($scope == (.capture_run_id + ":" + .capture_id))' <<< "$before" >/dev/null || return 1
+    alert_watcher_ready "$before" || return 1
+    after=$(primary_capture_stamp) || return 1
+    [[ $before == "$after" ]] || return 1
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
+    jq -c --arg interface "$interface" --arg sha256 "$running" --arg observed_at "$timestamp" \
+        --argjson packets "$packets" '{record_type:"verified_capture_build",observed_at:$observed_at,
+         interface:$interface,scope:{capture_id,session_id:.alert_session_id},capture_run_id,packets:$packets,sha256:$sha256}' <<< "$before"
+}
+
+write_capture_receipt() {
+    local proof staged receipt="$backup_dir/verified-capture.json"
+    proof=$(identify_capture_build) || return 1
+    staged=$(sudo -n mktemp "$backup_dir/.verified-capture.XXXXXXXX") || return 1
+    if ! printf '%s\n' "$proof" | sudo -n tee "$staged" >/dev/null ||
+       ! sudo -n mv -fT -- "$staged" "$receipt"; then
+        sudo -n rm -f -- "$staged"
+        return 1
+    fi
+    printf 'Verified capture receipt: %s\n' "$receipt"
+}
+
 triage_watcher_ready() {
     [[ -n $triage_state ]] || return 0
     local check packets code=0 drops=${2:-0} gap_free=${3:-0}

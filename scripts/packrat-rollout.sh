@@ -399,6 +399,7 @@ rollout() {
             error "Replacement alert monitoring could not be verified; companions not promoted"
         elif promote_companions 0 1; then
             retire_bridge || { error "Replacement is live; inspect the staging session"; return 1; }
+            write_capture_receipt || error "Replacement is live; could not record its capture build receipt"
             printf '%s\n' 'Rollout verified'
             return 0
         else
@@ -424,9 +425,19 @@ rollout() {
 }
 
 main() {
+    if [[ ${1-} == --identify ]]; then
+        if (( $# != 2 )) || [[ ! $2 =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            error 'Usage: bash packrat-rollout.sh --identify INTERFACE'
+            return 2
+        fi
+        interface=$2
+        identify_capture_build || { error 'Could not verify the running capture build'; return 1; }
+        return 0
+    fi
     if (( $# < 3 || $# > 4 )) || [[ $1 != --check && $1 != --deploy ]] ||
        [[ $# == 4 && $4 != --enable-alert-evidence ]]; then
         error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE [--enable-alert-evidence]'
+        error 'Use --identify INTERFACE to read the running executable fingerprint and capture scope.'
         error 'The opt-in enables a new private archive for HIGH/CRITICAL evidence only (64 MiB packet bytes, 8192 frames).'
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
         error 'Set PACKRAT_ROLLOUT_ANALYZER to stage and promote a matching packrat-analyze binary.'

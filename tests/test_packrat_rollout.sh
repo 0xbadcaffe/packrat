@@ -158,6 +158,7 @@ test_evidence_profile_opt_in 2>"$scratch/profile-errors"
 source "$root/tests/support/rollout_counter_cases.bash"
 (
     health_state="$scratch/health.json"
+    # shellcheck disable=SC2329  # Invoked by the sourced rollout helper.
     date() { printf '%s\n' 1700000000; }
     touch "$data_dir/alerts.jsonl"
     primary_alert_log_identity() { stat -Lc '%d:%i' "$data_dir/alerts.jsonl"; }
@@ -188,7 +189,6 @@ source "$root/tests/support/rollout_counter_cases.bash"
     jq -c --arg id "$(primary_alert_log_identity)" '.alert_log_identity = $id' <<< "$sample" >"$health_state"
     alert_watcher_ready "$scope"
 )
-
 (
     interface=wlan1
     tick=0

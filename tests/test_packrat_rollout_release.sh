@@ -134,10 +134,14 @@ cmp -s -- "$archive_candidate" "$installed_archive"
     archive_candidate=''
     health_state="$scratch/health.json"
     triage_journal_required=1
+    # shellcheck disable=SC2329  # Invoked by the sourced rollout helper.
     primary_alert_log_identity() { printf '%s\n' '1:2'; }
+    # shellcheck disable=SC2329
     date() { printf '%s\n' 1700000000; }
+    # shellcheck disable=SC2329
     timeout() { printf '%s\n' "$triage_sample"; return 1; }
     network_sample=$(jq -c '. + {status:"ok", telemetry_fresh:true, capture_active:true, pcap_buffer_drops:100}' <<< "$scope")
+    # shellcheck disable=SC2329
     curl() { printf '%s\n' "$network_sample"; }
     health_sample=$(jq -c --arg log "$data_dir/alerts.jsonl" '. + {
         record_type:"capture_health",timestamp:"2023-11-14T22:13:10Z",poll_interval_seconds:15,
@@ -171,4 +175,6 @@ cmp -s -- "$archive_candidate" "$installed_archive"
         )
     done
 )
+# shellcheck source=tests/support/rollout_identity_cases.bash
+source "$root/tests/support/rollout_identity_cases.bash"
 printf '%s\n' 'Packrat paired rollout tests passed'
