@@ -6,7 +6,8 @@ export LC_ALL=C
 usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh --history STATE.json | packrat-watch-coverage.sh [--capture-id ID --session ID]' \
         'Reads retained journal records from stdin; defaults to the last observed capture scope.' \
-        'Rates describe retained intervals with known coverage, not all traffic or all alerts.'
+        'Rates describe retained intervals with known coverage, not all traffic or all alerts.' \
+        'Alert-ID gaps identify records not observed in the retained sample, not proven missing from the saved log.'
 }
 
 capture='' session=''
@@ -30,15 +31,39 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
     def healthy:
         .status == "current" and .buffer_drops == 0 and .packet_counter_gap == false
         and (.healthy_capture_since | counter and . > 0) and .healthy_capture_since <= .tick and (.packets | counter);
-    def observed_openings($earlier; $later):
+    def opening_delta($earlier; $later):
         $earlier.highest_observed_alert_id as $low | $later.highest_observed_alert_id as $high
         | (if $later.checkpoint == true and $later.alert_changes == null
             then [] else $later.alert_changes.newly_observed end) as $ids
-        | if $earlier.alert_sample_gap == false and $later.alert_sample_gap == false
-             and ($low | counter) and ($high | counter)
-             and ($ids | type == "array" and all(.[]; counter and . > $low and . <= $high) and . == unique)
-             and $high - $low == ($ids | length)
+        | if ($low | counter) and ($high | counter) and $high >= $low
+             and ($ids | type == "array" and length <= 55 and all(.[]; counter and . > $low and . <= $high) and . == unique)
+          then $ids else null end;
+    def observed_openings($earlier; $later):
+        opening_delta($earlier; $later) as $ids
+        | if $earlier.alert_sample_gap == false and $later.alert_sample_gap == false and $ids != null
+             and $later.highest_observed_alert_id - $earlier.highest_observed_alert_id == ($ids | length)
           then $ids | length else null end;
+    def sampled_ids:
+        [((.recent_alerts | arrays | .[:50][]), (.review_queue | arrays | .[:5][]))
+         | objects | .alert_id | select(counter and . > 0)] | unique;
+    def unobserved_ranges($low; $known; $at):
+        # Walk the observed IDs, not every integer in a potentially wide range.
+        reduce $known[] as $id ({cursor:$low,ranges:[]};
+            if $id > .cursor + 1 then .ranges += [{first_id:(.cursor + 1),last_id:($id - 1),recorded_at:$at}]
+            else . end | .cursor = $id)
+        | .ranges[];
+    def alert_gaps($samples):
+        ($samples[0] | sampled_ids) as $initial
+        | (if ($initial | length) > 1 then
+             unobserved_ranges($initial[0] - 1; $initial; $samples[0].updated_at)
+           else empty end),
+          (range(1; $samples | length) as $i | $samples[$i - 1] as $before | $samples[$i] as $after
+           | $before.highest_observed_alert_id as $low | $after.highest_observed_alert_id as $high
+           | opening_delta($before; $after) as $delta
+           | select($delta != null and $high > $low and $after.tick >= $before.tick)
+           | (($after | sampled_ids | map(select(. > $low and . <= $high))) + $delta + [$high] | unique) as $known
+           | (if $low == 0 then $known[0] - 1 else $low end) as $floor
+           | unobserved_ranges($floor; $known; $after.updated_at));
     def no_capture_loss_between($earlier; $later):
         all([$earlier.capture_queue_full_packets, $later.capture_queue_full_packets,
              $earlier.truncated_frames, $later.truncated_frames][]; counter)
@@ -64,6 +89,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
     | ($healthy | map(select(.observed_openings != null))) as $comparable
     | ([$comparable[].packets] | add // 0) as $measured_packets
     | ([$comparable[].observed_openings] | add // 0) as $openings
+    | [limit(65; alert_gaps($sample))] as $alert_gaps
     | {record_type:"capture_coverage_report",coverage_policy:"capture_loss_counters_v1",
        status:(if ($sample | length) == 0 then "no_capture_records"
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
@@ -73,6 +99,8 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        healthy_intervals:($healthy | length), excluded_intervals:([($sample | length) - 1,0] | max) - ($healthy | length),
        healthy_seconds:([$healthy[].seconds] | add // 0), healthy_packets:([$healthy[].packets] | add // 0),
        alert_comparable_intervals:($comparable | length), alert_comparable_packets:$measured_packets,
+       alert_sample_gap_reported:any($sample[]; .alert_sample_gap == true),
+       unobserved_alert_id_ranges:$alert_gaps[:64], unobserved_alert_id_ranges_truncated:($alert_gaps | length > 64),
        observed_openings:(if ($comparable | length) > 0 then $openings else null end),
        observed_openings_per_10000_packets:(if $measured_packets > 0 then $openings * 10000 / $measured_packets else null end)}
 '

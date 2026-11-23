@@ -22,6 +22,7 @@ bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
     and .scoped_records==6 and .healthy_intervals==3 and .excluded_intervals==2
     and .healthy_seconds==180 and .healthy_packets==80 and .alert_comparable_intervals==2
     and .alert_comparable_packets==60 and .observed_openings==2
+    and .unobserved_alert_id_ranges==[{first_id:7,last_id:7,recorded_at:"2023-11-14T22:16:20Z"}]
     and (.observed_openings_per_10000_packets > 333 and .observed_openings_per_10000_packets < 334)' >/dev/null
 bash "$coverage" <<< "$sample" | jq -e '.status=="insufficient_coverage" and .scope.session_id=="b-2"
     and .observed_openings==null and .observed_openings_per_10000_packets==null' >/dev/null
@@ -39,6 +40,36 @@ jq -sc '(.[0],.[1]) | .capture_queue_full_packets = 2' <<< "$sample" | bash "$co
     jq -e '.healthy_intervals==1 and .alert_comparable_packets==25' >/dev/null
 jq -sc '(.[0] | .capture_queue_full_packets = 3), (.[1] | .capture_queue_full_packets = 2)' <<< "$sample" |
     bash "$coverage" | jq -e '.excluded_intervals==1 and .observed_openings==null' >/dev/null
+
+# Initial offsets are unknown. Only report holes bounded by observed IDs.
+jq -sc '
+    (.[0] | .recent_alerts = [{alert_id:2},{alert_id:4}]),
+    (.[1] | del(.checkpoint) | .alert_sample_gap = true | .highest_observed_alert_id = 9
+          | .alert_changes.newly_observed = [6,9] | .review_queue = [{alert_id:7}])
+' <<< "$sample" | bash "$coverage" | jq -e '
+    .alert_sample_gap_reported and .observed_openings == null
+    and [.unobserved_alert_id_ranges[] | [.first_id,.last_id]] == [[3,3],[5,5],[8,8]]
+    and (.unobserved_alert_id_ranges_truncated | not)' >/dev/null
+jq -sc '
+    .[0], (.[1] | .highest_observed_alert_id = 9007199254740991
+        | .alert_changes.newly_observed = [9007199254740991])
+' <<< "$sample" | bash "$coverage" | jq -e '
+    [.unobserved_alert_id_ranges[] | [.first_id,.last_id]] == [[5,9007199254740990]]' >/dev/null
+jq -sc '
+    (.[0] | .highest_observed_alert_id = 0),
+    (.[1] | .highest_observed_alert_id = 53 | .alert_changes.newly_observed = [51,53])
+' <<< "$sample" | bash "$coverage" | jq -e '
+    [.unobserved_alert_id_ranges[] | [.first_id,.last_id]] == [[52,52]]' >/dev/null
+jq -sc '.[0], (.[1] | .highest_observed_alert_id = 7)' <<< "$sample" |
+    bash "$coverage" | jq -e '
+        [.unobserved_alert_id_ranges[] | [.first_id,.last_id]] == [[5,6]]' >/dev/null
+jq -sc '
+    .[0] as $base | range(0;66) as $i
+    | $base + {highest_observed_alert_id:(4 + $i*2),updated_at:(1700000000 + $i | todateiso8601),
+               alert_changes:{newly_observed:[4 + $i*2]}}
+' <<< "$sample" | bash "$coverage" | jq -e '
+    .unobserved_alert_id_ranges_truncated and (.unobserved_alert_id_ranges | length) == 64
+    and [.unobserved_alert_id_ranges[0].first_id,.unobserved_alert_id_ranges[-1].last_id] == [5,131]' >/dev/null
 if printf '%s\n' '{incomplete' | bash "$coverage" >/dev/null 2>&1; then exit 1; fi
 if head -c 2097153 /dev/zero | tr '\000' 'x' | bash "$coverage" >/dev/null 2>&1; then exit 1; fi
 if bash "$coverage" --capture-id a </dev/null >/dev/null 2>&1; then exit 1; fi
