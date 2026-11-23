@@ -62,6 +62,18 @@ struct TransportLayout {
     end: usize,
 }
 
+pub(crate) fn captured_transport_header(packet: &Packet) -> Option<(u8, u16, u16, Option<u8>)> {
+    if packet.capture.as_ref()?.link_type != 1 {
+        return None;
+    }
+    let bytes = packet.bytes.as_slice();
+    let transport = transport_layout(bytes, ethernet_layout(bytes)?)?;
+    let source = read_u16(bytes, transport.offset)?;
+    let destination = read_u16(bytes, transport.offset + 2)?;
+    let tcp_flags = (transport.protocol == 6).then(|| bytes[transport.offset + 13]);
+    Some((transport.protocol, source, destination, tcp_flags))
+}
+
 pub fn extract_fields(packet: &Packet) -> Vec<PacketField> {
     let mut fields = vec![
         PacketField::new("Frame", "frame.number", "Frame Number", packet.no.to_string(), None, None),

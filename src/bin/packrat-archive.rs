@@ -12,6 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--alert-id ALERT_ID | --limit COUNT] [--report-integrity [--scan-bytes BYTES]]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --project-alert-evidence PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID OUTPUT_DIR [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR [--alert-log ALERT_LOG [--previous-log PATH]...]\nAn exact alert ID requires both --session and --capture-id. List previous alert logs oldest first. Log matching corroborates the alert snapshot, not the origin of the packet bytes. Integrity counts describe only the records examined."
         );
         println!("       packrat-archive DIRECTORY --alert-project ALERT_LOG SESSION_ID ALERT_ID OUTPUT_JSON --capture-id CAPTURE_ID [--previous-log PATH]...\nOpen the resulting JSON with packrat --project OUTPUT_JSON. It contains packet bytes.\nAlert evidence bundles list frames with unknown capture lengths as missing.");
+        println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
         return Ok(());
     };
     if path == "--alerts" {
@@ -69,12 +70,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     match action {
-        Some(flag) if matches!(flag.as_str(), "--alert-evidence" | "--alert-status" | "--alert-project") => {
-            use packrat_tui::storage::alert_evidence::{alert_evidence_across_logs, create_alert_project, export_alert_evidence_across_logs};
+        Some(flag) if matches!(flag.as_str(), "--alert-evidence" | "--alert-status" | "--alert-project" | "--alert-packet-metadata") => {
+            use packrat_tui::storage::alert_evidence::{
+                alert_evidence_across_logs, alert_packet_metadata, create_alert_project, export_alert_evidence_across_logs,
+            };
             let log = args.next().ok_or("Alert command requires an alert log")?;
             let session = args.next().ok_or("Alert command requires a session ID")?;
             let id = args.next().ok_or("Alert command requires an alert ID")?.parse()?;
-            let output = if flag != "--alert-status" {
+            let output = if matches!(flag.as_str(), "--alert-evidence" | "--alert-project") {
                 Some(args.next().ok_or_else(|| format!("{flag} requires a new output path"))?)
             } else {
                 None
@@ -103,6 +106,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let summary = export_alert_evidence_across_logs(&mut archive, logs, &session, id, scope, output)?;
                     println!("{}", serde_json::to_string(&summary)?);
                 }
+            } else if flag == "--alert-packet-metadata" {
+                let capture = scope.ok_or("--alert-packet-metadata requires --capture-id")?;
+                println!("{}", serde_json::to_string(&alert_packet_metadata(&mut archive, logs, &session, capture, id)?)?);
             } else {
                 let status = alert_evidence_across_logs(&mut archive, logs, &session, id, scope)?;
                 println!("{}", serde_json::to_string(&status)?);

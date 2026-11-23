@@ -17,7 +17,9 @@ use super::alert_jsonl::ExistingAlertRecord;
 
 mod verify;
 mod case;
+mod metadata;
 pub use case::create_alert_project;
+pub use metadata::{AlertPacketMetadata, alert_packet_metadata};
 pub use verify::{VerifiedEvidence, verify_alert_evidence, verify_logged_alert_evidence};
 
 const MANIFEST: &str = "manifest.json";
