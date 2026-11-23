@@ -25,7 +25,7 @@ usage() {
         'Automatic checks prefer CRITICAL, then HIGH, then only MEDIUM/LOW rules named in the active selective archive policy.' \
         'Within a severity, selects the newest eligible alert with frame references.' \
         '--saved-alert uses its explicit ID when an evidence source is supplied without PACKRAT_TRIAGE_EVIDENCE_ALERT_ID.' \
-        'Packet evidence status describes checked packet bytes, not just frame references or an enabled archive.' \
+        'Each alert reports packet evidence status and next_evidence_step; frame references alone do not prove retention.' \
         'Evidence for an alert in the recent report is withheld if its frame references changed during triage.' \
         'PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE optionally adds saved live socket snapshots for matching alerts.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
@@ -166,7 +166,7 @@ report() {
         .[1] as $alerts
         | (.[2] // []) as $evidence
         | (if $alerts == null then null else $alerts[:$limit] |
-            map(. + {packet_evidence_status:packet_evidence($evidence)}) end) as $sample
+            map(.packet_evidence_status = packet_evidence($evidence) | .next_evidence_step = (.packet_evidence_status | evidence_step)) end) as $sample
         | (if $alerts == null then null else [
             ("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | $alerts | to_entries[]
             | (.key < $limit) as $recent | .value

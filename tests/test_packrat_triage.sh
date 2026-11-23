@@ -189,7 +189,7 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
     result=$(PACKRAT_TEST_EVIDENCE_DRIFT=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
     [[ $status == 2 ]]
     jq -e '.status == "current" and .alerts[0].alert_id == 42
-        and .alerts[0].packet_evidence_status == "changed_during_review"
+        and .alerts[0].packet_evidence_status == "changed_during_review" and .alerts[0].next_evidence_step == "retry_evidence_check"
         and .evidence_status == {status:"alert_evidence_changed",alert_id:42,frames:null}' <<< "$result" >/dev/null
     status=0
     result=$(PACKRAT_TEST_ALERT_COUNT=0 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
@@ -418,11 +418,19 @@ saved_alert() {
 }
 result=$(PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" saved_alert 42 "$PACKRAT_TEST_LOG" "$previous")
 jq -e '.status == "saved" and .scope.alert_id == 42 and .alerts[0].alert_id == 42
-    and .previous_logs == 1 and .has_more_alerts == false' <<< "$result" >/dev/null
-result=$(PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" saved_alert 42 "$PACKRAT_TEST_LOG")
-jq -e '.status == "saved" and .live_packet_archive == "unknown"
-    and .evidence_status.alert_id == .scope.alert_id
-    and .alerts[0].packet_evidence_status == "partial"' <<< "$result" >/dev/null
+    and .previous_logs == 1 and .has_more_alerts == false
+    and .alerts[0].next_evidence_step == "verify_frame_availability"' <<< "$result" >/dev/null
+for evidence_status in complete partial unavailable; do
+    case $evidence_status in
+        complete) frames='["complete","complete"]'; step=inspect_retained_frames ;;
+        partial) frames='["truncated","missing"]'; step=inspect_retained_and_recover_missing_frames ;;
+        unavailable) frames='["missing","unreadable"]'; step=locate_original_capture ;;
+    esac
+    result=$(PACKRAT_TEST_FRAME_STATUSES="$frames" PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" saved_alert 42 "$PACKRAT_TEST_LOG")
+    jq -e --arg expected "$evidence_status" --arg step "$step" '.status == "saved" and .live_packet_archive == "unknown"
+        and .evidence_status.alert_id == .scope.alert_id and .review_queue == []
+        and .alerts[0].packet_evidence_status == $expected and .alerts[0].next_evidence_step == $step' <<< "$result" >/dev/null
+done
 status=0
 result=$(PACKRAT_TEST_ALERT_COUNT=0 saved_alert 99 "$PACKRAT_TEST_LOG") || status=$?
 [[ $status == 1 ]]
