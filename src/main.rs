@@ -51,12 +51,6 @@ async fn main() -> Result<()> {
         .transpose()
         .map_err(anyhow::Error::msg)?;
 
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
     let (packet_tx, mut packet_rx) = tokio::sync::mpsc::channel::<Packet>(10_000);
     let mut app = App::new_with_mode(packet_tx, options.mode);
     if let Some(archive) = packet_archive {
@@ -80,10 +74,11 @@ async fn main() -> Result<()> {
         core.tls_tracker.decrypt_helper_path = options.tls_decrypt_helper_path;
         core.quic_scope.decode_helper_path = options.quic_decode_helper_path;
     });
-    if let Some(path) = options
-        .key_log_path
-        .or_else(|| std::env::var_os("SSLKEYLOGFILE").map(Into::into))
-    {
+    let key_log_path = options.key_log_path.or_else(|| {
+        if options.project_path.is_some() { return None; }
+        std::env::var_os("SSLKEYLOGFILE").map(Into::into)
+    });
+    if let Some(path) = key_log_path {
         app.load_key_log(path);
     }
     if let Some(path) = options.socket_events_path {
@@ -96,22 +91,18 @@ async fn main() -> Result<()> {
         tokio::spawn(analysis::telemetry::serve(listener, app.telemetry.clone()));
     }
 
+    app.start_background_analysis().map_err(anyhow::Error::msg)?;
+    if let Some(path) = options.project_path {
+        app.open_project(&path).map_err(anyhow::Error::msg)?;
+    }
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let mut tick_interval = time::interval(Duration::from_millis(100));
     let mut event_reader = crossterm::event::EventStream::new();
-
-    let result = match app.start_background_analysis() {
-        Ok(()) => {
-            run_loop(
-                &mut terminal,
-                &mut app,
-                &mut tick_interval,
-                &mut packet_rx,
-                &mut event_reader,
-            )
-            .await
-        }
-        Err(error) => Err(anyhow::Error::msg(error)),
-    };
+    let result = run_loop(&mut terminal, &mut app, &mut tick_interval, &mut packet_rx, &mut event_reader).await;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;

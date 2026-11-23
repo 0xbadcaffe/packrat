@@ -75,6 +75,10 @@ impl App {
     }
 
     pub fn switch_interface(&mut self) {
+        if self.offline_review {
+            self.set_status("Capture is unavailable in offline review");
+            return;
+        }
         self.abort_capture();
         self.picking_iface = true;
         self.capturing = false;

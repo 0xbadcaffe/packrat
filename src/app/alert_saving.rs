@@ -6,6 +6,10 @@ pub(super) const ALERT_SAVE_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
 impl App {
     pub(super) fn toggle_alert_saving(&mut self) {
+        if self.offline_review {
+            self.set_status("Live alert logging is unavailable in offline review");
+            return;
+        }
         self.save_alerts = !self.save_alerts;
         self.alert_save_error_reported = None;
         self.alert_save_next_retry = None;

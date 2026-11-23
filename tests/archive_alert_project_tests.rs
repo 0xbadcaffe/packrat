@@ -8,6 +8,18 @@ use packrat_tui::tabs::Tab;
 use serde_json::{Value, json};
 
 #[test]
+fn invalid_startup_project_fails_before_entering_the_terminal() {
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("bad.json");
+    std::fs::write(&path, "not a project").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat"))
+        .arg("--project").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid project file"));
+}
+
+#[test]
 fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() {
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();

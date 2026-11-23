@@ -8,7 +8,11 @@ impl App {
     pub fn new_with_mode(packet_tx: Sender<Packet>, startup_mode: StartupMode) -> Self {
         let preferences = theme_store::load();
         let alert_session_id: std::sync::Arc<str> = crate::storage::alert_jsonl::new_session_id().into();
-        let iface_list = list_interfaces(startup_mode == StartupMode::Simulation);
+        let offline_review = startup_mode == StartupMode::OfflineReview;
+        let save_alerts = !offline_review && preferences.save_alerts;
+        let iface_list = if offline_review { Vec::new() } else {
+            list_interfaces(startup_mode == StartupMode::Simulation)
+        };
         let selected_iface = iface_list.first().cloned().unwrap_or_default();
         let mut core = AnalysisCore::default();
         core.ioc_engine.load_from_dir();
@@ -19,7 +23,7 @@ impl App {
             2 => AutomationMode::Triage,
             _ => AutomationMode::Off,
         };
-        let alert_save_error = if preferences.save_alerts {
+        let alert_save_error = if save_alerts {
             match crate::storage::alert_jsonl::AlertJsonlWriter::open_default_for_fresh_session(
                 &alert_session_id,
             ) {
@@ -65,7 +69,8 @@ impl App {
             packet_tx,
             next_capture_receiver: None,
             capture_dispatch_waiting: false,
-            picking_iface: startup_mode != StartupMode::Simulation,
+            picking_iface: startup_mode == StartupMode::Capture,
+            offline_review,
             iface_list,
             iface_sel: 0,
             selected_iface,
@@ -120,7 +125,7 @@ impl App {
             socket_scope: SocketScope::default(),
             route_ledger: RouteLedger::default(),
             traffic_latch: TrafficLatch::default(),
-            live_response_eligible: true,
+            live_response_eligible: !offline_review,
             processing_live_packet: false,
             live_response_incidents: std::collections::HashSet::new(),
             response_preview: Vec::new(),
@@ -179,11 +184,11 @@ impl App {
             preferred_workspace: Workspace::from_index(preferences.startup_workspace),
             ui_refresh_ms: preferences.ui_refresh_ms,
             capture_timeout_ms: preferences.capture_timeout_ms,
-            save_alerts: preferences.save_alerts,
+            save_alerts,
             alert_session_id,
             alert_save_error_reported,
             alert_save_next_retry: alert_save_error.map(|_| Instant::now() + ALERT_SAVE_RETRY_INTERVAL),
-            persist_preferences: true,
+            persist_preferences: !offline_review,
             current_project_name: None,
             current_project_path: None,
             project_dirty: false,

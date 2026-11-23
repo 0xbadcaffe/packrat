@@ -4,6 +4,7 @@ use super::*;
 pub enum StartupMode {
     Capture,
     Simulation,
+    OfflineReview,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +16,7 @@ pub enum CliAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartupOptions {
     pub mode: StartupMode,
+    pub project_path: Option<std::path::PathBuf>,
     pub telemetry_listen: Option<std::net::SocketAddr>,
     pub key_log_path: Option<std::path::PathBuf>,
     pub tls_decrypt_helper_path: Option<std::path::PathBuf>,
@@ -39,7 +41,8 @@ pub fn usage() -> String {
     let endpoint_help =
         "      --endpoint-evidence PATH import endpoint impact evidence as NDJSON\n      --single-tag-interface NAME  flag stacked VLAN tags on an exact capture interface; repeatable\n";
     let base = usage_base();
-    base.replace("      --socket-events", &format!("{endpoint_help}      --archive PATH           retain packets and SQLite index (pauses at limits)\n      --archive-alert-evidence PATH  retain referenced HIGH/CRITICAL alert frames, not restored cases\n      --archive-evidence-rule RULE_ID  also retain referenced frames for this rule (up to 16, selective archive only)\n      --archive-max-mib N      archived packet bytes in MiB (default: 256)\n      --archive-max-frames N   total indexed frames (default: 100000)\n      --socket-events"))
+    base.replace("      --key-log", "      --project PATH          open a saved project offline (standalone option)\n      --key-log")
+        .replace("      --socket-events", &format!("{endpoint_help}      --archive PATH           retain packets and SQLite index (pauses at limits)\n      --archive-alert-evidence PATH  retain referenced HIGH/CRITICAL alert frames, not restored cases\n      --archive-evidence-rule RULE_ID  also retain referenced frames for this rule (up to 16, selective archive only)\n      --archive-max-mib N      archived packet bytes in MiB (default: 256)\n      --archive-max-frames N   total indexed frames (default: 100000)\n      --socket-events"))
 }
 
 pub(super) fn usage_base() -> &'static str {
@@ -57,6 +60,7 @@ where
         .collect();
     let mut options = StartupOptions {
         mode: StartupMode::Capture,
+        project_path: None,
         telemetry_listen: None,
         key_log_path: None,
         tls_decrypt_helper_path: None,
@@ -76,6 +80,17 @@ where
         archive_limits: Default::default(),
         vlan_policy: Default::default(),
     };
+    if args.iter().any(|arg| arg == "--project") {
+        let [flag, path] = args.as_slice() else {
+            return Err("--project requires a path and cannot be combined with other options".into());
+        };
+        if flag != "--project" || path.is_empty() || path.starts_with('-') {
+            return Err("--project requires a project file path".into());
+        }
+        options.mode = StartupMode::OfflineReview;
+        options.project_path = Some(path.into());
+        return Ok(CliAction::Run(options));
+    }
     let mut archive_limits_set = false;
     let mut index = 0;
     while index < args.len() {

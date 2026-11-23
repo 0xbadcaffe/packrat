@@ -113,9 +113,17 @@ fn archive_alert_project_opens_at_the_trigger_in_investigate() {
     let output = root.join("case.json");
     create_alert_project(&mut archive, AlertLogs::new(&log, &[]).unwrap(), "s", &scope, alert.id, &output).unwrap();
 
-    let mut app = App::new_for_test();
-    app.capture_id = Some(App::new_capture_id());
-    app.apply_project_state(project_store::load(&output).unwrap()).unwrap();
+    let (tx, _) = tokio::sync::mpsc::channel(1);
+    let mut app = App::new_with_mode(tx, StartupMode::OfflineReview);
+    app.open_project(&output).unwrap();
+    assert_eq!(project_store::load(&output).unwrap().alert_items.len(), 1);
+    assert!(!app.picking_iface && !app.capturing && !app.save_alerts);
+    assert!(app.iface_list.is_empty());
+    app.switch_interface();
+    app.toggle_capture();
+    app.toggle_alert_saving();
+    assert!(!app.picking_iface && !app.capturing && !app.save_alerts);
+    assert!(app.core.edit().alert_jsonl_writer.is_none());
     assert_eq!(app.active_tab, Tab::Investigate);
     assert!(app.worklist.open);
     assert_eq!(app.worklist.active_packet_no(), Some(1));

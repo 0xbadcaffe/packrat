@@ -114,6 +114,7 @@ pub struct App {
     next_capture_receiver: Option<tokio::sync::mpsc::Receiver<Packet>>,
     capture_dispatch_waiting: bool,
     pub picking_iface: bool,
+    offline_review: bool,
     pub iface_list: Vec<String>,
     pub iface_sel: usize,
     pub selected_iface: String,

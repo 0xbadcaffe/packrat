@@ -61,11 +61,24 @@ fn single_tag_interface_policy_requires_distinct_printable_names() {
 }
 
 #[test]
+fn startup_project_selects_offline_review_and_rejects_combined_options() {
+    let parsed = app::parse_startup_args(["--project", "archive case.json"]).unwrap();
+    let CliAction::Run(options) = parsed else { panic!("Expected run options") };
+    assert_eq!(options.mode, StartupMode::OfflineReview);
+    assert_eq!(options.project_path.as_deref(), Some(std::path::Path::new("archive case.json")));
+    assert!(app::parse_startup_args(["--project"]).is_err());
+    assert!(app::parse_startup_args(["--project", "--simulation"]).is_err());
+    assert!(app::parse_startup_args(["--simulation", "--project", "case.json"]).is_err());
+    assert!(app::parse_startup_args(["--project", "case.json", "--archive", "capture"]).is_err());
+}
+
+#[test]
 fn parse_startup_args_defaults_to_capture() {
     assert_eq!(
         app::parse_startup_args(std::iter::empty::<&str>()).unwrap(),
         CliAction::Run(StartupOptions {
             mode: StartupMode::Capture,
+            project_path: None,
             telemetry_listen: None,
             key_log_path: None,
             tls_decrypt_helper_path: None,
@@ -94,6 +107,7 @@ fn parse_startup_args_enables_simulation() {
         app::parse_startup_args(["--simulation"]).unwrap(),
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation,
+            project_path: None,
             telemetry_listen: None,
             key_log_path: None,
             tls_decrypt_helper_path: None,
@@ -118,6 +132,7 @@ fn parse_startup_args_enables_simulation() {
         app::parse_startup_args(["-s"]).unwrap(),
         CliAction::Run(StartupOptions {
             mode: StartupMode::Simulation,
+            project_path: None,
             telemetry_listen: None,
             key_log_path: None,
             tls_decrypt_helper_path: None,
@@ -164,6 +179,7 @@ fn parse_startup_args_accepts_local_telemetry_listener() {
         result,
         CliAction::Run(StartupOptions {
             mode: StartupMode::Capture,
+            project_path: None,
             telemetry_listen: Some("127.0.0.1:9477".parse().unwrap()),
             key_log_path: None,
             tls_decrypt_helper_path: None,
@@ -193,6 +209,7 @@ fn parse_startup_args_accepts_key_log_path() {
         result,
         CliAction::Run(StartupOptions {
             mode: StartupMode::Capture,
+            project_path: None,
             telemetry_listen: None,
             key_log_path: Some("/tmp/keys.log".into()),
             tls_decrypt_helper_path: None,

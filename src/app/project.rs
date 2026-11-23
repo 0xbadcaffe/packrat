@@ -104,7 +104,9 @@ impl App {
         let state = self.snapshot_project(name, mode.clone())?;
         let p = std::path::Path::new(path);
         write(&state, p).map_err(|error| format!("Save failed: {error}"))?;
-        let _ = project_store::add_to_recent(name, p, state.metadata.description.as_deref(), mode);
+        if !self.offline_review {
+            let _ = project_store::add_to_recent(name, p, state.metadata.description.as_deref(), mode);
+        }
         self.current_project_name = Some(name.to_string());
         self.current_project_path = Some(path.to_string());
         self.project_dirty = false;
@@ -114,32 +116,26 @@ impl App {
 
     /// Load a project from `path`, restoring notebook, tags, filter, host tags.
     pub fn load_project(&mut self, path: &str) {
-        match project_store::load(std::path::Path::new(path)) {
-            Ok(state) => {
-                let name = state.metadata.name.clone();
-                let mode = state.metadata.save_mode.clone();
-                let description = state.metadata.description.clone();
-                if let Err(error) = self.apply_project_state(state) {
-                    self.project_manager.status = Some(format!("Load failed: {error}"));
-                    return;
-                }
-                // Update project tracking state
-                let _ = project_store::add_to_recent(
-                    &name,
-                    std::path::Path::new(path),
-                    description.as_deref(),
-                    mode,
-                );
-                self.current_project_name = Some(name.clone());
-                self.current_project_path = Some(path.to_string());
-                self.project_dirty = false;
-                self.project_manager_open = false;
-                self.set_status(format!("Project loaded: {name}"));
-            }
-            Err(e) => {
-                self.project_manager.status = Some(format!("Load failed: {e}"));
-            }
+        if let Err(error) = self.open_project(std::path::Path::new(path)) {
+            self.project_manager.status = Some(format!("Load failed: {error}"));
         }
+    }
+
+    pub fn open_project(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let state = project_store::load(path).map_err(|error| format!("{error:#}"))?;
+        let name = state.metadata.name.clone();
+        let mode = state.metadata.save_mode.clone();
+        let description = state.metadata.description.clone();
+        self.apply_project_state(state)?;
+        if !self.offline_review {
+            let _ = project_store::add_to_recent(&name, path, description.as_deref(), mode);
+        }
+        self.current_project_name = Some(name.clone());
+        self.current_project_path = Some(path.to_string_lossy().into_owned());
+        self.project_dirty = false;
+        self.project_manager_open = false;
+        self.set_status(format!("Project loaded: {name}"));
+        Ok(())
     }
 
     pub(super) fn apply_project_state(

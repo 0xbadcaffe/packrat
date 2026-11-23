@@ -2,6 +2,10 @@ use super::*;
 
 impl App {
     pub fn toggle_capture(&mut self) {
+        if self.offline_review {
+            self.set_status("Capture is unavailable in offline review");
+            return;
+        }
         self.capturing = !self.capturing;
     }
 
@@ -47,7 +51,7 @@ impl App {
         self.flows_selected = None;
         self.stream_overlay = None;
         self.packet_comparison = None;
-        self.live_response_eligible = true;
+        self.live_response_eligible = !self.offline_review;
         self.processing_live_packet = false;
         self.live_response_incidents.clear();
         self.evidence_vault.clear_session();
