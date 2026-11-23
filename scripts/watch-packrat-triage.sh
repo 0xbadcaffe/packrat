@@ -337,6 +337,8 @@ if [[ -f $state && -O $state ]]; then
                 (.recent_alerts | type == "array" and length <= 50 and all(.[]; type == "object"
                     and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
             | {status,capture_id,session_id,recent_alerts,alert_sample_gap:(.alert_sample_gap == true),
+                buffer_drops:(.buffer_drops | if type == "number" and . >= 0 and . <= 4294967295
+                    and floor == . then . else null end),
                 review_queue:(.review_queue | if type == "array" and length <= 5 then
                     map(objects | select(.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))
                     else [] end),
@@ -360,6 +362,8 @@ while :; do
             | ([.recent_alerts[]?.alert_id] | max // 0) as $seen
             | ([$prior.highest_observed_alert_id, ($prior.recent_alerts | map(.alert_id)? | max)] | max // 0) as $high
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
+                buffer_drops_delta:(if $comparable and .buffer_drops != null and $prior.buffer_drops != null
+                    and .buffer_drops >= $prior.buffer_drops then .buffer_drops - $prior.buffer_drops else null end),
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
                 alert_sample_gap: if observed | not then null elif $comparable then
                     $prior.alert_sample_gap == true or (
@@ -389,7 +393,8 @@ while :; do
               else . end' <<< "$snapshot")
     snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")
     if "$once"; then publish_snapshot not_checked; printf '%s\n' "$snapshot"; break; fi
-    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id, .last_observed)' <<< "$snapshot")
+    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id,
+        .last_observed, .buffer_drops_delta)' <<< "$snapshot")
     if [[ $key != "$previous" ]]; then
         event=$(jq -c 'del(.last_observed)' <<< "$event")
         if [[ $journal_enabled == 1 ]]; then

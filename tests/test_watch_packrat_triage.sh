@@ -207,7 +207,9 @@ wait "$watch_pid"
 watch_pid=''
 jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_alerts[0].alert_id==9
     and .[2].recent_alerts[0].hit_count==2 and .[3].review_queue[0].alert_id==7
-    and .[4].buffer_drops==1 and .[5].alert_log_integrity=={
+    and .[0].buffer_drops_delta==null and .[1].buffer_drops_delta==0
+    and .[4].buffer_drops==1 and .[4].buffer_drops_delta==1 and .[5].buffer_drops_delta==0
+    and .[11].buffer_drops_delta==null and .[5].alert_log_integrity=={
         invalid_records:2,oversized_records:0,stopped_at_limit:false,stopped_at_scan_budget:true}
     and .[6].truncated_frames==3 and .[7].archive_pause_reason=="disk_reserve"
     and .[0].alert_changes==null and .[1].alert_changes.newly_observed==[9]
