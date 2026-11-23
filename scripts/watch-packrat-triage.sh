@@ -5,6 +5,7 @@ umask 077; export LC_ALL=C
 snapshot_validation='
     def scope_id: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
     def counter: if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end;
+    def sample_count: counter | if . != null and . <= 50 then . else null end;
     def flow_cache: if type == "object" then {retained_summaries:(.retained_summaries | counter),summary_evictions:(.summary_evictions | counter)}
         | if any(.[]; . == null) then null else . end else null end;
     def evidence_check_failures:
@@ -132,6 +133,10 @@ check_snapshot() {
            triage_status:.status, age_seconds:$age, max_age_seconds, packets:(.packets | counter), flow_cache:(if $age >= -5 and $age <= .max_age_seconds then .flow_cache | flow_cache else null end),
            evidence_check_failures:(if $age >= -5 and $age <= .max_age_seconds
                then .evidence_checks | evidence_check_failures else null end),
+           invalid_alert_rows:(if $age >= -5 and $age <= .max_age_seconds
+               then .invalid_alert_rows | sample_count else null end),
+           duplicate_alert_ids:(if $age >= -5 and $age <= .max_age_seconds
+               then .duplicate_alert_ids | sample_count else null end),
            packet_counter_gap:(.packet_counter_gap | if type == "boolean" then . else null end),
            poll_started_at:(.poll_started_at | if type == "number" and . > 0 and floor == .
                 and . <= 9007199254740991 then . else null end),
@@ -249,6 +254,15 @@ sanitize() {
              disposition:(.disposition | disposition), hit_count:(.hit_count | counter),
              packet_evidence_status:(.packet_evidence_status | token), revision} + evidence
             | if .rule_id != null and (.revision | type == "number" and . >= 1 and . <= 65535 and floor == .) then . else del(.revision) end;
+        def recent_sample:
+            if type != "array" then {recent_alerts:null,invalid_alert_rows:null,duplicate_alert_ids:null}
+            else .[:50] as $rows
+                | [$rows[] | objects | alert_fields | select(.alert_id > 0 and .severity != null)] as $valid
+                | ($valid | group_by(.alert_id)) as $groups
+                | {recent_alerts:[$groups[] | select(length == 1) | .[0]],
+                   invalid_alert_rows:(($rows | length) - ($valid | length)),
+                   duplicate_alert_ids:([$groups[] | select(length > 1)] | length)}
+            end;
         def archive_mode:
             if .archive_enabled == false then "disabled"
             elif .archive_enabled != true then null
@@ -268,6 +282,7 @@ sanitize() {
         | select(.record_type == "capture_triage" and (.status | token) != null)
         | select(.status != "current" or (.health.issues == [] and
             (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null)))
+        | (.alerts | recent_sample) as $sample
         | {
             status, capture_id:(.health.capture_id | token), session_id:(.health.alert_session_id | token),
             interface:(.health.capture_interface | token),
@@ -302,15 +317,13 @@ sanitize() {
                 else null end),
             recent_alerts_at_limit:(.alerts | if type == "array" then length > 50 else null end),
             has_older_alerts:(.has_more_alerts | flag),
-            recent_alerts:(.alerts | if type == "array" then .[:50] | map(objects | alert_fields
-                | select(.alert_id > 0 and .severity != null)) | sort_by(.alert_id) else null end),
             review_queue:(.review_queue | if type == "array" then .[:5] | map(objects
                 | alert_fields + {confidence:(.confidence | token),
                    archive_rule:(.archive_rule | flag), in_recent_alerts:(.in_recent_alerts | flag),
                    next_evidence_step:(.next_evidence_step | token)}
                 | select(.alert_id > 0 and (.severity == "HIGH" or .severity == "CRITICAL" or
                     (.archive_rule == true and (.severity == "MEDIUM" or .severity == "LOW"))))) else null end)
-          } | .archive_near_limit = (.archive_usage | if . == null then null else
+          } + $sample | .archive_near_limit = (.archive_usage | if . == null then null else
                 (.frames / .max_frames >= 0.9 or .payload_bytes / .max_payload_bytes >= 0.9) end)
             | select(valid_current)'
 }
@@ -421,6 +434,7 @@ while :; do
             | alert_ids as $ids | ($ids[-1] // 0) as $seen
             | ([$prior.highest_observed_alert_id, ($prior | alert_ids | last)] | max // 0) as $high
             | (.recent_alerts_at_limit == true or .has_older_alerts == true) as $truncated
+            | ((.invalid_alert_rows // 0) > 0 or (.duplicate_alert_ids // 0) > 0) as $invalid_sample
             | [$ids[] | select(. > $high)] as $new_ids
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
                 poll_started_at:$started,
@@ -433,7 +447,7 @@ while :; do
                 buffer_drops_delta:(if $comparable and .buffer_drops != null and $prior.buffer_drops != null
                     and .buffer_drops >= $prior.buffer_drops then .buffer_drops - $prior.buffer_drops else null end),
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
-                alert_sample_gap: if observed | not then null elif $comparable and $high > 0 then
+                alert_sample_gap: if observed | not then null elif $invalid_sample then true elif $comparable and $high > 0 then
                     $prior.alert_sample_gap == true or ($seen - $high > ($new_ids | length))
                 else ($comparable and $prior.alert_sample_gap == true) or $truncated
                     or ($seen - ($ids[0] // 1) + 1 > ($ids | length)) end,

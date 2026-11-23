@@ -156,6 +156,31 @@ jq -e '.recent_alerts_at_limit and .has_older_alerts and (.recent_alerts | lengt
     and .recent_alerts[-1].alert_id==50 and .recent_alerts[0].rule_id==null
     and .recent_alerts[0].disposition==null' "$state" >/dev/null
 
+bad_sample_state="$scratch/bad-sample.json"
+live current 14 '[]' "$medium" | jq '.alerts += [null,{alert_id:9,severity:"HIGH"},{alert_id:10},{alert_id:0,severity:"LOW"}]' >"$report"
+bash "$watch" --once "$bad_sample_state" -- cat "$report" >/dev/null
+jq -e '.status=="current" and .alert_sample_gap and .recent_alerts==[]
+    and .invalid_alert_rows==3 and .duplicate_alert_ids==1' "$bad_sample_state" >/dev/null
+bash "$watch" --check "$bad_sample_state" | jq -e '.alert_sample_gap
+    and .invalid_alert_rows==3 and .duplicate_alert_ids==1' >/dev/null
+(
+    # shellcheck source=scripts/packrat-rollout.sh
+    source "$root/scripts/packrat-rollout.sh"
+    scope='{"capture_id":"a","capture_run_id":"run-a","alert_session_id":"1-2"}'
+    curl() { jq -c '. + {service:"packrat",status:"ok",telemetry_fresh:true,capture_active:true,packets_total:14}' <<< "$scope"; }
+    triage_check=$watch
+    triage_state=$bad_sample_state
+    triage_watcher_ready "$scope"
+    if triage_watcher_ready "$scope" 0 1; then exit 1; fi
+)
+live current 15 '[]' "$medium" >"$report"
+bash "$watch" --once "$bad_sample_state" -- cat "$report" >/dev/null
+jq -e '.alert_sample_gap and .invalid_alert_rows==0 and .duplicate_alert_ids==0
+    and (.recent_alerts|map(.alert_id))==[9]' "$bad_sample_state" >/dev/null
+live current 1 '[]' | jq '.health.capture_id="other"' >"$report"
+bash "$watch" --once "$bad_sample_state" -- cat "$report" >/dev/null
+jq -e '.alert_sample_gap==false and .invalid_alert_rows==0 and .duplicate_alert_ids==0' "$bad_sample_state" >/dev/null
+
 bash "$watch" --once "$state" -- printf '%s\n' 'private, not JSON' >/dev/null
 jq -e '.status=="triage_unavailable" and (tostring | contains("private") | not)' "$state" >/dev/null
 PACKRAT_TRIAGE_WATCH_TIMEOUT=1 bash "$watch" --once "$state" -- sleep 5 >/dev/null
