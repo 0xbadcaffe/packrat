@@ -366,10 +366,14 @@ fn http_burst_links_complete_and_anchored_sampled_exchanges() {
     let directory = tempfile::tempdir().unwrap();
     let request = b"GET /status HTTP/1.1\r\nHost: example.test\r\n\r\n";
     let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
-    for (label, anchored, complete) in [
-        ("complete", true, true),
-        ("midstream", false, true),
-        ("incomplete-request", true, false),
+    let partial_body = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 20\r\n\r\npartial";
+    let ambiguous = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nContent-Length: 20\r\n\r\n";
+    for (label, anchored, complete, tail_reply, expected_links) in [
+        ("complete", true, true, response.as_slice(), 5),
+        ("midstream", false, true, response.as_slice(), 0),
+        ("incomplete-request", true, false, response.as_slice(), 4),
+        ("partial-response-body", true, true, partial_body.as_slice(), 5),
+        ("ambiguous-response", true, true, ambiguous.as_slice(), 4),
     ] {
         let path = directory.path().join(format!("auth-exchange-{label}.pcapng"));
         let mut writer = PcapNgWriter::create(&path).unwrap();
@@ -384,7 +388,8 @@ fn http_burst_links_complete_and_anchored_sampled_exchanges() {
             let reply_seq = 501 + index as u32 * response.len() as u32;
             let observed = if index == 4 && !complete { &request[..request.len() - 4] } else { request };
             writer.write_packet(&support::tcp(frame, request_seq, 0x18, observed, false)).unwrap();
-            writer.write_packet(&support::tcp(frame + 1, reply_seq, 0x18, response, true)).unwrap();
+            let reply = if index == 4 { tail_reply } else { response };
+            writer.write_packet(&support::tcp(frame + 1, reply_seq, 0x18, reply, true)).unwrap();
         }
         writer.flush().unwrap();
 
@@ -392,7 +397,7 @@ fn http_burst_links_complete_and_anchored_sampled_exchanges() {
         let rows = events(&output);
         let alert = &rows.iter().find(|row| row["alert"]["provenance"]["rule_id"] == "http.unauthorized_burst")
             .unwrap()["alert"];
-        let (expected, linked) = if anchored && complete {
+        let (expected, linked) = if expected_links == 5 {
             (serde_json::json!([4, 6, 8, 10, 12, 11, 9, 7, 5, 3]), 5)
         } else if anchored {
             (serde_json::json!([4, 6, 8, 10, 12, 9, 7, 5, 3]), 4)
@@ -410,6 +415,7 @@ fn http_burst_matches_requests_across_distinct_client_ports_without_guessing() {
     let path = directory.path().join("several-connections.pcapng");
     let request = b"GET /status HTTP/1.1\r\nHost: example.test\r\n\r\n";
     let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    let response_with_body = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 4\r\n\r\n";
     let mut writer = PcapNgWriter::create(&path).unwrap();
     let mut frame = 0;
     for client in 0..5_u16 {
@@ -426,13 +432,18 @@ fn http_burst_matches_requests_across_distinct_client_ports_without_guessing() {
             write(500, 0x12, &[], true);
         }
         write(101, 0x18, request, false);
-        write(501, 0x18, response, true);
+        if client == 0 {
+            write(501, 0x18, response_with_body, true);
+            write(501 + response_with_body.len() as u32, 0x18, b"done", true);
+        } else {
+            write(501, 0x18, response, true);
+        }
     }
     writer.flush().unwrap();
     let rows = events(&run_with(&path, &["--expect-alert", "http.unauthorized_burst=1"]));
     let alert = &rows.iter().find(|row| row["alert"]["provenance"]["rule_id"] == "http.unauthorized_burst")
         .unwrap()["alert"];
-    assert_eq!(alert["packet_refs"], serde_json::json!([4, 8, 10, 14, 18, 17, 13, 7, 3]));
+    assert_eq!(alert["packet_refs"], serde_json::json!([4, 9, 11, 15, 19, 18, 14, 8, 3]));
     assert!(alert["detail"].as_str().unwrap().contains("for 4/5 sampled 401 replies"));
 }
 

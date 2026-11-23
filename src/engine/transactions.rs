@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::AnalysisCore;
 use crate::analysis::alert_center::MAX_ALERT_PACKET_REFS;
+use crate::analysis::stream::ReassembledStream;
 use crate::analysis::transactions::{
     HttpConversation, MessageState, MultiplexedConversation, reconstruct_http, reconstruct_http2,
 };
@@ -26,25 +27,34 @@ struct CachedConversation {
     conversation: Arc<HttpConversation>,
 }
 
-fn http_401_exchange_frames(conversation: &HttpConversation, trigger: u64) -> Option<Vec<u64>> {
+fn http_401_exchange_frames(
+    stream: &ReassembledStream, conversation: &HttpConversation, trigger: u64,
+) -> Option<Vec<u64>> {
     const MAX_EXCHANGE_FRAMES: usize = 32;
     let mut matches = conversation.transactions.iter().filter_map(|exchange| {
         let response = exchange.response.as_ref()?;
-        (response.status == Some(401) && response.packet_numbers.contains(&trigger))
-            .then_some((&exchange.request, response))
+        if response.status != Some(401) || !response.headers_complete
+            || !matches!(response.state, MessageState::Complete | MessageState::Incomplete)
+            || !response.packet_numbers.contains(&trigger)
+        {
+            return None;
+        }
+        let headers = stream.packet_numbers(
+            response.span.direction.from_a(), response.span.start, response.header_end,
+        );
+        headers.contains(&trigger).then_some((&exchange.request, headers))
     });
-    let (request, response) = matches.next()?;
-    let first_reply_frame = *response.packet_numbers.first()?;
+    let (request, reply_headers) = matches.next()?;
+    let first_reply_frame = *reply_headers.first()?;
     if matches.next().is_some()
         || request.state != MessageState::Complete
-        || response.state != MessageState::Complete
         || request.packet_numbers.is_empty()
         || request.packet_numbers.iter().any(|&frame| frame == 0 || frame >= first_reply_frame)
-        || request.packet_numbers.len() + response.packet_numbers.len() > MAX_EXCHANGE_FRAMES
+        || request.packet_numbers.len() + reply_headers.len() > MAX_EXCHANGE_FRAMES
     {
         return None;
     }
-    Some(request.packet_numbers.iter().chain(&response.packet_numbers).copied().collect())
+    Some(request.packet_numbers.iter().copied().chain(reply_headers).collect())
 }
 
 impl AnalysisCore {
@@ -60,10 +70,10 @@ impl AnalysisCore {
                 if stream.midstream || stream.has_gaps() || stream.reset || stream.provenance_truncated {
                     return None;
                 }
-                self.http_transactions(id)
+                Some((stream, self.http_transactions(id)?))
             });
             let Some(mut frames) = conversation.as_ref()
-                .and_then(|conversation| http_401_exchange_frames(conversation, *frame)) else { continue };
+                .and_then(|(stream, conversation)| http_401_exchange_frames(stream, conversation, *frame)) else { continue };
             frames.retain(|frame| !packet_refs.contains(frame));
             if packet_refs.len() + frames.len() <= MAX_ALERT_PACKET_REFS {
                 packet_refs.extend(frames);

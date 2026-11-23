@@ -64,6 +64,7 @@ fn empty(direction: Direction, start: usize) -> HttpMessage {
             end: start,
         },
         header_end: start,
+        headers_complete: false,
         body: Vec::new(),
         headers: Vec::new(),
         trailers: Vec::new(),
@@ -96,6 +97,7 @@ fn finish(
     match parsed {
         Ok(httparse::Status::Complete(length)) => {
             message.header_end = start + length;
+            message.headers_complete = strict_crlf(&data[start..message.header_end]);
             let finished = if direction.from_a() {
                 stream.client_finished
             } else {
@@ -112,7 +114,7 @@ fn finish(
                     diagnostic: Some("HTTP status code is outside 100..599".into()),
                     ..Body::complete(message.header_end)
                 }
-            } else if strict_crlf(&data[start..message.header_end]) {
+            } else if message.headers_complete {
                 frame_body(data, message.header_end, headers, no_body, request, eof)
             } else {
                 Body {

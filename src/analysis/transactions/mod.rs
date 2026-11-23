@@ -77,6 +77,8 @@ pub struct HttpMessage {
     pub status: Option<u16>,
     pub span: ByteSpan,
     pub header_end: usize,
+    #[serde(skip)]
+    pub(crate) headers_complete: bool,
     /// Transfer-decoded ranges; Content-Encoding is not decompressed.
     pub body: Vec<ByteSpan>,
     pub headers: Vec<HttpHeader>,
