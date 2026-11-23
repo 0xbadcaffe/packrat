@@ -328,8 +328,7 @@ read_health() {
         def archive_count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
         ($h.archive_usage
          | if $archive_enabled == true and type == "object" and (.frames | archive_count)
-              and (.payload_bytes | archive_count) and (.max_frames | archive_count)
-              and (.max_payload_bytes | archive_count)
+              and (.payload_bytes | archive_count) and all([.max_frames,.max_payload_bytes][]; archive_count and . > 0)
            then {frames,payload_bytes,max_frames,max_payload_bytes} else null end) as $archive_usage |
         {
             capture_active: ($h.capture_active // false),
@@ -408,6 +407,7 @@ read_health() {
                      elif $require_archive != "0" then
                         if $archive_enabled == false then "archive_disabled"
                         elif $archive_enabled != true or $archive_paused != false then "archive_status_unavailable"
+                        elif $archive_usage == null then "archive_usage_unavailable"
                         else empty end
                      else empty end),
                     (if $require_archive == "alert-evidence" and $archive_enabled == true then
@@ -415,10 +415,10 @@ read_health() {
                         elif $evidence_only == null then "archive_mode_unavailable"
                         elif $evidence_rules == null then "archive_rules_unavailable" else empty end
                      else empty end),
-                    (if $archive_paused == false and $archive_usage != null and ($archive_usage |
-                            (.max_frames > 0 and .frames / .max_frames >= 0.9)
-                            or (.max_payload_bytes > 0 and .payload_bytes / .max_payload_bytes >= 0.9))
-                     then "archive_near_capacity" else empty end)
+                    (if $archive_paused == false and $archive_usage != null then $archive_usage |
+                        if .frames >= .max_frames or .payload_bytes >= .max_payload_bytes then "archive_at_capacity"
+                        elif .frames / .max_frames >= 0.9 or .payload_bytes / .max_payload_bytes >= 0.9
+                        then "archive_near_capacity" else empty end else empty end)
                 end,
                 (if $watcher == false then "alert_watcher_unavailable"
                  elif $pipeline == false then "alert_watcher_pipeline_inactive"

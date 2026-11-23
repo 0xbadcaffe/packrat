@@ -8,7 +8,7 @@ archive_samples=$(jq -c '
      . + {archive_enabled:"true",archive_paused:false}]
 ' <<< "$PACKRAT_FAKE_HEALTH")
 PACKRAT_REQUIRE_ARCHIVE=1 PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$archive_samples" bash "$watch" | jq -se '
-    map(.issues) == [["archive_disabled"], [], ["archive_paused"], ["archive_status_unavailable"], ["archive_status_unavailable"]]
+    map(.issues) == [["archive_disabled"], ["archive_usage_unavailable"], ["archive_paused"], ["archive_status_unavailable"], ["archive_status_unavailable"]]
     and map(.archive_enabled) == [false,true,true,true,null]
     and map(.archive_paused) == [false,false,true,null,false]
     and all(.[]; .archive_requirement == "active")
@@ -22,6 +22,7 @@ PACKRAT_REQUIRE_ARCHIVE=true bash "$watch" --once >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
 
 evidence_samples=$(jq -c '
+    . + {archive_usage:{frames:0,max_frames:10,payload_bytes:0,max_payload_bytes:100}} |
     (. + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:true}) as $selective |
     [$selective + {archive_evidence_rules:["tcp.payload_after_observed_reset"]},
      . + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:false,archive_evidence_rules:["tcp.payload_after_observed_reset"]},
@@ -55,10 +56,12 @@ PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$pause_samples" bash "$watch" | jq -s
 capacity_samples=$(jq -c '(. + {archive_enabled:true,archive_paused:false,
     archive_usage:{frames:8,max_frames:10,payload_bytes:20,max_payload_bytes:100,private:"omitted"}}) as $base |
     [$base, ($base | .archive_usage.frames = 9), ($base | .archive_usage.frames = "9"),
-     ($base | .archive_usage.payload_bytes = 90), ($base | .archive_paused = true | .archive_usage.payload_bytes = 90)]
+     ($base | .archive_usage.payload_bytes = 90), ($base | .archive_paused = true | .archive_usage.payload_bytes = 100),
+     ($base | .archive_usage.payload_bytes = 100), ($base | .archive_usage.frames = 11), ($base | .archive_usage.max_frames = 0)]
 ' <<< "$PACKRAT_FAKE_HEALTH")
-PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$capacity_samples" bash "$watch" | jq -se '
-    map(.issues) == [[],["archive_near_capacity"],[],["archive_near_capacity"],["archive_paused"]]
-    and .[2].archive_usage == null and .[1].archive_usage.frames == 9
+PACKRAT_REQUIRE_ARCHIVE=1 PACKRAT_HEALTH_HEARTBEAT=1 PACKRAT_FAKE_STEPS=8 PACKRAT_FAKE_SAMPLES="$capacity_samples" bash "$watch" | jq -se '
+    map(.issues) == [[],["archive_near_capacity"],["archive_usage_unavailable"],["archive_near_capacity"],["archive_paused"],
+                    ["archive_at_capacity"],["archive_at_capacity"],["archive_usage_unavailable"]]
+    and .[2].archive_usage == null and .[7].archive_usage == null and .[1].archive_usage.frames == 9
     and all(.[]; (.archive_usage | has("private") | not))
 ' >/dev/null
