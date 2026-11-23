@@ -49,6 +49,10 @@ fn dns_packet(
     bytes[14] = 0x45;
     bytes[16..18].copy_from_slice(&((20 + 8 + dns.len()) as u16).to_be_bytes());
     bytes[23] = 17;
+    if let (Ok(source), Ok(destination)) = (source.parse::<std::net::Ipv4Addr>(), destination.parse::<std::net::Ipv4Addr>()) {
+        bytes[26..30].copy_from_slice(&source.octets());
+        bytes[30..34].copy_from_slice(&destination.octets());
+    }
     let (source_port, destination_port): (u16, u16) =
         if response { (53, 40_000) } else { (40_000, 53) };
     bytes[34..36].copy_from_slice(&source_port.to_be_bytes());
@@ -88,6 +92,8 @@ fn dns_ipv6_packet(
     bytes[14] = 0x60;
     bytes[18..20].copy_from_slice(&((8 + dns.len()) as u16).to_be_bytes());
     bytes[20] = 17;
+    bytes[22..38].copy_from_slice(&source.parse::<std::net::Ipv6Addr>().unwrap().octets());
+    bytes[38..54].copy_from_slice(&destination.parse::<std::net::Ipv6Addr>().unwrap().octets());
     let (source_port, destination_port): (u16, u16) =
         if response { (53, 40_000) } else { (40_000, 53) };
     bytes[54..56].copy_from_slice(&source_port.to_be_bytes());

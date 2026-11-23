@@ -1,6 +1,57 @@
 use super::*;
 
 #[test]
+fn saved_tcp_tuple_requires_recorded_ipv4_addresses_and_ports_to_agree_with_wire() {
+    let mut frame = [0u8; 54];
+    frame[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    frame[14] = 0x45;
+    frame[16..18].copy_from_slice(&40_u16.to_be_bytes());
+    frame[23] = 6;
+    frame[26..30].copy_from_slice(&[192, 0, 2, 1]);
+    frame[30..34].copy_from_slice(&[198, 51, 100, 2]);
+    frame[34..36].copy_from_slice(&40_000_u16.to_be_bytes());
+    frame[36..38].copy_from_slice(&443_u16.to_be_bytes());
+    frame[46] = 0x50;
+    let original = crate::net::parser::parse_ethernet(&frame, 1, 1.0);
+    let flow = AlertFlow::from_packet(&original).unwrap();
+    assert_eq!(flow.source, "192.0.2.1:40000".parse().unwrap());
+    assert_eq!(flow.destination, "198.51.100.2:443".parse().unwrap());
+    for change in [
+        |packet: &mut crate::net::packet::Packet| packet.src = "192.0.2.3".into(),
+        |packet: &mut crate::net::packet::Packet| packet.dst = "198.51.100.3".into(),
+        |packet: &mut crate::net::packet::Packet| packet.dst_port = Some(444),
+    ] {
+        let mut packet = original.clone();
+        change(&mut packet);
+        assert!(AlertFlow::from_packet(&packet).is_none());
+    }
+}
+
+#[test]
+fn saved_udp_tuple_compares_ipv6_addresses_without_requiring_the_same_spelling() {
+    let mut frame = [0u8; 62];
+    frame[12..14].copy_from_slice(&0x86dd_u16.to_be_bytes());
+    frame[14] = 0x60;
+    frame[18..20].copy_from_slice(&8_u16.to_be_bytes());
+    frame[20] = 17;
+    let source = "2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap();
+    let destination = "2001:db8::2".parse::<std::net::Ipv6Addr>().unwrap();
+    frame[22..38].copy_from_slice(&source.octets());
+    frame[38..54].copy_from_slice(&destination.octets());
+    frame[54..56].copy_from_slice(&40_000_u16.to_be_bytes());
+    frame[56..58].copy_from_slice(&53_u16.to_be_bytes());
+    frame[58..60].copy_from_slice(&8_u16.to_be_bytes());
+    let mut packet = crate::net::parser::parse_ethernet(&frame, 2, 2.0);
+    packet.src = "2001:DB8:0:0:0:0:0:1".into();
+    let flow = AlertFlow::from_packet(&packet).unwrap();
+    assert_eq!(flow.transport, AlertTransport::Udp);
+    assert_eq!(flow.source.ip(), std::net::IpAddr::V6(source));
+    assert_eq!(flow.destination.ip(), std::net::IpAddr::V6(destination));
+    packet.dst = "2001:db8::3".into();
+    assert!(AlertFlow::from_packet(&packet).is_none());
+}
+
+#[test]
 fn deduplicates_findings_and_preserves_disposition() {
     let mut center = AlertCenter::default();
     assert!(center.record(7, "IDS", "CRITICAL", "Probe", "first"));

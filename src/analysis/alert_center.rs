@@ -142,6 +142,7 @@ pub struct AlertFlow {
 
 impl AlertFlow {
     pub(crate) fn from_packet(pkt: &crate::net::packet::Packet) -> Option<Self> {
+        use crate::net::parser::{ethernet_network_header, ip_header_endpoints};
         let (transport, source_port, destination_port) =
             if let Some((source, destination)) = crate::analysis::stream::tcp_port_pair(pkt) {
                 (AlertTransport::Tcp, source, destination)
@@ -154,10 +155,15 @@ impl AlertFlow {
         {
             return None;
         }
+        let (offset, ether_type) = ethernet_network_header(&pkt.bytes)?;
+        let (source, destination) = ip_header_endpoints(&pkt.bytes, offset, ether_type)?;
+        if pkt.src.parse::<std::net::IpAddr>().ok()? != source || pkt.dst.parse::<std::net::IpAddr>().ok()? != destination {
+            return None;
+        }
         Some(Self {
             transport,
-            source: std::net::SocketAddr::new(pkt.src.parse().ok()?, source_port),
-            destination: std::net::SocketAddr::new(pkt.dst.parse().ok()?, destination_port),
+            source: std::net::SocketAddr::new(source, source_port),
+            destination: std::net::SocketAddr::new(destination, destination_port),
         })
     }
 }

@@ -1,6 +1,6 @@
 //! Structured packet fields for keyboard-driven investigation.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 
 use crate::net::packet::Packet;
 
@@ -93,19 +93,7 @@ pub(crate) fn captured_transport_header(packet: &Packet) -> Option<CapturedTrans
     let source = read_u16(bytes, transport.offset)?;
     let destination = read_u16(bytes, transport.offset + 2)?;
     let tcp_flags = (transport.protocol == 6).then(|| bytes[transport.offset + 13]);
-    let ip = ethernet.payload_offset;
-    // transport_layout has already checked the IP version and the base header bounds.
-    let (src, dst) = match ethernet.ether_type {
-        0x0800 => (
-            IpAddr::V4(Ipv4Addr::from(<[u8; 4]>::try_from(&bytes[ip + 12..ip + 16]).ok()?)),
-            IpAddr::V4(Ipv4Addr::from(<[u8; 4]>::try_from(&bytes[ip + 16..ip + 20]).ok()?)),
-        ),
-        0x86dd => (
-            IpAddr::V6(Ipv6Addr::from(<[u8; 16]>::try_from(&bytes[ip + 8..ip + 24]).ok()?)),
-            IpAddr::V6(Ipv6Addr::from(<[u8; 16]>::try_from(&bytes[ip + 24..ip + 40]).ok()?)),
-        ),
-        _ => return None,
-    };
+    let (src, dst) = crate::net::parser::ip_header_endpoints(bytes, ethernet.payload_offset, ethernet.ether_type)?;
     let vlan_stack = bytes[12..ethernet.ether_type_offset]
         .chunks_exact(4)
         .map(|tag| CapturedVlanTag {

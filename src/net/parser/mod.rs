@@ -1,6 +1,7 @@
 // These functions are called from live.rs (real-capture feature only).
 #![allow(dead_code)]
 use crate::net::packet::Packet;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 const MAX_PARSED_VLAN_TAGS: u8 = 2;
 
@@ -25,6 +26,21 @@ pub(crate) fn ethernet_network_header(raw: &[u8]) -> Option<(usize, u16)> {
 
 pub(crate) fn supports_capture_link_type(link_type: u32) -> bool {
     link_type == 1
+}
+
+pub(crate) fn ip_header_endpoints(raw: &[u8], offset: usize, ether_type: u16) -> Option<(IpAddr, IpAddr)> {
+    let header = raw.get(offset..)?;
+    match ether_type {
+        0x0800 if header.first()? >> 4 == 4 => Some((
+            Ipv4Addr::from(*header.get(12..)?.first_chunk::<4>()?).into(),
+            Ipv4Addr::from(*header.get(16..)?.first_chunk::<4>()?).into(),
+        )),
+        0x86dd if header.first()? >> 4 == 6 => Some((
+            Ipv6Addr::from(*header.get(8..)?.first_chunk::<16>()?).into(),
+            Ipv6Addr::from(*header.get(24..)?.first_chunk::<16>()?).into(),
+        )),
+        _ => None,
+    }
 }
 
 pub fn parse_captured(
