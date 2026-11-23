@@ -207,7 +207,7 @@ report_saved_index() {
             sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
             sampled_unscoped_open_high_or_critical:([.alerts[] | select((scoped | not) and priority and unresolved)] | length),
             review_shortlist_truncated:($review | length > 5),
-            review_shortlist:($review[:5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,revision,confidence,evidence_frame_count,last_seen})),
+            review_shortlist:($review[:5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,revision,confidence,evidence_frame_count,evidence_frame_set_sha256,last_seen})),
             alert_log_integrity:$integrity, review_latency:((.review_latency | objects | {sampled_alerts,measured_alerts,unmeasured_alerts,min_ms,median_ms,max_ms}) // null),
             captures:($scoped | group_by([.session_id, .capture_id]) | map(
               map(select(priority)) as $priority

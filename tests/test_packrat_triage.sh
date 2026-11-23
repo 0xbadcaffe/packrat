@@ -84,7 +84,7 @@ mock_archive() {
         jq -cn '
             {session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
              alert_id:1,first_seen:10,last_seen:20,severity:"HIGH",disposition:"New",detail:"not in index",
-             rule_id:"test.rule",revision:10} as $base
+             rule_id:"test.rule",revision:10,evidence_frame_set_sha256:("0"*64)} as $base
             | [$base, ($base + {alert_id:2,first_seen:12,last_seen:22,severity:"HIGH",disposition:"Benign"}),
                ($base + {alert_id:3,first_seen:13,last_seen:19,severity:"CRITICAL",disposition:"Reviewing"}),
                ($base + {session_id:"1700000000-123",last_seen:30,severity:"CRITICAL",disposition:"Confirmed"}),
