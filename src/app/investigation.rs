@@ -1,5 +1,5 @@
 use super::*;
-use super::alert_evidence::AlertEvidenceScope;
+use super::alert_evidence::{AlertEvidenceScope, LocalAlertPacket};
 
 #[cfg(test)]
 #[path = "../../tests/unit/app_alert_capacity_tests.rs"]
@@ -225,15 +225,12 @@ impl App {
         let evidence_scope = self.alert_evidence_scope(&alert);
         let same_capture = evidence_scope == AlertEvidenceScope::CurrentCapture;
         let scope_mismatch = evidence_scope.local_mismatch();
+        let local_packets = self.local_alert_packets(&alert, evidence_scope, &packet_refs);
         let mut reader = None;
         let mut archive_error = false;
         let mut invalid_lengths = 0;
-        let mut resolve_frame = |app: &Self, packet_no| {
-            let saved = app.saved_alert_pin(&alert, packet_no);
-            let local = saved.or_else(|| {
-                app.frame_may_be_local(evidence_scope, packet_no)
-                    .then(|| app.packet_by_no(packet_no)).flatten()
-            }).cloned();
+        let mut resolve_frame = |app: &Self, packet_no, location: Option<LocalAlertPacket>| {
+            let local = location.and_then(|location| location.get(app)).cloned();
             let from_archive = local.is_none() && same_capture;
             let packet = if from_archive {
                 if reader.is_none() && !archive_error {
@@ -266,7 +263,7 @@ impl App {
             })
         };
         let mut trigger = packet_refs.binary_search(&alert.packet_no).ok()
-            .and_then(|_| resolve_frame(self, alert.packet_no));
+            .and_then(|index| resolve_frame(self, alert.packet_no, local_packets[index]));
         if let Some((packet, _, _)) = &trigger {
             // Reserve bytes before processing older evidence; add the tray item in order below.
             let _ = self.worklist.retain_packet(packet);
@@ -278,11 +275,11 @@ impl App {
         let mut truncated = 0;
         let mut unknown_lengths = 0;
         let mut retained = Vec::with_capacity(packet_refs.len());
-        for packet_no in packet_refs {
+        for (packet_no, location) in packet_refs.into_iter().zip(local_packets) {
             let frame = if packet_no == alert.packet_no {
                 trigger.take()
             } else {
-                resolve_frame(self, packet_no)
+                resolve_frame(self, packet_no, location)
             };
             let Some((packet, from_archive, status)) = frame else {
                 unavailable += 1;

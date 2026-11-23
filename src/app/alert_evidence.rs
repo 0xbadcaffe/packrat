@@ -10,6 +10,21 @@ pub(super) enum AlertEvidenceScope {
     MissingCaptureId,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum LocalAlertPacket {
+    Pin(u64),
+    Buffer(usize),
+}
+
+impl LocalAlertPacket {
+    pub(super) fn get(self, app: &App) -> Option<&Packet> {
+        match self {
+            Self::Pin(frame) => app.worklist.retained_packet(frame),
+            Self::Buffer(index) => app.packets.get(index),
+        }
+    }
+}
+
 impl AlertEvidenceScope {
     pub(super) fn local_mismatch(self) -> Option<&'static str> {
         match self {
@@ -77,30 +92,10 @@ impl App {
             return "No packet references".into();
         }
         let scope = self.alert_evidence_scope(alert);
-        let mut slots: Vec<FrameStatus> = frames.iter().map(|&frame| {
-            self.saved_alert_pin(alert, frame)
-                .or_else(|| {
-                    self.frame_may_be_local(scope, frame)
-                        .then(|| self.worklist.retained_packet(frame)).flatten()
-                })
-                .map_or(FrameStatus::Missing, frame_status)
-        }).collect();
-        let mut unresolved = slots.iter().filter(|&&slot| slot == FrameStatus::Missing).count();
-        // One pass through the live buffer, with pinned bytes taking precedence.
-        if unresolved > 0 && scope.local_mismatch().is_none() {
-            for packet in &self.packets {
-                if let Ok(index) = frames.binary_search(&packet.no)
-                    && slots[index] == FrameStatus::Missing
-                    && self.frame_may_be_local(scope, packet.no)
-                {
-                    slots[index] = frame_status(packet);
-                    unresolved -= 1;
-                    if unresolved == 0 {
-                        break;
-                    }
-                }
-            }
-        }
+        let slots: Vec<_> = self.local_alert_packets(alert, scope, &frames).into_iter()
+            .map(|slot| slot.and_then(|location| location.get(self)).map_or(FrameStatus::Missing, frame_status))
+            .collect();
+        let unresolved = slots.iter().filter(|&&slot| slot == FrameStatus::Missing).count();
         let invalid = slots.iter().filter(|&&slot| slot == FrameStatus::Unreadable).count();
         let retained = frames.len() - unresolved - invalid;
         if retained == 0 && invalid == 0 && let Some(reason) = scope.local_mismatch() {
@@ -129,5 +124,32 @@ impl App {
             status.push_str("; capture ID not recorded");
         }
         status
+    }
+
+    /// Resolve sorted, unique alert references in one pass without opening the archive.
+    pub(super) fn local_alert_packets(
+        &self, alert: &AlertItem, scope: AlertEvidenceScope, frames: &[u64],
+    ) -> Vec<Option<LocalAlertPacket>> {
+        let mut locations: Vec<_> = frames.iter().map(|&frame| {
+            (self.saved_alert_pin(alert, frame).is_some()
+                || (self.frame_may_be_local(scope, frame) && self.worklist.retained_packet(frame).is_some()))
+                .then_some(LocalAlertPacket::Pin(frame))
+        }).collect();
+        let mut missing = locations.iter().filter(|location| location.is_none()).count();
+        if missing == 0 || scope.local_mismatch().is_some() {
+            return locations;
+        }
+        for (position, packet) in self.packets.iter().enumerate() {
+            if let Ok(index) = frames.binary_search(&packet.no)
+                && locations[index].is_none() && self.frame_may_be_local(scope, packet.no)
+            {
+                locations[index] = Some(LocalAlertPacket::Buffer(position));
+                missing -= 1;
+                if missing == 0 {
+                    break;
+                }
+            }
+        }
+        locations
     }
 }
