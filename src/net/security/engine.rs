@@ -139,7 +139,7 @@ impl SecurityEngine {
         self.check_scan_activity(pkt);
         self.check_ipv6_control_plane(pkt, archive_rules);
         self.check_layer2_control_plane(pkt);
-        self.check_beacon_and_exfiltration(pkt, tcp_payload);
+        self.check_beacon_and_exfiltration(pkt, tcp_payload, archive_rules);
         self.check_ntlm_fanout(pkt);
         self.check_dhcp_integrity(pkt);
         self.check_ipv6_fragment_reassembly(pkt);

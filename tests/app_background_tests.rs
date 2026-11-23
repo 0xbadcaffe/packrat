@@ -79,6 +79,60 @@ fn opted_in_tcp_reset_evidence_survives_rollover_and_remains_vlan_scoped() {
 }
 
 #[test]
+fn periodic_archive_retains_only_the_matched_run_after_worker_history_rolls_over() {
+    use packrat_tui::engine::worker::WorkerLimits;
+    use packrat_tui::net::parser::parse_ethernet;
+    use packrat_tui::storage::packet_archive::{ArchiveLimits, ArchiveWorker, PacketArchive};
+
+    let rule = "traffic.periodic_fixed_size";
+    let sample = |no, timestamp, size| {
+        let mut pkt = packets::tcp(no, no as u32 * 1000, 0x18, &vec![1; size]);
+        pkt.timestamp = timestamp;
+        pkt
+    };
+    for selected in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("archive");
+        let mut app = App::new_for_test();
+        let archive = ArchiveWorker::open_alert_evidence(&path, ArchiveLimits::default()).unwrap();
+        app.set_packet_archive_with_rules(archive, selected.then(|| rule.to_owned()).into_iter().collect()).unwrap();
+        app.start_background_analysis().unwrap();
+        for (index, time) in [1.0, 2.0, 4.0, 15.0].into_iter().enumerate() {
+            app.inject_packet(sample(index as u64 + 1, time, 400));
+        }
+        for frame in 5..=10 {
+            app.inject_packet(sample(frame, 60.0 + (frame - 5) as f64 * 10.0, 70));
+        }
+        drain(&mut app);
+        let trigger = WorkerLimits::default().history_packets as u64 + 12;
+        for no in 11..trigger {
+            app.inject_packet(parse_ethernet(&[0; 14], no, 115.0));
+            drain(&mut app);
+        }
+        app.packets.clear();
+        app.inject_packet(sample(trigger, 120.0, 70));
+        drain(&mut app);
+        app.stop_background_analysis().unwrap();
+        app.packet_archive.as_mut().unwrap().finish().unwrap();
+
+        let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
+            alert.provenance.as_ref().is_some_and(|provenance| provenance.rule_id == rule)).cloned()).unwrap().unwrap();
+        let expected = (5..=10).chain([trigger]).collect::<Vec<_>>();
+        assert_eq!(alert.packet_refs, expected);
+        assert_eq!(alert.severity, "MEDIUM");
+        let scope = alert.capture_id.unwrap();
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { 7 } else { 0 });
+        for frame in expected {
+            assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), selected);
+        }
+        for frame in 1..5 {
+            assert!(archive.packet_for_capture(&scope, frame).unwrap().is_none());
+        }
+    }
+}
+
+#[test]
 fn asynchronous_packets_keep_display_and_analysis_counts_in_agreement() {
     let mut app = App::new_for_test();
     app.start_background_analysis().unwrap();

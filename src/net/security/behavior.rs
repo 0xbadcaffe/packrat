@@ -1,5 +1,9 @@
 use super::*;
 use super::fragments::TcpPayloadObservation;
+use std::collections::VecDeque;
+
+const MAX_PERIODIC_FRAME_COST: usize = 2 * 1024;
+const MAX_PERIODIC_DIRECTION_COST: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct BehaviorFlowKey {
@@ -18,10 +22,35 @@ pub(super) struct BeaconSample {
 
 #[derive(Debug, Default)]
 pub(super) struct BeaconState {
-    directions: [Vec<BeaconSample>; 2],
+    directions: [BeaconDirection; 2],
     pub(super) last_seen: f64,
     episode: Option<BeaconEpisode>,
     rearmed_at: Option<f64>,
+}
+
+#[derive(Debug, Default)]
+struct BeaconDirection {
+    samples: Vec<BeaconSample>,
+    retained: VecDeque<(Packet, usize)>,
+    retained_cost: usize,
+}
+
+impl BeaconDirection {
+    fn remember(&mut self, packet: &Packet) {
+        let cost = crate::model::project::pinned_packet_cost(packet);
+        let fits = cost <= MAX_PERIODIC_FRAME_COST;
+        let oldest = self.samples.first().map_or(packet.timestamp, |sample| sample.timestamp);
+        while self.retained.front().is_some_and(|(prior, _)| prior.timestamp < oldest)
+            || (fits && self.retained_cost + cost > MAX_PERIODIC_DIRECTION_COST)
+        {
+            let Some((_, removed)) = self.retained.pop_front() else { break; };
+            self.retained_cost -= removed;
+        }
+        if fits {
+            self.retained.push_back((packet.clone(), cost));
+            self.retained_cost += cost;
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -147,7 +176,7 @@ impl ExfilState {
 impl SecurityEngine {
     // ─── C2 Beacon and Exfiltration Correlation ─────────────────────────────
 
-    pub(super) fn check_beacon_and_exfiltration(&mut self, pkt: &Packet, tcp_payload: TcpPayloadObservation) {
+    pub(super) fn check_beacon_and_exfiltration(&mut self, pkt: &Packet, tcp_payload: TcpPayloadObservation, archive_rules: Option<&[String]>) {
         if !pkt.timestamp.is_finite() {
             return;
         }
@@ -170,7 +199,7 @@ impl SecurityEngine {
         });
         let may_have_new_payload = tcp_payload == TcpPayloadObservation::UnknownOrNew;
         if may_have_new_payload {
-            self.check_periodic_traffic(pkt);
+            self.check_periodic_traffic(pkt, archive_rules);
         }
         let mut alerts = Vec::new();
         let source_internal = is_internal_address(&pkt.src);
@@ -270,7 +299,7 @@ impl SecurityEngine {
         }
     }
 
-    fn check_periodic_traffic(&mut self, pkt: &Packet) {
+    fn check_periodic_traffic(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
         let (Some(source_port), Some(destination_port)) = (pkt.src_port, pkt.dst_port) else {
             return;
         };
@@ -309,7 +338,7 @@ impl SecurityEngine {
         if let Some(episode) = &mut state.episode {
             if pkt.timestamp - episode.last_seen > BEACON_WINDOW_SECS {
                 state.episode = None;
-                state.directions.iter_mut().for_each(Vec::clear);
+                state.directions = Default::default();
                 state.rearmed_at = Some(pkt.timestamp);
             } else {
                 if direction == episode.direction {
@@ -318,7 +347,8 @@ impl SecurityEngine {
                 return;
             }
         }
-        let samples = &mut state.directions[direction];
+        let window = &mut state.directions[direction];
+        let samples = &mut window.samples;
         if samples.last().is_some_and(|sample| pkt.timestamp <= sample.timestamp) {
             return;
         }
@@ -331,23 +361,30 @@ impl SecurityEngine {
             size: pkt.capture.as_ref().map_or(u32::from(pkt.length), |meta| meta.wire_length),
             packet_no: pkt.no,
         });
-        let (evidence, stats) = if let Some(stats) = beacon_pattern(samples) {
-            (samples.as_slice(), stats)
+        let window_match = if let Some(stats) = beacon_pattern(samples) {
+            Some((samples.as_slice(), stats))
         } else if samples.len() > BEACON_MIN_SAMPLES {
             let recent = &samples[samples.len() - BEACON_MIN_SAMPLES..];
-            let Some(stats) = beacon_pattern(recent) else {
-                return;
-            };
-            (recent, stats)
+            beacon_pattern(recent).map(|stats| (recent, stats))
         } else {
+            None
+        };
+        let retain = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "traffic.periodic_fixed_size"));
+        let Some((evidence, stats)) = window_match else {
+            if retain { window.remember(pkt); }
             return;
         };
         state.episode = Some(BeaconEpisode { direction, last_seen: pkt.timestamp });
-        let related_packets = evidence[..evidence.len() - 1]
+        let related_packets: Vec<_> = evidence[..evidence.len() - 1]
             .iter()
             .map(|sample| sample.packet_no)
             .collect();
         let count = evidence.len();
+        if retain {
+            self.findings.retained_evidence.extend(window.retained.drain(..)
+                .filter_map(|(packet, _)| related_packets.contains(&packet.no).then_some(packet)));
+        }
+        state.directions = Default::default();
         self.push_ids_finding(IdsFinding {
             alert: IdsAlert {
                 pkt_no: pkt.no,
@@ -417,3 +454,7 @@ impl SecurityEngine {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/periodic_evidence_cache_tests.rs"]
+mod evidence_cache_tests;
