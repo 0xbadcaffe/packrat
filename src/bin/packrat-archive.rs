@@ -14,6 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("       packrat-archive DIRECTORY --alert-project ALERT_LOG SESSION_ID ALERT_ID OUTPUT_JSON --capture-id CAPTURE_ID [--previous-log PATH]...\nOpen the resulting JSON with packrat --project OUTPUT_JSON. It contains packet bytes.\nAlert evidence bundles count all omitted frames as missing and identify unreadable and unknown-length frames separately.");
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
         println!("       packrat-archive DIRECTORY --alert-flow-summary ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nSummarizes directional TCP/UDP headers from cited frames only, without exporting packet bytes.");
+        println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nFinds transport-tuple matches within five minutes in a bounded saved alert sample; does not identify a connection.");
         return Ok(());
     };
     if path == "--alerts" {
@@ -213,6 +214,7 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
     let log = args.next().ok_or("--alerts requires an alert log")?;
     let (mut session, mut capture, mut limit) = (None, None, None);
     let mut alert_id = None;
+    let mut related_to = None;
     let mut scan_bytes = None;
     let mut previous = Vec::new();
     let mut report_integrity = false;
@@ -227,12 +229,24 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
             "--session" if session.is_none() => session = Some(value),
             "--capture-id" if capture.is_none() => capture = Some(value),
             "--alert-id" if alert_id.is_none() => alert_id = Some(value.parse()?),
+            "--related-to" if related_to.is_none() => related_to = Some(value.parse()?),
             "--limit" if limit.is_none() => limit = Some(value.parse()?),
             "--scan-bytes" if scan_bytes.is_none() => scan_bytes = Some(value.parse()?),
             "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(PathBuf::from(value)),
             "--previous-log" => return Err("Too many previous alert logs".into()),
             _ => return Err(format!("Unknown or repeated alert option: {flag}").into()),
         }
+    }
+    if let Some(anchor) = related_to {
+        if alert_id.is_some() || limit.is_some() || scan_bytes.is_some() || report_integrity {
+            return Err("--related-to uses its own bounded scan and cannot be combined with other query options".into());
+        }
+        let report = packrat_tui::storage::alert_related::related_alerts(
+            &previous, std::path::Path::new(&log), session.as_deref().ok_or("--related-to requires --session")?,
+            capture.as_deref().ok_or("--related-to requires --capture-id")?, anchor,
+        )?;
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
     }
     if scan_bytes.is_some() && (!report_integrity || alert_id.is_some()) {
         return Err("--scan-bytes requires --report-integrity and cannot be combined with --alert-id".into());

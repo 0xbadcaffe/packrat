@@ -7,3 +7,4 @@ pub mod packet_archive;
 pub mod alert_jsonl;
 pub mod alert_evidence;
 pub mod alert_history;
+pub mod alert_related;
