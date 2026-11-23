@@ -24,6 +24,11 @@ pub fn reconstruct_http(stream: &ReassembledStream) -> HttpConversation {
             .limitations
             .push("Packet provenance retention limit reached".into());
     }
+    if stream.http_overlap_conflict {
+        report
+            .limitations
+            .push("Conflicting TCP overlap; decoded bytes do not establish what the receiver accepted".into());
+    }
     if stream.client_data.starts_with(b"PRI * HTTP/2.0")
         || stream.server_data.starts_with(b"PRI * HTTP/2.0")
     {

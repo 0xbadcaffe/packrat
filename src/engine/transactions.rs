@@ -94,7 +94,9 @@ impl AnalysisCore {
         for (frame, id) in samples.iter().rev() {
             let conversation = conversations.entry(id.as_str()).or_insert_with(|| {
                 let stream = self.streams.get(id)?;
-                if stream.midstream || stream.has_gaps() || stream.reset || stream.provenance_truncated {
+                if stream.midstream || stream.has_gaps() || stream.reset || stream.provenance_truncated
+                    || stream.http_overlap_conflict
+                {
                     return None;
                 }
                 Some((stream, self.http_transactions(id)?))

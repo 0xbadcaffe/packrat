@@ -164,9 +164,14 @@ impl StreamAssembler {
         let track_tls_prefix = observe_tls && !*checked && data.first().is_none_or(|&kind| kind == 0x16);
         let track_dns = observe_tls && stream.dns_offsets[direction].is_some()
             && (sport == 53 || pkt.dst_port == Some(53));
-        let check_limit = if track_dns { usize::MAX } else if track_tls_prefix { MAX_TLS_RECORD_BYTES } else { 0 };
+        // An uppercase prefix can be cleartext HTTP; avoid scanning encrypted HTTPS overlaps.
+        let track_http = !stream.http_overlap_conflict
+            && (matches!(sport, 80 | 443 | 8080) || matches!(pkt.dst_port, Some(80 | 443 | 8080)))
+            && data.first().or_else(|| payload.first()).is_some_and(u8::is_ascii_uppercase);
+        let check_limit = if track_dns || track_http { usize::MAX } else if track_tls_prefix { MAX_TLS_RECORD_BYTES } else { 0 };
         let progress = consume_contiguous(data, next_seq_slot, pending, segment, check_limit);
         *checked |= progress.prefix_conflict;
+        stream.http_overlap_conflict |= track_http && progress.prefix_conflict;
         if track_dns && progress.prefix_conflict {
             stream.dns_offsets[direction] = None;
         }
@@ -242,7 +247,7 @@ impl StreamAssembler {
         };
         let initial = syn?.wrapping_add(1);
         let previous = std::mem::replace(&mut stream.http_auth_examined[usize::from(from_a)], data.len());
-        if stream.midstream || stream.reset || stream.has_gaps() || stream.provenance_truncated
+        if stream.midstream || stream.reset || stream.has_gaps() || stream.provenance_truncated || stream.http_overlap_conflict
             || data.len() <= previous || !data.starts_with(b"HTTP/1.")
             || !data[previous.saturating_sub(3)..].windows(4).any(|bytes| bytes == b"\r\n\r\n")
             || !data[previous.saturating_sub(16_384)..].windows(12)
