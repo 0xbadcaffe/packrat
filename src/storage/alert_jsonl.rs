@@ -6,7 +6,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
-use crate::analysis::alert_center::AlertItem;
+use crate::analysis::alert_center::{AlertItem, CREDENTIAL_ALERT_DETAIL};
 
 pub(super) const MAX_ALERT_LINE: usize = 1_048_576;
 const MAX_SAVED_ALERTS: usize = 4096;
@@ -76,11 +76,16 @@ fn snapshot_key(alert: &AlertItem) -> SnapshotKey {
 }
 
 fn encode_alert_record(session_id: &str, alert: &AlertItem) -> Result<Vec<u8>, String> {
+    let redacted = (alert.source == "CREDENTIAL" && alert.detail != CREDENTIAL_ALERT_DETAIL).then(|| {
+        let mut copy = alert.clone();
+        copy.detail = CREDENTIAL_ALERT_DETAIL.into();
+        copy
+    });
     serde_json::to_vec(&AlertRecord {
         schema_version: 1,
         record_type: "alert",
         session_id,
-        alert,
+        alert: redacted.as_ref().unwrap_or(alert),
     })
     .map_err(|error| format!("Serialize alert JSONL record: {error}"))
 }

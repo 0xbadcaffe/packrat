@@ -3,6 +3,26 @@ use std::{io::Write, process::Command};
 use packrat_tui::analysis::alert_center::{AlertCenter, AlertDisposition, AlertFlow, AlertTransport};
 use serde_json::{Value, json};
 
+#[test]
+fn saved_alert_history_omits_legacy_credentials_without_rewriting_the_log() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("alerts.jsonl");
+    let mut center = AlertCenter::default();
+    center.record(1, "CREDENTIAL", "HIGH", "Example credential finding", "fixture");
+    let mut legacy = center.items[0].clone();
+    legacy.detail = "Exposed credential value: fixture-only-value".into();
+    let row = json!({"schema_version":1,"record_type":"alert","session_id":"legacy","alert":legacy});
+    let original = format!("{row}\n");
+    std::fs::write(&log, &original).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--alerts").arg(&log).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let summary = String::from_utf8(output.stdout).unwrap();
+    assert!(summary.contains("value omitted"));
+    assert!(!summary.contains("fixture-only-value"));
+    assert_eq!(std::fs::read_to_string(log).unwrap(), original);
+}
+
 #[cfg(unix)]
 #[test]
 fn archive_rejects_fifo_alert_logs_without_waiting_for_a_writer() {

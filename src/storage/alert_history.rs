@@ -4,7 +4,7 @@ use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::{collections::HashSet, fs::{File, OpenOptions}, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}};
 
-use crate::analysis::alert_center::{AlertDisposition, AlertFlow, MAX_ALERT_PACKET_REFS};
+use crate::analysis::alert_center::{AlertDisposition, AlertFlow, CREDENTIAL_ALERT_DETAIL, MAX_ALERT_PACKET_REFS};
 use crate::analysis::alert_provenance::EvidenceConfidence;
 use super::alert_jsonl::{ExistingAlertRecord, MAX_ALERT_LINE};
 use super::alert_evidence::evidence_frame_set_sha256;
@@ -201,7 +201,7 @@ fn filtered_alerts_report(
                 alert_id: alert.id,
                 title: limited(&alert.title, 160),
                 severity: limited(&alert.severity, 16),
-                detail: limited(&alert.detail, 512),
+                detail: limited(if alert.source == "CREDENTIAL" { CREDENTIAL_ALERT_DETAIL } else { &alert.detail }, 512),
                 disposition: alert.disposition,
                 first_seen: alert.first_seen,
                 last_seen: alert.last_seen,

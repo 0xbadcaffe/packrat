@@ -8,6 +8,8 @@ mod evidence;
 const MAX_ALERTS: usize = 2_000;
 const AUTOMATIC_EVIDENCE_PRIORITY: u8 = 80;
 pub(crate) const MAX_ALERT_PACKET_REFS: usize = 128;
+pub(crate) const CREDENTIAL_ALERT_DETAIL: &str =
+    "Possible cleartext credential material observed; value omitted from the alert.";
 const EARLY_ALERT_PACKET_REFS: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -197,6 +199,7 @@ impl AlertCenter {
         }
         self.next_id = items.iter().map(|item| item.id).max().unwrap_or(0);
         for item in &mut items {
+            if item.source == "CREDENTIAL" { item.detail = CREDENTIAL_ALERT_DETAIL.into(); }
             if item.first_packet == 0 { item.first_packet = item.packet_no; }
             if item.last_packet == 0 { item.last_packet = item.packet_no; }
             if item.packet_refs.is_empty() {
@@ -289,7 +292,7 @@ impl AlertCenter {
         let source = source.into();
         let severity = severity.into().to_uppercase();
         let title = title.into();
-        let detail = detail.into();
+        let detail = if source == "CREDENTIAL" { CREDENTIAL_ALERT_DETAIL.into() } else { detail.into() };
         let correlation_key = correlation_key.into();
         let capture_id = self.capture_id.as_deref().unwrap_or_default();
         let fingerprint = format!("{capture_id}\0{source}\0{title}\0{correlation_key}");

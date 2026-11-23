@@ -55,6 +55,24 @@ fn enabling_saving_backfills_alerts_without_duplicate_snapshots() {
 }
 
 #[test]
+fn credential_snapshots_are_redacted_and_deduplicated_on_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let mut legacy = alert(1, 1);
+    legacy.source = "CREDENTIAL".into();
+    legacy.detail = "Exposed credential value: fixture-only-value".into();
+    for _ in 0..2 {
+        let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+        writer.append_alerts(std::slice::from_ref(&legacy)).unwrap();
+    }
+    let records = read_log(&path);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].alert.detail, CREDENTIAL_ALERT_DETAIL);
+    assert_eq!(records[0].alert.packet_refs, [1]);
+    assert!(!std::fs::read_to_string(path).unwrap().contains("fixture-only-value"));
+}
+
+#[test]
 fn identical_alerts_from_a_new_session_are_kept() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("alerts.jsonl");

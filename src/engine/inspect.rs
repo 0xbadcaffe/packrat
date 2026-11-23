@@ -1,5 +1,5 @@
 use super::*;
-use crate::analysis::alert_center::AlertFlow;
+use crate::analysis::alert_center::{AlertFlow, CREDENTIAL_ALERT_DETAIL};
 
 impl AnalysisCore {
     pub fn analyze_with_history<I>(&mut self, pkt: &Packet, history: I) -> PacketAnalysis
@@ -339,7 +339,7 @@ impl AnalysisCore {
                     "CREDENTIAL",
                     "HIGH",
                     credential.kind,
-                    format!("Exposed credential value: {}", credential.value),
+                    CREDENTIAL_ALERT_DETAIL,
                     format!("{}:{}>{}", credential.kind, pkt.src, pkt.dst),
                 );
             }

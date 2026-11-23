@@ -58,6 +58,11 @@ fn cleartext_credentials_have_host_links_and_packet_evidence() {
     let mut core = AnalysisCore::default();
     core.analyze(&packet);
     assert_eq!(core.credentials.len(), 1);
+    let alerts = core.alert_center.drain_pending_exports();
+    let finding = alerts.iter().find(|alert| alert.source == "CREDENTIAL").unwrap();
+    assert_eq!(finding.packet_refs, [1]);
+    assert!(finding.detail.contains("value omitted"));
+    assert!(!serde_json::to_string(&alerts).unwrap().contains("alice:secret"));
     let graph = &core.operator_graph;
     let nodes = graph.nodes_by_kind(&GraphNodeKind::Credential);
     assert_eq!(nodes.len(), 1);
