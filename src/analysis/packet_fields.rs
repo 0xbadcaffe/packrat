@@ -1,5 +1,7 @@
 //! Structured packet fields for keyboard-driven investigation.
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
 use crate::net::packet::Packet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,16 +64,62 @@ struct TransportLayout {
     end: usize,
 }
 
-pub(crate) fn captured_transport_header(packet: &Packet) -> Option<(u8, u16, u16, Option<u8>)> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub(crate) struct CapturedVlanTag {
+    pub tpid: u16,
+    pub vid: u16,
+}
+
+pub(crate) struct CapturedTransportHeader {
+    pub protocol: u8,
+    pub source: SocketAddr,
+    pub destination: SocketAddr,
+    pub tcp_flags: Option<u8>,
+    pub vlan_stack: Vec<CapturedVlanTag>,
+}
+
+pub(crate) const MAX_EVIDENCE_VLAN_TAGS: usize = 16;
+
+pub(crate) fn captured_transport_header(packet: &Packet) -> Option<CapturedTransportHeader> {
     if packet.capture.as_ref()?.link_type != 1 {
         return None;
     }
     let bytes = packet.bytes.as_slice();
-    let transport = transport_layout(bytes, ethernet_layout(bytes)?)?;
+    let ethernet = ethernet_layout(bytes)?;
+    if ethernet.vlan_tags > MAX_EVIDENCE_VLAN_TAGS {
+        return None;
+    }
+    let transport = transport_layout(bytes, ethernet)?;
     let source = read_u16(bytes, transport.offset)?;
     let destination = read_u16(bytes, transport.offset + 2)?;
     let tcp_flags = (transport.protocol == 6).then(|| bytes[transport.offset + 13]);
-    Some((transport.protocol, source, destination, tcp_flags))
+    let ip = ethernet.payload_offset;
+    // transport_layout has already checked the IP version and the base header bounds.
+    let (src, dst) = match ethernet.ether_type {
+        0x0800 => (
+            IpAddr::V4(Ipv4Addr::from(<[u8; 4]>::try_from(&bytes[ip + 12..ip + 16]).ok()?)),
+            IpAddr::V4(Ipv4Addr::from(<[u8; 4]>::try_from(&bytes[ip + 16..ip + 20]).ok()?)),
+        ),
+        0x86dd => (
+            IpAddr::V6(Ipv6Addr::from(<[u8; 16]>::try_from(&bytes[ip + 8..ip + 24]).ok()?)),
+            IpAddr::V6(Ipv6Addr::from(<[u8; 16]>::try_from(&bytes[ip + 24..ip + 40]).ok()?)),
+        ),
+        _ => return None,
+    };
+    let vlan_stack = bytes[12..ethernet.ether_type_offset]
+        .chunks_exact(4)
+        .map(|tag| CapturedVlanTag {
+            tpid: u16::from_be_bytes([tag[0], tag[1]]),
+            vid: u16::from_be_bytes([tag[2], tag[3]]) & 0x0fff,
+        })
+        .collect();
+    Some(CapturedTransportHeader {
+        protocol: transport.protocol,
+        source: SocketAddr::new(src, source),
+        destination: SocketAddr::new(dst, destination),
+        tcp_flags,
+        vlan_stack,
+    })
 }
 
 pub fn extract_fields(packet: &Packet) -> Vec<PacketField> {

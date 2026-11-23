@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, net::{IpAddr, SocketAddr}};
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::analysis::packet_fields::captured_transport_header;
+use crate::analysis::packet_fields::{CapturedVlanTag, MAX_EVIDENCE_VLAN_TAGS, captured_transport_header};
 use crate::net::packet::Packet;
 
 use super::{
@@ -57,6 +57,7 @@ struct FlowKey {
     interface_id: u32,
     outer_vlan_id: Option<u16>,
     vlan_id: Option<u16>,
+    vlan_stack: Vec<CapturedVlanTag>,
     protocol: &'static str,
     source: SocketAddr,
     destination: SocketAddr,
@@ -94,6 +95,7 @@ pub struct AlertFlowSummary {
     truncated_frames: usize,
     length_unknown_frames: usize,
     retained_frames_without_flow: usize,
+    max_vlan_tags: usize,
     directional_flows: Vec<DirectionalFlow>,
     limitation: &'static str,
 }
@@ -101,22 +103,21 @@ pub struct AlertFlowSummary {
 impl PacketMetadata {
     fn new(packet: &Packet) -> Self {
         let capture = packet.capture.as_ref();
-        let transport = captured_transport_header(packet).map(
-            |(protocol, source_port, destination_port, tcp_flags)| TransportHeader {
-                protocol: if protocol == 6 { "tcp" } else { "udp" },
-                source_port,
-                destination_port,
-                tcp_flags,
-            },
-        );
-        let flow = capture.zip(transport.as_ref()).and_then(|(capture, transport)| {
-            let decoded = crate::net::parser::parse_ethernet(&packet.bytes, packet.no, packet.timestamp);
-            Some(FlowKey {
+        let wire = captured_transport_header(packet);
+        let transport = wire.as_ref().map(|wire| TransportHeader {
+            protocol: if wire.protocol == 6 { "tcp" } else { "udp" },
+            source_port: wire.source.port(),
+            destination_port: wire.destination.port(),
+            tcp_flags: wire.tcp_flags,
+        });
+        let flow = capture.zip(wire).zip(transport.as_ref()).map(|((capture, wire), transport)| {
+            FlowKey {
                 section_id: capture.section_id, interface_id: capture.interface_id,
-                outer_vlan_id: decoded.outer_vlan_id, vlan_id: decoded.vlan_id, protocol: transport.protocol,
-                source: SocketAddr::new(decoded.src.parse().ok()?, transport.source_port),
-                destination: SocketAddr::new(decoded.dst.parse().ok()?, transport.destination_port),
-            })
+                outer_vlan_id: wire.vlan_stack.first().filter(|_| wire.vlan_stack.len() > 1).map(|tag| tag.vid),
+                vlan_id: wire.vlan_stack.last().map(|tag| tag.vid),
+                vlan_stack: wire.vlan_stack, protocol: transport.protocol,
+                source: wire.source, destination: wire.destination,
+            }
         });
         Self {
             timestamp: packet.timestamp.is_finite().then_some(packet.timestamp),
@@ -142,8 +143,9 @@ pub fn alert_flow_summary(
         alert_id: metadata.alert_id, evidence_frame_set_sha256: metadata.evidence_frame_set_sha256,
         referenced_frames: metadata.frames.len(), missing_frames: 0, unreadable_frames: 0,
         truncated_frames: 0, length_unknown_frames: 0, retained_frames_without_flow: 0,
+        max_vlan_tags: MAX_EVIDENCE_VLAN_TAGS,
         directional_flows: Vec::new(),
-        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown.",
+        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
     for frame in metadata.frames {

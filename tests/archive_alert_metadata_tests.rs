@@ -159,3 +159,61 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
         }
     }
 }
+
+#[test]
+fn alert_flow_summary_distinguishes_full_vlan_stacks_and_bounds_depth() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive");
+    let log = root.path().join("alerts.jsonl");
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "HIGH", "Saved alert", "fixture");
+    let mut alert = center.items.remove(0);
+    alert.capture_id = Some("scope-a".into());
+    alert.packet_refs = (1..=5).collect();
+    std::fs::write(&log,
+        json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
+    ).unwrap();
+
+    let make = |no, reverse, tags: &[(u16, u16)]| {
+        let mut packet = packets::tcp(no, 100, if reverse { 0x12 } else { 0x02 }, b"");
+        if reverse {
+            for index in 0..4 { packet.bytes.swap(26 + index, 30 + index); }
+            for index in 0..2 { packet.bytes.swap(34 + index, 36 + index); }
+        }
+        packet.bytes.splice(12..12, tags.iter().flat_map(|(tpid, tci)| {
+            tpid.to_be_bytes().into_iter().chain(tci.to_be_bytes())
+        }));
+        let length = packet.bytes.len() as u32;
+        packet.capture = Some(CaptureMetadata {
+            timestamp: None, captured_length: length, wire_length: length, link_type: 1,
+            section_id: 2, interface_id: 3, interface_name: None, comments: Vec::new(),
+        });
+        packet
+    };
+    let mut archive = PacketArchive::open(&path).unwrap();
+    archive.append_scoped("scope-a", &[
+        make(1, false, &[(0x88a8, 10), (0x8100, 20), (0x8100, 30)]),
+        make(2, true, &[(0x88a8, 10), (0x8100, 20 | 0xb000), (0x8100, 30)]),
+        make(3, true, &[(0x88a8, 10), (0x8100, 21), (0x8100, 30)]),
+        make(4, true, &[(0x9100, 10), (0x8100, 20), (0x8100, 30)]),
+        make(5, true, &[(0x8100, 10); 17]),
+    ]).unwrap();
+    drop(archive);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&path).arg("--alert-flow-summary").arg(&log).args(["session-a", "1", "--capture-id", "scope-a"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["max_vlan_tags"], 16);
+    assert_eq!(report["retained_frames_without_flow"], 1);
+    let flows = report["directional_flows"].as_array().unwrap();
+    assert_eq!(flows.len(), 4);
+    let matching_stack = json!([{"tpid":0x88a8,"vid":10},{"tpid":0x8100,"vid":20},{"tpid":0x8100,"vid":30}]);
+    assert_eq!(flows.iter().filter(|flow| flow["vlan_stack"] == matching_stack).count(), 2);
+    for flow in flows {
+        assert_eq!(flow["outer_vlan_id"], 10);
+        assert_eq!(flow["vlan_id"], 30);
+        assert_eq!(flow["reverse_evidence_frames"], u8::from(flow["vlan_stack"] == matching_stack));
+    }
+}
