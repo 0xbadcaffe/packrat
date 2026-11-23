@@ -7,6 +7,35 @@ installed_archive=/usr/local/bin/packrat-archive
 companion_tools=(analyzer archive)
 companion_update_selected() { [[ -n $analyzer_candidate || -n $archive_candidate ]]; }
 
+triage_watcher_ready() {
+    [[ -n $triage_state ]] || return 0
+    local check packets code=0 drops=${2:-0} gap_free=${3:-0}
+    check=$(timeout 5s "$triage_check" --check "$triage_state") || code=$?
+    packets=$(jq -ser --argjson scope "$1" --argjson require_journal "$triage_journal_required" \
+        --argjson drops "$drops" --argjson code "$code" --arg archive "$archive_candidate" \
+        --argjson after "${triage_after:-0}" --argjson gap_free "$gap_free" '
+        def counter: type == "number" and floor == . and . >= 0 and . <= 9007199254740991;
+        select(length == 1) | .[0] | objects
+        | select((($code == 0 and .status == "current") or ($code == 1 and $drops > 0
+            and .status == "triage_unhealthy" and .historical_drop_total == $drops))
+            and .capture_id == $scope.capture_id and .session_id == $scope.alert_session_id
+            and ($gap_free == 0 or .packet_counter_gap != true)
+            and ($archive == "" or (.poll_started_at | type == "number" and . > $after))
+            and ($require_journal == 0 or (.journal_status == "current" and .journal_pending_events == 0)))
+        | if .packets == null then "legacy" else .packets | select(counter) end
+    ' <<< "$check") || return 1
+    [[ $packets != legacy ]] || return 0
+    # The watcher sample can lag, but must not be ahead of live telemetry in the same scope.
+    curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$health_addr/health" |
+        jq -se --argjson scope "$1" --argjson packets "$packets" '
+        length == 1 and (.[0] | .service == "packrat" and .status == "ok"
+            and .telemetry_fresh == true and .capture_active == true
+            and .capture_id == $scope.capture_id and .capture_run_id == $scope.capture_run_id
+            and .alert_session_id == $scope.alert_session_id
+            and (.packets_total | type == "number" and floor == . and . <= 9007199254740991 and . >= $packets))
+    ' >/dev/null
+}
+
 companion_candidates_ready() {
     local tool proposed destination resolved help
     for tool in "${companion_tools[@]}"; do
@@ -97,7 +126,7 @@ restore_companions() {
 verify_archive_promotion() {
     [[ -n $archive_candidate && -n $triage_state ]] || return 0
     local triage_after
-    triage_after=$(date -u +%s) && await_primary_watcher "${1:-0}"
+    triage_after=$(date -u +%s) && await_primary_watcher "${1:-0}" "${2:-0}"
 }
 
 promote_companions() {
@@ -119,7 +148,7 @@ promote_companions() {
         fi
         promoted+=("$destination")
     done
-    if ! verify_archive_promotion "${1:-0}"; then
+    if ! verify_archive_promotion "${1:-0}" "${2:-0}"; then
         error "Triage did not verify the promoted archive tool; restoring companion binaries"
         restore_companions "${promoted[@]}"
         return 1

@@ -131,7 +131,6 @@ source "$root/scripts/packrat-rollout.sh"
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 data_dir=$scratch
-
 test_evidence_profile_opt_in() {
     local enable_alert_evidence=true archive_path='' archive_flag=--archive
     local -a archive_limits=()
@@ -155,7 +154,8 @@ test_evidence_profile_opt_in() {
     if apply_requested_profile; then exit 1; fi
 }
 test_evidence_profile_opt_in 2>"$scratch/profile-errors"
-
+# shellcheck source=tests/support/rollout_counter_cases.bash
+source "$root/tests/support/rollout_counter_cases.bash"
 (
     health_state="$scratch/health.json"
     date() { printf '%s\n' 1700000000; }

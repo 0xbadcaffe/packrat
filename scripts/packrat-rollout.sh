@@ -139,22 +139,6 @@ primary_capture_stamp() {
         '
 }
 
-triage_watcher_ready() {
-    [[ -n $triage_state ]] || return 0
-    local check code=0 drops=${2:-0}
-    check=$(timeout 5s "$triage_check" --check "$triage_state") || code=$?
-    jq -se --argjson scope "$1" --argjson require_journal "$triage_journal_required" \
-        --argjson drops "$drops" --argjson code "$code" --arg archive "$archive_candidate" \
-        --argjson after "${triage_after:-0}" '
-        length == 1 and (.[0] |
-            (($code == 0 and .status == "current") or ($code == 1 and $drops > 0
-                and .status == "triage_unhealthy" and .historical_drop_total == $drops)) and
-            .capture_id == $scope.capture_id and .session_id == $scope.alert_session_id and
-            ($archive == "" or (.poll_started_at | type == "number" and . > $after)) and
-            ($require_journal == 0 or (.journal_status == "current" and .journal_pending_events == 0)))
-    ' <<< "$check" >/dev/null
-}
-
 alert_watcher_ready() {
     local capture_stamp=$1 identity latest_identity drops
     [[ -f $health_state ]] || return 1
@@ -197,14 +181,14 @@ alert_watcher_ready() {
             .status == "ok" and .telemetry_fresh == true and .capture_active == true
         ' >/dev/null; then return 1; fi
     latest_identity=$(primary_alert_log_identity) && [[ $latest_identity == "$identity" ]] &&
-        triage_watcher_ready "$capture_stamp" "$drops"
+        triage_watcher_ready "$capture_stamp" "$drops" "${3:-0}"
 }
 
 await_primary_watcher() {
     local stamp attempt limit=30
     if [[ -n $triage_state ]]; then limit=90; fi
     for ((attempt=0; attempt<limit; attempt++)); do
-        if stamp=$(primary_capture_stamp) && alert_watcher_ready "$stamp" "${1:-0}"; then return 0; fi
+        if stamp=$(primary_capture_stamp) && alert_watcher_ready "$stamp" "${1:-0}" "${2:-0}"; then return 0; fi
         sleep 1
     done
     return 1
@@ -407,13 +391,13 @@ rollout() {
         return 1
     fi
     if replace_installed "$stage_binary" && start_capture "$main_session" "$installed"; then
-        if ! await_primary_watcher; then
+        if ! await_primary_watcher 0 1; then
             if ! companion_update_selected; then
                 error "Replacement is live but alert monitoring could not be verified; staging capture left running"
                 return 1
             fi
             error "Replacement alert monitoring could not be verified; companions not promoted"
-        elif promote_companions; then
+        elif promote_companions 0 1; then
             retire_bridge || { error "Replacement is live; inspect the staging session"; return 1; }
             printf '%s\n' 'Rollout verified'
             return 0
@@ -427,7 +411,7 @@ rollout() {
     if stop_capture "$main_session" "$installed" &&
        replace_installed "$backup_dir/packrat" &&
        start_capture "$main_session" "$installed" false; then
-        if await_primary_watcher; then
+        if await_primary_watcher 0 1; then
             retire_bridge || error "Rollback is live; inspect the staging session"
         else
             error "Rollback is live but alert monitoring could not be verified; staging capture left running"
