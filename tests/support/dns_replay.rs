@@ -12,6 +12,10 @@ pub enum Scenario {
 }
 
 pub fn write_fixture(path: &Path, scenario: Scenario) {
+    write_answer_sequence(path, scenario, false);
+}
+
+fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool) {
     let rr_type = match scenario {
         Scenario::ChangedWire => 65_280_u16,
         _ => 1,
@@ -56,11 +60,55 @@ pub fn write_fixture(path: &Path, scenario: Scenario) {
             dns.extend_from_slice(rdata);
         }
 
+        if early_alternate && frame == 2 {
+            capture.write_packet(&udp_frame(frame, &dns, true, 54, 40_000)).unwrap();
+        }
+        let capture_frame = frame + u64::from(early_alternate && response);
         capture
-            .write_packet(&udp_frame(frame, &dns, response, 53, 40_000))
+            .write_packet(&udp_frame(capture_frame, &dns, response, 53, 40_000))
             .unwrap();
     }
     capture.flush().unwrap();
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn early_alternate_resolver_does_not_mask_later_answer_changes() {
+    use serde_json::{Value, json};
+
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    write_answer_sequence(&root.join("unchanged.pcapng"), Scenario::Equivalent, true);
+    write_answer_sequence(&root.join("changed.pcapng"), Scenario::ChangedAnswer, true);
+    let unexpected = "dns.unexpected_responder";
+    let competing = "dns.competing_responders";
+    let changed = "dns.changed_answers";
+    let mut cases = Vec::new();
+    for (file, has_change) in [("unchanged.pcapng", false), ("changed.pcapng", true)] {
+        let mut case = json!({
+            "name": file, "capture": file, "expect_snapshots": 2 + usize::from(has_change),
+            "expect_counts": {(unexpected): 1, (competing): 1, (changed): usize::from(has_change)},
+            "opening_frames": {(unexpected): [2], (competing): [3]},
+            "opening_evidence": [
+                {"rule_id": unexpected, "opening_frame": 2, "frames": [1, 2]},
+                {"rule_id": competing, "opening_frame": 3, "frames": [1, 2, 3]}
+            ]
+        });
+        if has_change {
+            case["opening_frames"][changed] = json!([5]);
+            case["opening_evidence"].as_array_mut().unwrap().push(json!({
+                "rule_id": changed, "opening_frame": 5, "frames": [1, 3, 5]
+            }));
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("early-alternate.json");
+    let labels = json!({"version": 1, "strict": true, "cases": cases});
+    std::fs::write(&manifest, labels.to_string()).unwrap();
+    let output = super::run_suite(&manifest);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], 2);
 }
 
 pub fn write_parallel_transactions(path: &Path, alternate_replies: bool) {
