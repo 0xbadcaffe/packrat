@@ -126,6 +126,7 @@ fn scan_rules_rearm_after_most_evidence_expires_without_realerting_on_sustained_
         };
 
         assert_eq!(observe(&mut engine, 1.0, 1..=12), 1);
+        let initial_key = engine.findings.ids.last().unwrap().correlation_key.clone();
         assert_eq!(observe(&mut engine, 12.0, 1..=6), 1);
         // Six probes remain active, so reaching the threshold again is not a new burst.
         assert_eq!(observe(&mut engine, 17.0, 13..=18), 1);
@@ -135,6 +136,7 @@ fn scan_rules_rearm_after_most_evidence_expires_without_realerting_on_sustained_
         let latest = engine.findings.ids.last().unwrap();
         assert_eq!(latest.alert.pkt_no, 36);
         assert_eq!(latest.related_packets, (25..=35).collect::<Vec<_>>());
+        assert_ne!(latest.correlation_key, initial_key);
     }
 }
 
@@ -154,6 +156,7 @@ fn syn_rule_records_renewed_spikes_but_not_sustained_or_retransmitted_syns() {
     };
     assert_eq!(observe(&mut engine, 1.0, 50, None), 0);
     assert_eq!(observe(&mut engine, 1.5, 50, None), 1);
+    let initial_key = engine.findings.ids.last().unwrap().correlation_key.clone();
     assert_eq!(observe(&mut engine, 2.25, 50, None), 1);
     assert_eq!(observe(&mut engine, 3.0, 1, None), 1);
     assert_eq!(observe(&mut engine, 3.5, 120, Some(151)), 1);
@@ -161,6 +164,7 @@ fn syn_rule_records_renewed_spikes_but_not_sustained_or_retransmitted_syns() {
     let renewed = engine.findings.ids.last().unwrap();
     assert_eq!(renewed.alert.pkt_no, 370);
     assert_eq!(renewed.related_packets, std::iter::once(151).chain(272..370).collect::<Vec<_>>());
+    assert_ne!(renewed.correlation_key, initial_key);
 }
 
 #[test]

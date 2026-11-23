@@ -291,7 +291,7 @@ impl SecurityEngine {
                     ),
                 },
                 related_packets,
-                correlation_key: Some(format!("{scope:?}:[{}]:{port}", pkt.dst)),
+                correlation_key: Some(format!("{scope:?}:[{}]:{port}:burst:{}", pkt.dst, pkt.no)),
             });
         }
     }
@@ -398,7 +398,8 @@ fn scan_finding<'a>(
     IdsFinding {
         alert: IdsAlert { pkt_no: pkt.no, signature, severity: Severity::High, detail },
         related_packets,
-        correlation_key: Some(format!("{}:{:?}:{}:{target}", key.transport, key.scope, key.address)),
+        // The detector's latch groups sustained observations within a burst.
+        correlation_key: Some(format!("{}:{:?}:{}:{target}:burst:{}", key.transport, key.scope, key.address, pkt.no)),
     }
 }
 

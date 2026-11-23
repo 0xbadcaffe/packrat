@@ -322,7 +322,22 @@ fn scan_evidence_deduplicates_targets_and_stays_in_its_vlan_and_transport() {
     assert_eq!(alert.hit_count, 1);
     assert_eq!(alert.packet_refs, [80, 2, 3, 4, 5, 6, 107, 108, 109, 110, 111, 112]);
     assert_eq!(alert.flow.unwrap().destination, "10.0.0.12:443".parse().unwrap());
-    assert_eq!(alert.provenance.as_ref().unwrap().revision, 9);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 10);
+
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+    let (old_id, capture) = (alert.id, alert.capture_id.clone());
+    assert!(core.alert_center.set_disposition(old_id, capture.as_deref(), AlertDisposition::Benign));
+    for index in 1..=12_u8 {
+        let mut probe = tcp_probe(u64::from(index) + 200, [10, 0, 0, index], 443, 0x02, 50.0 + f64::from(index));
+        probe.vlan_id = Some(10);
+        core.analyze(&probe);
+    }
+    let scans: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == "Horizontal host scan").collect();
+    assert_eq!(scans.len(), 2);
+    assert_eq!(scans[0].disposition, AlertDisposition::Benign);
+    assert_eq!(scans[1].disposition, AlertDisposition::New);
+    assert_ne!(scans[1].id, old_id);
+    assert_eq!(scans[1].packet_refs, (201..=212).collect::<Vec<_>>());
 }
 
 #[test]
