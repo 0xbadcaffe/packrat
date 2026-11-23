@@ -53,7 +53,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
             if $id > .cursor + 1 then .ranges += [{first_id:(.cursor + 1),last_id:($id - 1),recorded_at:$at}]
             else . end | .cursor = $id)
         | .ranges[];
-    def alert_gaps($samples):
+    def candidate_gaps($samples):
         ($samples[0] | sampled_ids) as $initial
         | (if ($initial | length) > 1 then
              unobserved_ranges($initial[0] - 1; $initial; $samples[0].updated_at)
@@ -65,6 +65,16 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
            | (($after | sampled_ids | map(select(. > $low and . <= $high))) + $delta + [$high] | unique) as $known
            | (if $low == 0 then $known[0] - 1 else $low end) as $floor
            | unobserved_ranges($floor; $known; $after.updated_at));
+    def lower_bound($sorted; $value):
+        ($sorted | bsearch($value)) as $index | if $index < 0 then -1 - $index else $index end;
+    def alert_gaps($samples):
+        ([$samples[] | sampled_ids | .[]] | unique) as $observed
+        | candidate_gaps($samples) as $range
+        | ($range.last_id + 1) as $end
+        | (lower_bound($observed; $range.first_id)) as $start_index
+        | (lower_bound($observed; $end)) as $end_index
+        # Later queue entries can account for holes in an earlier poll.
+        | unobserved_ranges($range.first_id - 1; $observed[$start_index:$end_index] + [$end]; $range.recorded_at);
     def no_capture_loss_between($earlier; $later):
         all([$earlier.capture_queue_full_packets, $later.capture_queue_full_packets,
              $earlier.truncated_frames, $later.truncated_frames][]; counter)

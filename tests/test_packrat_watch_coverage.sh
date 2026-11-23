@@ -76,6 +76,20 @@ jq -sc '.[0], (.[1] | .highest_observed_alert_id = 7)' <<< "$sample" |
     bash "$coverage" | jq -e '
         [.unobserved_alert_id_ranges[] | [.first_id,.last_id]] == [[5,6]]' >/dev/null
 jq -sc '
+    .[0], (.[1] | .highest_observed_alert_id = 9 | .alert_changes.newly_observed = [9] | del(.checkpoint)),
+    (.[2] | .highest_observed_alert_id = 9 | .alert_changes.newly_observed = []
+        | .review_queue = [{alert_id:6},{alert_id:8}]),
+    (.[3] | .capture_id = "another" | .recent_alerts = [{alert_id:5},{alert_id:7}])
+' <<< "$sample" | bash "$coverage" --capture-id a --session a-1 | jq -e '
+    [.unobserved_alert_id_ranges[] | [.first_id,.last_id,.recorded_at]] ==
+        [[5,5,"2023-11-14T22:14:20Z"],[7,7,"2023-11-14T22:14:20Z"]]' >/dev/null
+jq -sc '
+    .[0], (.[1] | .highest_observed_alert_id = 8 | .alert_changes.newly_observed = [8] | del(.checkpoint)),
+    (.[2] | .highest_observed_alert_id = 8 | .alert_changes.newly_observed = []
+        | .recent_alerts = [{alert_id:5},{alert_id:6},{alert_id:7}] | .alert_sample_gap = true)
+' <<< "$sample" | bash "$coverage" | jq -e '
+    .alert_sample_gap_reported and .unobserved_alert_id_ranges == []' >/dev/null
+jq -sc '
     .[0] as $base | range(0;66) as $i
     | $base + {highest_observed_alert_id:(4 + $i*2),updated_at:(1700000000 + $i | todateiso8601),
                alert_changes:{newly_observed:[4 + $i*2]}}
