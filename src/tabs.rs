@@ -1,3 +1,5 @@
+use crate::model::project::INVESTIGATE_TAB_INDEX;
+
 /// Application tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -90,7 +92,7 @@ impl Tab {
     pub fn index(&self) -> usize {
         match self {
             Tab::Packets       => 0,
-            Tab::Investigate   => 1,
+            Tab::Investigate   => INVESTIGATE_TAB_INDEX,
             Tab::Analysis      => 2,
             Tab::Strings       => 3,
             Tab::Dynamic       => 4,
@@ -114,7 +116,7 @@ impl Tab {
     pub fn from_index(i: usize) -> Self {
         match i {
             0  => Tab::Packets,
-            1  => Tab::Investigate,
+            INVESTIGATE_TAB_INDEX => Tab::Investigate,
             2  => Tab::Analysis,
             3  => Tab::Strings,
             4  => Tab::Dynamic,

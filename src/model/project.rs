@@ -14,6 +14,8 @@ use crate::storage::case_bundle::ObjectEntry;
 use crate::net::packet::Packet;
 
 pub const SCHEMA_VERSION: u32 = 6;
+// Stable project-format index, shared by headless export and the terminal UI.
+pub(crate) const INVESTIGATE_TAB_INDEX: usize = 1;
 pub(crate) const MAX_PINNED_PACKETS: usize = 1024;
 pub(crate) const MAX_PINNED_BYTES: usize = 64 * 1024 * 1024;
 

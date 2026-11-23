@@ -4,10 +4,12 @@ use packrat_tui::analysis::alert_center::AlertCenter;
 use packrat_tui::model::project::SavedInvestigationItem;
 use packrat_tui::net::parser::parse_ethernet;
 use packrat_tui::storage::{packet_archive::PacketArchive, project_store};
+#[cfg(feature = "terminal-ui")]
 use packrat_tui::tabs::Tab;
 use serde_json::{Value, json};
 
 #[test]
+#[cfg(feature = "terminal-ui")]
 fn invalid_startup_project_fails_before_entering_the_terminal() {
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("bad.json");
@@ -67,6 +69,8 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
     assert_eq!(state.pinned_packets.iter().map(|p| (p.no, p.bytes[0])).collect::<Vec<_>>(), [(1, 1), (2, 2)]);
     assert!(state.pinned_packet_scopes.values().all(|id| id == "previous"));
     assert_eq!(state.investigation_items[state.active_investigation.unwrap()], SavedInvestigationItem::Packet(2));
+    assert_eq!(state.active_tab, 1);
+    #[cfg(feature = "terminal-ui")]
     assert_eq!(Tab::from_index(state.active_tab), Tab::Investigate);
     let original = std::fs::read(&output).unwrap();
     assert!(!run(Some("current")).status.success());

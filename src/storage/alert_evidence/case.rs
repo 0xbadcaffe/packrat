@@ -4,11 +4,10 @@ use anyhow::{Result, ensure};
 use serde::Serialize;
 
 use crate::model::project::{
-    MAX_PINNED_BYTES, MAX_PINNED_PACKETS, ProjectSaveMode, ProjectState, SavedInvestigationItem,
-    pinned_packet_cost,
+    INVESTIGATE_TAB_INDEX, MAX_PINNED_BYTES, MAX_PINNED_PACKETS, ProjectSaveMode, ProjectState,
+    SavedInvestigationItem, pinned_packet_cost,
 };
 use crate::storage::project_store;
-use crate::tabs::Tab;
 
 use super::{AlertLogs, FrameStatus, PacketArchive, frame_status, latest_alert_in_logs, scoped_frames};
 
@@ -60,7 +59,7 @@ pub fn create_alert_project(
     state.active_investigation = Some(state.pinned_packets.binary_search_by_key(&trigger, |packet| packet.no)
         .map_or(usize::from(!state.pinned_packets.is_empty()), |index| index + 1));
     state.investigation_tray_open = true;
-    state.active_tab = Tab::Investigate.index();
+    state.active_tab = INVESTIGATE_TAB_INDEX;
     summary.retained_frames = state.pinned_packets.len();
     state.metadata.description = Some(format!(
         "Session {session_id}, capture {capture_id}. {} retained, {} missing, {} unreadable, {} over the tray limit.",
