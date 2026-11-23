@@ -9,7 +9,7 @@ const MAX_DHCP_SERVERS: usize = 32;
 impl SecurityEngine {
     // ─── DHCP Authority and Starvation ──────────────────────────────────────
 
-    pub(super) fn check_dhcp_integrity(&mut self, pkt: &Packet) {
+    pub(super) fn check_dhcp_integrity(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
         if !pkt.timestamp.is_finite() || pkt.timestamp < 0.0 {
             return;
         }
@@ -31,9 +31,19 @@ impl SecurityEngine {
         let state = self.dhcp_scopes.entry(scope).or_default();
         state.last_seen = state.last_seen.max(pkt.timestamp);
         if matches!(message.message_type, 2 | 5) {
-            if let Some(server) = message.server_identifier
-                && let Some((previous, frame)) = observe_dhcp_server(state, server, pkt)
-            {
+            let Some(server) = message.server_identifier else { return; };
+            let prior = observe_dhcp_server(state, server, pkt);
+            if archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "dhcp.new_server_identifier")) {
+                if let Some((_, frame)) = prior
+                    && let Some(evidence) = self.dhcp_server_evidence.supporting_packet(pkt, frame)
+                {
+                    self.findings.retained_evidence.push(evidence.clone());
+                }
+                if state.servers.get(&server) == Some(&(pkt.timestamp, pkt.no)) {
+                    self.dhcp_server_evidence.remember(pkt);
+                }
+            }
+            if let Some((previous, frame)) = prior {
                 let kind = if message.message_type == 2 { "OFFER" } else { "ACK" };
                 let scope_name = dhcp_scope_name(scope);
                 self.push_ids_finding(IdsFinding {

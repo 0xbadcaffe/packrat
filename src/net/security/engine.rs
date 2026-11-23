@@ -44,6 +44,7 @@ impl SecurityEngine {
             ftp_control: Default::default(),
             ntlm_fanout: HashMap::new(),
             dhcp_scopes: HashMap::new(),
+            dhcp_server_evidence: Default::default(),
             ipv6_fragments: Ipv6FragmentReassembler::default(),
             ipv6_reassembled: 0,
             http_headers: HashMap::new(),
@@ -82,6 +83,7 @@ impl SecurityEngine {
         self.ftp_control.clear();
         self.ntlm_fanout.clear();
         self.dhcp_scopes.clear();
+        self.dhcp_server_evidence = Default::default();
         self.ipv6_fragments.clear();
         self.ipv6_reassembled = 0;
         self.http_headers.clear();
@@ -144,7 +146,7 @@ impl SecurityEngine {
         self.check_layer2_control_plane(pkt);
         self.check_beacon_and_exfiltration(pkt, tcp_payload, archive_rules);
         self.check_ntlm_fanout(pkt);
-        self.check_dhcp_integrity(pkt);
+        self.check_dhcp_integrity(pkt, archive_rules);
         self.check_ipv6_fragment_reassembly(pkt);
         self.check_http_request_smuggling(pkt);
         self.check_industrial_policy(pkt, modbus);
