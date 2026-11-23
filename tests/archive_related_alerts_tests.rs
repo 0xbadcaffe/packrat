@@ -101,7 +101,31 @@ fn relates_only_nearby_exact_tuples_in_the_same_session_and_capture() {
     assert_eq!(matches[0]["direction"], "reverse");
     assert_eq!(matches[1]["alert_id"], 5);
     assert_eq!(matches[1]["direction"], "same");
-    assert_eq!(matches[2]["seconds_from_anchor_opening"], -300.);
+    assert_eq!(matches[2]["seconds_from_anchor_trigger"], -300.);
+}
+
+#[test]
+fn times_the_stored_tuple_at_the_latest_hit_and_ignores_missing_times() {
+    let mut log = tempfile::NamedTempFile::new().unwrap();
+    for (id, first, last) in [
+        (1, 500., 900.),
+        (2, 100., 910.),
+        (3, 530., 1210.),
+        (4, 899., 0.),
+    ] {
+        let mut entry = record(id, first, Some(flow()), "session-a", "capture-a");
+        entry["alert"]["hit_count"] = json!(2);
+        entry["alert"]["last_seen"] = json!(last);
+        writeln!(log, "{entry}").unwrap();
+    }
+    let report = run(log.path(), "1", &[]);
+    assert_eq!(report["anchor_trigger_time"], 900.);
+    assert_eq!(report["matching_alerts_in_sample"], 1);
+    assert_eq!(report["matches"][0]["alert_id"], 2);
+    assert_eq!(report["matches"][0]["seconds_from_anchor_trigger"], 10.);
+    let missing = run(log.path(), "4", &[]);
+    assert_eq!(missing["status"], "anchor_tuple_or_time_unavailable");
+    assert!(missing["anchor_trigger_time"].is_null());
 }
 
 #[test]

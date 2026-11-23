@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("       packrat-archive DIRECTORY --alert-project ALERT_LOG SESSION_ID ALERT_ID OUTPUT_JSON --capture-id CAPTURE_ID [--previous-log PATH]...\nOpen the resulting JSON with packrat --project OUTPUT_JSON. It contains packet bytes.\nAlert evidence bundles count all omitted frames as missing and identify unreadable and unknown-length frames separately.");
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
         println!("       packrat-archive DIRECTORY --alert-flow-summary ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nSummarizes directional TCP/UDP headers from cited frames only, without exporting packet bytes.");
-        println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nFinds transport-tuple matches within five minutes in a bounded saved alert sample; does not identify a connection.");
+        println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nCompares the latest saved trigger of each alert for nearby transport-tuple matches; does not identify a connection.");
         return Ok(());
     };
     if path == "--alerts" {

@@ -29,7 +29,8 @@ pub struct RelatedAlertReport {
     capture_id: String,
     anchor_alert_id: u64,
     anchor_flow: Option<AlertFlow>,
-    opening_window_seconds: u64,
+    anchor_trigger_time: Option<f64>,
+    trigger_window_seconds: u64,
     sampled_alerts: usize,
     scan_complete: bool,
     integrity: AlertHistoryIntegrity,
@@ -45,7 +46,7 @@ struct RelatedAlert {
     revision: Option<u16>,
     severity: &'static str,
     disposition: AlertDisposition,
-    seconds_from_anchor_opening: f64,
+    seconds_from_anchor_trigger: f64,
     direction: &'static str,
     evidence_frame_count: usize,
 }
@@ -54,9 +55,15 @@ fn usable_flow(flow: AlertFlow) -> bool {
     flow.source.port() != 0 && flow.destination.port() != 0 && flow.source != flow.destination
 }
 
-fn classify(candidate: AlertHistoryEntry, anchor: AlertFlow, opening: f64) -> Option<RelatedAlert> {
+// AlertCenter replaces flow and last_seen together when a newer hit is recorded.
+fn trigger_time(alert: &AlertHistoryEntry) -> Option<f64> {
+    let time = alert.last_seen;
+    (time.is_finite() && time != 0.0).then_some(time)
+}
+
+fn classify(candidate: AlertHistoryEntry, anchor: AlertFlow, trigger: f64) -> Option<RelatedAlert> {
     let flow = candidate.flow.filter(|&flow| usable_flow(flow))?;
-    let delta = candidate.first_seen - opening;
+    let delta = trigger_time(&candidate)? - trigger;
     if !delta.is_finite()
         || delta.abs() > WINDOW_SECONDS as f64
         || flow.transport != anchor.transport
@@ -88,7 +95,7 @@ fn classify(candidate: AlertHistoryEntry, anchor: AlertFlow, opening: f64) -> Op
             _ => "UNKNOWN",
         },
         disposition: candidate.disposition,
-        seconds_from_anchor_opening: delta,
+        seconds_from_anchor_trigger: delta,
         direction,
         evidence_frame_count: candidate.evidence_frame_count,
     })
@@ -124,31 +131,29 @@ pub fn related_alerts(
     let anchor_flow = anchor
         .and_then(|item| item.flow)
         .filter(|&flow| usable_flow(flow));
-    let opening = anchor
-        .map(|item| item.first_seen)
-        .filter(|time| time.is_finite());
+    let trigger = anchor.and_then(trigger_time);
     let status = if anchor.is_none() {
         "anchor_not_in_sample"
-    } else if anchor_flow.is_none() || opening.is_none() {
+    } else if anchor_flow.is_none() || trigger.is_none() {
         "anchor_tuple_or_time_unavailable"
     } else {
         "sampled"
     };
     let sampled_alerts = history.alerts.len();
     let mut matches = anchor_flow
-        .zip(opening)
-        .map_or_else(Vec::new, |(flow, opening)| {
+        .zip(trigger)
+        .map_or_else(Vec::new, |(flow, trigger)| {
             history
                 .alerts
                 .into_iter()
                 .filter(|alert| alert.alert_id != anchor_id)
-                .filter_map(|alert| classify(alert, flow, opening))
+                .filter_map(|alert| classify(alert, flow, trigger))
                 .collect()
         });
     matches.sort_unstable_by(|left, right| {
-        left.seconds_from_anchor_opening
+        left.seconds_from_anchor_trigger
             .abs()
-            .total_cmp(&right.seconds_from_anchor_opening.abs())
+            .total_cmp(&right.seconds_from_anchor_trigger.abs())
             .then(left.alert_id.cmp(&right.alert_id))
     });
     let matching_alerts_in_sample = matches.len();
@@ -160,7 +165,8 @@ pub fn related_alerts(
         capture_id: capture.into(),
         anchor_alert_id: anchor_id,
         anchor_flow,
-        opening_window_seconds: WINDOW_SECONDS,
+        anchor_trigger_time: trigger.filter(|_| anchor_flow.is_some()),
+        trigger_window_seconds: WINDOW_SECONDS,
         sampled_alerts,
         scan_complete,
         integrity: history.integrity,
