@@ -2,26 +2,25 @@
 set -euo pipefail
 umask 077
 export LC_ALL=C
-
 snapshot_validation='
     def scope_id: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
+    def counter: if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end;
     def valid_scope_and_log:
         (.capture_id | scope_id) != null and (.session_id | scope_id) != null and
-        (.packets | type == "number" and . >= 0 and . <= 9007199254740991 and floor == .) and
+        (.packets | counter) != null and
         .alert_saving == true and (.recent_alerts | type == "array") and
         .alert_log_integrity.invalid_records == 0 and .alert_log_integrity.oversized_records == 0 and
         (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null);
     def valid_current:
         .status != "current" or (valid_scope_and_log and .issues == []);
 '
-
 usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh [--once|--supervise] STATE.json -- TRIAGE_COMMAND [ARG ...]' \
         '       watch-packrat-triage.sh --check STATE.json' \
         '       watch-packrat-triage.sh --history STATE.json' \
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
-        'healthy_capture_seconds measures consecutive healthy observations of the same capture, not detector coverage.' \
+        'healthy_capture_seconds restarts after a packet counter regression; packet_counter_gap marks the affected capture.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
         'review_queue_entries and review_queue_exits report bounded queue changes, not incident openings or inferred resolutions.' \
         'alert_sample_gap warns that the watcher may have missed alerts in a bounded sample; review saved history.' \
@@ -32,7 +31,6 @@ usage() {
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
 }
-
 once=false
 check=false
 read_only=false
@@ -106,7 +104,6 @@ read_journal_history() {
     fi
     if [[ -n $records ]]; then printf '%s\n' "$records"; fi
 }
-
 check_snapshot() {
     local raw result
     if [[ ! -e $state ]]; then
@@ -124,15 +121,18 @@ check_snapshot() {
         | . as $snapshot | (.updated_at | fromdateiso8601) as $observed_at | (now - $observed_at | floor) as $age
         | {status:(if $age < -5 then "snapshot_future"
                    elif $age > .max_age_seconds then "snapshot_stale"
+                   elif .packet_counter_regressed == true then "packet_counter_regressed"
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
-           triage_status:.status, age_seconds:$age, max_age_seconds,
+           triage_status:.status, age_seconds:$age, max_age_seconds, packets:(.packets | counter),
+           packet_counter_gap:(.packet_counter_gap | if type == "boolean" then . else null end),
            poll_started_at:(.poll_started_at | if type == "number" and . > 0 and floor == .
                 and . <= 9007199254740991 then . else null end),
            healthy_capture_seconds:(.healthy_capture_since | if $age >= -5 and $age <= $snapshot.max_age_seconds
-               and $snapshot.status == "current" and type == "number" and floor == . and . > 0 and . <= $observed_at
+               and $snapshot.status == "current" and $snapshot.packet_counter_regressed != true
+               and type == "number" and floor == . and . > 0 and . <= $observed_at
                then $observed_at - . else null end),
-           historical_drop_total:(if $age >= -5 and $age <= .max_age_seconds and .status == "degraded"
+           historical_drop_total:(if $age >= -5 and $age <= .max_age_seconds and .status == "degraded" and .packet_counter_regressed != true
               and valid_scope_and_log and .issues == ["pcap_buffer_drops"] and .buffer_drops_delta == 0
               then .buffer_drops | select(type == "number" and . > 0 and . <= 4294967295 and floor == .) // null
               else null end),
@@ -238,7 +238,6 @@ flush_journal() {
 sanitize() {
     jq -cse "$snapshot_validation"'
         def token: scope_id;
-        def counter: if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end;
         def flag: if type == "boolean" then . else null end;
         def severity: if . == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" then . else null end;
         def disposition: if . == "New" or . == "Reviewing" or . == "Confirmed" or
@@ -313,7 +312,6 @@ sanitize() {
                 (.frames / .max_frames >= 0.9 or .payload_bytes / .max_payload_bytes >= 0.9) end)
             | select(valid_current)'
 }
-
 read_status() {
     local raw result status=0
     # A bad or noisy child must not leak its output or grow the snapshot without bound.
@@ -326,7 +324,6 @@ read_status() {
         printf '%s\n' '{"status":"triage_unavailable"}'
     fi
 }
-
 temp=''
 timer=''
 trap 'if [[ -n $temp ]]; then rm -f -- "$temp"; fi' EXIT
@@ -341,7 +338,6 @@ publish_snapshot() {
     mv -fT -- "$temp" "$state"
     temp=''
 }
-
 previous=''
 prior=null
 if [[ -f $state && -O $state ]]; then
@@ -362,7 +358,7 @@ if [[ -f $state && -O $state ]]; then
         .snapshot | [9007199254740991, ((.journal_unconfirmed_events | bounded(9007199254740991))
             + (.journal_pending_events | bounded(16)))] | min
         ' <<< "$saved")
-    prior=$(jq -ce '
+    prior=$(jq -ce "$snapshot_validation"'
             .fresh as $fresh | .snapshot
             | .last_observed // .
             | select((.status == "current" or .status == "degraded") and
@@ -370,6 +366,7 @@ if [[ -f $state && -O $state ]]; then
                 (.recent_alerts | type == "array" and length <= 50 and all(.[]; type == "object"
                     and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
             | {status,capture_id,session_id,recent_alerts,alert_sample_gap:(.alert_sample_gap == true),
+                packets:(.packets | counter),packet_counter_gap:(.packet_counter_gap == true),
                 buffer_drops:(.buffer_drops | if $fresh and type == "number" and . >= 0 and . <= 4294967295
                     and floor == . then . else null end),
                 review_queue:(.review_queue | if type == "array" and length <= 5 then
@@ -419,13 +416,16 @@ while :; do
             . as $now
             | (($prior | observed) and observed and
                $prior.capture_id == .capture_id and $prior.session_id == .session_id) as $comparable
+            | ($comparable and .packets != null and $prior.packets != null and .packets < $prior.packets) as $regressed
             | ([.recent_alerts[]?.alert_id] | max // 0) as $seen
             | ([$prior.highest_observed_alert_id, ($prior.recent_alerts | map(.alert_id)? | max)] | max // 0) as $high
             | (.recent_alerts_at_limit == true or .has_older_alerts == true) as $truncated
             | ([.recent_alerts[]?.alert_id | select(. > $high)] | unique) as $new_ids
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
                 poll_started_at:$started,
-                healthy_capture_since:(if .status != "current" then null elif $comparable and $prior.status == "current"
+                packet_counter_regressed:(if observed then $regressed else null end),
+                packet_counter_gap:(if observed then $regressed or ($comparable and $prior.packet_counter_gap == true) else null end),
+                healthy_capture_since:(if .status != "current" or $regressed then null elif $comparable and $prior.status == "current"
                     and ($prior.poll_started_at | type == "number" and . <= $started and $started - . <= $max_age)
                     and ($prior.healthy_capture_since | type == "number" and . > 0 and . <= $prior.poll_started_at)
                     then $prior.healthy_capture_since else $started end),
@@ -454,7 +454,7 @@ while :; do
                 else null end}
             | if (observed | not) and ($prior | observed) then
                 .last_observed = ($prior | {
-                    status,capture_id,session_id,highest_observed_alert_id,alert_sample_gap,
+                    status,capture_id,session_id,highest_observed_alert_id,alert_sample_gap,packets,packet_counter_gap,
                     review_queue: [(.review_queue // [])[] | {alert_id,hit_count,severity,disposition,packet_evidence_status}],
                     recent_alerts: [.recent_alerts[] | {alert_id,hit_count,severity,disposition,packet_evidence_status}]
                 })

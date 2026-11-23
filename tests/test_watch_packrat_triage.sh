@@ -235,7 +235,6 @@ jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_ale
     and .[11].highest_observed_alert_id==12 and .[11].alert_changes==null' "$scratch/events" >/dev/null
 cmp -s "$scratch/events" "$state.events.jsonl"
 [[ $(stat --format='%a' "$state.events.jsonl") == 600 ]]
-
 jq '.updated_at=(now - 360 | todateiso8601) | .capture_id="previous" | .highest_observed_alert_id=99' "$state" >"$scratch/stale.next"
 mv -- "$scratch/stale.next" "$state"
 live current 60 '[]' "$medium" >"$report"
@@ -359,7 +358,6 @@ for newest in 11 13; do
         .has_older_alerts and .recent_alerts[0].alert_id==9 and
         .highest_observed_alert_id==$id and .alert_sample_gap==$expected' "$state" >/dev/null
 done
-
 state="$scratch/queue-updates.json"
 backlog=$(jq -c '.[0] as $base | [2,7,8,9,10 | $base + {alert_id:.,in_recent_alerts:(.==9),disposition:"New",hit_count:1}]' <<<"$queue")
 live current 80 "$backlog" "$(jq -c '. + [.[0] | . + {alert_id:6,disposition:"Benign"}, . + {alert_id:8}, . + {alert_id:10}]' <<<"$medium")" >"$report"
@@ -496,4 +494,6 @@ bash "$watch" --history "$scratch/linked-history.json" >/dev/null 2>&1 || status
 [[ $status == 2 ]]
 # shellcheck source=tests/support/watch_triage_atomic_journal.bash
 source "$root/tests/support/watch_triage_atomic_journal.bash"
+# shellcheck source=tests/support/watch_triage_counter_gap.bash
+source "$root/tests/support/watch_triage_counter_gap.bash"
 printf '%s\n' 'Packrat triage watcher tests passed'
