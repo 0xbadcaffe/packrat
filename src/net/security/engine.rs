@@ -36,6 +36,7 @@ impl SecurityEngine {
             scan_sources: HashMap::new(),
             scan_packet_evidence: Default::default(),
             syn_flood_targets: HashMap::new(),
+            syn_arrival_evidence: Default::default(),
             ndp_bindings: HashMap::new(),
             router_advertisements: HashMap::new(),
             router_rate_evidence: Default::default(),
@@ -80,6 +81,7 @@ impl SecurityEngine {
         self.scan_sources.clear();
         self.scan_packet_evidence = Default::default();
         self.syn_flood_targets.clear();
+        self.syn_arrival_evidence = Default::default();
         self.ndp_bindings.clear();
         self.router_advertisements.clear();
         self.router_rate_evidence = Default::default();

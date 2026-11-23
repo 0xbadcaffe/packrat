@@ -140,7 +140,7 @@ impl SecurityEngine {
 
             if flags & (SYN | ACK | FIN | RST) == SYN {
                 self.record_scan_probe(pkt, destination_port, "TCP", Some((source_port, sequence)), retain);
-                self.record_syn_arrival(pkt, destination_port, source_port, sequence);
+                self.record_syn_arrival(pkt, destination_port, source_port, sequence, retain);
                 if destination_port == 22 && control == SYN {
                     self.record_service_observation(
                         pkt, "SSH", false, destination_port, (source_port, sequence), Vec::new(),
@@ -273,6 +273,7 @@ impl SecurityEngine {
         port: u16,
         source_port: u16,
         sequence: u32,
+        retain: bool,
     ) {
         let scope = service_scope(pkt);
         let key = SynTargetKey {
@@ -325,10 +326,15 @@ impl SecurityEngine {
         });
         if active + 1 >= SYN_FLOOD_THRESHOLD && !state.alerted {
             state.alerted = true;
-            let related_packets = state.attempts.iter()
+            let related_packets: Vec<_> = state.attempts.iter()
                 .filter(|attempt| state.last_seen - attempt.timestamp <= SYN_FLOOD_WINDOW_SECS)
                 .map(|attempt| attempt.packet_no)
                 .filter(|&number| number != pkt.no).collect();
+            if retain {
+                self.findings.retained_evidence.extend(related_packets.iter().filter_map(|&frame| {
+                    self.syn_arrival_evidence.cited_packet(pkt, frame).cloned()
+                }));
+            }
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
@@ -343,6 +349,7 @@ impl SecurityEngine {
                 correlation_key: Some(format!("{scope:?}:[{}]:{port}:burst:{}", pkt.dst, pkt.no)),
             });
         }
+        if retain { self.syn_arrival_evidence.remember(pkt); }
     }
 }
 

@@ -273,7 +273,7 @@ fn syn_rule_records_renewed_spikes_but_not_sustained_or_retransmitted_syns() {
     let mut observe = |engine: &mut SecurityEngine, time: f64, count: usize, sequence: Option<u32>| {
         for _ in 0..count {
             packet.timestamp = time;
-            engine.record_syn_arrival(&packet, 443, 40_000, sequence.unwrap_or(packet.no as u32));
+            engine.record_syn_arrival(&packet, 443, 40_000, sequence.unwrap_or(packet.no as u32), false);
             packet.no += 1;
         }
         engine.ids_alerts.len()
@@ -299,19 +299,19 @@ fn late_syn_repeats_do_not_create_a_spike_but_new_sequences_do() {
     packet.dst = "198.51.100.1".into();
     for sequence in 0..100 {
         packet.timestamp = if sequence < 50 { 1.0 } else { 2.1 };
-        engine.record_syn_arrival(&packet, 443, 40_000, sequence);
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence, false);
         packet.no += 1;
     }
     assert!(engine.ids_alerts.is_empty());
 
     packet.timestamp = 3.2;
     for sequence in 0..100 {
-        engine.record_syn_arrival(&packet, 443, 40_000, sequence);
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence, false);
         packet.no += 1;
     }
     assert!(engine.ids_alerts.is_empty());
     for sequence in 100..200 {
-        engine.record_syn_arrival(&packet, 443, 40_000, sequence);
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence, false);
         packet.no += 1;
     }
     let finding = engine.findings.ids.last().unwrap();
@@ -321,7 +321,7 @@ fn late_syn_repeats_do_not_create_a_spike_but_new_sequences_do() {
 
     packet.timestamp = 5.3;
     for sequence in 0..100 {
-        engine.record_syn_arrival(&packet, 443, 40_000, sequence);
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence, false);
         packet.no += 1;
     }
     assert_eq!(engine.ids_alerts.len(), 2);
@@ -335,7 +335,7 @@ fn sustained_syn_activity_keeps_retry_memory_bounded() {
     packet.src = "192.0.2.1".into();
     packet.dst = "198.51.100.1".into();
     for sequence in 0..MAX_SYN_HISTORY_PER_TARGET * 2 {
-        engine.record_syn_arrival(&packet, 443, 40_000, sequence as u32);
+        engine.record_syn_arrival(&packet, 443, 40_000, sequence as u32, false);
         packet.no += 1;
     }
     assert_eq!(engine.ids_alerts.len(), 1);
@@ -379,7 +379,7 @@ fn scan_and_syn_findings_never_join_evidence_across_capture_interfaces_or_sectio
                     "horizontal" => engine.record_scan_probe(&packet, 443, "TCP", None, false),
                     "vertical" => engine.record_scan_probe(&packet, frame as u16, "TCP", None, false),
                     "echo" => engine.record_echo_request(&packet, "ICMP"),
-                    _ => engine.record_syn_arrival(&packet, 443, 40_000, frame as u32),
+                    _ => engine.record_syn_arrival(&packet, 443, 40_000, frame as u32, false),
                 }
                 packet.no += 1;
             }

@@ -1,4 +1,4 @@
-use super::archive_fixture::{finish, roll_history, start};
+use super::archive_fixture::{drain, finish, roll_history, start};
 use super::tcp_probe;
 use packrat_tui::storage::packet_archive::PacketArchive;
 
@@ -56,5 +56,42 @@ fn scan_archive_keeps_only_the_selected_probes_and_matched_replies_after_rollove
     }
     for packet in [first, reply, ack] {
         assert_eq!(archive.packet_for_capture(&scope, packet.no).unwrap().unwrap().bytes, packet.bytes);
+    }
+}
+
+#[test]
+fn syn_arrival_archive_keeps_newest_cited_attempts_and_the_reordered_trigger() {
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("archive");
+    let mut app = start(&path, Vec::new());
+    let syn = |frame, vlan, port, time| {
+        let mut packet = tcp_probe(frame, [192, 0, 2, 4], port, 0x02, time);
+        packet.vlan_id = Some(vlan);
+        packet
+    };
+    app.inject_packet(syn(1, 10, 443, 3.25));
+    for frame in 2..=100 {
+        app.inject_packet(syn(frame, 10, 443, 5.0));
+        drain(&mut app);
+    }
+    let mut retry = syn(100, 10, 443, 5.0);
+    retry.no = 101;
+    app.inject_packet(retry);
+    app.inject_packet(syn(102, 20, 443, 5.0));
+    app.inject_packet(syn(103, 10, 444, 5.0));
+    let trigger = roll_history(&mut app, 104);
+    app.inject_packet(syn(trigger, 10, 443, 4.5));
+    finish(&mut app);
+
+    let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
+        alert.provenance.as_ref().is_some_and(|p| p.rule_id == "tcp.syn_arrival_spike")).cloned()).unwrap().unwrap();
+    let refs: Vec<_> = (2..=100).chain([trigger]).collect();
+    assert_eq!(alert.packet_refs, refs);
+    let scope = alert.capture_id.unwrap();
+    let mut archive = PacketArchive::open_readonly(&path).unwrap();
+    assert_eq!(archive.count().unwrap(), 32);
+    for frame in (1..=103).chain([trigger]) {
+        assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(),
+            (70..=100).contains(&frame) || frame == trigger);
     }
 }
