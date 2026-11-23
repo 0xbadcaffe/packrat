@@ -167,6 +167,7 @@ pub struct ReassembledStream {
     pub dropped_segments: u64,
     pub provenance_truncated: bool,
     pub(crate) http_overlap_conflict: bool,
+    pub(crate) dns_overlap_conflict: [bool; 2],
     /// Combined interleaved segment metadata.
     pub segments: Vec<StreamSegment>,
     /// Next expected TCP sequence number for each direction.

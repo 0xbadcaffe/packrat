@@ -392,3 +392,54 @@ fn offline_case_does_not_reconstruct_dns_from_conflicting_tcp_overlaps() {
         }).unwrap();
     }
 }
+
+#[test]
+fn offline_case_reports_a_late_tcp_conflict_without_rewriting_the_saved_alert() {
+    use crate::model::project::{ProjectSaveMode, ProjectState, SavedInvestigationItem};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let queries = two_dns_messages(false);
+    let reply = tcp_frame(4, 201, 0x18, true, &two_dns_messages(true));
+    let scope = "saved-capture";
+    for conflicting in [false, true] {
+        let mut overlap = queries[4..8].to_vec();
+        if conflicting {
+            overlap[0] ^= 1;
+        }
+        let mut state = ProjectState::new("Saved DNS case", ProjectSaveMode::Lightweight);
+        state.pinned_packets = vec![
+            tcp_frame(1, 100, 0x02, false, &[]),
+            tcp_frame(2, 200, 0x12, true, &[]),
+            tcp_frame(3, 101, 0x18, false, &queries),
+            reply.clone(),
+            tcp_frame(5, 105, 0x18, false, &overlap),
+        ];
+        state.pinned_packet_scopes = (1..=5).map(|frame| (frame, scope.into())).collect();
+        state.investigation_items = (1..=5).map(SavedInvestigationItem::Packet).collect();
+        state.active_investigation = Some(3);
+        state.investigation_tray_open = true;
+        state.active_tab = Tab::Investigate.index();
+        let mut alerts = crate::analysis::alert_center::AlertCenter::default();
+        alerts.capture_id = Some(scope.into());
+        alerts.record(4, "IDS", "HIGH", "Saved finding", "fixture");
+        state.alert_items = alerts.items;
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let mut app = App::new_with_mode(tx, StartupMode::OfflineReview);
+        app.apply_project_state(state).unwrap();
+        app.investigation_view = InvestigationView::Transactions;
+        app.query_core(|core| {
+            assert_eq!(core.security.dns_exchanges_for_packet(&reply).len(), 2);
+            assert_eq!(app.dns_exchanges(core, &reply).len(), if conflicting { 0 } else { 2 });
+            assert_eq!(core.alert_center.items.len(), 1);
+            assert_eq!(core.alert_center.items[0].title, "Saved finding");
+        }).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| crate::ui::draw(frame, &app)).unwrap();
+        assert_eq!(terminal.backend().to_string().contains("DNS exchange unverified"), conflicting);
+        advance(&mut app);
+        assert_eq!(app.worklist.active_packet_no(), Some(if conflicting { 4 } else { 3 }));
+        if conflicting {
+            assert!(app.status_msg.as_deref().unwrap().contains("saved DNS exchange unverified"));
+        }
+    }
+}

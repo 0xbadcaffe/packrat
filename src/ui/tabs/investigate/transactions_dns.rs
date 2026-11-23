@@ -61,6 +61,9 @@ pub(super) fn draw(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
             }
             lines
         }
+        None if app.saved_dns_overlap_conflict(&app.core, packet) => vec![
+            Line::raw("Conflicting TCP overlap in retained evidence. DNS exchange unverified."),
+        ],
         None => vec![Line::raw("No retained DNS exchange matches this frame.")],
     };
     f.render_widget(

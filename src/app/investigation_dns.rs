@@ -36,11 +36,23 @@ enum DnsFrameOrigin<'a> {
 }
 
 impl App {
+    pub(crate) fn saved_dns_overlap_conflict(&self, core: &AnalysisCore, packet: &Packet) -> bool {
+        self.offline_review
+            && self.saved_packet_capture(packet.no).is_some()
+            && (packet.src_port == Some(53) || packet.dst_port == Some(53))
+            && StreamKey::from_packet(packet)
+                .and_then(|key| core.streams.get(&key.id()))
+                .is_some_and(|stream| stream.dns_overlap_conflict.contains(&true))
+    }
+
     pub(crate) fn dns_exchanges(
         &self,
         core: &AnalysisCore,
         packet: &Packet,
     ) -> Vec<DnsExchangeEvidence> {
+        if self.saved_dns_overlap_conflict(core, packet) {
+            return Vec::new();
+        }
         core.security
             .dns_exchanges_for_packet(packet)
             .into_iter()
@@ -133,12 +145,22 @@ impl App {
         let current = packet.no;
         let exchange = self.query_core(|core| {
             let mut exchanges = self.dns_exchanges(core, packet);
+            if exchanges.is_empty() && self.saved_dns_overlap_conflict(core, packet) {
+                return Err(());
+            }
             let index = self.dns_exchange_index(&exchanges);
-            (!exchanges.is_empty()).then(|| exchanges.swap_remove(index))
+            Ok((!exchanges.is_empty()).then(|| exchanges.swap_remove(index)))
         });
-        let Some(Some(exchange)) = exchange else {
-            self.set_status("No retained DNS exchange for this frame");
-            return;
+        let exchange = match exchange {
+            Some(Ok(Some(exchange))) => exchange,
+            Some(Err(())) => {
+                self.set_status("Conflicting TCP overlap; saved DNS exchange unverified");
+                return;
+            }
+            _ => {
+                self.set_status("No retained DNS exchange for this frame");
+                return;
+            }
         };
         self.dns_transaction_selection = Some(DnsSelection::new(&exchange));
         let mut frames: Vec<_> = exchange.frame_numbers().collect();
