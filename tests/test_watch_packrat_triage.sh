@@ -50,7 +50,7 @@ medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","disposition"
 live current 12 "$queue" "$medium" >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
-check_status "$state" current 0
+bash "$watch" --check "$state" | jq -e '.status=="current" and (.healthy_capture_seconds | type=="number" and .>=0)' >/dev/null
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .journal_status=="not_checked" and .journal_pending_events==0
@@ -65,7 +65,7 @@ jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .recent_alerts==[{alert_id:9,severity:"MEDIUM",rule_id:"test.medium",disposition:"New",hit_count:1,packet_evidence_status:"partial"}]
     and .recent_alerts_at_limit==false and .has_older_alerts==false
     and .max_age_seconds==62
-    and .poll_started_at > 0 and .poll_started_at <= (.updated_at | fromdateiso8601)
+    and .healthy_capture_since==.poll_started_at and .poll_started_at > 0 and .poll_started_at <= (.updated_at | fromdateiso8601)
     and (tostring | contains("private") | not)' "$state" >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$state" >"$scratch/stale.json"
 check_status "$scratch/stale.json" snapshot_stale 1
@@ -224,6 +224,7 @@ wait "$watch_pid"
 watch_pid=''
 jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_alerts[0].alert_id==9
     and .[2].recent_alerts[0].hit_count==2 and .[3].review_queue[0].alert_id==7
+    and .[0].healthy_capture_since==.[2].healthy_capture_since and .[3].healthy_capture_since==null
     and .[0].buffer_drops_delta==null and .[1].buffer_drops_delta==0
     and .[4].buffer_drops==1 and .[4].buffer_drops_delta==1 and .[5].buffer_drops_delta==0
     and .[11].buffer_drops_delta==null and .[5].alert_log_integrity=={
@@ -310,7 +311,7 @@ jq -se 'length==3 and .[0].highest_observed_alert_id==13 and (.[0].alert_sample_
     and .[1].alert_sample_gap and .[1].alert_changes.newly_observed==[range(16;66)]
     and (.[2].alert_sample_gap | not) and .[2].alert_changes==null' \
     "$scratch/recovered" >/dev/null
-jq -e '.status=="current" and .alert_sample_gap==false and (has("last_observed") | not)' "$state" >/dev/null
+jq -e '.status=="current" and .alert_sample_gap==false and .healthy_capture_since==.poll_started_at and (has("last_observed") | not)' "$state" >/dev/null
 
 state="$scratch/one-shot.json"
 live current 70 '[]' "$medium" >"$report"
@@ -323,14 +324,13 @@ jq -e '.status=="triage_unavailable" and .last_observed.alert_sample_gap
     and .last_observed.highest_observed_alert_id==65' "$state" >/dev/null
 live current 72 '[]' "$medium" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
-jq -e '.status=="current" and .alert_sample_gap and .highest_observed_alert_id==65' "$state" >/dev/null
-
+jq -e '.status=="current" and .alert_sample_gap and .highest_observed_alert_id==65 and .healthy_capture_since==.poll_started_at' "$state" >/dev/null
 state="$scratch/stale-restart.json"
 live current 73 '[]' "$medium" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 jq '.updated_at=(now - 360 | todateiso8601)' "$state" >"$state.next"
 mv -- "$state.next" "$state"
-check_status "$state" snapshot_stale 1
+{ bash "$watch" --check "$state" || [[ $? == 1 ]]; } | jq -e '.status=="snapshot_stale" and .healthy_capture_seconds==null' >/dev/null
 live current 74 '[]' "$bulk" >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/stale-events" &
 watch_pid=$!
@@ -338,7 +338,7 @@ await_packets 74
 kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
-jq -e '.alert_sample_gap and .highest_observed_alert_id==65 and .buffer_drops_delta==null' "$state" >/dev/null
+jq -e '.alert_sample_gap and .highest_observed_alert_id==65 and .buffer_drops_delta==null and .healthy_capture_since==.poll_started_at' "$state" >/dev/null
 jq -se 'length==1 and .[0].alert_changes.newly_observed==[range(16;66)]' "$scratch/stale-events" >/dev/null
 
 state="$scratch/bounded-sample.json"

@@ -21,6 +21,7 @@ usage() {
         '       watch-packrat-triage.sh --history STATE.json' \
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
+        'healthy_capture_seconds measures consecutive healthy observations of the same capture, not detector coverage.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
         'review_queue_entries and review_queue_exits report bounded queue changes, not incident openings or inferred resolutions.' \
         'alert_sample_gap warns that the watcher may have missed alerts in a bounded sample; review saved history.' \
@@ -122,7 +123,7 @@ check_snapshot() {
         | select(.record_type == "capture_triage_watch" and
             (.status | type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z")) and
             (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .) and valid_current)
-        | (now - (.updated_at | fromdateiso8601) | floor) as $age
+        | . as $snapshot | (.updated_at | fromdateiso8601) as $observed_at | (now - $observed_at | floor) as $age
         | {status:(if $age < -5 then "snapshot_future"
                    elif $age > .max_age_seconds then "snapshot_stale"
                    elif .status == "current" then "current"
@@ -130,6 +131,9 @@ check_snapshot() {
            triage_status:.status, age_seconds:$age, max_age_seconds,
            poll_started_at:(.poll_started_at | if type == "number" and . > 0 and floor == .
                 and . <= 9007199254740991 then . else null end),
+           healthy_capture_seconds:(.healthy_capture_since | if $age >= -5 and $age <= $snapshot.max_age_seconds
+               and $snapshot.status == "current" and type == "number" and floor == . and . > 0 and . <= $observed_at
+               then $observed_at - . else null end),
            historical_drop_total:(if $age >= -5 and $age <= .max_age_seconds and .status == "degraded"
               and valid_scope_and_log and .issues == ["pcap_buffer_drops"] and .buffer_drops_delta == 0
               then .buffer_drops | select(type == "number" and . > 0 and . <= 4294967295 and floor == .) // null
@@ -371,6 +375,7 @@ if [[ -f $state && -O $state ]]; then
                 review_queue:(.review_queue | if type == "array" and length <= 5 then
                     map(objects | select(.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))
                     else [] end),
+                poll_started_at, healthy_capture_since:(if $fresh then .healthy_capture_since else null end),
                 highest_observed_alert_id:(
                 .highest_observed_alert_id | if type == "number" and . >= 0 and . <= 9007199254740991
                     and floor == . then . else null end)}
@@ -420,6 +425,10 @@ while :; do
             | ([.recent_alerts[]?.alert_id | select(. > $high)] | unique) as $new_ids
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
                 poll_started_at:$started,
+                healthy_capture_since:(if .status != "current" then null elif $comparable and $prior.status == "current"
+                    and ($prior.poll_started_at | type == "number" and . <= $started and $started - . <= $max_age)
+                    and ($prior.healthy_capture_since | type == "number" and . > 0 and . <= $prior.poll_started_at)
+                    then $prior.healthy_capture_since else $started end),
                 buffer_drops_delta:(if $comparable and .buffer_drops != null and $prior.buffer_drops != null
                     and .buffer_drops >= $prior.buffer_drops then .buffer_drops - $prior.buffer_drops else null end),
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
