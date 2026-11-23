@@ -493,7 +493,7 @@ fn outbound_transfer_replay_checks_thresholds_scope_and_packet_samples() {
         .filter(|row| row["type"] == "alert")
         .map(|row| row["alert"].clone()).collect();
     assert_eq!(findings.len(), 2);
-    assert_eq!(findings[0]["packet_refs"], json!([1,2,3,4,5]));
-    assert_eq!(findings[1]["packet_refs"], json!([10,11,12,13,14,15,16,17]));
+    assert_eq!((findings[0]["severity"].as_str(), &findings[0]["packet_refs"]), (Some("MEDIUM"), &json!([1,2,3,4,5])));
+    assert_eq!((findings[1]["severity"].as_str(), &findings[1]["packet_refs"]), (Some("HIGH"), &json!([10,11,12,13,14,15,16,17])));
     assert!(findings.iter().all(|alert| alert["provenance"]["confidence"] == "heuristic"));
 }

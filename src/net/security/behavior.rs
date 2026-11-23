@@ -177,9 +177,9 @@ impl SecurityEngine {
                 state.entropy_alerted = true;
                 alerts.push((
                     "High-entropy outbound transfer",
-                    Severity::High,
+                    Severity::Medium,
                     format!(
-                        "{} to {}: {} high-entropy outbound transport payload bytes in the rolling hour",
+                        "{} to {}: {} high-entropy outbound transport payload bytes in the rolling hour; encryption or compression is possible, and exfiltration is unverified",
                         pkt.src, pkt.dst, state.high_entropy_bytes
                     ),
                     state.entropy_frames.iter().map(|&(_, frame)| frame).collect::<Vec<_>>(),

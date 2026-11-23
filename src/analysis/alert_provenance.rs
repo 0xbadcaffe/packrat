@@ -169,7 +169,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Identify the owning process and destination. Check for an expected upload, backup, or sync job.",
         ),
         (
-            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 5, Heuristic,
+            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 6, Heuristic,
             "Check whether the traffic is normally encrypted or compressed. Verify the transfer with endpoint logs.",
         ),
         (

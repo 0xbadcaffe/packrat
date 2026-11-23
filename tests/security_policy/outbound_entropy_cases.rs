@@ -77,6 +77,8 @@ fn repeated_tcp_bytes_do_not_accumulate_entropy_evidence(#[case] resegmented: bo
         .find(|alert| alert.title == "High-entropy outbound transfer")
         .unwrap();
     assert_eq!(alert.packet_refs, [1, 36, 37, 38, 39]);
+    assert_eq!(alert.severity, "MEDIUM");
+    assert!(alert.detail.contains("exfiltration is unverified"));
 }
 
 #[test]
@@ -104,9 +106,9 @@ fn detects_large_high_entropy_outbound_transfer() {
             .iter()
             .any(|alert| alert.signature == "High-entropy outbound transfer")
     );
-    for (rule, frames) in [
-        ("traffic.asymmetric_outbound", (10..=17).collect::<Vec<_>>()),
-        ("traffic.high_entropy_outbound", (1..=5).collect()),
+    for (rule, severity, revision, frames) in [
+        ("traffic.asymmetric_outbound", "HIGH", 4, (10..=17).collect::<Vec<_>>()),
+        ("traffic.high_entropy_outbound", "MEDIUM", 6, (1..=5).collect()),
     ] {
         let alert = core
             .alert_center
@@ -120,6 +122,8 @@ fn detects_large_high_entropy_outbound_transfer() {
             })
             .unwrap();
         assert_eq!(alert.packet_refs, frames);
+        assert_eq!(alert.severity, severity);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, revision);
         let flow = alert.flow.unwrap();
         assert_eq!(flow.transport, packrat_tui::analysis::alert_center::AlertTransport::Tcp);
         assert_eq!(flow.source.ip().to_string(), "10.0.0.5");
