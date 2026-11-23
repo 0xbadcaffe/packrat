@@ -44,8 +44,9 @@ fn write_scan_with_replies(path: &Path) {
     let mut frame = 0;
     let mut write = |host, flags, acknowledgement: u32| {
         frame += 1;
-        let reply = flags != 0x02;
-        let mut raw = super::support::tcp(frame, 100, flags, &[], reply).bytes;
+        let reply = matches!(flags, 0x12 | 0x14);
+        let sequence = if flags == 0x10 { 101 } else { 100 };
+        let mut raw = super::support::tcp(frame, sequence, flags, &[], reply).bytes;
         raw[if reply { 29 } else { 33 }] = host;
         raw[42..46].copy_from_slice(&acknowledgement.to_be_bytes());
         capture.write_packet(&parse_ethernet(&raw, frame, frame as f64 / 100.0)).unwrap();
@@ -56,6 +57,7 @@ fn write_scan_with_replies(path: &Path) {
     write(22, 0x02, 0);
     write(22, 0x14, 101);
     write(21, 0x02, 0); // Identical retry must not replace the matched pair.
+    write(21, 0x10, 101); // Only this matched third leg belongs in the evidence.
     for host in 23..=32 {
         write(host, 0x02, 0);
     }
@@ -108,11 +110,11 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
     .collect();
     let capture = "fan-out-with-replies.pcapng";
     write_scan_with_replies(&root.join(capture));
-    let frames = (1..=16).filter(|frame| !matches!(frame, 3 | 6)).collect::<Vec<_>>();
+    let frames = (1..=17).filter(|frame| !matches!(frame, 3 | 6)).collect::<Vec<_>>();
     cases.push(json!({
         "name":"scoped-reply-evidence", "capture":capture, "expect_snapshots":1,
-        "expect_counts":{(horizontal):1,(vertical):0}, "opening_frames":{(horizontal):[16]},
-        "opening_evidence":[{"rule_id":horizontal,"opening_frame":16,"frames":frames}],
+        "expect_counts":{(horizontal):1,(vertical):0}, "opening_frames":{(horizontal):[17]},
+        "opening_evidence":[{"rule_id":horizontal,"opening_frame":17,"frames":frames}],
     }));
     let manifest = root.join("scan-suite.json");
     std::fs::write(

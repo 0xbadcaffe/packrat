@@ -13,8 +13,15 @@ pub(super) struct ScanProbe {
 struct ScanTcpProbe {
     source_port: u16,
     sequence: u32,
-    syn_ack: Option<u64>,
+    syn_ack: Option<ScanSynAck>,
     reset_ack: Option<u64>,
+    final_ack: Option<u64>,
+}
+
+#[derive(Debug)]
+struct ScanSynAck {
+    order: (f64, u64),
+    sequence: u32,
 }
 
 impl SecurityEngine {
@@ -103,6 +110,8 @@ impl SecurityEngine {
                 }
             } else if control == (SYN | ACK) || control == (RST | ACK) {
                 self.record_scan_reply(pkt, signal, control == (RST | ACK));
+            } else if control == ACK {
+                self.record_scan_final_ack(pkt, signal);
             }
             self.record_admin_tcp(pkt, signal);
         } else if let Some(Ipv6Probe::EmptyUdp(port)) = ipv6 {
@@ -213,8 +222,30 @@ impl SecurityEngine {
         }) else { return };
         let Some(attempt) = &mut probe.tcp else { return };
         if attempt.source_port == tcp.destination_port && attempt.sequence.wrapping_add(1) == tcp.acknowledgement {
-            let reply = if reset { &mut attempt.reset_ack } else { &mut attempt.syn_ack };
-            reply.get_or_insert(pkt.no);
+            if reset {
+                attempt.reset_ack.get_or_insert(pkt.no);
+            } else {
+                attempt.syn_ack.get_or_insert(ScanSynAck {
+                    order: (pkt.timestamp, pkt.no), sequence: tcp.sequence,
+                });
+            }
+        }
+    }
+
+    fn record_scan_final_ack(&mut self, pkt: &Packet, tcp: TcpSignal) {
+        let Some(state) = self.scan_sources.get_mut(&scan_key(pkt, "TCP")) else { return };
+        let Some(probe) = state.probes.iter_mut().find(|probe| {
+            probe.destination == pkt.dst && probe.port == tcp.destination_port
+                && pkt.timestamp - probe.timestamp <= SCAN_WINDOW_SECS
+        }) else { return };
+        let Some(attempt) = &mut probe.tcp else { return };
+        let Some(reply) = &attempt.syn_ack else { return };
+        if attempt.source_port == tcp.source_port && attempt.reset_ack.is_none()
+            && (pkt.timestamp, pkt.no) > reply.order
+            && tcp.sequence == attempt.sequence.wrapping_add(1)
+            && tcp.acknowledgement == reply.sequence.wrapping_add(1)
+        {
+            attempt.final_ack.get_or_insert(pkt.no);
         }
     }
 
@@ -378,7 +409,7 @@ fn scan_finding<'a>(
     mut detail: String,
     probes: impl Iterator<Item = &'a ScanProbe>,
 ) -> IdsFinding {
-    let (mut syn_acks, mut resets) = (0, 0);
+    let (mut syn_acks, mut resets, mut final_acks) = (0, 0, 0);
     let mut related_packets = Vec::new();
     for probe in probes {
         if probe.packet_no != pkt.no {
@@ -387,13 +418,15 @@ fn scan_finding<'a>(
         if let Some(tcp) = &probe.tcp {
             syn_acks += usize::from(tcp.syn_ack.is_some());
             resets += usize::from(tcp.reset_ack.is_some());
-            related_packets.extend(tcp.syn_ack);
+            final_acks += usize::from(tcp.final_ack.is_some());
+            related_packets.extend(tcp.syn_ack.as_ref().map(|reply| reply.order.1));
             related_packets.extend(tcp.reset_ack);
+            related_packets.extend(tcp.final_ack);
         }
     }
     if key.transport == "TCP" {
         use std::fmt::Write as _;
-        let _ = write!(detail, "; matched replies at alert time: SYN-ACK={syn_acks}, RST-ACK={resets}; handshake completion and intent unverified");
+        let _ = write!(detail, "; matched replies at alert time: SYN-ACK={syn_acks}, RST-ACK={resets}; matched final ACKs={final_acks}; missing ACKs do not prove failure; intent unverified");
     }
     IdsFinding {
         alert: IdsAlert { pkt_no: pkt.no, signature, severity: Severity::High, detail },

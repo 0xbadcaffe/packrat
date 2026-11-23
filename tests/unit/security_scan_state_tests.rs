@@ -6,7 +6,7 @@ fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
     let tcp_frame = |no, target, flags, ack: u32, client_port: u16, vlan| {
         let client = [192, 0, 2, 1];
         let host = [198, 51, 100, target];
-        let (src, dst, sport, dport) = if flags == 0x02 {
+        let (src, dst, sport, dport) = if matches!(flags, 0x02 | 0x10) {
             (client, host, client_port, 443_u16)
         } else {
             (host, client, 443_u16, client_port)
@@ -21,7 +21,8 @@ fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
         raw[30..34].copy_from_slice(&dst);
         raw[34..36].copy_from_slice(&sport.to_be_bytes());
         raw[36..38].copy_from_slice(&dport.to_be_bytes());
-        raw[38..42].copy_from_slice(&u32::MAX.to_be_bytes());
+        let sequence = if flags == 0x10 { 0 } else { u32::MAX };
+        raw[38..42].copy_from_slice(&sequence.to_be_bytes());
         raw[42..46].copy_from_slice(&ack.to_be_bytes());
         raw[46] = 0x50;
         raw[47] = flags;
@@ -41,18 +42,22 @@ fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
         (8, 2, 0x02, 0, 40_000, 10),
         (9, 2, 0x14, 0, 40_000, 10),
         (10, 1, 0x02, 0, 40_000, 10), // Retry after the matched SYN-ACK.
+        (11, 1, 0x10, 1, 40_000, 10), // Wrong acknowledgement.
+        (12, 1, 0x10, 0, 40_000, 20), // Different capture scope.
+        (13, 2, 0x10, 0, 40_000, 10), // Reset, not a matched SYN-ACK.
+        (14, 1, 0x10, 0, 40_000, 10),
     ] {
         engine.update(&tcp_frame(no, host, flags, ack, port, vlan));
     }
     for host in 3..=12 {
-        engine.update(&tcp_frame(u64::from(host) + 8, host, 0x02, 0, 40_000, 10));
+        engine.update(&tcp_frame(u64::from(host) + 12, host, 0x02, 0, 40_000, 10));
     }
     let finding = engine.findings.ids.iter().find(|f| f.alert.signature == "Horizontal host scan").unwrap();
-    assert_eq!(finding.alert.pkt_no, 20);
+    assert_eq!(finding.alert.pkt_no, 24);
     assert!(finding.alert.detail.contains("matched replies at alert time: SYN-ACK=1, RST-ACK=1"));
-    assert!(finding.alert.detail.contains("handshake completion and intent unverified"));
-    assert_eq!(finding.related_packets, [2, 6, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
-    engine.update(&tcp_frame(21, 12, 0x12, 0, 40_000, 10));
+    assert!(finding.alert.detail.contains("matched final ACKs=1; missing ACKs do not prove failure"));
+    assert_eq!(finding.related_packets, [2, 6, 14, 8, 9, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
+    engine.update(&tcp_frame(25, 12, 0x12, 0, 40_000, 10));
     assert!(!engine.findings.ids.iter().any(|f| f.alert.signature == "Horizontal host scan"));
 }
 
