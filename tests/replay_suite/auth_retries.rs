@@ -29,9 +29,9 @@ fn delayed_auth_retries_do_not_open_a_new_burst() {
             "opening_frames":{(rule):[5,15]},
             "opening_evidence":[
                 {"rule_id":rule,"opening_frame":5,"frames":[1,2,3,4,5],
-                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":15}},
+                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":16}},
                 {"rule_id":rule,"opening_frame":15,"frames":[11,12,13,14,15],
-                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":15}}
+                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":16}}
             ]
         }]
     });
@@ -78,7 +78,7 @@ fn auth_replay_distinguishes_status_lines_from_body_text_at_segment_boundaries()
             json!({"name":"actual 401 responses","capture":file,
                 "expect_snapshots":1,"expect_counts":{(rule):1},"opening_frames":{(rule):[12]},
                 "opening_evidence":[{"rule_id":rule,"opening_frame":12,"frames":(3..=12).collect::<Vec<_>>(),
-                    "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":15}}]})
+                    "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":16}}]})
         });
     }
     let manifest = root.join("auth-status-boundaries.json");

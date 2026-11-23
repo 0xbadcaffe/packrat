@@ -83,7 +83,7 @@ fn split_401_bursts_use_only_complete_scoped_headers_and_keep_each_frame() {
             let alert = &alerts[0]["alert"];
             assert_eq!(alerts[0]["opening"], true);
             assert_eq!(alert["packet_no"], 21);
-            assert_eq!(alert["provenance"]["revision"], 15);
+            assert_eq!(alert["provenance"]["revision"], 16);
             assert!(alert["detail"].as_str().unwrap().contains("for 5/5 sampled 401 replies"));
             let mut frames: Vec<_> = alert["packet_refs"].as_array().unwrap().iter()
                 .map(|frame| frame.as_u64().unwrap()).collect();
@@ -93,8 +93,10 @@ fn split_401_bursts_use_only_complete_scoped_headers_and_keep_each_frame() {
     }
 }
 
-#[test]
-fn coalesced_401_headers_keep_distinct_observations_and_unique_frames() {
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn coalesced_401_headers_keep_distinct_observations_and_unique_frames(#[case] out_of_order: bool) {
     let scratch = tempfile::tempdir().unwrap();
     let capture = scratch.path().join("coalesced-401.pcapng");
     let request = b"GET /status HTTP/1.1\r\nHost: example.test\r\n\r\n";
@@ -108,9 +110,19 @@ fn coalesced_401_headers_keep_distinct_observations_and_unique_frames() {
         )).unwrap();
     }
     let coalesced = response.repeat(5);
-    for frame in [8, 9] {
-        writer.write_packet(&support::tcp(frame, 501, 0x18, &coalesced, true)).unwrap();
-    }
+    let trigger = if out_of_order {
+        let split = 7;
+        let later_sequence = 501 + split as u32;
+        writer.write_packet(&support::tcp(8, later_sequence, 0x18, &coalesced[split..], true)).unwrap();
+        writer.write_packet(&support::tcp(9, 501, 0x18, &coalesced[..split], true)).unwrap();
+        writer.write_packet(&support::tcp(10, later_sequence, 0x18, &coalesced[split..], true)).unwrap();
+        9
+    } else {
+        for frame in [8, 9] {
+            writer.write_packet(&support::tcp(frame, 501, 0x18, &coalesced, true)).unwrap();
+        }
+        8
+    };
     writer.flush().unwrap();
 
     let rule = "http.unauthorized_burst";
@@ -123,13 +135,13 @@ fn coalesced_401_headers_keep_distinct_observations_and_unique_frames() {
     let [alert]: [&Value; 1] = rows.iter()
         .filter(|row| row["alert"]["provenance"]["rule_id"] == rule)
         .map(|row| &row["alert"]).collect::<Vec<_>>().try_into().unwrap();
-    assert_eq!(alert["packet_no"], 8);
-    assert_eq!(alert["provenance"]["revision"], 15);
+    assert_eq!(alert["packet_no"], trigger);
+    assert_eq!(alert["provenance"]["revision"], 16);
     assert!(alert["detail"].as_str().unwrap().contains("for 5/5 sampled 401 replies"));
     let mut frames: Vec<_> = alert["packet_refs"].as_array().unwrap()
         .iter().map(|frame| frame.as_u64().unwrap()).collect();
     frames.sort_unstable();
-    assert_eq!(frames, (3..=8).collect::<Vec<_>>());
+    assert_eq!(frames, (3..=trigger).collect::<Vec<_>>());
 }
 
 #[cfg(feature = "terminal-ui")]

@@ -182,7 +182,9 @@ impl SecurityEngine {
                 service,
                 packet_refs,
                 http_streams: window.observations.iter().filter_map(|entry| {
-                    Some((entry.packet_no, entry.http_stream.clone()?, entry.transport_token.1))
+                    // A gap-filling packet can expose headers wholly in earlier buffered frames.
+                    let frame = entry.related_frames.last().copied().unwrap_or(entry.packet_no);
+                    Some((frame, entry.http_stream.clone()?, entry.transport_token.1))
                 }).collect(),
             };
             self.findings.authentication.push(alert.clone());

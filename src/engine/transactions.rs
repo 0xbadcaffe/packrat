@@ -84,7 +84,7 @@ impl AnalysisCore {
             }
             let frames = stream.packet_numbers(from_a, response.span.start, response.header_end);
             let first = *frames.first()?;
-            if frames.len() > 16 || !frames.contains(&pkt.no)
+            if frames.len() > 16
                 || exchange.request.packet_numbers.is_empty()
                 || exchange.request.packet_numbers.iter().any(|&frame| frame == 0 || frame >= first)
             {

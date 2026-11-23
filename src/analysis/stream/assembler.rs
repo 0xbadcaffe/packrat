@@ -247,12 +247,12 @@ impl StreamAssembler {
             (stream.server_initial_syn, &stream.server_data)
         };
         let initial = syn?.wrapping_add(1);
-        let previous = std::mem::replace(&mut stream.http_auth_examined[usize::from(from_a)], data.len());
         if stream.midstream || stream.reset || stream.has_gaps() || stream.provenance_truncated || stream.http_overlap_conflict
             || !data.starts_with(b"HTTP/1.")
         {
             return None;
         }
+        let previous = std::mem::replace(&mut stream.http_auth_examined[usize::from(from_a)], data.len());
         let direct_offset = matches!(payload.first_chunk::<12>(), Some(b"HTTP/1.1 401" | b"HTTP/1.0 401"))
             .then_some(sequence.wrapping_sub(initial) as usize).filter(|&offset| offset < data.len());
         if direct_offset.is_none() && (data.len() <= previous
