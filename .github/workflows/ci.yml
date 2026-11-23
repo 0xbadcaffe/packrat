@@ -174,10 +174,10 @@ jobs:
           cargo flamegraph --profile profiling --bin packrat-profile \
             --freq 99 --no-inline \
             --output target/profiling/packrat-flamegraph.svg -- \
-            --packets 100000
+            --packets 1000000
           perf record --freq 99 --call-graph dwarf \
             --output target/profiling/packrat.perf.data -- \
-            target/profiling/packrat-profile --packets 50000
+            target/profiling/packrat-profile --packets 1000000
           perf report --stdio --no-children --sort overhead,symbol \
             --input target/profiling/packrat.perf.data \
             > target/profiling/hot-symbols.txt

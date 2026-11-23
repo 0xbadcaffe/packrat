@@ -2,6 +2,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use crate::net::packet::Packet;
 
+const ENCRYPTED_ENTROPY_THRESHOLD: f64 = 7.2;
+// With n bytes, the highest possible Shannon entropy is log2(n).
+const MIN_BYTES_ABOVE_ENCRYPTED_ENTROPY: usize = 148;
+
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 pub struct FlowKey {
     pub ep1:     (String, u16),
@@ -145,7 +149,8 @@ impl FlowTracker {
         flow.flags.large     = flow.bytes > 1_000_000;
         flow.flags.long_conn = (flow.last_seen - flow.first_seen) > 300.0; // 5 min
         if pkt.bytes.len() > 20 {
-            flow.flags.encrypted = shannon_entropy(&pkt.bytes) > 7.2;
+            flow.flags.encrypted = pkt.bytes.len() >= MIN_BYTES_ABOVE_ENCRYPTED_ENTROPY
+                && shannon_entropy(&pkt.bytes) > ENCRYPTED_ENTROPY_THRESHOLD;
         }
 
         // Composite RITA-style beacon score
