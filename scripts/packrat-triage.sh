@@ -10,7 +10,7 @@ usage() {
         '--saved reviews an explicit saved capture without consulting live health.' \
         '--saved reports saved_scope_not_observed when the supplied logs contain no matching alert records.' \
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
-        '--list-saved ranks up to five scoped findings from the latest 512 distinct alerts and counts unscoped findings separately.' \
+        '--list-saved ranks up to five scoped findings and reports review timing coverage over the latest 512 distinct alerts.' \
         'has_more_alerts indicates that older matching alerts were omitted.' \
         'review_queue lists up to five unresolved CRITICAL or HIGH alerts (New, Reviewing, or Confirmed), even outside the recent list.' \
         'priority_sample_at_limit means older alerts may not have been reviewed.' \
@@ -208,7 +208,7 @@ report_saved_index() {
             sampled_unscoped_open_high_or_critical:([.alerts[] | select((scoped | not) and priority and unresolved)] | length),
             review_shortlist_truncated:($review | length > 5),
             review_shortlist:($review[:5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,confidence,evidence_frame_count,last_seen})),
-            alert_log_integrity:$integrity,
+            alert_log_integrity:$integrity, review_latency:((.review_latency | objects | {sampled_alerts,measured_alerts,unmeasured_alerts,min_ms,median_ms,max_ms}) // null),
             captures:($scoped | group_by([.session_id, .capture_id]) | map(
               map(select(priority)) as $priority
               | ($priority | map(select(unresolved))) as $open | {

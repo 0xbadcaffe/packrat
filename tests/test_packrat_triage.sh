@@ -118,9 +118,10 @@ packrat-archive() {
     if [[ ${1-} != --alerts ]]; then mock_archive "$@"; return; fi
     mock_archive "$@" | jq -c --argjson invalid "${PACKRAT_TEST_INVALID_RECORDS:-0}" \
         --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" \
-        --arg target "${PACKRAT_TEST_TARGET:-}" --argjson stopped "${PACKRAT_TEST_SCAN_STOPPED:-false}" '
+        --arg target "${PACKRAT_TEST_TARGET:-}" --argjson stopped "${PACKRAT_TEST_SCAN_STOPPED:-false}" \
+        --argjson timing "${PACKRAT_TEST_REVIEW_LATENCY:-null}" '
         {alerts:.,integrity:{invalid_records:$invalid,oversized_records:$oversized,
-            stopped_at_limit:(length == (if $target != "" then 1 else 512 end)),stopped_at_scan_budget:$stopped}}'
+            stopped_at_limit:(length == (if $target != "" then 1 else 512 end)),stopped_at_scan_budget:$stopped},review_latency:$timing}'
 }
 
 timeout() {

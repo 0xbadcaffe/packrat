@@ -8,6 +8,7 @@ use crate::analysis::alert_center::{AlertDisposition, AlertFlow, CREDENTIAL_ALER
 use crate::analysis::alert_provenance::EvidenceConfidence;
 use super::alert_jsonl::{ExistingAlertRecord, MAX_ALERT_LINE};
 use super::alert_evidence::evidence_frame_set_sha256;
+use super::packet_archive::valid_capture_id;
 
 pub const MAX_HISTORY_LIMIT: usize = 512;
 pub const MAX_PREVIOUS_LOGS: usize = 8;
@@ -90,6 +91,37 @@ pub struct AlertHistoryIntegrity {
 pub struct AlertHistoryReport {
     pub alerts: Vec<AlertHistoryEntry>,
     pub integrity: AlertHistoryIntegrity,
+    pub review_latency: ReviewLatency,
+}
+
+#[derive(Serialize)]
+pub struct ReviewLatency {
+    pub sampled_alerts: usize,
+    pub measured_alerts: usize,
+    pub unmeasured_alerts: usize,
+    pub min_ms: Option<u64>,
+    pub median_ms: Option<u64>,
+    pub max_ms: Option<u64>,
+}
+
+impl AlertHistoryReport {
+    fn new(alerts: Vec<AlertHistoryEntry>, integrity: AlertHistoryIntegrity) -> Self {
+        let mut delays: Vec<_> = alerts.iter()
+            .filter(|entry| entry.capture_id.as_deref().is_some_and(valid_capture_id))
+            .filter_map(|entry| entry.first_review_delay_ms)
+            .collect();
+        delays.sort_unstable();
+        let measured_alerts = delays.len();
+        let median_ms = if measured_alerts == 0 { None } else {
+            let (left, right) = (delays[(measured_alerts - 1) / 2], delays[measured_alerts / 2]);
+            Some(left + (right - left) / 2)
+        };
+        let review_latency = ReviewLatency {
+            sampled_alerts: alerts.len(), measured_alerts, unmeasured_alerts: alerts.len() - measured_alerts,
+            min_ms: delays.first().copied(), median_ms, max_ms: delays.last().copied(),
+        };
+        Self { alerts, integrity, review_latency }
+    }
 }
 
 pub fn recent_alerts(
@@ -230,7 +262,7 @@ fn filtered_alerts_report(
             });
             if latest.len() == limit {
                 integrity.stopped_at_limit = true;
-                return Ok(AlertHistoryReport { alerts: latest, integrity });
+                return Ok(AlertHistoryReport::new(latest, integrity));
             }
         }
         if reader.start != 0 {
@@ -239,7 +271,7 @@ fn filtered_alerts_report(
         }
         remaining = remaining.map(|budget| budget.saturating_sub(file_bytes));
     }
-    Ok(AlertHistoryReport { alerts: latest, integrity })
+    Ok(AlertHistoryReport::new(latest, integrity))
 }
 
 const READ_CHUNK: usize = 64 * 1024;

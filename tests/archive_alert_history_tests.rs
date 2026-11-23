@@ -4,6 +4,47 @@ use packrat_tui::analysis::alert_center::{AlertCenter, AlertDisposition, AlertFl
 use serde_json::{Value, json};
 
 #[test]
+fn review_latency_uses_only_usable_timings_in_the_requested_latest_sample() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("alerts.jsonl");
+    let mut file = std::fs::File::create(&log).unwrap();
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "HIGH", "Saved alert", "fixture");
+    let item = center.items.remove(0);
+    for (id, scope, saved, reviewed) in [
+        (1, Some("capture-a"), Some(1000), Some(9000)),
+        (1, Some("capture-a"), Some(1000), Some(1100)),
+        (2, Some("capture-a"), Some(1000), Some(1401)),
+        (3, Some("capture-a"), None, Some(1600)),
+        (4, Some("capture-b"), Some(1500), Some(1400)),
+        (5, None, Some(1000), Some(1090)),
+    ] {
+        let mut alert = item.clone();
+        alert.id = id;
+        alert.capture_id = scope.map(str::to_owned);
+        alert.first_reviewed_unix_ms = reviewed;
+        writeln!(file, "{}", json!({"schema_version":1,"record_type":"alert","session_id":"test-session",
+            "first_saved_unix_ms":saved,"alert":alert})).unwrap();
+    }
+    drop(file);
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+            .arg("--alerts").arg(&log).arg("--report-integrity").args(args).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    assert_eq!(run(&[])["review_latency"], json!({
+        "sampled_alerts":5,"measured_alerts":2,"unmeasured_alerts":3,"min_ms":100,"median_ms":250,"max_ms":401
+    }));
+    assert_eq!(run(&["--capture-id", "capture-a"])["review_latency"]["sampled_alerts"], 3);
+    let limited = run(&["--limit", "2"]);
+    assert_eq!(limited["integrity"]["stopped_at_limit"], true);
+    assert_eq!(limited["review_latency"], json!({
+        "sampled_alerts":2,"measured_alerts":0,"unmeasured_alerts":2,"min_ms":null,"median_ms":null,"max_ms":null
+    }));
+}
+
+#[test]
 fn saved_alert_history_omits_legacy_credentials_without_rewriting_the_log() {
     let directory = tempfile::tempdir().unwrap();
     let log = directory.path().join("alerts.jsonl");
@@ -154,7 +195,9 @@ fn integrity_reports_oversized_first_record_and_invalid_tail_with_no_alerts() {
         .arg("--alerts").arg(log).arg("--report-integrity").output().unwrap();
     assert!(output.status.success());
     assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), json!({
-        "alerts": [], "integrity": {
+        "alerts": [],
+        "review_latency": {"sampled_alerts":0,"measured_alerts":0,"unmeasured_alerts":0,"min_ms":null,"median_ms":null,"max_ms":null},
+        "integrity": {
             "invalid_records": 1, "oversized_records": 1, "stopped_at_limit": false
         }
     }));

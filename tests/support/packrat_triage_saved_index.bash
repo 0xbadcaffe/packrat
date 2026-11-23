@@ -4,6 +4,7 @@ list_saved() {
 }
 result=$(list_saved "$PACKRAT_TEST_LOG")
 jq -e '.record_type == "saved_capture_index" and .status == "saved"
+    and .review_latency == null
     and .sampled_alerts == 6 and .sampled_unscoped_alerts == 2
     and .sampled_unscoped_open_high_or_critical == 1
     and .alert_sample_limit == 512 and .alert_log_integrity.stopped_at_limit == false
@@ -17,6 +18,9 @@ jq -e '.record_type == "saved_capture_index" and .status == "saved"
         [["1700000000-123",1,"CRITICAL"],["1700000000-432",3,"CRITICAL"],["1700000000-432",1,"HIGH"]]
     and .captures[1].first_seen == 10 and .captures[1].last_seen == 22
     and (tostring | contains("not in index") | not)' <<< "$result" >/dev/null
+timing='{"sampled_alerts":6,"measured_alerts":2,"unmeasured_alerts":4,"min_ms":300,"median_ms":400,"max_ms":500}'
+result=$(PACKRAT_TEST_REVIEW_LATENCY=$(jq -c '. + {extra:"not in index"}' <<<"$timing") list_saved "$PACKRAT_TEST_LOG")
+jq -e --argjson expected "$timing" '.review_latency == $expected' <<< "$result" >/dev/null
 result=$(PACKRAT_TEST_ALERT_COUNT=512 list_saved "$PACKRAT_TEST_LOG")
 jq -e '.status == "saved" and .sampled_alerts == 512 and .alert_log_integrity.stopped_at_limit
     and .captures[0].last_seen == null' <<< "$result" >/dev/null
