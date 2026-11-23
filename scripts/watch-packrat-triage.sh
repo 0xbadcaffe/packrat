@@ -332,7 +332,7 @@ publish_snapshot() {
 previous=''
 prior=null
 if [[ -f $state && -O $state ]]; then
-    # Any refresh can recover only a recent, bounded snapshot from this watcher.
+    # A stale snapshot can still identify alerts already seen in the same capture.
     prior=$(head -c 65537 -- "$state" |
         jq -Rces "$snapshot_validation"'
             select(utf8bytelength <= 65536) | fromjson | objects
@@ -340,14 +340,15 @@ if [[ -f $state && -O $state ]]; then
                 and (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .)
                 and valid_current)
             | (now - (.updated_at | fromdateiso8601) | floor) as $age
-            | select($age >= -5 and $age <= .max_age_seconds)
+            | select($age >= -5)
+            | ($age <= .max_age_seconds) as $fresh
             | .last_observed // .
             | select((.status == "current" or .status == "degraded") and
                 (.capture_id | type == "string") and (.session_id | type == "string") and
                 (.recent_alerts | type == "array" and length <= 50 and all(.[]; type == "object"
                     and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
             | {status,capture_id,session_id,recent_alerts,alert_sample_gap:(.alert_sample_gap == true),
-                buffer_drops:(.buffer_drops | if type == "number" and . >= 0 and . <= 4294967295
+                buffer_drops:(.buffer_drops | if $fresh and type == "number" and . >= 0 and . <= 4294967295
                     and floor == . then . else null end),
                 review_queue:(.review_queue | if type == "array" and length <= 5 then
                     map(objects | select(.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))

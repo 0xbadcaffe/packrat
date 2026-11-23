@@ -235,7 +235,7 @@ jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_ale
 cmp -s "$scratch/events" "$state.events.jsonl"
 [[ $(stat --format='%a' "$state.events.jsonl") == 600 ]]
 
-jq '.updated_at=(now - 360 | todateiso8601) | .capture_id="a" | .highest_observed_alert_id=99' "$state" >"$scratch/stale.next"
+jq '.updated_at=(now - 360 | todateiso8601) | .capture_id="previous" | .highest_observed_alert_id=99' "$state" >"$scratch/stale.next"
 mv -- "$scratch/stale.next" "$state"
 live current 60 '[]' "$medium" >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=10 bash "$watch" --supervise "$state" -- cat -- "$report" >"$scratch/supervised" 2>"$scratch/retry" &
@@ -322,6 +322,22 @@ jq -e '.status=="triage_unavailable" and .last_observed.alert_sample_gap
 live current 72 '[]' "$medium" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 jq -e '.status=="current" and .alert_sample_gap and .highest_observed_alert_id==65' "$state" >/dev/null
+
+state="$scratch/stale-restart.json"
+live current 73 '[]' "$medium" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq '.updated_at=(now - 360 | todateiso8601)' "$state" >"$state.next"
+mv -- "$state.next" "$state"
+check_status "$state" snapshot_stale 1
+live current 74 '[]' "$bulk" >"$report"
+PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/stale-events" &
+watch_pid=$!
+await_packets 74
+kill "$watch_pid"
+wait "$watch_pid"
+watch_pid=''
+jq -e '.alert_sample_gap and .highest_observed_alert_id==65 and .buffer_drops_delta==null' "$state" >/dev/null
+jq -se 'length==1 and .[0].alert_changes.newly_observed==[range(16;66)]' "$scratch/stale-events" >/dev/null
 
 state="$scratch/queue-updates.json"
 backlog=$(jq -c '[.[0] + {alert_id:2,in_recent_alerts:false,disposition:"New",hit_count:1},
