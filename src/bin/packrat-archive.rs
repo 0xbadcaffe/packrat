@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         println!("       packrat-archive DIRECTORY --alert-project ALERT_LOG SESSION_ID ALERT_ID OUTPUT_JSON --capture-id CAPTURE_ID [--previous-log PATH]...\nOpen the resulting JSON with packrat --project OUTPUT_JSON. It contains packet bytes.\nAlert evidence bundles count all omitted frames as missing and identify unreadable and unknown-length frames separately.");
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
+        println!("       packrat-archive DIRECTORY --alert-flow-summary ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nSummarizes directional TCP/UDP headers from cited frames only, without exporting packet bytes.");
         return Ok(());
     };
     if path == "--alerts" {
@@ -70,9 +71,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     match action {
-        Some(flag) if matches!(flag.as_str(), "--alert-evidence" | "--alert-status" | "--alert-project" | "--alert-packet-metadata") => {
+        Some(flag) if matches!(flag.as_str(), "--alert-evidence" | "--alert-status" | "--alert-project" | "--alert-packet-metadata" | "--alert-flow-summary") => {
             use packrat_tui::storage::alert_evidence::{
-                alert_evidence_across_logs, alert_packet_metadata, create_alert_project, export_alert_evidence_across_logs,
+                alert_evidence_across_logs, alert_flow_summary, alert_packet_metadata, create_alert_project, export_alert_evidence_across_logs,
             };
             let log = args.next().ok_or("Alert command requires an alert log")?;
             let session = args.next().ok_or("Alert command requires a session ID")?;
@@ -106,6 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let summary = export_alert_evidence_across_logs(&mut archive, logs, &session, id, scope, output)?;
                     println!("{}", serde_json::to_string(&summary)?);
                 }
+            } else if flag == "--alert-flow-summary" {
+                let capture = scope.ok_or("--alert-flow-summary requires --capture-id")?;
+                println!("{}", serde_json::to_string(&alert_flow_summary(&mut archive, logs, &session, capture, id)?)?);
             } else if flag == "--alert-packet-metadata" {
                 let capture = scope.ok_or("--alert-packet-metadata requires --capture-id")?;
                 println!("{}", serde_json::to_string(&alert_packet_metadata(&mut archive, logs, &session, capture, id)?)?);

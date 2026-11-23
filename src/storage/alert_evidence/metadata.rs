@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::{collections::BTreeMap, net::{IpAddr, SocketAddr}};
 
 use anyhow::Result;
 use serde::Serialize;
@@ -39,6 +39,8 @@ struct PacketMetadata {
     section_id: Option<u32>,
     interface_id: Option<u32>,
     transport: Option<TransportHeader>,
+    #[serde(skip)]
+    flow: Option<FlowKey>,
 }
 
 #[derive(Serialize)]
@@ -47,6 +49,53 @@ struct TransportHeader {
     source_port: u16,
     destination_port: u16,
     tcp_flags: Option<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+struct FlowKey {
+    section_id: u32,
+    interface_id: u32,
+    outer_vlan_id: Option<u16>,
+    vlan_id: Option<u16>,
+    protocol: &'static str,
+    source: SocketAddr,
+    destination: SocketAddr,
+}
+
+#[derive(Default, Serialize)]
+struct FlowCounts {
+    evidence_frames: usize,
+    initial_syn_frames: usize,
+    syn_ack_frames: usize,
+    reset_frames: usize,
+    first_seen: Option<f64>,
+    last_seen: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct DirectionalFlow {
+    #[serde(flatten)]
+    key: FlowKey,
+    #[serde(flatten)]
+    counts: FlowCounts,
+    reverse_evidence_frames: usize,
+}
+
+#[derive(Serialize)]
+pub struct AlertFlowSummary {
+    record_type: &'static str,
+    session_id: String,
+    capture_id: String,
+    alert_id: u64,
+    evidence_frame_set_sha256: String,
+    referenced_frames: usize,
+    missing_frames: usize,
+    unreadable_frames: usize,
+    truncated_frames: usize,
+    length_unknown_frames: usize,
+    retained_frames_without_flow: usize,
+    directional_flows: Vec<DirectionalFlow>,
+    limitation: &'static str,
 }
 
 impl PacketMetadata {
@@ -60,6 +109,15 @@ impl PacketMetadata {
                 tcp_flags,
             },
         );
+        let flow = capture.zip(transport.as_ref()).and_then(|(capture, transport)| {
+            let decoded = crate::net::parser::parse_ethernet(&packet.bytes, packet.no, packet.timestamp);
+            Some(FlowKey {
+                section_id: capture.section_id, interface_id: capture.interface_id,
+                outer_vlan_id: decoded.outer_vlan_id, vlan_id: decoded.vlan_id, protocol: transport.protocol,
+                source: SocketAddr::new(decoded.src.parse().ok()?, transport.source_port),
+                destination: SocketAddr::new(decoded.dst.parse().ok()?, transport.destination_port),
+            })
+        });
         Self {
             timestamp: packet.timestamp.is_finite().then_some(packet.timestamp),
             recorded_source: packet.src.parse().ok(),
@@ -70,8 +128,53 @@ impl PacketMetadata {
             section_id: capture.map(|value| value.section_id),
             interface_id: capture.map(|value| value.interface_id),
             transport,
+            flow,
         }
     }
+}
+
+pub fn alert_flow_summary(
+    archive: &mut PacketArchive, logs: AlertLogs<'_>, session_id: &str, capture_id: &str, alert_id: u64,
+) -> Result<AlertFlowSummary> {
+    let metadata = alert_packet_metadata(archive, logs, session_id, capture_id, alert_id)?;
+    let mut result = AlertFlowSummary {
+        record_type: "alert_flow_summary", session_id: metadata.session_id, capture_id: metadata.capture_id,
+        alert_id: metadata.alert_id, evidence_frame_set_sha256: metadata.evidence_frame_set_sha256,
+        referenced_frames: metadata.frames.len(), missing_frames: 0, unreadable_frames: 0,
+        truncated_frames: 0, length_unknown_frames: 0, retained_frames_without_flow: 0,
+        directional_flows: Vec::new(),
+        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown.",
+    };
+    let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
+    for frame in metadata.frames {
+        match frame.status {
+            FrameStatus::Missing => result.missing_frames += 1,
+            FrameStatus::Unreadable => result.unreadable_frames += 1,
+            FrameStatus::Truncated => result.truncated_frames += 1,
+            FrameStatus::LengthUnknown => result.length_unknown_frames += 1,
+            FrameStatus::Complete => {}
+        }
+        let Some(packet) = frame.packet else { continue };
+        let Some(flow) = packet.flow else { result.retained_frames_without_flow += 1; continue };
+        let counts = flows.entry(flow).or_default();
+        counts.evidence_frames += 1;
+        if let Some(flags) = packet.transport.and_then(|header| header.tcp_flags) {
+            counts.initial_syn_frames += usize::from(flags & 0x17 == 0x02);
+            counts.syn_ack_frames += usize::from(flags & 0x17 == 0x12);
+            counts.reset_frames += usize::from(flags & 0x04 != 0);
+        }
+        if let Some(time) = packet.timestamp {
+            counts.first_seen = Some(counts.first_seen.map_or(time, |prior| prior.min(time)));
+            counts.last_seen = Some(counts.last_seen.map_or(time, |prior| prior.max(time)));
+        }
+    }
+    let counts: BTreeMap<_, _> = flows.iter().map(|(key, value)| (key.clone(), value.evidence_frames)).collect();
+    result.directional_flows = flows.into_iter().map(|(key, counts_for_flow)| {
+        let reverse = FlowKey { source: key.destination, destination: key.source, ..key.clone() };
+        let reverse_evidence_frames = if reverse != key { counts.get(&reverse).copied().unwrap_or(0) } else { 0 };
+        DirectionalFlow { key, counts: counts_for_flow, reverse_evidence_frames }
+    }).collect();
+    Ok(result)
 }
 
 pub fn alert_packet_metadata(
