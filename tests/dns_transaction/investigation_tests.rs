@@ -128,6 +128,36 @@ fn truncated_replies_are_retained_but_complete_replies_anchor_dns_comparison() {
 }
 
 #[test]
+fn queried_resolver_anchors_answer_comparison_even_when_another_resolver_replies_first() {
+    let client = "10.0.0.5";
+    let resolver = "10.0.0.53";
+    let other = "10.0.0.54";
+    let query = dns_packet(1, false, client, resolver, 70, "example.test");
+    let reply = |no, source, last_octet, ttl| {
+        let mut packet = dns_packet(no, true, source, client, 70, "example.test");
+        append_answer(&mut packet, &[0xc0, 0x0c], 1, ttl, &[192, 0, 2, last_octet]);
+        packet
+    };
+
+    let mut tracker = DnsTransactionTracker::default();
+    assert!(tracker.observe(&query).is_empty());
+    let unexpected = tracker.observe(&reply(2, other, 10, 300));
+    assert_eq!(unexpected[0].kind, DnsFindingKind::UnexpectedResponder);
+    let conflict = tracker.observe(&reply(3, resolver, 1, 300));
+    assert_eq!(conflict[0].kind, DnsFindingKind::ConflictingResponse);
+    assert_eq!(conflict[0].related_packets, [1, 2]);
+
+    assert!(tracker.observe(&reply(4, resolver, 1, 299)).is_empty());
+    let changed = tracker.observe(&reply(5, resolver, 2, 298));
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0].kind, DnsFindingKind::ChangedAnswerSet);
+    assert_eq!(changed[0].related_packets, [1, 3]);
+    let conflict = tracker.observe(&reply(6, other, 11, 300));
+    assert_eq!(conflict[0].kind, DnsFindingKind::ConflictingResponse);
+    assert_eq!(conflict[0].related_packets, [1, 3]);
+}
+
+#[test]
 fn edns_reply_comparison_uses_validated_full_response_codes() {
     fn add_opt(reply: &mut Packet, payload: u16, ext_rcode: u8, options: &[u8]) {
         reply.bytes[53] = 1; // ARCOUNT.

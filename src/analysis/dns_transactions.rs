@@ -282,14 +282,15 @@ impl DnsTransactionTracker {
             }];
         };
         let query = &exchange.query;
+        let mut findings = Vec::new();
         if let Some(previous) = &mut exchange.reply {
             match previous.observe_follow_up(packet, query, &message) {
-                ReplyOutcome::FirstMatch => {}
+                ReplyOutcome::Inspect(finding) => findings.extend(finding),
                 ReplyOutcome::Repeat => return Vec::new(),
-                    ReplyOutcome::Finding(mut finding) => {
-                        append_evidence(&mut finding.related_packets, &query.frames);
-                        return vec![finding];
-                    }
+                ReplyOutcome::Finding(mut finding) => {
+                    append_evidence(&mut finding.related_packets, &query.frames);
+                    return vec![finding];
+                }
             }
         } else {
             let matches = query.question == message.question;
@@ -301,7 +302,6 @@ impl DnsTransactionTracker {
             }
         }
 
-        let mut findings = Vec::new();
         if query.server != packet.src {
             findings.push(DnsFinding {
                 kind: DnsFindingKind::UnexpectedResponder,

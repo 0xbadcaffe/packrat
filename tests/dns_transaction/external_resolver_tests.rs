@@ -40,6 +40,24 @@ fn detects_external_resolver_use() {
 }
 
 #[test]
+fn expected_external_exchange_is_still_reported_after_a_competing_reply() {
+    let mut tracker = DnsTransactionTracker::default();
+    let client = "10.0.0.5";
+    let public = "8.8.8.8";
+    assert!(tracker.observe(&dns_packet(1, false, client, public, 6, "example.test")).is_empty());
+    let other = tracker.observe(&dns_packet(2, true, "9.9.9.9", client, 6, "example.test"));
+    assert_eq!(other.len(), 1);
+    assert_eq!(other[0].kind, DnsFindingKind::UnexpectedResponder);
+    let reply = tracker.observe(&dns_packet(3, true, public, client, 6, "example.test"));
+    assert_eq!(reply.len(), 2);
+    assert_eq!(reply[0].kind, DnsFindingKind::ConflictingResponse);
+    assert_eq!(reply[0].related_packets, [1, 2]);
+    assert_eq!(reply[1].kind, DnsFindingKind::ExternalResolver);
+    assert_eq!(reply[1].related_packets, [1]);
+    assert!(tracker.observe(&dns_packet(4, true, public, client, 6, "example.test")).is_empty());
+}
+
+#[test]
 fn external_ipv6_resolver_rule_excludes_documentation_and_multicast() {
     let mut tracker = DnsTransactionTracker::default();
     for (i, server) in ["2001:db8::53", "ff02::53", "fd00::53", "2606:4700:4700::1111"].into_iter().enumerate() {

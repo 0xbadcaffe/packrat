@@ -43,7 +43,7 @@ impl ComparisonBaseline {
 }
 
 pub(super) enum ReplyOutcome {
-    FirstMatch,
+    Inspect(Option<DnsFinding>),
     Repeat,
     Finding(DnsFinding),
 }
@@ -81,7 +81,7 @@ impl RecentResponse {
         let Some(baseline) = &self.baseline else {
             self.baseline = Some(ComparisonBaseline::new(packet, message));
             self.retain(packet, message, fingerprint, true);
-            return ReplyOutcome::FirstMatch;
+            return ReplyOutcome::Inspect(None);
         };
 
         // TC indicates a partial response (RFC 2181, section 9), not an answer change.
@@ -92,7 +92,7 @@ impl RecentResponse {
             }
             self.retain(packet, message, fingerprint, promote);
             return if promote && query.server == packet.src {
-                ReplyOutcome::FirstMatch
+                ReplyOutcome::Inspect(None)
             } else {
                 ReplyOutcome::Repeat
             };
@@ -128,15 +128,24 @@ impl RecentResponse {
         };
         let mut related_packets = vec![query.packet_no, baseline.packet];
         append_evidence(&mut related_packets, &baseline.frames);
-        self.retain(packet, message, fingerprint, false);
-        ReplyOutcome::Finding(DnsFinding {
+        let expected_resolver_arrived = baseline.resolver != query.server && packet.src == query.server;
+        let finding = DnsFinding {
             kind,
             detail: format!(
                 "transaction 0x{:04x} for {} received {detail}",
                 message.id, query.question.name,
             ),
             related_packets,
-        })
+        };
+        if expected_resolver_arrived {
+            self.baseline = Some(ComparisonBaseline::new(packet, message));
+        }
+        self.retain(packet, message, fingerprint, expected_resolver_arrived);
+        if expected_resolver_arrived {
+            ReplyOutcome::Inspect(Some(finding))
+        } else {
+            ReplyOutcome::Finding(finding)
+        }
     }
 
     fn retain(
