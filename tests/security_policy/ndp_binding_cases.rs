@@ -61,6 +61,45 @@ fn default_router_link_change_does_not_flag_expired_or_withdrawn_claims(#[case] 
 }
 
 #[test]
+fn default_router_link_change_groups_same_pair_until_an_independent_transition() {
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+
+    let mut core = AnalysisCore::default();
+    for (no, host) in [(1, 1), (2, 2), (3, 1), (4, 2), (5, 2), (6, 1)] {
+        core.analyze(&router_link_packet(no, no as f64, 10, host, 60));
+    }
+    let alerts = &core.alert_center.items;
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].hit_count, 4);
+    assert_eq!(alerts[0].packet_refs, [1, 2, 3, 4, 5, 6]);
+    core.analyze(&router_link_packet(7, 7.0, 10, 3, 60));
+    let second = &core.alert_center.items[1];
+    assert_eq!(second.packet_refs, [6, 7]);
+    let (id, scope) = (second.id, second.capture_id.clone());
+    assert!(core.alert_center.set_disposition(id, scope.as_deref(), AlertDisposition::Benign));
+    core.analyze(&router_link_packet(8, 8.0, 10, 3, 0));
+    core.analyze(&router_link_packet(9, 9.0, 10, 1, 60));
+    core.analyze(&router_link_packet(10, 10.0, 10, 3, 60));
+    let alerts = &core.alert_center.items;
+    assert_eq!(alerts.len(), 3);
+    assert_eq!(alerts[1].disposition, AlertDisposition::Benign);
+    assert_eq!(alerts[2].disposition, AlertDisposition::New);
+    assert_eq!(alerts[2].packet_refs, [9, 10]);
+}
+
+#[test]
+fn default_router_link_change_reopens_when_the_prior_pair_overlap_expires() {
+    let mut core = AnalysisCore::default();
+    for (no, time, host, lifetime) in [(1, 1.0, 1, 5), (2, 2.0, 2, 60), (3, 5.0, 2, 60), (4, 6.0, 1, 60)] {
+        core.analyze(&router_link_packet(no, time, 10, host, lifetime));
+    }
+    let alerts = &core.alert_center.items;
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0].packet_refs, [1, 2]);
+    assert_eq!(alerts[1].packet_refs, [3, 4]);
+}
+
+#[test]
 fn router_advertisement_rate_keeps_only_scoped_valid_samples() {
     const TITLE: &str = "IPv6 router advertisement flood";
     let source = "fe80::1".parse::<Ipv6Addr>().unwrap().octets();

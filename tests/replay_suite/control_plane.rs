@@ -44,10 +44,15 @@ fn default_router_link_replay_keeps_both_frames_on_one_vlan() {
     let root = scratch.path();
     let rule = "ipv6.ra_router_link_change";
     let mut cases = Vec::new();
-    for (name, second_vlan, openings) in [("same-vlan", 10, vec![2]), ("other-vlan", 20, vec![])] {
+    for (name, observations, openings, snapshots) in [
+        ("same-vlan", &[(10, 1), (10, 2)][..], vec![2], 1),
+        ("other-vlan", &[(10, 1), (20, 2)][..], vec![], 0),
+        ("same-pair", &[(10, 1), (10, 2), (10, 1), (10, 2)][..], vec![2], 3),
+    ] {
         let capture = format!("{name}.pcapng");
         let mut writer = PcapNgWriter::create(&root.join(&capture)).unwrap();
-        for (no, vlan, host) in [(1, 10, 1), (2, second_vlan, 2)] {
+        for (index, &(vlan, host)) in observations.iter().enumerate() {
+            let no = index as u64 + 1;
             let mut frame = ethernet([0x33, 0x33, 0, 0, 0, 1], vlan, 0x86dd);
             frame[11] = host;
             frame.extend([0x60, 0, 0, 0, 0, 16, 58, 255]);
@@ -59,7 +64,7 @@ fn default_router_link_replay_keeps_both_frames_on_one_vlan() {
         }
         writer.flush().unwrap();
         let mut case = json!({"name":name,"capture":capture,"expect_counts":{(rule):openings.len()},
-            "expect_snapshots":openings.len()});
+            "expect_snapshots":snapshots});
         if !openings.is_empty() {
             case["opening_frames"] = json!({(rule):openings});
             case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":2,"frames":[1,2]}]);
@@ -72,7 +77,7 @@ fn default_router_link_replay_keeps_both_frames_on_one_vlan() {
     assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 2);
+    assert_eq!(report["passed"], 3);
 }
 
 #[test]

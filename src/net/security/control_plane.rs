@@ -9,6 +9,34 @@ pub(super) struct RouterLink {
     order: (f64, u64),
     expires_at: f64,
     evidence: Option<Box<Packet>>,
+    episode: Option<RouterLinkEpisode>,
+}
+
+#[derive(Clone, Copy)]
+struct RouterLinkEpisode {
+    pair: [[u8; 6]; 2],
+    first_frame: u64,
+    expires_at: f64,
+}
+
+impl RouterLink {
+    fn advance_episode(&self, mac: [u8; 6], timestamp: f64, expires_at: f64) -> Option<RouterLinkEpisode> {
+        if timestamp >= self.expires_at {
+            return None;
+        }
+        let active = self.episode.filter(|episode| timestamp < episode.expires_at);
+        if self.mac == mac {
+            return active;
+        }
+        let mut pair = [self.mac, mac];
+        pair.sort_unstable();
+        Some(RouterLinkEpisode {
+            pair,
+            first_frame: active.filter(|episode| episode.pair == pair)
+                .map_or(self.order.1, |episode| episode.first_frame),
+            expires_at: self.expires_at.min(expires_at),
+        })
+    }
 }
 
 fn icmpv6_checksum_valid(inspection: &Ipv6Inspection<'_>) -> bool {
@@ -182,6 +210,7 @@ impl SecurityEngine {
                 prior.order = order;
                 prior.expires_at = pkt.timestamp;
                 prior.evidence = None;
+                prior.episode = None;
             }
             return;
         }
@@ -191,12 +220,15 @@ impl SecurityEngine {
             self.default_router_links.retain(|_, prior| prior.expires_at > pkt.timestamp);
             if self.default_router_links.len() >= MAX_CONTROL_PLANE_IDENTITIES { return; }
         }
+        let expires_at = pkt.timestamp + f64::from(lifetime);
+        let episode = self.default_router_links.get(&key)
+            .and_then(|prior| prior.advance_episode(mac, pkt.timestamp, expires_at));
         let previous = self.default_router_links.insert(key, RouterLink {
-            mac, order, expires_at: pkt.timestamp + f64::from(lifetime),
+            mac, order, expires_at, episode,
             evidence: (retain && crate::model::project::pinned_packet_cost(pkt) <= MAX_ROUTER_EVIDENCE_BYTES)
                 .then(|| Box::new(pkt.clone())),
         });
-        if let Some(prior) = previous && prior.mac != mac && pkt.timestamp < prior.expires_at {
+        if let (Some(prior), Some(episode)) = (previous, episode) && prior.mac != mac {
             if retain && let Some(packet) = prior.evidence {
                 self.findings.retained_evidence.push(*packet);
             }
@@ -210,7 +242,7 @@ impl SecurityEngine {
                         format_mac(prior.mac), format_mac(mac)),
                 },
                 related_packets: vec![prior.order.1],
-                correlation_key: Some(format!("{scope:?}:{source}:{}", prior.order.1)),
+                correlation_key: Some(format!("{scope:?}:{source}:{}", episode.first_frame)),
             });
         }
     }
