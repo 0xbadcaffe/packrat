@@ -99,7 +99,7 @@ impl AppView<'_> {
                     available: true,
                 })
                 .unwrap_or_else(|| missing("Packet", format!("Packet #{no}"))),
-            InvestigationItem::Stream(id) => InvestigationContext {
+            InvestigationItem::Stream(id) if self.core.streams.get(id).is_some() => InvestigationContext {
                 kind: "Stream",
                 title: id.clone(),
                 details: vec![
@@ -111,6 +111,7 @@ impl AppView<'_> {
                 ],
                 available: true,
             },
+            InvestigationItem::Stream(id) => missing("Stream", id.clone()),
             InvestigationItem::Host(address) => self
                 .core
                 .hosts

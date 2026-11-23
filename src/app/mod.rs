@@ -34,7 +34,7 @@ use crate::filter::PacketFilter;
 use crate::model::evidence::Severity as EvidenceSeverity;
 use crate::model::project::{ProjectSaveMode, SavedInvestigationItem};
 use crate::model::tags::TagStore;
-use crate::net::flow::{FlowKey, FlowSort};
+use crate::net::flow::{Flow, FlowSort};
 use crate::net::lua_plugin::PluginManager;
 use crate::net::packet::Packet;
 use crate::net::packet::TreeSection;

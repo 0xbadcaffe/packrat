@@ -86,6 +86,7 @@ pub struct Flow {
     pub bytes_out:    u64,   // from ep1
     pub first_seen:   f64,
     pub last_seen:    f64,
+    frame_range:      std::ops::RangeInclusive<u64>,
     pub flags:        FlowFlags,
     pub beacon_score: f64,   // 0.0–1.0 composite (RITA-style)
     pub throughput:   f64,   // bytes/sec
@@ -98,6 +99,12 @@ pub struct Flow {
     pub intervals:    VecDeque<f64>,
     pkt_sizes:        VecDeque<u16>,  // for data-size stddev
     strobe_window:    VecDeque<f64>,  // timestamps last 1s
+}
+
+impl Flow {
+    pub fn covers_packet(&self, packet: &Packet) -> bool {
+        self.frame_range.contains(&packet.no) && self.key == FlowKey::from_packet(packet)
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -126,6 +133,11 @@ impl FlowTracker {
 
     pub fn get(&self, key: &FlowKey) -> Option<&Flow> { self.flows.peek(key) }
 
+    pub fn get_for_packet(&self, packet: &Packet) -> Option<&Flow> {
+        self.get(&FlowKey::from_packet(packet))
+            .filter(|flow| flow.frame_range.contains(&packet.no))
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Flow> { self.flows.iter().map(|(_, flow)| flow) }
 
     pub fn evicted(&self) -> u64 { self.evicted }
@@ -143,6 +155,7 @@ impl FlowTracker {
                 key: key.clone(),
                 packets: 0, bytes: 0, bytes_in: 0, bytes_out: 0,
                 first_seen: pkt.timestamp, last_seen: pkt.timestamp,
+                frame_range: pkt.no..=pkt.no,
                 flags: FlowFlags::default(),
                 beacon_score: 0.0, throughput: 0.0,
                 initiator: pkt.src.clone(),
@@ -178,6 +191,7 @@ impl FlowTracker {
         flow.packets += 1;
         flow.bytes += pkt.length as u64;
         flow.last_seen = pkt.timestamp;
+        flow.frame_range = (*flow.frame_range.start()).min(pkt.no)..=(*flow.frame_range.end()).max(pkt.no);
 
         // Derived flags
         flow.flags.large     = flow.bytes > 1_000_000;

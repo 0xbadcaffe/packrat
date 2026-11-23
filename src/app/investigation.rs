@@ -337,15 +337,14 @@ impl App {
                 let sorted = core.flow_tracker.sorted_flows(&self.flows_sort);
                 self.flows_selected
                     .and_then(|index| sorted.get(index))
-                    .map(|flow| {
-                        InvestigationItem::Stream(format!(
-                            "{}:{} <-> {}:{} ({})",
-                            flow.key.ep1.0,
-                            flow.key.ep1.1,
-                            flow.key.ep2.0,
-                            flow.key.ep2.1,
-                            flow.key.proto,
-                        ))
+                    .and_then(|flow| {
+                        let mut packets = self.retained_packets_for_flow(flow);
+                        let latest = packets.next()?;
+                        let stream = std::iter::once(latest).chain(packets)
+                            .filter_map(StreamKey::from_packet)
+                            .map(|key| key.id())
+                            .find(|id| core.streams.get(id).is_some());
+                        Some(stream.map_or(InvestigationItem::Packet(latest.no), InvestigationItem::Stream))
                     })
             }
             Tab::Hosts => {

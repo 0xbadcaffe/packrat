@@ -3,8 +3,10 @@
 #[path = "support/packets.rs"]
 mod packets;
 
-use packrat_tui::app::App;
+use packrat_tui::analysis::stream::StreamKey;
+use packrat_tui::app::{App, InvestigationItem};
 use packrat_tui::net::flow::FlowKey;
+use packrat_tui::tabs::Tab;
 
 #[test]
 fn flow_follow_uses_ordered_deduplicated_stream_bytes() {
@@ -46,4 +48,36 @@ fn qinq_flow_counters_do_not_combine_tenants_with_identical_endpoints() {
             .iter()
             .all(|flow| flow.packets == 1)
     );
+}
+
+#[test]
+fn pinned_flow_resolves_the_scoped_stream_in_investigation() {
+    let mut app = App::new_for_test();
+    let mut packet = packets::tcp(1, 101, 0x18, b"pinned stream bytes");
+    packet.vlan_id = Some(20);
+    packet.outer_vlan_id = Some(10);
+    let id = StreamKey::from_packet(&packet).unwrap().id();
+    app.inject_packet(packet);
+    app.active_tab = Tab::Flows;
+    app.flows_selected = Some(0);
+    assert!(app.pin_current_context());
+    assert_eq!(app.active_investigation_item(), Some(&InvestigationItem::Stream(id.clone())));
+    assert_eq!(app.active_investigation_stream().unwrap().key.id(), id);
+    assert!(app.active_investigation_context().unwrap().available);
+}
+
+#[test]
+fn pinning_udp_flow_keeps_a_packet_instead_of_inventing_a_stream() {
+    let mut app = App::new_for_test();
+    let mut raw = packets::tcp(1, 101, 0x18, b"").bytes;
+    raw.truncate(42);
+    raw[16..18].copy_from_slice(&28_u16.to_be_bytes());
+    raw[23] = 17;
+    raw[38..40].copy_from_slice(&8_u16.to_be_bytes());
+    app.inject_packet(packrat_tui::net::parser::parse_ethernet(&raw, 1, 1.0));
+    app.active_tab = Tab::Flows;
+    app.flows_selected = Some(0);
+    assert!(app.pin_current_context());
+    assert_eq!(app.active_investigation_item(), Some(&InvestigationItem::Packet(1)));
+    assert_eq!(app.active_investigation_packet().unwrap().no, 1);
 }

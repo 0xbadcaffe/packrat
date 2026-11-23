@@ -10,7 +10,6 @@ use crate::analysis::packet_fields::PacketField;
 use crate::analysis::stream::ReassembledStream;
 use crate::app::{AppView as App, InvestigationItem, InvestigationView};
 use crate::model::evidence::{EvidenceRef, PacketRef};
-use crate::net::flow::FlowKey;
 use crate::net::packet::Packet;
 use crate::storage::alert_evidence::{FrameStatus, frame_status};
 use crate::ui::helpers::truncate;

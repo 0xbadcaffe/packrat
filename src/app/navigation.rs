@@ -99,10 +99,8 @@ impl App {
             .flows_selected
             .and_then(|index| sorted.get(index))
             .and_then(|flow| {
-                self.packets
-                    .iter()
-                    .find(|packet| FlowKey::from_packet(packet) == flow.key)
-                    .and_then(StreamKey::from_packet)
+                self.retained_packets_for_flow(flow)
+                    .find_map(StreamKey::from_packet)
                     .map(|key| key.id())
             });
         let Some(stream_id) = stream_id else {
@@ -111,6 +109,10 @@ impl App {
         };
         drop(core);
         self.open_reassembled_stream(stream_id);
+    }
+
+    pub(super) fn retained_packets_for_flow<'a>(&'a self, flow: &'a Flow) -> impl Iterator<Item = &'a Packet> {
+        self.packets.iter().rev().filter(|packet| flow.covers_packet(packet))
     }
 
     pub fn flows_jump_to_packets(&mut self) {

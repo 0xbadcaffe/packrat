@@ -1,11 +1,10 @@
 use super::*;
 
 pub(super) fn draw_flow(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
-    let key = FlowKey::from_packet(packet);
     let rows: Vec<Row> = app
         .core
         .flow_tracker
-        .get(&key)
+        .get_for_packet(packet)
         .into_iter()
         .map(|flow| {
             Row::new(vec![
@@ -28,7 +27,7 @@ pub(super) fn draw_flow(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
 
     if rows.is_empty() {
         f.render_widget(
-            Paragraph::new("No flow record exists for this packet yet.")
+            Paragraph::new("No retained flow summary covers this packet.")
                 .block(panel("Flow Context"))
                 .wrap(Wrap { trim: false }),
             chunks[0],

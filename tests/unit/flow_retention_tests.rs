@@ -47,3 +47,20 @@ fn retention_follows_packet_arrival_not_reads_or_capture_timestamps() {
     assert!(tracker.is_empty());
     assert_eq!(tracker.evicted(), 0);
 }
+
+#[test]
+fn retired_packet_does_not_inherit_a_new_summary_for_the_same_tuple() {
+    let mut tracker = FlowTracker::with_capacity(NonZeroUsize::new(1).unwrap());
+    let old = packet(50001, 1.0);
+    let mut latest = packet(50001, 3.0);
+    latest.no = 3;
+    tracker.update(&old);
+    assert!(tracker.get_for_packet(&old).is_some());
+    tracker.update(&packet(50002, 2.0));
+    tracker.update(&latest);
+    assert!(tracker.get_for_packet(&old).is_none());
+    assert_eq!(tracker.get_for_packet(&latest).unwrap().packets, 1);
+    let mut pending = latest.clone();
+    pending.no += 1;
+    assert!(tracker.get_for_packet(&pending).is_none());
+}
