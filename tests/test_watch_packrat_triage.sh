@@ -29,7 +29,7 @@ live() {
         record_type:"capture_triage", status:$status,
         health:{capture_id:"a", alert_session_id:"1-2", capture_interface:"wlan1", issues:[],
             packets_total:$packets, pcap_buffer_drops:0, alert_saving:true, capture_truncated_frames:0,
-            capture_queue_full_packets:8,capture_queue_full_packets_delta:3,
+            capture_queue_full_packets:8,capture_queue_full_packets_delta:3, flow_cache:{retained_summaries:8192,summary_evictions:4,extra:"private"},
             capture_link_type:1, capture_link_decodable:true, disk_free_mib:2048,
             archive_enabled:true,archive_alert_evidence_only:true,
             archive_evidence_rules:["traffic.periodic_fixed_size"],
@@ -50,12 +50,12 @@ medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","revision":65
 live current 12 "$queue" "$medium" >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
-bash "$watch" --check "$state" | jq -e '.status=="current" and (.healthy_capture_seconds | type=="number" and .>=0)' >/dev/null
+bash "$watch" --check "$state" | jq -e '.status=="current" and (.healthy_capture_seconds | type=="number" and .>=0) and .flow_cache=={retained_summaries:8192,summary_evictions:4}' >/dev/null
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .journal_status=="not_checked" and .journal_pending_events==0
     and .link_type==1 and .link_decodable and .truncated_frames==0 and .disk_free_mib==2048
-    and .capture_queue_full_packets==8 and .capture_queue_full_packets_delta==3
+    and .capture_queue_full_packets==8 and .capture_queue_full_packets_delta==3 and .flow_cache=={retained_summaries:8192,summary_evictions:4}
     and .review_queue[0].packet_evidence_status=="partial" and .review_queue[0].revision==10
     and .archive_mode=="alert_evidence" and .archive_rule_ids==["traffic.periodic_fixed_size"]
     and .archive_usage=={frames:1,max_frames:100,payload_bytes:1024,max_payload_bytes:65536}
@@ -98,10 +98,10 @@ jq -e '(.review_queue | map(.alert_id))==[7,8] and .review_queue[1].archive_rule
     and .review_queue[1].severity=="MEDIUM" and .review_queue[1].in_recent_alerts==false
     and .open_archive_rule_alerts==4 and .review_queue_truncated
     and (tostring | contains("private") | not)' "$state" >/dev/null
-live current 14 '[]' | jq '.health.archive_evidence_rules=["unsafe data"]
+live current 14 '[]' | jq '.health.archive_evidence_rules=["unsafe data"] | .health.flow_cache.summary_evictions=0.25
     | .health.archive_usage.frames=90' >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
-jq -e '.archive_rule_ids==null and .archive_near_limit and .archive_usage.frames==90' "$state" >/dev/null
+jq -e '.archive_rule_ids==null and .archive_near_limit and .archive_usage.frames==90 and .flow_cache==null' "$state" >/dev/null
 (
     # shellcheck source=scripts/packrat-rollout.sh
     source "$root/scripts/packrat-rollout.sh"

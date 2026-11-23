@@ -5,6 +5,8 @@ umask 077; export LC_ALL=C
 snapshot_validation='
     def scope_id: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
     def counter: if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end;
+    def flow_cache: if type == "object" then {retained_summaries:(.retained_summaries | counter),summary_evictions:(.summary_evictions | counter)}
+        | if any(.[]; . == null) then null else . end else null end;
     def packet_evidence_counts: (.evidence_frame_count | counter) as $refs
         | if (.evidence_availability | type == "object" and length > 0 and
               all(to_entries[]; (.key | IN("complete","truncated","missing","length_unknown","unreadable"))
@@ -123,7 +125,7 @@ check_snapshot() {
                    elif .packet_counter_regressed == true then "packet_counter_regressed"
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
-           triage_status:.status, age_seconds:$age, max_age_seconds, packets:(.packets | counter),
+           triage_status:.status, age_seconds:$age, max_age_seconds, packets:(.packets | counter), flow_cache:(if $age >= -5 and $age <= .max_age_seconds then .flow_cache | flow_cache else null end),
            packet_counter_gap:(.packet_counter_gap | if type == "boolean" then . else null end),
            poll_started_at:(.poll_started_at | if type == "number" and . > 0 and floor == .
                 and . <= 9007199254740991 then . else null end),
@@ -137,10 +139,8 @@ check_snapshot() {
               else null end),
            journal_status:(.journal_status | if . == "current" or . == "write_failed" or
               . == "disabled" or . == "not_checked" then . else null end),
-           journal_pending_events:(.journal_pending_events |
-              if type == "number" and . >= 0 and . <= 16 and floor == . then . else null end),
-           journal_unconfirmed_events:(.journal_unconfirmed_events |
-              if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end),
+           journal_pending_events:(.journal_pending_events | counter | if . != null and . <= 16 then . else null end),
+           journal_unconfirmed_events:(.journal_unconfirmed_events | counter),
            alert_sample_gap:(.alert_sample_gap | if type == "boolean" then . else null end),
            capture_id:(.capture_id | scope_id), session_id:(.session_id | scope_id)}' <<< "$raw" 2>/dev/null); then
         printf '%s\n' '{"status":"snapshot_invalid"}'
@@ -268,7 +268,7 @@ sanitize() {
             link_type:(.health.capture_link_type | counter),
             link_decodable:(.health.capture_link_decodable | flag),
             issues:(.health.issues | if type == "array" then .[:64] | map(token | select(. != null)) | unique else null end),
-            packets:(.health.packets_total | counter), buffer_drops:(.health.pcap_buffer_drops | counter),
+            packets:(.health.packets_total | counter), buffer_drops:(.health.pcap_buffer_drops | counter), flow_cache:(.health.flow_cache | flow_cache),
             capture_queue_full_packets:(.health.capture_queue_full_packets | counter),
             capture_queue_full_packets_delta:(.health.capture_queue_full_packets_delta | counter),
             truncated_frames:(.health.capture_truncated_frames | counter),
@@ -455,7 +455,7 @@ while :; do
               else . end' <<< "$snapshot")
     snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")
     if "$once"; then publish_snapshot not_checked; printf '%s\n' "$snapshot"; break; fi
-    key=$(jq -c 'del(.updated_at, .poll_started_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id,
+    key=$(jq -c 'del(.updated_at, .poll_started_at, .packets, .disk_free_mib, .archive_usage, .flow_cache, .highest_observed_alert_id,
         .last_observed, .buffer_drops_delta, .capture_queue_full_packets_delta)' <<< "$snapshot")
     checkpoint=false
     if [[ $key == "$previous" && $journal_enabled == 1 ]] && (( SECONDS >= next_checkpoint )); then

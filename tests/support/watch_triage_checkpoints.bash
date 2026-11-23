@@ -9,7 +9,7 @@ PACKRAT_TRIAGE_WATCH_INTERVAL=1 PACKRAT_TRIAGE_WATCH_CHECKPOINT_INTERVAL=2 \
     bash "$watch" "$state" -- cat -- "$report" >"$scratch/quiet-events" &
 watch_pid=$!
 await_packets 100
-live current 120 '[]' '[]' >"$report.next"
+live current 120 '[]' '[]' | jq -c '.health.flow_cache.summary_evictions=5' >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 120
 for _ in {1..100}; do
@@ -25,7 +25,7 @@ bash "$watch" --history "$state" | jq -se 'length>=2 and .[0].checkpoint==null
     and ([.[].journal_writer] | unique | length) == 1
     and ([.[].journal_sequence] == [range(1; length + 1)])
     and all(.[1:][]; .checkpoint==true and .alert_changes==null and .capture_id=="a" and .buffer_drops==0)' >/dev/null
-jq -e '.status=="current" and .packets==120 and .journal_status=="current" and .journal_pending_events==0' "$state" >/dev/null
+jq -e '.status=="current" and .packets==120 and .journal_status=="current" and .journal_pending_events==0 and .flow_cache.summary_evictions==5' "$state" >/dev/null
 
 live current 130 '[]' '[]' >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/restart-events" &

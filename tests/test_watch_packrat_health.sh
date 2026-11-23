@@ -105,11 +105,19 @@ bash "$watch" --once | jq -e '
     .record_type == "capture_health" and .event == "sample" and .issues == []
     and .pcap_buffer_drops == 0 and .alert_watcher_alive == true and .alert_watcher_pipeline_alive == null
     and .archive_enabled == null and .alert_watcher_log == null and .poll_interval_seconds == 15
-    and .alert_log_storage == null
+    and .alert_log_storage == null and .flow_cache == null
     and .disk_path == "/"
     and .packets_total == null and .packets_since_last_poll == null
     and .expect_traffic_seconds == 0 and .packets_without_progress_seconds == null
 ' >/dev/null
+
+for cache in '{"retained_summaries":8192,"summary_evictions":4,"extra":"private"}' '{"retained_summaries":-1,"summary_evictions":4}'; do
+    sample=$(jq -c --argjson cache "$cache" '.flow_cache = $cache' <<< "$PACKRAT_FAKE_HEALTH")
+    PACKRAT_FAKE_HEALTH="$sample" bash "$watch" --once | jq -e --argjson cache "$cache" '
+        .issues == [] and .pcap_buffer_drops == 0 and
+        .flow_cache == (if $cache.retained_summaries < 0 then null else {retained_summaries:8192,summary_evictions:4} end)
+    ' >/dev/null
+done
 
 pipeline=$'91 2 Ss bash\n92 91 S sudo\n93 92 S sudo\n94 93 S tail'
 PACKRAT_ALERT_PIPELINE=1 PACKRAT_FAKE_PROCESSES="$pipeline"$'\n95 91 S jq' \

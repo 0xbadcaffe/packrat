@@ -19,7 +19,6 @@ usage() {
         'PACKRAT_REQUIRE_ARCHIVE (1 requires active archiving; alert-evidence also verifies selective retention),' \
         'PACKRAT_MIN_FREE_MIB (512). Health requests always use IPv4 loopback.'
 }
-
 once=false
 case ${1-} in
     '') ;;
@@ -28,7 +27,6 @@ case ${1-} in
     *) usage >&2; exit 2 ;;
 esac
 if (( $# > 1 )); then usage >&2; exit 2; fi
-
 port=${PACKRAT_HEALTH_PORT:-9477}
 interval=${PACKRAT_HEALTH_INTERVAL:-15}
 heartbeat=${PACKRAT_HEALTH_HEARTBEAT:-300}
@@ -354,6 +352,8 @@ read_health() {
             capture_queue_full_packets: (if $usable then $queue_full else null end),
             capture_queue_full_packets_delta: counter_delta($queue_full; $baseline.queue_full),
             capture_queue: $queue,
+            flow_cache: (if $usable then $h.flow_cache | objects | {retained_summaries,summary_evictions}
+                | select(all(.[]; type == "number" and . >= 0 and . <= 9007199254740991 and floor == .)) else empty end) // null,
             alert_saving: ($h.alert_saving // false),
             alert_watcher_alive: (if $pipeline == false or $source == false or $context == false then false else $watcher end),
             alert_watcher_pipeline_alive: $pipeline,
