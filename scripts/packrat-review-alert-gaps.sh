@@ -5,7 +5,7 @@ export LC_ALL=C
 
 usage() {
     printf '%s\n' 'Usage: packrat-review-alert-gaps.sh COVERAGE.json ALERT_LOG [PREVIOUS_LOG ...]' \
-        'Reads up to 8 MiB and 512 distinct saved alerts. Supply previous logs oldest first.' \
+        'Reads up to 8 MiB and returns up to 512 saved alerts matching the requested ID ranges. Supply previous logs oldest first.' \
         'Absence refers only to the supplied logs, never to uncaptured or unpersisted traffic.'
 }
 
@@ -39,6 +39,9 @@ fi
 read -r capture session < <(jq -r '.scope | [.capture_id,.session_id] | @tsv' <<< "$requested")
 logs=("$@") previous=()
 for log in "${logs[@]:1}"; do previous+=(--previous-log "$log"); done
+range_args=()
+range_list=$(jq -er '.ranges[] | "\(.first_id)..\(.last_id)"' <<< "$requested")
+while IFS= read -r range; do range_args+=(--alert-range "$range"); done <<< "$range_list"
 log_stamps() {
     local path
     for path in "${logs[@]}"; do
@@ -49,7 +52,7 @@ log_stamps() {
 before=$(log_stamps) || { printf '%s\n' 'Expected regular saved alert logs.' >&2; exit 2; }
 if ! history=$(timeout --kill-after=2s 15s packrat-archive --alerts "${logs[0]}" \
     --session "$session" --capture-id "$capture" --limit 512 --scan-bytes 8388608 \
-    --report-integrity "${previous[@]}" | head -c 2097153) || (( ${#history} > 2097152 )); then
+    --report-integrity "${range_args[@]}" "${previous[@]}" | head -c 2097153) || (( ${#history} > 2097152 )); then
     printf '%s\n' 'Could not read the bounded saved alert log.' >&2
     exit 1
 fi

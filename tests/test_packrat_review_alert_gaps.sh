@@ -10,7 +10,10 @@ touch -- "$scratch/current.jsonl" "$scratch/old.jsonl"
 cat > "$scratch/packrat-archive" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ $* == "--alerts $TEST_DIR/current.jsonl --session session-a --capture-id 00000000000000000000000000000001 --limit 512 --scan-bytes 8388608 --report-integrity --previous-log $TEST_DIR/old.jsonl" ]]
+[[ ${*:1:11} == "--alerts $TEST_DIR/current.jsonl --session session-a --capture-id 00000000000000000000000000000001 --limit 512 --scan-bytes 8388608 --report-integrity" ]]
+shift 11
+[[ $* == "--alert-range 5..8 --alert-range 20..20 --previous-log $TEST_DIR/old.jsonl" ||
+   $* == "--alert-range 1..9007199254740991 --previous-log $TEST_DIR/old.jsonl" ]]
 touch -- "$TEST_DIR/called"
 case ${TEST_MODE:-normal} in
     raced) printf 'late record\n' >> "$TEST_DIR/current.jsonl" ;;

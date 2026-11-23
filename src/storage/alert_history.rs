@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
-use std::{collections::HashSet, fs::{File, OpenOptions}, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}};
+use std::{collections::HashSet, fs::{File, OpenOptions}, io::{Read, Seek, SeekFrom}, ops::RangeInclusive, path::{Path, PathBuf}};
 
 use crate::analysis::alert_center::{AlertDisposition, AlertFlow, CREDENTIAL_ALERT_DETAIL, MAX_ALERT_PACKET_REFS};
 use crate::analysis::alert_provenance::{EvidenceConfidence, legacy_rule_hint};
@@ -12,6 +12,7 @@ use super::packet_archive::valid_capture_id;
 
 pub const MAX_HISTORY_LIMIT: usize = 512;
 pub const MAX_PREVIOUS_LOGS: usize = 8;
+pub const MAX_ALERT_ID_RANGES: usize = 64;
 
 pub struct AlertLogs<'a> {
     active: &'a Path,
@@ -163,7 +164,7 @@ pub fn recent_alerts_report_with_budget(
     limit: usize,
     scan_bytes: Option<std::num::NonZeroU64>,
 ) -> Result<AlertHistoryReport> {
-    filtered_alerts_report(previous, active, session_filter, capture_filter, None, limit, scan_bytes)
+    filtered_alerts_report(previous, active, session_filter, capture_filter, &[], limit, scan_bytes)
 }
 
 pub fn exact_alert_report(
@@ -174,7 +175,21 @@ pub fn exact_alert_report(
     alert_id: u64,
 ) -> Result<AlertHistoryReport> {
     ensure!(alert_id != 0, "Alert ID must be positive");
-    filtered_alerts_report(previous, active, Some(session), Some(capture), Some(alert_id), 1, None)
+    filtered_alerts_report(previous, active, Some(session), Some(capture), &[alert_id..=alert_id], 1, None)
+}
+
+pub fn alert_ranges_report(
+    previous: &[PathBuf],
+    active: &Path,
+    scope: (&str, &str),
+    ranges: &[RangeInclusive<u64>],
+    limit: usize,
+    scan_bytes: std::num::NonZeroU64,
+) -> Result<AlertHistoryReport> {
+    ensure!(valid_capture_id(scope.0) && valid_capture_id(scope.1), "Invalid session or capture ID");
+    ensure!(!ranges.is_empty() && ranges.len() <= MAX_ALERT_ID_RANGES
+        && ranges.iter().all(|range| *range.start() != 0 && !range.is_empty()), "Invalid alert ID ranges");
+    filtered_alerts_report(previous, active, Some(scope.0), Some(scope.1), ranges, limit, Some(scan_bytes))
 }
 
 fn filtered_alerts_report(
@@ -182,7 +197,7 @@ fn filtered_alerts_report(
     active: &Path,
     session_filter: Option<&str>,
     capture_filter: Option<&str>,
-    alert_id: Option<u64>,
+    ranges: &[RangeInclusive<u64>],
     limit: usize,
     scan_bytes: Option<std::num::NonZeroU64>,
 ) -> Result<AlertHistoryReport> {
@@ -218,7 +233,7 @@ fn filtered_alerts_report(
             }
             if session_filter.is_some_and(|id| record.session_id != id)
                 || capture_filter.is_some_and(|id| alert.capture_id.as_deref() != Some(id))
-                || alert_id.is_some_and(|id| alert.id != id)
+                || (!ranges.is_empty() && !ranges.iter().any(|range| range.contains(&alert.id)))
                 || !seen.insert((record.session_id.clone(), alert.capture_id.clone(), alert.id))
             {
                 continue;

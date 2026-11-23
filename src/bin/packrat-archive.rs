@@ -15,6 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
         println!("       packrat-archive DIRECTORY --alert-flow-summary ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nSummarizes directional TCP/UDP headers from cited frames only, without exporting packet bytes.");
         println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nCompares the latest saved trigger of each alert for nearby transport-tuple matches; does not identify a connection.");
+        println!("       packrat-archive --alerts ALERT_LOG --alert-range FIRST..LAST --session SESSION_ID --capture-id CAPTURE_ID --report-integrity [--scan-bytes BYTES] [--limit N] [--previous-log PATH]...\nSelects matching IDs before applying the result limit. Repeat --alert-range up to 64 times; the default scan budget is 8 MiB.");
         return Ok(());
     };
     if path == "--alerts" {
@@ -209,11 +210,12 @@ fn project_alert(
 }
 
 fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
-    use packrat_tui::storage::alert_history::{exact_alert_report, recent_alerts_report_with_budget};
+    use packrat_tui::storage::alert_history::{MAX_ALERT_ID_RANGES, alert_ranges_report, exact_alert_report, recent_alerts_report_with_budget};
 
     let log = args.next().ok_or("--alerts requires an alert log")?;
     let (mut session, mut capture, mut limit) = (None, None, None);
     let mut alert_id = None;
+    let mut ranges = Vec::new();
     let mut related_to = None;
     let mut scan_bytes = None;
     let mut previous = Vec::new();
@@ -229,6 +231,11 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
             "--session" if session.is_none() => session = Some(value),
             "--capture-id" if capture.is_none() => capture = Some(value),
             "--alert-id" if alert_id.is_none() => alert_id = Some(value.parse()?),
+            "--alert-range" if ranges.len() < MAX_ALERT_ID_RANGES => {
+                let (first, last) = value.split_once("..").ok_or("--alert-range requires FIRST..LAST")?;
+                ranges.push(first.parse()?..=last.parse()?);
+            }
+            "--alert-range" => return Err("Too many alert ID ranges".into()),
             "--related-to" if related_to.is_none() => related_to = Some(value.parse()?),
             "--limit" if limit.is_none() => limit = Some(value.parse()?),
             "--scan-bytes" if scan_bytes.is_none() => scan_bytes = Some(value.parse()?),
@@ -238,7 +245,7 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
         }
     }
     if let Some(anchor) = related_to {
-        if alert_id.is_some() || limit.is_some() || scan_bytes.is_some() || report_integrity {
+        if alert_id.is_some() || !ranges.is_empty() || limit.is_some() || scan_bytes.is_some() || report_integrity {
             return Err("--related-to uses its own bounded scan and cannot be combined with other query options".into());
         }
         let report = packrat_tui::storage::alert_related::related_alerts(
@@ -253,12 +260,20 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
     }
     let log = std::path::Path::new(&log);
     let report = if let Some(id) = alert_id {
-        if limit.is_some() {
-            return Err("--alert-id cannot be combined with --limit".into());
+        if limit.is_some() || !ranges.is_empty() {
+            return Err("--alert-id cannot be combined with --limit or --alert-range".into());
         }
         exact_alert_report(&previous, log,
             session.as_deref().ok_or("--alert-id requires --session")?,
             capture.as_deref().ok_or("--alert-id requires --capture-id")?, id)?
+    } else if !ranges.is_empty() {
+        if !report_integrity {
+            return Err("--alert-range requires --report-integrity".into());
+        }
+        alert_ranges_report(&previous, log, (
+            session.as_deref().ok_or("--alert-range requires --session")?,
+            capture.as_deref().ok_or("--alert-range requires --capture-id")?,
+        ), &ranges, limit.unwrap_or(512), scan_bytes.unwrap_or(std::num::NonZeroU64::new(8 * 1024 * 1024).unwrap()))?
     } else {
         recent_alerts_report_with_budget(
             &previous, log, session.as_deref(), capture.as_deref(), limit.unwrap_or(50), scan_bytes,
