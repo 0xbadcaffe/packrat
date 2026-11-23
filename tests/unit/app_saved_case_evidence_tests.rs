@@ -97,6 +97,34 @@ fn scoped_case() -> (String, ProjectState) {
 }
 
 #[test]
+fn archive_alert_project_opens_at_the_trigger_in_investigate() {
+    use crate::storage::{alert_evidence::create_alert_project, alert_history::AlertLogs,
+        packet_archive::PacketArchive, project_store};
+
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let (scope, state) = scoped_case();
+    let alert = &state.alert_items[0];
+    let mut archive = PacketArchive::open(&root.join("archive")).unwrap();
+    archive.append_scoped(&scope, &state.pinned_packets).unwrap();
+    let log = root.join("alerts.jsonl");
+    let record = serde_json::json!({"schema_version":1,"record_type":"alert","session_id":"s","alert":alert});
+    std::fs::write(&log, format!("{record}\n")).unwrap();
+    let output = root.join("case.json");
+    create_alert_project(&mut archive, AlertLogs::new(&log, &[]).unwrap(), "s", &scope, alert.id, &output).unwrap();
+
+    let mut app = App::new_for_test();
+    app.capture_id = Some(App::new_capture_id());
+    app.apply_project_state(project_store::load(&output).unwrap()).unwrap();
+    assert_eq!(app.active_tab, Tab::Investigate);
+    assert!(app.worklist.open);
+    assert_eq!(app.worklist.active_packet_no(), Some(1));
+    assert_eq!(app.active_investigation_packet().unwrap().info, "saved evidence");
+    assert!(app.investigate_selected_alert());
+    assert!(app.status_msg.as_deref().unwrap().contains("1 unavailable (saved case)"));
+}
+
+#[test]
 fn restored_alert_opens_only_verified_pins_and_preserves_scope_on_resave() {
     let (scope, state) = scoped_case();
     let other_scope = App::new_capture_id();

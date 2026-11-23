@@ -16,6 +16,8 @@ use super::alert_history::{AlertLogs, ReverseAlertLines};
 use super::alert_jsonl::ExistingAlertRecord;
 
 mod verify;
+mod case;
+pub use case::create_alert_project;
 pub use verify::{VerifiedEvidence, verify_alert_evidence, verify_logged_alert_evidence};
 
 const MANIFEST: &str = "manifest.json";

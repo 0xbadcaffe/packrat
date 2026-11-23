@@ -164,30 +164,12 @@ pub struct InvestigationTray {
 }
 
 impl InvestigationTray {
-    pub(super) const MAX_RETAINED_PACKETS: usize = 1024;
-    pub(super) const MAX_RETAINED_BYTES: usize = 64 * 1024 * 1024;
-
-    fn packet_cost(packet: &Packet) -> usize {
-        let metadata = packet
-            .capture
-            .as_ref()
-            .map(|capture| {
-                capture.interface_name.as_ref().map_or(0, String::len)
-                    + capture.comments.iter().map(String::len).sum::<usize>()
-            })
-            .unwrap_or(0);
-        std::mem::size_of::<Packet>()
-            + packet.bytes.len()
-            + packet.src.len()
-            + packet.dst.len()
-            + packet.protocol.len()
-            + packet.info.len()
-            + metadata
-    }
+    pub(super) const MAX_RETAINED_PACKETS: usize = crate::model::project::MAX_PINNED_PACKETS;
+    pub(super) const MAX_RETAINED_BYTES: usize = crate::model::project::MAX_PINNED_BYTES;
 
     pub(super) fn retain_packet(&mut self, packet: &Packet) -> Result<(), String> {
         if !self.retained_packets.contains_key(&packet.no) {
-            let cost = Self::packet_cost(packet);
+            let cost = crate::model::project::pinned_packet_cost(packet);
             if self.retained_packets.len() >= Self::MAX_RETAINED_PACKETS
                 || cost > Self::MAX_RETAINED_BYTES.saturating_sub(self.retained_bytes)
             {
@@ -233,7 +215,7 @@ impl InvestigationTray {
         if let InvestigationItem::Packet(no) = &removed {
             self.restored_packet_scopes.remove(no);
             if let Some(packet) = self.retained_packets.remove(no) {
-                self.retained_bytes -= Self::packet_cost(&packet);
+                self.retained_bytes -= crate::model::project::pinned_packet_cost(&packet);
             }
         }
         self.active = if self.items.is_empty() {

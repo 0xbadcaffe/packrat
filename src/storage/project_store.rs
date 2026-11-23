@@ -11,7 +11,7 @@ use crate::model::project::{ProjectSaveMode, ProjectState, RecentProject, SCHEMA
 const MAX_PROJECT_BYTES: u64 = 512 * 1024 * 1024;
 
 fn atomic_json_write(
-    value: &impl serde::Serialize, path: &Path, max_bytes: u64, replace: bool,
+    value: &impl serde::Serialize, path: &Path, max_bytes: u64, replace: bool, pretty: bool,
 ) -> Result<()> {
     let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
@@ -20,7 +20,11 @@ fn atomic_json_write(
     let mut pending = tempfile::NamedTempFile::new_in(parent)?;
     {
         let mut writer = BufWriter::new(pending.as_file_mut());
-        serde_json::to_writer_pretty(&mut writer, value)?;
+        if pretty {
+            serde_json::to_writer_pretty(&mut writer, value)?;
+        } else {
+            serde_json::to_writer(&mut writer, value)?;
+        }
         writer.flush()?;
     }
     anyhow::ensure!(pending.as_file().metadata()?.len() <= max_bytes, "Project exceeds size limit");
@@ -41,15 +45,15 @@ fn atomic_json_write(
     Ok(())
 }
 
-/// Save a project to `path` as pretty-printed JSON.
+/// Save a project to `path`, keeping pinned packet byte arrays compact.
 pub fn save(state: &ProjectState, path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
-    atomic_json_write(state, path, MAX_PROJECT_BYTES, true)
+    atomic_json_write(state, path, MAX_PROJECT_BYTES, true, state.pinned_packets.is_empty())
 }
 
 /// Create a new project without replacing an existing case.
 pub fn create(state: &ProjectState, path: &Path) -> Result<()> {
-    atomic_json_write(state, path, MAX_PROJECT_BYTES, false)
+    atomic_json_write(state, path, MAX_PROJECT_BYTES, false, state.pinned_packets.is_empty())
 }
 
 /// Load a project from `path`.  Performs lightweight schema migration.
@@ -105,7 +109,7 @@ pub fn add_to_recent(
     list.truncate(20);
 
     if let Some(p) = recent_path() {
-        atomic_json_write(&list, &p, MAX_PROJECT_BYTES, true)?;
+        atomic_json_write(&list, &p, MAX_PROJECT_BYTES, true, true)?;
     }
     Ok(())
 }

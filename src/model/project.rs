@@ -14,6 +14,17 @@ use crate::storage::case_bundle::ObjectEntry;
 use crate::net::packet::Packet;
 
 pub const SCHEMA_VERSION: u32 = 6;
+pub(crate) const MAX_PINNED_PACKETS: usize = 1024;
+pub(crate) const MAX_PINNED_BYTES: usize = 64 * 1024 * 1024;
+
+pub(crate) fn pinned_packet_cost(packet: &Packet) -> usize {
+    let metadata = packet.capture.as_ref().map_or(0, |capture| {
+        capture.interface_name.as_ref().map_or(0, String::len)
+            + capture.comments.iter().map(String::len).sum::<usize>()
+    });
+    std::mem::size_of::<Packet>() + packet.bytes.len() + packet.src.len() + packet.dst.len()
+        + packet.protocol.len() + packet.info.len() + metadata
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum SavedInvestigationItem {
