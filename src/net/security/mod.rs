@@ -195,6 +195,7 @@ pub struct SecurityEngine {
     dhcp_server_evidence: crate::net::recent_evidence::RecentEvidence<1024, 3600>,
     dhcp_client_evidence: crate::net::recent_evidence::RecentEvidence<1024, 10>,
     ipv6_fragments: Ipv6FragmentReassembler,
+    ipv6_fragment_evidence: crate::net::recent_evidence::RecentEvidence<1024, 120>,
     pub ipv6_reassembled: u64,
     http_headers: HashMap<(TcpFlowKey, bool), HttpHeaderState>,
     dns_transactions: DnsTransactionTracker,

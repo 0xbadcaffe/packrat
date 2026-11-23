@@ -47,6 +47,7 @@ impl SecurityEngine {
             dhcp_server_evidence: Default::default(),
             dhcp_client_evidence: Default::default(),
             ipv6_fragments: Ipv6FragmentReassembler::default(),
+            ipv6_fragment_evidence: Default::default(),
             ipv6_reassembled: 0,
             http_headers: HashMap::new(),
             dns_transactions: DnsTransactionTracker::default(),
@@ -87,6 +88,7 @@ impl SecurityEngine {
         self.dhcp_server_evidence = Default::default();
         self.dhcp_client_evidence = Default::default();
         self.ipv6_fragments.clear();
+        self.ipv6_fragment_evidence = Default::default();
         self.ipv6_reassembled = 0;
         self.http_headers.clear();
         self.dns_transactions.clear();
@@ -149,7 +151,7 @@ impl SecurityEngine {
         self.check_beacon_and_exfiltration(pkt, tcp_payload, archive_rules);
         self.check_ntlm_fanout(pkt);
         self.check_dhcp_integrity(pkt, archive_rules);
-        self.check_ipv6_fragment_reassembly(pkt);
+        self.check_ipv6_fragment_reassembly(pkt, archive_rules);
         self.check_http_request_smuggling(pkt);
         self.check_industrial_policy(pkt, modbus);
         self.check_dns_transaction_integrity(pkt, &dns, archive_rules);

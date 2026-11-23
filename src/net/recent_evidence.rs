@@ -37,9 +37,14 @@ impl<const CAPACITY: usize, const MAX_AGE_SECS: u64> RecentEvidence<CAPACITY, MA
     }
 
     pub(crate) fn supporting_packet_at(&self, trigger: &Packet, frame: u64, window_end: f64) -> Option<&Packet> {
-        if frame == trigger.no { return None; }
-        self.packets.get(&key(trigger, frame)).filter(|packet| {
+        self.cited_packet(trigger, frame).filter(|packet| {
             (0.0..=MAX_AGE_SECS as f64).contains(&(window_end - packet.timestamp))
         })
+    }
+
+    // Use for an exact reference selected by a tracker that already checked its own time window.
+    pub(crate) fn cited_packet(&self, trigger: &Packet, frame: u64) -> Option<&Packet> {
+        if frame == trigger.no { return None; }
+        self.packets.get(&key(trigger, frame))
     }
 }

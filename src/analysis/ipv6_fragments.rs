@@ -76,6 +76,10 @@ pub struct Ipv6FragmentReassembler {
 
 impl Ipv6FragmentReassembler {
     pub fn ingest(&mut self, packet: &Packet) -> Ipv6FragmentOutcome {
+        self.ingest_tracking(packet, |_| {})
+    }
+
+    pub(crate) fn ingest_tracking(&mut self, packet: &Packet, pending: impl FnOnce(&Packet)) -> Ipv6FragmentOutcome {
         let Some(fragment) = parse_fragment(&packet.bytes) else {
             return Ipv6FragmentOutcome::Ignored;
         };
@@ -160,9 +164,11 @@ impl Ipv6FragmentReassembler {
 
         let fragment_count = state.fragments.len();
         let (Some(final_len), Some(next_header)) = (state.final_len, state.first_header) else {
+            pending(packet);
             return Ipv6FragmentOutcome::Pending { fragment_count };
         };
         let Some(payload) = assemble_if_complete(&state.fragments, final_len) else {
+            pending(packet);
             return Ipv6FragmentOutcome::Pending { fragment_count };
         };
         let key = Ipv6FragmentKey { next_header, ..fragment.key };

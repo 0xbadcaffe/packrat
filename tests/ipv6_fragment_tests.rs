@@ -3,6 +3,10 @@ use packrat_tui::engine::AnalysisCore;
 use packrat_tui::net::packet::{CaptureMetadata, Packet};
 use packrat_tui::net::security::SecurityEngine;
 
+#[cfg(feature = "terminal-ui")]
+#[path = "ipv6_fragments/archive_evidence.rs"]
+mod archive_evidence;
+
 fn fragment_packet(no: u64, identification: u32, offset: u16, more: bool, payload: &[u8]) -> Packet {
     assert_eq!(offset % 8, 0);
     let mut bytes = vec![0_u8; 14 + 40 + 8];

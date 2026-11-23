@@ -89,10 +89,18 @@ impl SecurityEngine {
         }
     }
 
-    pub(super) fn check_ipv6_fragment_reassembly(&mut self, pkt: &Packet) {
-        match self.ipv6_fragments.ingest(pkt) {
+    pub(super) fn check_ipv6_fragment_reassembly(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
+        let candidates = &mut self.ipv6_fragment_evidence;
+        match self.ipv6_fragments.ingest_tracking(pkt, |accepted| {
+            if archive_rules.is_some() { candidates.remember(accepted); }
+        }) {
             Ipv6FragmentOutcome::Ignored | Ipv6FragmentOutcome::Pending { .. } => {}
             Ipv6FragmentOutcome::Overlap { identification, previous_frame, conflicting_bytes } => {
+                if archive_rules.is_some_and(|rules| conflicting_bytes || rules.iter().any(|rule| rule == "ipv6.reassembly_rejected"))
+                    && let Some(previous) = candidates.cited_packet(pkt, previous_frame)
+                {
+                    self.findings.retained_evidence.push(previous.clone());
+                }
                 self.push_ids_finding(IdsFinding {
                     alert: IdsAlert {
                         pkt_no: pkt.no,
