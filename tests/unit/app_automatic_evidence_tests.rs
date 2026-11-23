@@ -95,6 +95,59 @@ fn detected_router_change_is_saved_and_only_opted_in_evidence_is_archived() {
 }
 
 #[test]
+fn opted_in_router_burst_archives_supporting_frames_after_history_eviction() {
+    use crate::net::packet::TimestampResolution;
+    use crate::storage::packet_archive::{ArchiveLimits, ArchiveWorker, PacketArchive};
+
+    let wait = |app: &mut App| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !app.analysis_idle() {
+            app.poll_analysis();
+            assert!(std::time::Instant::now() < deadline, "background analysis did not finish");
+            std::thread::yield_now();
+        }
+    };
+    let ra = |frame, vlan| {
+        let mut packet = router_advertisement_fixture(frame, 1, vlan);
+        packet.timestamp = 1.25;
+        let timestamp = packet.capture.as_mut().unwrap().timestamp.as_mut().unwrap();
+        timestamp.ticks = 125;
+        timestamp.resolution = TimestampResolution::Decimal(2);
+        packet
+    };
+    for selected in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("archive");
+        let mut app = App::new_for_test();
+        let archive = ArchiveWorker::open_alert_evidence(&path, ArchiveLimits::default()).unwrap();
+        app.set_packet_archive_with_rules(archive, selected.then(|| "ipv6.ra_rate_burst".into()).into_iter().collect()).unwrap();
+        let scope = app.capture_id.clone().unwrap();
+        app.start_background_analysis().unwrap();
+        for no in 1..=20 {
+            app.inject_packet(ra(no, if no == 20 { 20 } else { 10 }));
+            wait(&mut app);
+        }
+        let trigger = crate::engine::worker::WorkerLimits::default().history_packets as u64 + 22;
+        for no in 21..trigger {
+            app.inject_packet(crate::net::parser::parse_ethernet(&[0; 14], no, 1.25));
+            wait(&mut app);
+        }
+        app.packets.clear();
+        app.inject_packet(ra(trigger, 10));
+        wait(&mut app);
+        app.stop_background_analysis().unwrap();
+        app.packet_archive.as_mut().unwrap().finish().unwrap();
+
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { 20 } else { 0 });
+        assert!(archive.packet_for_capture(&scope, 20).unwrap().is_none());
+        for frame in (1..=19).chain([trigger]) {
+            assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), selected);
+        }
+    }
+}
+
+#[test]
 fn selective_archive_retains_scoped_high_alert_frames_without_pinning_unrelated_traffic() {
     use crate::storage::packet_archive::{ArchiveLimits, ArchiveWorker, PacketArchive};
 

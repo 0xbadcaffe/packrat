@@ -3,6 +3,36 @@ use std::net::Ipv6Addr;
 
 const NDP_BINDING_WINDOW_SECS: f64 = 300.0;
 const MAX_ROUTER_EVIDENCE_BYTES: usize = 2_048;
+const MAX_ROUTER_RATE_EVIDENCE: usize = 256;
+
+pub(super) type RouterSource = (ServiceScope, [u8; 6]);
+
+#[derive(Default)]
+pub(super) struct RouterRateEvidence(std::collections::VecDeque<(RouterSource, Packet)>);
+
+impl RouterRateEvidence {
+    fn remember(&mut self, source: RouterSource, packet: &Packet) {
+        while self.0.front().is_some_and(|(_, prior)| packet.timestamp - prior.timestamp > 1.0) {
+            self.0.pop_front();
+        }
+        if crate::model::project::pinned_packet_cost(packet) > MAX_ROUTER_EVIDENCE_BYTES {
+            return;
+        }
+        if self.0.len() == MAX_ROUTER_RATE_EVIDENCE {
+            self.0.pop_front();
+        }
+        self.0.push_back((source, packet.clone()));
+    }
+
+    fn supporting_frames(&self, source: RouterSource, frames: &[u64]) -> impl Iterator<Item = Packet> {
+        self.0.iter().filter(move |(key, packet)| *key == source && frames.contains(&packet.no))
+            .map(|(_, packet)| packet.clone())
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../tests/unit/router_rate_evidence_cache_tests.rs"]
+mod rate_evidence_tests;
 
 pub(super) struct RouterLink {
     mac: [u8; 6],
@@ -178,10 +208,14 @@ impl SecurityEngine {
         if state.samples.iter().any(|&(_, frame)| frame == pkt.no) { return; }
         if state.samples.len() == RA_FLOOD_THRESHOLD { state.samples.pop_front(); }
         state.samples.push_back((now, pkt.no));
+        let retain_rate = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "ipv6.ra_rate_burst"));
         if state.samples.len() == RA_FLOOD_THRESHOLD && !state.alerted {
             state.alerted = true;
-            let related_packets = state.samples.iter().take(RA_FLOOD_THRESHOLD - 1)
+            let related_packets: Vec<_> = state.samples.iter().take(RA_FLOOD_THRESHOLD - 1)
                 .map(|&(_, frame)| frame).collect();
+            if retain_rate {
+                self.findings.retained_evidence.extend(self.router_rate_evidence.supporting_frames(key, &related_packets));
+            }
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
@@ -195,6 +229,9 @@ impl SecurityEngine {
                 related_packets,
                 correlation_key: Some(format!("{scope:?}:{mac:?}:{}", pkt.no)),
             });
+        }
+        if retain_rate {
+            self.router_rate_evidence.remember(key, pkt);
         }
     }
 
