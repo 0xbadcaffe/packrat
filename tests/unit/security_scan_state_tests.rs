@@ -81,7 +81,7 @@ fn pending_scan_acks_are_removed_by_probe_replacement_expiration_and_eviction() 
         probe.src = "192.0.2.1".into();
         probe.dst = "198.51.100.1".into();
         let key = scan_key(&probe, "TCP");
-        engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)));
+        engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)), false);
         let mut reply = probe.clone();
         std::mem::swap(&mut reply.src, &mut reply.dst);
         reply.no = 2;
@@ -101,17 +101,17 @@ fn pending_scan_acks_are_removed_by_probe_replacement_expiration_and_eviction() 
             }
             "expire" => {
                 probe.timestamp += SCAN_WINDOW_SECS + 1.0;
-                engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 101)));
+                engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 101)), false);
             }
             "evict" => {
                 probe.timestamp = 2.0;
                 for index in 0..MAX_SCAN_PROBES_PER_SOURCE {
                     probe.dst = format!("198.51.{}.{index}", index / 256);
-                    engine.record_scan_probe(&probe, 1_000 + index as u16, "TCP", Some((40_000, 101)));
+                    engine.record_scan_probe(&probe, 1_000 + index as u16, "TCP", Some((40_000, 101)), false);
                     probe.no += 1;
                 }
             }
-            _ => engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 101))),
+            _ => engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 101)), false),
         }
         assert_eq!(engine.scan_sources[&key].pending_final_acks, 0, "{change}");
     }
@@ -144,7 +144,7 @@ fn linked_scan_attempts_expire_and_do_not_count_as_new_targets_or_extend_retries
     for host in 1..=12 {
         probe.no = host;
         probe.dst = format!("198.51.100.{host}");
-        engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)));
+        engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)), false);
     }
     let key = scan_key(&probe, "TCP");
     let mut reply = probe.clone();
@@ -156,9 +156,9 @@ fn linked_scan_attempts_expire_and_do_not_count_as_new_targets_or_extend_retries
     reply.no = 13;
     engine.record_scan_reply(&reply, signal, false);
     probe.no = 14;
-    engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 200)));
+    engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 200)), false);
     probe.no = 15;
-    engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)));
+    engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)), false);
     let state = &engine.scan_sources[&key];
     assert_eq!(state.probes.len(), 12);
     assert_eq!(state.probes.last().unwrap().packet_no, 14);
@@ -173,7 +173,7 @@ fn linked_scan_attempts_expire_and_do_not_count_as_new_targets_or_extend_retries
     assert_eq!(engine.findings.ids_evidence.len(), updates);
     probe.no = 17;
     probe.timestamp = reply.timestamp;
-    engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)));
+    engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)), false);
     let state = &engine.scan_sources[&key];
     assert_eq!(state.probes.len(), 1);
     assert!(state.linked_probes.is_empty());
@@ -187,20 +187,20 @@ fn tcp_scan_retries_do_not_extend_the_evidence_window_but_new_attempts_can() {
     packet.src = "192.0.2.1".into();
     packet.dst = "198.51.100.1".into();
     let key = scan_key(&packet, "TCP");
-    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 100)));
+    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 100)), false);
     packet.no = 2;
     packet.timestamp = 10.0;
-    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 100)));
+    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 100)), false);
     assert_eq!(engine.scan_sources[&key].probes[0].packet_no, 1);
 
     packet.no = 3;
     packet.timestamp = 11.0;
-    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 101)));
+    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 101)), false);
     assert_eq!(engine.scan_sources[&key].probes[0].packet_no, 3);
 
     packet.no = 4;
     packet.timestamp = 27.0;
-    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 101)));
+    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 101)), false);
     assert_eq!(engine.scan_sources[&key].probes[0].packet_no, 4);
 }
 
@@ -212,7 +212,7 @@ fn unique_probe_and_latch_state_are_bounded_within_one_scan_window() {
     for host in 1..=100 {
         packet.dst = format!("198.51.100.{host}");
         for port in 1..=SCAN_UNIQUE_THRESHOLD as u16 {
-            engine.record_scan_probe(&packet, port, "TCP", None);
+            engine.record_scan_probe(&packet, port, "TCP", None, false);
             packet.no += 1;
             packet.timestamp += 0.001;
         }
@@ -242,7 +242,7 @@ fn scan_rules_rearm_after_most_evidence_expires_without_realerting_on_sustained_
                 if echo {
                     engine.record_echo_request(&packet, "ICMP");
                 } else {
-                    engine.record_scan_probe(&packet, if vertical { target } else { 443 }, "TCP", None);
+                    engine.record_scan_probe(&packet, if vertical { target } else { 443 }, "TCP", None, false);
                 }
                 packet.no += 1;
             }
@@ -376,8 +376,8 @@ fn scan_and_syn_findings_never_join_evidence_across_capture_interfaces_or_sectio
                     _ => "198.51.100.1".into(),
                 };
                 match mode {
-                    "horizontal" => engine.record_scan_probe(&packet, 443, "TCP", None),
-                    "vertical" => engine.record_scan_probe(&packet, frame as u16, "TCP", None),
+                    "horizontal" => engine.record_scan_probe(&packet, 443, "TCP", None, false),
+                    "vertical" => engine.record_scan_probe(&packet, frame as u16, "TCP", None, false),
                     "echo" => engine.record_echo_request(&packet, "ICMP"),
                     _ => engine.record_syn_arrival(&packet, 443, 40_000, frame as u32),
                 }

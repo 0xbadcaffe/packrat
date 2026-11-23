@@ -30,6 +30,8 @@ struct ScanSynAck {
     sequence: u32,
 }
 
+enum ProbeChange { Distinct, Replaced, Ignored }
+
 impl ScanTcpProbe {
     fn awaits_final_ack(&self) -> bool {
         self.syn_ack.is_some() && self.reset_ack.is_none() && self.final_ack.is_none()
@@ -60,7 +62,7 @@ impl ScanProbe {
 impl SecurityEngine {
     // ─── Scan and Flood Correlation ─────────────────────────────────────────
 
-    pub(super) fn check_scan_activity(&mut self, pkt: &Packet) {
+    pub(super) fn check_scan_activity(&mut self, pkt: &Packet, retain: bool) {
         if !pkt.timestamp.is_finite() {
             return;
         }
@@ -137,7 +139,7 @@ impl SecurityEngine {
             }
 
             if flags & (SYN | ACK | FIN | RST) == SYN {
-                self.record_scan_probe(pkt, destination_port, "TCP", Some((source_port, sequence)));
+                self.record_scan_probe(pkt, destination_port, "TCP", Some((source_port, sequence)), retain);
                 self.record_syn_arrival(pkt, destination_port, source_port, sequence);
                 if destination_port == 22 && control == SYN {
                     self.record_service_observation(
@@ -145,15 +147,19 @@ impl SecurityEngine {
                     );
                 }
             } else if control == (SYN | ACK) || control == (RST | ACK) {
-                self.record_scan_reply(pkt, signal, control == (RST | ACK));
+                if self.record_scan_reply(pkt, signal, control == (RST | ACK)) && retain {
+                    self.scan_packet_evidence.remember(pkt);
+                }
             } else if control & !PSH == ACK && has_pending_final_ack {
-                self.record_scan_final_ack(pkt, signal);
+                if self.record_scan_final_ack(pkt, signal) && retain {
+                    self.scan_packet_evidence.remember(pkt);
+                }
             }
             self.record_admin_tcp(pkt, signal);
         } else if let Some(Ipv6Probe::EmptyUdp(port)) = ipv6 {
-            self.record_scan_probe(pkt, port, "UDP", None);
+            self.record_scan_probe(pkt, port, "UDP", None, retain);
         } else if let Some(Ipv4DiscoveryProbe::EmptyUdp(port)) = ipv4 {
-            self.record_scan_probe(pkt, port, "UDP", None);
+            self.record_scan_probe(pkt, port, "UDP", None, retain);
         }
 
         let echo_protocol = if matches!(ipv6, Some(Ipv6Probe::EchoRequest)) {
@@ -187,7 +193,7 @@ impl SecurityEngine {
     fn record_echo_request(&mut self, pkt: &Packet, protocol: &'static str) {
         let key = scan_key(pkt, protocol);
         let state = self.scan_state(key.clone());
-        if !state.push_probe(pkt, 0, None) {
+        if !matches!(state.push_probe(pkt, 0, None), ProbeChange::Distinct) {
             return;
         }
         let count = state.probes.len();
@@ -207,11 +213,16 @@ impl SecurityEngine {
         self.push_ids_finding(finding);
     }
 
-    fn record_scan_probe(&mut self, pkt: &Packet, port: u16, transport: &'static str, tcp: Option<(u16, u32)>) {
+    fn record_scan_probe(&mut self, pkt: &Packet, port: u16, transport: &'static str, tcp: Option<(u16, u32)>, retain: bool) {
         let key = scan_key(pkt, transport);
         let state = self.scan_state(key.clone());
-        if !state.push_probe(pkt, port, tcp) {
-            return;
+        match state.push_probe(pkt, port, tcp) {
+            ProbeChange::Ignored => return,
+            ProbeChange::Replaced => {
+                if retain { self.scan_packet_evidence.remember(pkt); }
+                return;
+            }
+            ProbeChange::Distinct => {}
         }
 
         let unique_ports = state
@@ -246,8 +257,14 @@ impl SecurityEngine {
             }
         }
         for finding in vertical.into_iter().chain(horizontal) {
+            if retain {
+                self.findings.retained_evidence.extend(finding.related_packets.iter().filter_map(|&frame| {
+                    self.scan_packet_evidence.cited_packet(pkt, frame).cloned()
+                }));
+            }
             self.push_ids_finding(finding);
         }
+        if retain { self.scan_packet_evidence.remember(pkt); }
     }
 
     fn record_syn_arrival(
@@ -330,14 +347,14 @@ impl SecurityEngine {
 }
 
 impl SourceScanState {
-    fn push_probe(&mut self, pkt: &Packet, port: u16, tcp: Option<(u16, u32)>) -> bool {
+    fn push_probe(&mut self, pkt: &Packet, port: u16, tcp: Option<(u16, u32)>) -> ProbeChange {
         self.last_seen = if self.probes.is_empty() {
             pkt.timestamp
         } else {
             self.last_seen.max(pkt.timestamp)
         };
         if self.last_seen - pkt.timestamp > SCAN_WINDOW_SECS {
-            return false;
+            return ProbeChange::Ignored;
         }
         let previous_len = self.probes.len();
         self.linked_probes.retain(|probe| {
@@ -365,7 +382,7 @@ impl SourceScanState {
             && self.linked_probes.iter().any(|prior| prior.destination == pkt.dst && prior.port == port
                 && prior.tcp.as_ref().is_some_and(|old| old.matches_syn(attempt)))
         {
-            return false;
+            return ProbeChange::Ignored;
         }
         if let Some(index) = self.probes.iter().position(|prior| {
             prior.destination == pkt.dst && prior.port == port
@@ -373,13 +390,14 @@ impl SourceScanState {
             let probe = &mut self.probes[index];
             // An identical SYN retry is not a new attempt or a new evidence window.
             if probe.tcp.as_ref().zip(tcp.as_ref()).is_some_and(|(old, new)| old.matches_syn(new)) {
-                return false;
+                return ProbeChange::Ignored;
             }
             if (probe.timestamp, probe.packet_no) < (pkt.timestamp, pkt.no) {
                 let old = std::mem::replace(probe, ScanProbe::new(pkt, port, tcp));
                 self.retain_linked_probe(old);
+                return ProbeChange::Replaced;
             }
-            return false;
+            return ProbeChange::Ignored;
         }
         if self.probes.len() == MAX_SCAN_PROBES_PER_SOURCE {
             let oldest = self.probes.iter().enumerate()
@@ -390,7 +408,7 @@ impl SourceScanState {
             prune_scan_latches(self, 1);
         }
         self.probes.push(ScanProbe::new(pkt, port, tcp));
-        true
+        ProbeChange::Distinct
     }
 }
 

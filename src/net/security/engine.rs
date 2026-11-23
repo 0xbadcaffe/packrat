@@ -34,6 +34,7 @@ impl SecurityEngine {
             tcp_integrity: HashMap::new(),
             tcp_overlap_evidence: Default::default(),
             scan_sources: HashMap::new(),
+            scan_packet_evidence: Default::default(),
             syn_flood_targets: HashMap::new(),
             ndp_bindings: HashMap::new(),
             router_advertisements: HashMap::new(),
@@ -77,6 +78,7 @@ impl SecurityEngine {
         self.tcp_integrity.clear();
         self.tcp_overlap_evidence = Default::default();
         self.scan_sources.clear();
+        self.scan_packet_evidence = Default::default();
         self.syn_flood_targets.clear();
         self.ndp_bindings.clear();
         self.router_advertisements.clear();
@@ -149,7 +151,7 @@ impl SecurityEngine {
         }
         self.check_ipv4_fragments(pkt, archive_rules);
         let tcp_payload = self.check_tcp_integrity(pkt, archive_rules);
-        self.check_scan_activity(pkt);
+        self.check_scan_activity(pkt, archive_rules.is_some());
         self.check_ipv6_control_plane(pkt, archive_rules);
         self.check_layer2_control_plane(pkt);
         self.check_beacon_and_exfiltration(pkt, tcp_payload, archive_rules);

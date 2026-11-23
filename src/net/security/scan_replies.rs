@@ -19,13 +19,13 @@ impl SourceScanState {
 }
 
 impl SecurityEngine {
-    pub(super) fn record_scan_reply(&mut self, pkt: &Packet, tcp: TcpSignal, reset: bool) {
+    pub(super) fn record_scan_reply(&mut self, pkt: &Packet, tcp: TcpSignal, reset: bool) -> bool {
         let key = ScanSourceKey {
             address: pkt.dst.clone(),
             transport: "TCP",
             scope: service_scope(pkt),
         };
-        let Some(state) = self.scan_sources.get_mut(&key) else { return };
+        let Some(state) = self.scan_sources.get_mut(&key) else { return false };
         let Some(probe) = state.probes.iter_mut().chain(&mut state.linked_probes).find(|probe| {
             probe.destination == pkt.src && probe.port == tcp.source_port
                 && (pkt.timestamp, pkt.no) > (probe.timestamp, probe.packet_no)
@@ -34,8 +34,8 @@ impl SecurityEngine {
                     attempt.source_port == tcp.destination_port
                         && attempt.sequence.wrapping_add(1) == tcp.acknowledgement
                 })
-        }) else { return };
-        let Some(attempt) = &mut probe.tcp else { return };
+        }) else { return false };
+        let Some(attempt) = &mut probe.tcp else { return false };
         let was_pending = attempt.awaits_final_ack();
         let newly_matched = if reset {
             let new = attempt.reset_ack.is_none();
@@ -53,12 +53,13 @@ impl SecurityEngine {
         if newly_matched {
             self.findings.ids_evidence.extend(probe.reply_evidence(pkt.no));
         }
+        newly_matched
     }
 
-    pub(super) fn record_scan_final_ack(&mut self, pkt: &Packet, tcp: TcpSignal) {
-        let Some(state) = self.scan_sources.get_mut(&scan_key(pkt, "TCP")) else { return };
+    pub(super) fn record_scan_final_ack(&mut self, pkt: &Packet, tcp: TcpSignal) -> bool {
+        let Some(state) = self.scan_sources.get_mut(&scan_key(pkt, "TCP")) else { return false };
         if state.pending_final_acks == 0 {
-            return;
+            return false;
         }
         let Some(probe) = state.probes.iter_mut().chain(&mut state.linked_probes).find(|probe| {
             probe.destination == pkt.dst && probe.port == tcp.destination_port
@@ -71,10 +72,11 @@ impl SecurityEngine {
                                 && tcp.acknowledgement == reply.sequence.wrapping_add(1)
                         })
                 })
-        }) else { return };
-        let Some(attempt) = &mut probe.tcp else { return };
+        }) else { return false };
+        let Some(attempt) = &mut probe.tcp else { return false };
         attempt.final_ack = Some(pkt.no);
         state.pending_final_acks -= 1;
         self.findings.ids_evidence.extend(probe.reply_evidence(pkt.no));
+        true
     }
 }

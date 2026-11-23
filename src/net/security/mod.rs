@@ -182,6 +182,7 @@ pub struct SecurityEngine {
     tcp_integrity: HashMap<(ServiceScope, TcpFlowKey), TcpIntegrityState>,
     tcp_overlap_evidence: crate::net::recent_evidence::RecentEvidence<1024, 300>,
     scan_sources: HashMap<ScanSourceKey, SourceScanState>,
+    scan_packet_evidence: crate::net::recent_evidence::RecentEvidence<2048, 30>,
     syn_flood_targets: HashMap<SynTargetKey, SynFloodState>,
     ndp_bindings: HashMap<(ServiceScope, [u8; 16]), NdpObservation>,
     router_advertisements: HashMap<control_plane::RouterSource, RouterAdvertisementState>,
