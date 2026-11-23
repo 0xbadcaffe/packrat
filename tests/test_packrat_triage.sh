@@ -240,6 +240,7 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
         and [.alerts[].packet_evidence_status] == ["not_checked","not_checked","not_checked","no_references","partial","partial","partial"]
         and .open_priority_alerts_in_sample == 4 and [.review_queue[].alert_id] == [45,42,41,44] and .review_queue[1].disposition=="Confirmed"
         and .review_queue[1].rule_id=="test.rule" and .review_queue[1].revision==10 and .review_queue[0].revision==null
+        and .review_queue[1].evidence_frame_count==2 and .review_queue[1].evidence_frame_set_sha256==("0"*64)
         and [.review_queue[].next_evidence_step] == ["corroborate_with_host_or_service_logs",
             "inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames"]' \
         <<< "$result" >/dev/null

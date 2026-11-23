@@ -46,7 +46,7 @@ live() {
     }'
 }
 queue='[{"alert_id":7,"severity":"HIGH","rule_id":"test.rule","revision":10,"confidence":"correlated","packet_evidence_status":"partial","next_evidence_step":"inspect_retained_and_recover_missing_frames"}]'
-medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","revision":65536,"disposition":"New","hit_count":1,"packet_evidence_status":"partial"}]'
+medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","revision":65536,"disposition":"New","hit_count":1,"packet_evidence_status":"partial","evidence_frame_count":2,"evidence_frame_set_sha256":"invalid"}]'
 live current 12 "$queue" "$medium" >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
@@ -172,17 +172,14 @@ if bash "$watch" --once "$state" -- true >/dev/null 2>&1; then exit 1; fi
 live current 31 '[]' | jq '.health.disk_free_mib=2047 | .health.archive_usage.frames=2' >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 31
-medium=$(jq -c '.[0].revision=9' <<<"$medium")
+medium=$(jq -c '.[0] += {revision:9,evidence_frame_set_sha256:("a"*64)}' <<<"$medium")
 live current 32 '[]' "$medium" >"$report.next"
-mv -- "$report.next" "$report"
-await_packets 32
+mv -- "$report.next" "$report"; await_packets 32
 live current 33 '[]' "$medium" >"$report.next"
-mv -- "$report.next" "$report"
-await_packets 33
-medium=$(jq -c '.[0].hit_count=2 | .[0].revision=10' <<<"$medium")
+mv -- "$report.next" "$report"; await_packets 33
+medium=$(jq -c '.[0] += {hit_count:2,revision:10}' <<<"$medium")
 live current 34 '[]' "$medium" >"$report.next"
-mv -- "$report.next" "$report"
-await_packets 34
+mv -- "$report.next" "$report"; await_packets 34
 live degraded 35 "$queue" "$medium" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 35
@@ -194,9 +191,8 @@ live degraded 37 "$queue" "$medium" |
 mv -- "$report.next" "$report"
 await_packets 37
 check_status "$state" triage_unhealthy 1
-jq '.health.packets_total=38 | .health.capture_truncated_frames=3' "$report" >"$report.next"
-mv -- "$report.next" "$report"
-await_packets 38
+jq '.health.packets_total=38 | .health.capture_truncated_frames=3 | .alerts[0].evidence_frame_set_sha256=("b"*64)' "$report" >"$report.next"
+mv -- "$report.next" "$report"; await_packets 38
 jq '.health.packets_total=39 | .health.archive_pause_reason="disk_reserve" | .live_packet_archive="paused"' "$report" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 39
@@ -230,6 +226,8 @@ jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_ale
     and .[0].alert_changes==null and .[1].alert_changes.newly_observed==[9]
     and .[1].recent_alerts[0].revision==9 and .[2].recent_alerts[0].revision==10
     and .[2].alert_changes.updated==[{alert_id:9,fields:["hit_count","revision"]}]
+    and .[6].recent_alerts[0].evidence_frame_count==.[5].recent_alerts[0].evidence_frame_count
+    and .[6].alert_changes.updated==[{alert_id:9,fields:["evidence"]}] and .[6].alert_changes.newly_observed==[]
     and .[8].alert_changes.updated==[{alert_id:9,fields:["disposition","packet_evidence_status"]}]
     and .[9].highest_observed_alert_id==9 and .[10].alert_changes.newly_observed==[]
     and .[11].highest_observed_alert_id==12 and .[11].alert_changes==null' "$scratch/events" >/dev/null
