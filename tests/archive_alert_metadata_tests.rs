@@ -18,7 +18,7 @@ fn archive_links_syn_acks_only_to_preceding_reverse_syn_sequences_on_the_same_pa
     center.record(1, "IDS", "HIGH", "Saved alert", "fixture");
     let mut alert = center.items.remove(0);
     alert.capture_id = Some("scope-a".into());
-    alert.packet_refs = (1..=10).collect();
+    alert.packet_refs = (1..=18).collect();
     std::fs::write(&log,
         json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
     ).unwrap();
@@ -41,14 +41,22 @@ fn archive_links_syn_acks_only_to_preceding_reverse_syn_sequences_on_the_same_pa
     archive.append_scoped("scope-a", &[
         packet(1, false, 0x02, u32::MAX, 0, 10, 3),
         packet(2, false, 0x02, u32::MAX, 0, 10, 3),
-        packet(3, true, 0x12, 100, 0, 10, 3),
+        packet(3, true, 0x12, u32::MAX, 0, 10, 3),
         packet(4, true, 0x12, 100, 8, 10, 3),
-        packet(5, false, 0x02, 7, 0, 10, 3),
-        packet(6, true, 0x12, 100, 0, 20, 3),
-        packet(7, true, 0x12, 100, 0, 10, 4),
-        packet(8, false, 0x12, 100, 0, 10, 3),
-        packet(9, true, 0x16, 100, 0, 10, 3),
-        packet(10, true, 0x12, 101, 8, 10, 3),
+        packet(5, false, 0x10, 1, 0, 10, 3),
+        packet(6, false, 0x10, 0, 1, 10, 3),
+        packet(7, false, 0x10, 0, 0, 20, 3),
+        packet(8, false, 0x18, 0, 0, 10, 3),
+        packet(9, false, 0x10, 0, 0, 10, 3),
+        packet(10, false, 0x02, 7, 0, 10, 3),
+        packet(11, false, 0x10, 0, 0, 10, 3),
+        packet(12, true, 0x12, 101, 8, 10, 3),
+        packet(13, false, 0x10, 8, 102, 10, 4),
+        packet(14, true, 0x14, 102, 8, 10, 3),
+        packet(15, false, 0x10, 8, 102, 10, 3),
+        packet(16, true, 0x12, 100, 0, 20, 3),
+        packet(17, true, 0x12, 100, 0, 10, 4),
+        packet(18, false, 0x12, 100, 0, 10, 3),
     ]).unwrap();
     drop(archive);
     let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
@@ -57,10 +65,12 @@ fn archive_links_syn_acks_only_to_preceding_reverse_syn_sequences_on_the_same_pa
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["tcp_syn_ack_matches"], json!([
-        {"syn_ack_frame":3,"prior_syn_candidates":2,"latest_candidate_syn_frame":2},
-        {"syn_ack_frame":10,"prior_syn_candidates":1,"latest_candidate_syn_frame":5}
+        {"syn_ack_frame":3,"prior_syn_candidates":2,"latest_candidate_syn_frame":2,
+         "later_ack_candidates":2,"earliest_candidate_ack_frame":8},
+        {"syn_ack_frame":12,"prior_syn_candidates":1,"latest_candidate_syn_frame":10,
+         "later_ack_candidates":0,"earliest_candidate_ack_frame":null}
     ]));
-    assert!(report["limitation"].as_str().unwrap().contains("not a completed handshake"));
+    assert!(report["limitation"].as_str().unwrap().contains("not endpoint acceptance"));
 }
 
 #[test]
