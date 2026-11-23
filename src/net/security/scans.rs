@@ -1,4 +1,5 @@
 use super::*;
+use super::findings::IdsEvidenceUpdate;
 
 #[derive(Debug)]
 pub(super) struct ScanProbe {
@@ -7,6 +8,8 @@ pub(super) struct ScanProbe {
     destination: String,
     port: u16,
     tcp: Option<ScanTcpProbe>,
+    vertical_opening: Option<u64>,
+    horizontal_opening: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -33,6 +36,13 @@ impl ScanTcpProbe {
 impl ScanProbe {
     fn awaits_final_ack(&self) -> bool {
         self.tcp.as_ref().is_some_and(ScanTcpProbe::awaits_final_ack)
+    }
+
+    fn reply_evidence(&self, frame: u64) -> impl Iterator<Item = IdsEvidenceUpdate> {
+        [("Vertical port scan", self.vertical_opening), ("Horizontal host scan", self.horizontal_opening)]
+            .into_iter().filter_map(move |(signature, opening)| Some(IdsEvidenceUpdate {
+                signature, opening_frame: opening?, probe_frame: self.packet_no, evidence_frame: frame,
+            }))
     }
 }
 
@@ -218,6 +228,12 @@ impl SecurityEngine {
                 format!("{} probed {transport} port {port} on {unique_targets} hosts", pkt.src),
                 state.probes.iter().filter(|probe| probe.port == port),
             ));
+        if vertical.is_some() || horizontal.is_some() {
+            for probe in &mut state.probes {
+                if vertical.is_some() && probe.destination == pkt.dst { probe.vertical_opening = Some(pkt.no); }
+                if horizontal.is_some() && probe.port == port { probe.horizontal_opening = Some(pkt.no); }
+            }
+        }
         for finding in vertical.into_iter().chain(horizontal) {
             self.push_ids_finding(finding);
         }
@@ -238,15 +254,22 @@ impl SecurityEngine {
         let Some(attempt) = &mut probe.tcp else { return };
         if attempt.source_port == tcp.destination_port && attempt.sequence.wrapping_add(1) == tcp.acknowledgement {
             let was_pending = attempt.awaits_final_ack();
-            if reset {
+            let newly_matched = if reset {
+                let new = attempt.reset_ack.is_none();
                 attempt.reset_ack.get_or_insert(pkt.no);
+                new
             } else {
+                let new = attempt.syn_ack.is_none();
                 attempt.syn_ack.get_or_insert(ScanSynAck {
                     order: (pkt.timestamp, pkt.no), sequence: tcp.sequence,
                 });
-            }
+                new
+            };
             state.pending_final_acks += usize::from(attempt.awaits_final_ack());
             state.pending_final_acks -= usize::from(was_pending);
+            if newly_matched {
+                self.findings.ids_evidence.extend(probe.reply_evidence(pkt.no));
+            }
         }
     }
 
@@ -268,6 +291,7 @@ impl SecurityEngine {
         {
             attempt.final_ack = Some(pkt.no);
             state.pending_final_acks -= 1;
+            self.findings.ids_evidence.extend(probe.reply_evidence(pkt.no));
         }
     }
 
@@ -392,6 +416,8 @@ impl SourceScanState {
                 probe.timestamp = pkt.timestamp;
                 probe.packet_no = pkt.no;
                 probe.tcp = tcp;
+                probe.vertical_opening = None;
+                probe.horizontal_opening = None;
             }
             return false;
         }
@@ -409,6 +435,8 @@ impl SourceScanState {
             destination: pkt.dst.clone(),
             port,
             tcp,
+            vertical_opening: None,
+            horizontal_opening: None,
         });
         true
     }

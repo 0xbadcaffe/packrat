@@ -52,9 +52,9 @@ fn analyze(
         }
         analyzed += 1;
         for alert in core.alert_center.drain_pending_exports() {
-            replay.observe(&alert);
+            let opening = replay.observe(&alert);
             if alerts_only {
-                event(output, &json!({"type": "alert", "schema_version": 1, "alert": alert}))?;
+                event(output, &json!({"type": "alert", "schema_version": 1, "opening": opening, "alert": alert}))?;
             }
         }
         if !alerts_only {

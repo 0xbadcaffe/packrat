@@ -64,6 +64,13 @@ fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
     assert!(engine.scan_sources.values().all(|state| state.pending_final_acks == 0));
     engine.update(&tcp_frame(25, 12, 0x12, 0, 40_000, 10));
     assert!(!engine.findings.ids.iter().any(|f| f.alert.signature == "Horizontal host scan"));
+    let [update] = engine.findings.ids_evidence.as_slice() else { panic!("expected one follow-up") };
+    assert_eq!((update.opening_frame, update.probe_frame, update.evidence_frame), (24, 24, 25));
+    assert_eq!(update.signature, "Horizontal host scan");
+    for (no, ack, vlan) in [(26, 0, 20), (27, 1, 10), (28, 0, 10)] {
+        engine.update(&tcp_frame(no, 12, 0x12, ack, 40_000, vlan));
+        assert!(engine.findings.ids_evidence.is_empty());
+    }
 }
 
 #[test]

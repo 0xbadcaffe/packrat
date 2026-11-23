@@ -76,6 +76,11 @@ impl AnalysisCore {
                     .unwrap_or_else(|| format!("{}>{}", pkt.src, pkt.dst)),
             );
         }
+        for update in &findings.ids_evidence {
+            self.alert_center.attach_ids_evidence(
+                update.signature, update.opening_frame, update.probe_frame, update.evidence_frame,
+            );
+        }
         for finding in &findings.arp {
             let anomaly = &finding.anomaly;
             let (title, claims) = if finding.involves_announcement {

@@ -1,6 +1,24 @@
-use super::{AUTOMATIC_EVIDENCE_PRIORITY, AlertCenter, AlertDisposition, AlertItem};
+use super::{
+    AUTOMATIC_EVIDENCE_PRIORITY, AlertCenter, AlertDisposition, AlertItem, AutomationMode, retain_packet_ref,
+};
 
 impl AlertCenter {
+    pub(crate) fn attach_ids_evidence(
+        &mut self, signature: &str, opening_frame: u64, probe_frame: u64, evidence_frame: u64,
+    ) {
+        let Some(item) = self.items.iter_mut().find(|item| {
+            item.capture_id == self.capture_id && item.source == "IDS" && item.title == signature
+                && item.first_packet == opening_frame && item.packet_refs.contains(&probe_frame)
+        }) else { return };
+        if !retain_packet_ref(item, evidence_frame) { return; }
+        if item.queue_evidence(self.automation_mode != AutomationMode::Off, self.archive_evidence_rules.as_deref())
+            && !self.pending_pins.contains(&item.id)
+        {
+            self.pending_pins.push(item.id);
+        }
+        self.pending_exports.push(item.clone());
+    }
+
     pub fn set_disposition(&mut self, id: u64, capture_id: Option<&str>, disposition: AlertDisposition) -> bool {
         self.set_disposition_at(id, capture_id, disposition, None)
     }

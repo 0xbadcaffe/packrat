@@ -62,6 +62,11 @@ fn write_scan_with_replies(path: &Path) {
     for host in 23..=32 {
         write(host, 0x02, 0);
     }
+    write(32, 0x12, 101); // Retain a late SYN-ACK for the opening probe.
+    write(32, 0x12, 101); // The retransmission does not update the alert.
+    write(32, 0x18, 101); // Retain the matching final ACK with data.
+    write(33, 0x02, 0);
+    write(33, 0x12, 101); // This probe was never part of the alert.
     capture.flush().unwrap();
 }
 
@@ -113,7 +118,7 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
     write_scan_with_replies(&root.join(capture));
     let frames = (1..=17).filter(|frame| !matches!(frame, 3 | 6)).collect::<Vec<_>>();
     cases.push(json!({
-        "name":"scoped-reply-evidence", "capture":capture, "expect_snapshots":1,
+        "name":"scoped-reply-evidence", "capture":capture, "expect_snapshots":3,
         "expect_counts":{(horizontal):1,(vertical):0}, "opening_frames":{(horizontal):[17]},
         "opening_evidence":[{"rule_id":horizontal,"opening_frame":17,"frames":frames}],
     }));
@@ -130,6 +135,22 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+        .arg("--alerts-only").arg(root.join(capture)).output().unwrap();
+    assert!(output.status.success());
+    let records: Vec<_> = String::from_utf8(output.stdout).unwrap().lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|record| record["type"] == "alert").collect();
+    assert_eq!(records.iter().map(|record| record["opening"].as_bool()).collect::<Vec<_>>(),
+               [Some(true), Some(false), Some(false)]);
+    let alerts: Vec<_> = records.iter().map(|record| &record["alert"]).collect();
+    assert_eq!(alerts[2]["provenance"]["revision"], 13);
+    for field in ["id", "hit_count", "packet_no", "flow", "first_seen", "last_seen", "detail"] {
+        assert_eq!(alerts[0][field], alerts[2][field], "{field}");
+    }
+    let mut evidence = alerts[0]["packet_refs"].as_array().unwrap().clone();
+    evidence.extend([json!(18), json!(20)]);
+    assert_eq!(alerts[2]["packet_refs"], json!(evidence));
 }
 
 #[test]

@@ -86,7 +86,8 @@ replay_case() {
                     .summary = ($row | {packets,analyzed,skipped,truncated_frames,allow_truncated,
                         alerts_opened,alert_snapshots,rule_counts,alert_expectations})
                 elif ($keys | length) > 0 and $row.type == "alert" and $row.schema_version == 1
-                    and $row.alert.hit_count == 1 and ($row.alert.provenance.rule_id | type == "string")
+                    and (if $row | has("opening") then $row.opening == true else $row.alert.hit_count == 1 end)
+                    and ($row.alert.provenance.rule_id | type == "string")
                     and ($row.alert.packet_no | ordinal)
                 then key($row.alert.provenance.rule_id; $row.alert.packet_no) as $key
                      | if ($keys | index($key)) != null then

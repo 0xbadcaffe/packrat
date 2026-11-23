@@ -8,6 +8,15 @@ pub struct DetectionBatch {
     pub vulnerabilities: Vec<VulnHit>,
     pub authentication: Vec<BruteForceAlert>,
     pub tls: Vec<TlsWeakness>,
+    pub(crate) ids_evidence: Vec<IdsEvidenceUpdate>,
+}
+
+#[derive(Debug)]
+pub(crate) struct IdsEvidenceUpdate {
+    pub(crate) signature: &'static str,
+    pub(crate) opening_frame: u64,
+    pub(crate) probe_frame: u64,
+    pub(crate) evidence_frame: u64,
 }
 
 #[derive(Debug)]

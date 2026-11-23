@@ -322,7 +322,7 @@ fn scan_evidence_deduplicates_targets_and_stays_in_its_vlan_and_transport() {
     assert_eq!(alert.hit_count, 1);
     assert_eq!(alert.packet_refs, [80, 2, 3, 4, 5, 6, 107, 108, 109, 110, 111, 112]);
     assert_eq!(alert.flow.unwrap().destination, "10.0.0.12:443".parse().unwrap());
-    assert_eq!(alert.provenance.as_ref().unwrap().revision, 12);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 13);
 
     use packrat_tui::analysis::alert_center::AlertDisposition;
     let (old_id, capture) = (alert.id, alert.capture_id.clone());

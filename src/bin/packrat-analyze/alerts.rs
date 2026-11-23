@@ -9,6 +9,7 @@ pub(super) struct ReplayAlerts {
     pub opened: u64,
     pub snapshots: u64,
     pub rule_counts: BTreeMap<String, u64>,
+    highest_alert_id: u64,
     expected: BTreeMap<String, u64>,
     expected_frames: BTreeMap<String, BTreeMap<u64, bool>>,
 }
@@ -53,11 +54,13 @@ impl ReplayAlerts {
         Ok(())
     }
 
-    pub fn observe(&mut self, item: &AlertItem) {
+    pub fn observe(&mut self, item: &AlertItem) -> bool {
         self.snapshots = self.snapshots.saturating_add(1);
-        if item.hit_count != 1 {
-            return;
+        // One offline capture owns a monotonic alert ID space, including evidence-only snapshots.
+        if item.id <= self.highest_alert_id {
+            return false;
         }
+        self.highest_alert_id = item.id;
         self.opened = self.opened.saturating_add(1);
         if let Some(rule) = &item.provenance {
             let count = self.rule_counts.entry(rule.rule_id.clone()).or_default();
@@ -68,6 +71,7 @@ impl ReplayAlerts {
                 *matched = true;
             }
         }
+        true
     }
 
     pub fn expect_frame(&mut self, specification: &str) -> Result<(), String> {
