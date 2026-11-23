@@ -45,6 +45,42 @@ fn dns_transport_requires_consistent_ip_headers_link_type_and_supported_tag_dept
     }
 }
 
+#[test]
+fn udp_dns_requires_capture_lengths_that_support_the_ip_datagram() {
+    let ipv4 = dns_packet(1, true, "192.0.2.53", "192.0.2.8", 5, "sample.test");
+    let ipv6 = dns_ipv6_packet(2, true, "2001:db8::53", "2001:db8::8", 5, "sample.test");
+    for (reply, field) in [(ipv4, 16), (ipv6, 18)] {
+        let actual = reply.bytes.len() as u32;
+        let capture = |captured_length, wire_length| CaptureMetadata {
+            timestamp: None, captured_length, wire_length, link_type: 1,
+            section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+        };
+        let length = u16::from_be_bytes(reply.bytes[field..field + 2].try_into().unwrap());
+        let mut bigger_ip = reply.clone();
+        bigger_ip.bytes[field..field + 2].copy_from_slice(&(length + 8).to_be_bytes());
+        for metadata in [None, Some(capture(actual, actual + 7))] {
+            let mut impossible = bigger_ip.clone();
+            impossible.capture = metadata;
+            assert!(DnsTransactionTracker::default().observe(&impossible).is_empty());
+        }
+        bigger_ip.capture = Some(capture(actual, actual + 8));
+        assert_eq!(DnsTransactionTracker::default().observe(&bigger_ip)[0].kind,
+            DnsFindingKind::ReplyWithoutObservedQuery);
+
+        for metadata in [capture(actual - 1, actual + 8), capture(actual, actual - 1)] {
+            let mut inconsistent = reply.clone();
+            inconsistent.capture = Some(metadata);
+            assert!(DnsTransactionTracker::default().observe(&inconsistent).is_empty());
+        }
+        let mut cut_dns = reply.clone();
+        cut_dns.bytes.pop();
+        cut_dns.capture = Some(capture(actual - 1, actual));
+        assert!(DnsTransactionTracker::default().observe(&cut_dns).is_empty());
+        assert_eq!(DnsTransactionTracker::default().observe(&reply)[0].kind,
+            DnsFindingKind::ReplyWithoutObservedQuery);
+    }
+}
+
 fn tcp_dns(no: u64, reply: bool, resolver_octet: u8, name: &str) -> Packet {
     let dns = dns_packet(no, reply, "", "", 5, name);
     let message = &dns.bytes[42..];

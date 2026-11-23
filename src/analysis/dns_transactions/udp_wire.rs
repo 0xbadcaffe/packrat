@@ -11,14 +11,14 @@ pub(crate) fn udp_port_pair(packet: &Packet) -> Option<(u16, u16)> {
 }
 
 fn udp_view(packet: &Packet) -> Option<((u16, u16), usize, &[u8])> {
-    if packet
-        .capture
-        .as_ref()
-        .is_some_and(|metadata| metadata.link_type != 1)
-    {
-        return None;
-    }
     let raw = packet.bytes.as_slice();
+    let wire_end = match packet.capture.as_ref() {
+        Some(metadata) if metadata.link_type == 1
+            && metadata.captured_length as usize == raw.len()
+            && metadata.wire_length >= metadata.captured_length => metadata.wire_length as usize,
+        Some(_) => return None,
+        None => raw.len(),
+    };
     let (network, ether_type) = ethernet_network_header(raw)?;
     let (transport, network_end) = match ether_type {
         0x0800 if raw.get(network)? >> 4 == 4 && raw.get(network + 9) == Some(&17) => {
@@ -37,6 +37,9 @@ fn udp_view(packet: &Packet) -> Option<((u16, u16), usize, &[u8])> {
         }
         _ => return None,
     };
+    if network_end > wire_end {
+        return None;
+    }
     let udp = raw.get(transport..network_end.min(raw.len()))?;
     let &[src_hi, src_lo, dst_hi, dst_lo, len_hi, len_lo, _, _] = udp.first_chunk::<8>()?;
     let udp_length = usize::from(u16::from_be_bytes([len_hi, len_lo]));

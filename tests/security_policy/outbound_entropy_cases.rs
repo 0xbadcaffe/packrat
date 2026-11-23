@@ -373,7 +373,20 @@ fn outbound_volume_does_not_combine_tcp_udp_or_unverified_transport() {
     for no in 1..=17 {
         let mut packet = transfer_packet(no, &payload, no % 2 == 0);
         // A captured UDP header still identifies its service when its payload is truncated.
-        if no % 2 == 0 { packet.bytes.pop(); }
+        if no % 2 == 0 {
+            let wire_length = packet.bytes.len() as u32;
+            packet.bytes.pop();
+            packet.capture = Some(packrat_tui::net::packet::CaptureMetadata {
+                timestamp: None,
+                captured_length: packet.bytes.len() as u32,
+                wire_length,
+                link_type: 1,
+                section_id: 0,
+                interface_id: 0,
+                interface_name: None,
+                comments: Vec::new(),
+            });
+        }
         packet.protocol = "TCP".into();
         engine.update(&packet);
     }
