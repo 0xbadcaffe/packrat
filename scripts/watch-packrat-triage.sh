@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-umask 077
-export LC_ALL=C
+umask 077; export LC_ALL=C
+# shellcheck disable=SC2016
 snapshot_validation='
     def scope_id: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
     def counter: if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end;
+    def packet_evidence_counts: (.evidence_frame_count | counter) as $refs
+        | if (.evidence_availability | type == "object" and length > 0 and
+              all(to_entries[]; (.key | IN("complete","truncated","missing","length_unknown","unreadable"))
+                  and (.value | counter | . != null and . > 0 and . <= 131)) and ([.[]] | add) == $refs and $refs <= 131)
+          then {evidence_availability} else {} end;
     def valid_scope_and_log:
         (.capture_id | scope_id) != null and (.session_id | scope_id) != null and
         (.packets | counter) != null and
@@ -43,18 +48,15 @@ esac
 if [[ ${1-} != /* || $1 == */ || $1 == *[[:cntrl:]]* ]] ||
    { "$read_only" && (( $# != 1 )); } ||
    { ! "$read_only" && { (( $# < 3 )) || [[ $2 != -- ]]; }; }; then
-    usage >&2
-    exit 2
+    usage >&2; exit 2
 fi
-state=$1
-directory=${state%/*}
+state=$1 directory=${1%/*}
 if [[ -z $directory || ! -d $directory || -L $directory || ! -O $directory ||
       -L $state || -L $state.lock ||
       ( -e $state && ! -f $state ) || ( -e $state.lock && ! -f $state.lock ) ]] ||
    ! mode=$(stat --format='%a' -- "$directory") || [[ ! $mode =~ ^[0-7]{3,4}$ ]] ||
    (( (8#$mode & 077) != 0 )); then
-    printf '%s\n' 'Triage state requires a private, owned directory and regular files.' >&2
-    exit 2
+    printf '%s\n' 'Triage state requires a private, owned directory and regular files.' >&2; exit 2
 fi
 journal="$state.events.jsonl" journal_limit=1048576
 journal_path_safe() {
@@ -81,8 +83,7 @@ journal_fingerprint() {
 read_journal_history() {
     local before after records path
     if ! before=$(journal_fingerprint 2>/dev/null); then
-        printf '%s\n' 'Triage journal is unsafe, unreadable, or over its size limit.' >&2
-        return 2
+        printf '%s\n' 'Triage journal is unsafe, unreadable, or over its size limit.' >&2; return 2
     fi
     local valid=true
     records=$(
@@ -236,7 +237,7 @@ sanitize() {
         def disposition: if IN("New","Reviewing","Confirmed","Benign","Contained","Closed") then . else null end;
         def evidence: if (.evidence_frame_set_sha256 | type == "string" and test("\\A[0-9a-f]{64}\\z"))
             and (.evidence_frame_count | counter | . != null and . <= 131)
-            then {evidence_frame_count,evidence_frame_set_sha256} else {} end;
+            then {evidence_frame_count,evidence_frame_set_sha256} + packet_evidence_counts else {} end;
         def alert_fields:
             {alert_id:(.alert_id | counter), severity:(.severity | severity), rule_id:(.rule_id | token),
              disposition:(.disposition | disposition), hit_count:(.hit_count | counter),
@@ -376,7 +377,7 @@ while :; do
     poll_started_at=$(date -u +%s)
     snapshot=$(exec {lock_fd}>&-; read_status "$@")
     # Allow the poll interval, the next triage deadline, and timeout cleanup/scheduling.
-    event=$(jq -c --argjson prior "$prior" --argjson started "$poll_started_at" --argjson max_age "$((interval + deadline + 7))" '
+    event=$(jq -c --argjson prior "$prior" --argjson started "$poll_started_at" --argjson max_age "$((interval + deadline + 7))" "$snapshot_validation"'
             def observed:
                 (.status == "current" or .status == "degraded") and
                 .capture_id != null and .session_id != null and (.recent_alerts | type == "array");
@@ -384,7 +385,7 @@ while :; do
             def alert_ids: [((.review_queue // []) + (.recent_alerts // []))[] | .alert_id] | unique;
             def queue_index: .review_queue | INDEX(.alert_id | tostring);
             def queue_comparable($prior): (.review_queue | type) == "array" and ($prior.review_queue | type) == "array";
-            def compact_alert: {alert_id,hit_count,severity,disposition,packet_evidence_status,revision,evidence_frame_count,evidence_frame_set_sha256};
+            def compact_alert: {alert_id,hit_count,severity,disposition,packet_evidence_status,revision,evidence_frame_count,evidence_frame_set_sha256} + packet_evidence_counts;
             def queue_entries($prior):
                 if queue_comparable($prior) | not then []
                 else ($prior | queue_index) as $queued
@@ -439,9 +440,9 @@ while :; do
                             ($now | alert_index | [.[]] | sort_by(.alert_id))[] as $item
                             | $before[$item.alert_id | tostring] as $old | select($old != null)
                             | {alert_id:$item.alert_id, fields:[
-                                ("hit_count", "severity", "disposition", "packet_evidence_status", "revision", "evidence_frame_set_sha256") as $field
+                                ("hit_count", "severity", "disposition", "packet_evidence_status", "revision", "evidence_frame_set_sha256","evidence_availability") as $field
                                 | select($old[$field] != $item[$field] and
-                                    (($field != "revision" and $field != "evidence_frame_set_sha256") or ($old[$field] != null and $item[$field] != null)))
+                                    (($field | IN("revision","evidence_frame_set_sha256","evidence_availability") | not) or ($old[$field] != null and $item[$field] != null)))
                                 | if $field == "evidence_frame_set_sha256" then "evidence" else $field end]} | select(.fields | length > 0)
                         ]
                     }

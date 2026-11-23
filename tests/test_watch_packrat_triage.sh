@@ -137,7 +137,6 @@ for change in 'del(.health.capture_id)' '.health.alert_session_id="bad session"'
     jq -e '.status=="triage_unavailable"' "$state" >/dev/null
     check_status "$state" triage_unhealthy 1
 done
-
 many=$(jq -cn '[range(1; 52) | {alert_id:.,severity:"LOW",rule_id:"bad token",disposition:"unknown"}]')
 live current 12 '[]' "$many" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
@@ -335,7 +334,6 @@ wait "$watch_pid"
 watch_pid=''
 jq -e '.alert_sample_gap and .highest_observed_alert_id==65 and .buffer_drops_delta==null and .healthy_capture_since==.poll_started_at' "$state" >/dev/null
 jq -se 'length==1 and .[0].alert_changes.newly_observed==[range(16;66)]' "$scratch/stale-events" >/dev/null
-
 state="$scratch/bounded-sample.json"
 live current 75 '[]' "$bulk" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
@@ -496,4 +494,6 @@ source "$root/tests/support/watch_triage_atomic_journal.bash"
 source "$root/tests/support/watch_triage_counter_gap.bash"
 # shellcheck source=tests/support/watch_triage_checkpoints.bash
 source "$root/tests/support/watch_triage_checkpoints.bash"
+# shellcheck source=tests/support/watch_triage_evidence_counts.bash
+source "$root/tests/support/watch_triage_evidence_counts.bash"
 printf '%s\n' 'Packrat triage watcher tests passed'
