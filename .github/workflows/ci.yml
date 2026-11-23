@@ -39,7 +39,7 @@ jobs:
       - name: Test capture monitoring scripts
         if: runner.os == 'Linux'
         run: |
-          shellcheck scripts/watch-packrat-health.sh tests/test_watch_packrat_health.sh
+          shellcheck -x scripts/watch-packrat-health.sh tests/test_watch_packrat_health.sh
           shellcheck scripts/watch-packrat-alerts.sh tests/test_watch_packrat_alerts.sh
           shellcheck scripts/watch-packrat-socket-context.sh tests/test_watch_packrat_socket_context.sh
           shellcheck -x scripts/packrat-triage.sh tests/test_packrat_triage.sh

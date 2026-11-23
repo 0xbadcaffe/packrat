@@ -321,6 +321,10 @@ read_health() {
                 ["frame_limit","byte_limit","disk_reserve","queue_unavailable","write_failed"] | index($reason) != null
             )][0] else null end) as $pause_reason |
         ($h.archive_alert_evidence_only | if type == "boolean" then . else null end) as $evidence_only |
+        ($h.archive_evidence_rules | if $archive_enabled == true and $evidence_only == true and type == "array" and
+            length <= 16 and length == (unique | length) and
+            all(.[]; type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z"))
+            then sort else null end) as $evidence_rules |
         def archive_count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
         ($h.archive_usage
          | if $archive_enabled == true and type == "object" and (.frames | archive_count)
@@ -365,10 +369,7 @@ read_health() {
             archive_pause_reason: $pause_reason,
             archive_usage: $archive_usage,
             archive_alert_evidence_only: $evidence_only,
-            archive_evidence_rules: ($h.archive_evidence_rules | if $archive_enabled == true and $evidence_only == true and
-                type == "array" and length <= 16 and
-                all(.[]; type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z"))
-                then unique else null end),
+            archive_evidence_rules: $evidence_rules,
             archive_requirement: (if $require_archive == "1" then "active"
                                   elif $require_archive == "alert-evidence" then "alert_evidence_only"
                                   else null end),
@@ -412,7 +413,7 @@ read_health() {
                     (if $require_archive == "alert-evidence" and $archive_enabled == true then
                         if $evidence_only == false then "archive_full_capture_unexpected"
                         elif $evidence_only == null then "archive_mode_unavailable"
-                        else empty end
+                        elif $evidence_rules == null then "archive_rules_unavailable" else empty end
                      else empty end),
                     (if $archive_paused == false and $archive_usage != null and ($archive_usage |
                             (.max_frames > 0 and .frames / .max_frames >= 0.9)
