@@ -362,6 +362,48 @@ fn http_burst_replay_keeps_sustained_traffic_grouped_and_records_a_renewed_burst
 }
 
 #[test]
+fn http_burst_links_only_a_complete_and_anchored_trigger_exchange() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = b"GET /status HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    for (label, anchored, complete) in [
+        ("complete", true, true),
+        ("midstream", false, true),
+        ("incomplete-request", true, false),
+    ] {
+        let path = directory.path().join(format!("auth-exchange-{label}.pcapng"));
+        let mut writer = PcapNgWriter::create(&path).unwrap();
+        if anchored {
+            writer.write_packet(&support::tcp(1, 100, 0x02, &[], false)).unwrap();
+            writer.write_packet(&support::tcp(2, 500, 0x12, &[], true)).unwrap();
+        }
+        let start = if anchored { 3 } else { 1 };
+        for index in 0..5 {
+            let frame = start + index * 2;
+            let request_seq = 101 + index as u32 * request.len() as u32;
+            let reply_seq = 501 + index as u32 * response.len() as u32;
+            let observed = if index == 4 && !complete { &request[..request.len() - 4] } else { request };
+            writer.write_packet(&support::tcp(frame, request_seq, 0x18, observed, false)).unwrap();
+            writer.write_packet(&support::tcp(frame + 1, reply_seq, 0x18, response, true)).unwrap();
+        }
+        writer.flush().unwrap();
+
+        let output = run_with(&path, &["--expect-alert", "http.unauthorized_burst=1"]);
+        let rows = events(&output);
+        let alert = &rows.iter().find(|row| row["alert"]["provenance"]["rule_id"] == "http.unauthorized_burst")
+            .unwrap()["alert"];
+        let (expected, detail) = if anchored && complete {
+            (serde_json::json!([4, 6, 8, 10, 12, 11]), "matched retained HTTP/1 request")
+        } else {
+            (serde_json::json!((0..5).map(|index| start + 2 * index + 1).collect::<Vec<_>>()),
+                "request association unavailable")
+        };
+        assert_eq!(alert["packet_refs"], expected);
+        assert!(alert["detail"].as_str().unwrap().contains(detail));
+    }
+}
+
+#[test]
 fn labeled_scan_replay_differentiates_unique_targets_from_repeat_traffic() {
     let directory = tempfile::tempdir().unwrap();
     for (label, diverse) in [("repeated", false), ("fanout", true)] {

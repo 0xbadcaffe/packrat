@@ -129,14 +129,23 @@ impl AnalysisCore {
                 pkt.outer_vlan_id,
                 pkt.vlan_id,
             );
+            let mut packet_refs = alert.packet_refs.clone();
+            let exchange = if alert.service != "HTTP" {
+                ""
+            } else if let Some(frames) = self.http_401_exchange_frames(pkt) {
+                packet_refs.extend(frames);
+                "; matched retained HTTP/1 request for the triggering 401"
+            } else {
+                "; triggering 401 request association unavailable"
+            };
             self.alert_center.record_correlated_with_evidence(
-                (pkt.no, &alert.packet_refs),
+                (pkt.no, &packet_refs),
                 pkt.timestamp,
                 "AUTH",
                 severity,
                 title,
                 format!(
-                    "{} {observation} for client {} and service {}:{}",
+                    "{} {observation} for client {} and service {}:{}{exchange}",
                     alert.attempts, alert.src_ip, alert.dst_ip, alert.port
                 ),
                 // The detector emits once per burst; a rearmed burst needs a fresh review.
