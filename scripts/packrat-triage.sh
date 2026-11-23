@@ -234,14 +234,10 @@ with_socket_context() {
         | select(length <= 64 and all(.[]; type == "object"))
     ') || return 1
     jq -ce --argjson snapshots "$snapshots" '
-        def snapshot($alert):
-            .alert_last_seen as $seen
-            | select(.session_id == $alert.session_id and .capture_id == $alert.capture_id
+        def context($alert; $time):
+            [$snapshots[] | select(.session_id == $alert.session_id and .capture_id == $alert.capture_id
                 and .alert_id == $alert.alert_id and .flow == $alert.flow and .flow.transport == "tcp"
-                and (.alert_last_seen | type == "number" and isfinite and . > 0)
-                and $alert.last_seen == $seen);
-        map(. as $alert
-            | ([$snapshots[] | snapshot($alert)
+                and (.alert_last_seen | type == "number" and isfinite and . > 0) and .alert_last_seen == $time)
                 | .alert_last_seen as $when
                 | .socket_context | objects
                 | select(.status == "exact_tuple_snapshot" and (.tcp_state == null or .tcp_state == "ESTAB" or .tcp_state == "SYN-SENT")
@@ -252,8 +248,12 @@ with_socket_context() {
                     and ((try (.observed_at | fromdateiso8601) catch null)
                         | . != null and . >= ($when | floor) and . <= ($when | floor) + 8))
                 | {status,observed_at,local,peer,process,pid,alert_last_seen:$when} + (if .tcp_state == "ESTAB" or .tcp_state == "SYN-SENT" then {tcp_state} else {} end)]
-                | if (map([.local,.peer,.process,.pid]) | unique | length)==1 then max_by(.observed_at) else null end) as $context
-            | if $context == null then . else . + {socket_context:$context} end)
+            | if (map([.local,.peer,.process,.pid]) | unique | length)==1 then max_by(.observed_at) else null end;
+        map(. as $alert | context($alert; $alert.last_seen) as $latest
+            | (if ([$alert.first_seen,$alert.last_seen] | all(.[]; type == "number" and isfinite)) and $alert.first_seen < $alert.last_seen
+               then context($alert; $alert.first_seen) else null end) as $earlier
+            | if $latest != null then .socket_context=$latest else . end
+            | if $earlier != null then .earlier_socket_context=$earlier else . end)
     ' <<< "$alerts"
 }
 fresh() {

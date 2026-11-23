@@ -93,10 +93,10 @@ mock_archive() {
         '
     else
         jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" --arg queue "${PACKRAT_TEST_AUTO_QUEUE:-}" \
-            --argjson refs "${PACKRAT_TEST_FRAME_COUNT:-2}" '
+            --argjson refs "${PACKRAT_TEST_FRAME_COUNT:-2}" --argjson first "${PACKRAT_TEST_FIRST_SEEN:-1700000000}" '
             {alert_id:42,title:"Scoped alert",session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
              evidence_frame_count:$refs,evidence_frame_set_sha256:("0"*64),
-             last_seen:1700000000,
+             first_seen:$first,last_seen:1700000000,
              flow:{transport:"tcp",source:"192.0.2.1:4321",destination:"192.0.2.2:443"}} as $valid
             | if $queue == "yes" then [
                   ({Benign:46,Contained:47,Closed:48} | to_entries[] | $valid + {alert_id:.value,severity:"CRITICAL",disposition:.key}),
