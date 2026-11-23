@@ -362,7 +362,7 @@ fn http_burst_replay_keeps_sustained_traffic_grouped_and_records_a_renewed_burst
 }
 
 #[test]
-fn http_burst_links_only_a_complete_and_anchored_trigger_exchange() {
+fn http_burst_links_complete_and_anchored_sampled_exchanges() {
     let directory = tempfile::tempdir().unwrap();
     let request = b"GET /status HTTP/1.1\r\nHost: example.test\r\n\r\n";
     let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
@@ -392,15 +392,48 @@ fn http_burst_links_only_a_complete_and_anchored_trigger_exchange() {
         let rows = events(&output);
         let alert = &rows.iter().find(|row| row["alert"]["provenance"]["rule_id"] == "http.unauthorized_burst")
             .unwrap()["alert"];
-        let (expected, detail) = if anchored && complete {
-            (serde_json::json!([4, 6, 8, 10, 12, 11]), "matched retained HTTP/1 request")
+        let (expected, linked) = if anchored && complete {
+            (serde_json::json!([4, 6, 8, 10, 12, 11, 9, 7, 5, 3]), 5)
+        } else if anchored {
+            (serde_json::json!([4, 6, 8, 10, 12, 9, 7, 5, 3]), 4)
         } else {
-            (serde_json::json!((0..5).map(|index| start + 2 * index + 1).collect::<Vec<_>>()),
-                "request association unavailable")
+            (serde_json::json!([2, 4, 6, 8, 10]), 0)
         };
         assert_eq!(alert["packet_refs"], expected);
-        assert!(alert["detail"].as_str().unwrap().contains(detail));
+        assert!(alert["detail"].as_str().unwrap().contains(&format!("for {linked}/5 sampled 401 replies")));
     }
+}
+
+#[test]
+fn http_burst_matches_requests_across_distinct_client_ports_without_guessing() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("several-connections.pcapng");
+    let request = b"GET /status HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    let mut writer = PcapNgWriter::create(&path).unwrap();
+    let mut frame = 0;
+    for client in 0..5_u16 {
+        let mut write = |seq, flags, body, reverse| {
+            frame += 1;
+            let mut packet = support::tcp(frame, seq, flags, body, reverse);
+            let port = 40000 + client;
+            let offset = if reverse { 36 } else { 34 };
+            packet.bytes[offset..offset + 2].copy_from_slice(&port.to_be_bytes());
+            writer.write_packet(&packet).unwrap();
+        };
+        if client != 2 {
+            write(100, 0x02, &[], false);
+            write(500, 0x12, &[], true);
+        }
+        write(101, 0x18, request, false);
+        write(501, 0x18, response, true);
+    }
+    writer.flush().unwrap();
+    let rows = events(&run_with(&path, &["--expect-alert", "http.unauthorized_burst=1"]));
+    let alert = &rows.iter().find(|row| row["alert"]["provenance"]["rule_id"] == "http.unauthorized_burst")
+        .unwrap()["alert"];
+    assert_eq!(alert["packet_refs"], serde_json::json!([4, 8, 10, 14, 18, 17, 13, 7, 3]));
+    assert!(alert["detail"].as_str().unwrap().contains("for 4/5 sampled 401 replies"));
 }
 
 #[test]

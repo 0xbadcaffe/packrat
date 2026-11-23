@@ -406,6 +406,7 @@ pub struct BruteForceAlert {
     pub attempts: usize,
     pub service: &'static str,
     pub packet_refs: Vec<u64>,
+    pub(crate) http_streams: Vec<(u64, String)>,
 }
 
 /// Internal tracking key for brute force attempts
@@ -438,6 +439,7 @@ pub(super) struct AuthObservation {
     pub(super) timestamp: f64,
     pub(super) packet_no: u64,
     pub(super) transport_token: (u16, u32),
+    pub(super) http_stream: Option<String>,
 }
 
 // ─── HTTP Record ──────────────────────────────────────────────────────────────

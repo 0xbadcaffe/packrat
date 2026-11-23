@@ -1,12 +1,12 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::AnalysisCore;
-use crate::analysis::stream::StreamKey;
+use crate::analysis::alert_center::MAX_ALERT_PACKET_REFS;
 use crate::analysis::transactions::{
     HttpConversation, MessageState, MultiplexedConversation, reconstruct_http, reconstruct_http2,
 };
-use crate::net::packet::Packet;
 
 #[derive(Default)]
 pub(super) struct TransactionCache {
@@ -26,32 +26,51 @@ struct CachedConversation {
     conversation: Arc<HttpConversation>,
 }
 
+fn http_401_exchange_frames(conversation: &HttpConversation, trigger: u64) -> Option<Vec<u64>> {
+    const MAX_EXCHANGE_FRAMES: usize = 32;
+    let mut matches = conversation.transactions.iter().filter_map(|exchange| {
+        let response = exchange.response.as_ref()?;
+        (response.status == Some(401) && response.packet_numbers.contains(&trigger))
+            .then_some((&exchange.request, response))
+    });
+    let (request, response) = matches.next()?;
+    let first_reply_frame = *response.packet_numbers.first()?;
+    if matches.next().is_some()
+        || request.state != MessageState::Complete
+        || response.state != MessageState::Complete
+        || request.packet_numbers.is_empty()
+        || request.packet_numbers.iter().any(|&frame| frame == 0 || frame >= first_reply_frame)
+        || request.packet_numbers.len() + response.packet_numbers.len() > MAX_EXCHANGE_FRAMES
+    {
+        return None;
+    }
+    Some(request.packet_numbers.iter().chain(&response.packet_numbers).copied().collect())
+}
+
 impl AnalysisCore {
-    pub(super) fn http_401_exchange_frames(&self, trigger: &Packet) -> Option<Vec<u64>> {
-        const MAX_EXCHANGE_FRAMES: usize = 32;
-        let id = StreamKey::from_packet(trigger)?.id();
-        let stream = self.streams.get(&id)?;
-        if stream.midstream || stream.has_gaps() || stream.reset || stream.provenance_truncated {
-            return None;
+    pub(super) fn attach_http_401_exchanges(
+        &self, samples: &[(u64, String)], packet_refs: &mut Vec<u64>,
+    ) -> usize {
+        let mut conversations = HashMap::new();
+        let mut linked = 0;
+        // Give recent replies first use of the remaining evidence budget.
+        for (frame, id) in samples.iter().rev() {
+            let conversation = conversations.entry(id.as_str()).or_insert_with(|| {
+                let stream = self.streams.get(id)?;
+                if stream.midstream || stream.has_gaps() || stream.reset || stream.provenance_truncated {
+                    return None;
+                }
+                self.http_transactions(id)
+            });
+            let Some(mut frames) = conversation.as_ref()
+                .and_then(|conversation| http_401_exchange_frames(conversation, *frame)) else { continue };
+            frames.retain(|frame| !packet_refs.contains(frame));
+            if packet_refs.len() + frames.len() <= MAX_ALERT_PACKET_REFS {
+                packet_refs.extend(frames);
+                linked += 1;
+            }
         }
-        let conversation = self.http_transactions(&id)?;
-        let mut matches = conversation.transactions.iter().filter_map(|exchange| {
-            let response = exchange.response.as_ref()?;
-            (response.status == Some(401) && response.packet_numbers.contains(&trigger.no))
-                .then_some((&exchange.request, response))
-        });
-        let (request, response) = matches.next()?;
-        if matches.next().is_some()
-            || request.state != MessageState::Complete
-            || response.state != MessageState::Complete
-            || request.packet_numbers.is_empty()
-            || request.packet_numbers.iter().any(|&frame| frame == 0 || frame >= trigger.no)
-            || response.packet_numbers.iter().any(|&frame| frame == 0)
-            || request.packet_numbers.len() + response.packet_numbers.len() > MAX_EXCHANGE_FRAMES
-        {
-            return None;
-        }
-        Some(request.packet_numbers.iter().chain(&response.packet_numbers).copied().collect())
+        linked
     }
 
     /// Query derived exchanges without cloning stream payloads. Only the most

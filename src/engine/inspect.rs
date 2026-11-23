@@ -130,13 +130,11 @@ impl AnalysisCore {
                 pkt.vlan_id,
             );
             let mut packet_refs = alert.packet_refs.clone();
-            let exchange = if alert.service != "HTTP" {
-                ""
-            } else if let Some(frames) = self.http_401_exchange_frames(pkt) {
-                packet_refs.extend(frames);
-                "; matched retained HTTP/1 request for the triggering 401"
+            let exchange = if alert.service == "HTTP" {
+                let linked = self.attach_http_401_exchanges(&alert.http_streams, &mut packet_refs);
+                format!("; matched retained HTTP/1 requests for {linked}/{} sampled 401 replies", alert.attempts)
             } else {
-                "; triggering 401 request association unavailable"
+                String::new()
             };
             self.alert_center.record_correlated_with_evidence(
                 (pkt.no, &packet_refs),

@@ -110,6 +110,11 @@ impl SecurityEngine {
             timestamp: now,
             packet_no: pkt.no,
             transport_token: token,
+            http_stream: if service == "HTTP" {
+                crate::analysis::stream::StreamKey::from_packet(pkt).map(|key| key.id())
+            } else {
+                None
+            },
         });
         if window.observations.len() > AUTH_BURST_THRESHOLD {
             if let Some((oldest, _)) = window.observations.iter().enumerate()
@@ -131,6 +136,9 @@ impl SecurityEngine {
                 attempts: window.observations.len(),
                 service,
                 packet_refs: window.observations.iter().map(|entry| entry.packet_no).collect(),
+                http_streams: window.observations.iter().filter_map(|entry| {
+                    Some((entry.packet_no, entry.http_stream.clone()?))
+                }).collect(),
             };
             self.findings.authentication.push(alert.clone());
             self.brute_force.push(alert);
