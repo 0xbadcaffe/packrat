@@ -225,12 +225,17 @@ fn filtered_alerts_report(
             }
             let evidence_frames = alert.evidence_frame_numbers();
             let evidence_frame_count = evidence_frames.len();
+            let credential = alert.source == "CREDENTIAL";
+            let provenance = alert.provenance.as_ref().filter(|_| !credential);
             let mut review_limitations = Vec::new();
             if alert.capture_id.is_none() {
                 review_limitations.push("capture_scope_not_recorded");
             }
             if alert.provenance.is_none() {
                 review_limitations.push("rule_provenance_not_recorded");
+            }
+            if credential {
+                review_limitations.push("credential_metadata_redacted");
             }
             if evidence_frame_count == 0 {
                 review_limitations.push("no_packet_references");
@@ -248,9 +253,9 @@ fn filtered_alerts_report(
                 session_id: record.session_id,
                 capture_id: alert.capture_id,
                 alert_id: alert.id,
-                title: limited(&alert.title, 160),
+                title: limited(if credential { credential_label(&alert.title) } else { &alert.title }, 160),
                 severity: limited(&alert.severity, 16),
-                detail: limited(if alert.source == "CREDENTIAL" { CREDENTIAL_ALERT_DETAIL } else { &alert.detail }, 512),
+                detail: limited(if credential { CREDENTIAL_ALERT_DETAIL } else { &alert.detail }, 512),
                 disposition: alert.disposition,
                 first_seen: alert.first_seen,
                 last_seen: alert.last_seen,
@@ -261,11 +266,11 @@ fn filtered_alerts_report(
                 evidence_frame_count,
                 evidence_frame_set_sha256: evidence_frame_set_sha256(&evidence_frames),
                 flow: alert.flow,
-                rule_id: alert.provenance.as_ref().map(|rule| limited(&rule.rule_id, 128)),
+                rule_id: provenance.map(|rule| limited(&rule.rule_id, 128)),
                 legacy_rule_hint,
-                revision: alert.provenance.as_ref().map(|rule| rule.revision),
-                confidence: alert.provenance.as_ref().map(|rule| rule.confidence),
-                verify: alert.provenance.as_ref().map(|rule| limited(&rule.verification_hint, 240)),
+                revision: provenance.map(|rule| rule.revision),
+                confidence: provenance.map(|rule| rule.confidence),
+                verify: provenance.map(|rule| limited(&rule.verification_hint, 240)),
                 review_limitations,
             });
             if latest.len() == limit {
@@ -359,6 +364,13 @@ impl ReverseAlertLines {
                 line.clear();
             }
         }
+    }
+}
+
+fn credential_label(title: &str) -> &str {
+    match title {
+        "HTTP-BasicAuth" | "FTP-USER" | "FTP-PASS" | "SMTP-AUTH" | "IMAP-LOGIN" => title,
+        _ => "Possible cleartext credential material",
     }
 }
 
