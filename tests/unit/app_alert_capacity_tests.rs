@@ -48,3 +48,19 @@ fn alert_resolution_preserves_pin_precedence_in_a_full_buffer_and_keeps_missing_
     assert_eq!(app.worklist.retained_packet(5_000).unwrap().info, "Already pinned");
     assert!(app.status_msg.as_deref().unwrap().contains("2 unavailable"));
 }
+
+#[test]
+fn opening_an_alert_does_not_select_another_packet_when_the_trigger_is_missing() {
+    let mut app = App::new_for_test();
+    app.packets.push_back(parse_ethernet(&[], 10, 1.0));
+    app.core.edit().alert_center.record_correlated_with_evidence(
+        (20, &[10]), 2.0, "IDS", "HIGH", "Finding", "Missing trigger", "flow",
+    );
+    assert!(app.investigate_selected_alert());
+    assert!(matches!(app.active_investigation_item(), Some(InvestigationItem::Alert(1))));
+    assert!(app.active_investigation_context().unwrap().details.iter().any(|(label, value)|
+        label == "Trigger frame" && value == "#20: not retained here"));
+    assert!(app.status_msg.as_deref().unwrap().contains("trigger #20 not opened"));
+    app.worklist_next_packet();
+    assert_eq!(app.worklist.active_packet_no(), Some(10));
+}

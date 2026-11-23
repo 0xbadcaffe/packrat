@@ -172,6 +172,26 @@ impl App {
         status
     }
 
+    pub(super) fn alert_trigger_status(&self, alert: &AlertItem) -> String {
+        let frame = alert.packet_no;
+        if frame == 0 {
+            return "Not recorded".into();
+        }
+        let scope = self.alert_evidence_scope(alert);
+        let slot = self.local_alert_packets(alert, scope, &[frame]).pop().flatten();
+        let status = slot.and_then(|location| location.get(self)).map_or(FrameStatus::Missing, frame_status);
+        let description = match status {
+            FrameStatus::Complete => "retained, complete capture",
+            FrameStatus::Truncated => "retained, truncated",
+            FrameStatus::LengthUnknown => "retained, capture length unknown",
+            FrameStatus::Unreadable => "invalid capture lengths",
+            FrameStatus::Missing if scope == AlertEvidenceScope::CurrentCapture
+                && self.packet_archive.is_some() && self.frame_may_be_local(scope, frame) => "unchecked in archive",
+            FrameStatus::Missing => "not retained here",
+        };
+        format!("#{frame}: {description}")
+    }
+
     /// Resolve sorted, unique alert references in one pass without opening the archive.
     pub(super) fn local_alert_packets(
         &self, alert: &AlertItem, scope: AlertEvidenceScope, frames: &[u64],

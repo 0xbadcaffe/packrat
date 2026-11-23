@@ -287,13 +287,13 @@ impl App {
             }
         }
         self.worklist.open = true;
-        self.worklist.active = retained.iter().find(|&&frame| frame == alert.packet_no)
-            .or_else(|| retained.first())
+        let trigger_opened = retained.contains(&alert.packet_no);
+        self.worklist.active = trigger_opened.then_some(alert.packet_no)
             .and_then(|packet_no| {
                 self.worklist
                     .items
                     .iter()
-                    .position(|item| *item == InvestigationItem::Packet(*packet_no))
+                    .position(|item| *item == InvestigationItem::Packet(packet_no))
             })
             .or_else(|| {
                 self.worklist
@@ -307,7 +307,7 @@ impl App {
             .into_iter().filter(|&(count, _)| count > 0)
             .map(|(count, label)| format!("{count} {label}; ")).collect();
         self.set_status(format!(
-            "Alert #{}: {quality}opened {} matching packets ({} archived); {} unavailable{}{}{}",
+            "Alert #{}: {quality}opened {} matching packets ({} archived); {} unavailable{}{}{}{}",
             alert.id,
             retained.len(),
             archived,
@@ -316,7 +316,12 @@ impl App {
             if reader.invalid_lengths > 0 { format!(" ({} invalid capture lengths)", reader.invalid_lengths) } else { String::new() },
             scope_mismatch.map(|reason| if retained.is_empty() { reason } else { "saved case" })
                 .or(reader.archive_error.then_some("archive read failed"))
-                .map_or_else(String::new, |reason| format!(" ({reason})"))
+                .map_or_else(String::new, |reason| format!(" ({reason})")),
+            if alert.packet_no != 0 && !trigger_opened {
+                format!("; trigger #{} not opened", alert.packet_no)
+            } else {
+                String::new()
+            },
         ));
         true
     }

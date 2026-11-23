@@ -165,7 +165,7 @@ impl AppView<'_> {
                             alert.provenance.as_ref().map(|rule| rule.confidence.to_string())
                                 .unwrap_or_else(|| "Not recorded".into()),
                         ),
-                        ("Packet".into(), format!("#{}", alert.packet_no)),
+                        ("Trigger frame".into(), self.alert_trigger_status(alert)),
                         (
                             "Trigger flow".into(),
                             alert.flow.map_or_else(|| "Not recorded".into(), |flow| {

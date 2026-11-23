@@ -36,6 +36,7 @@ fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     let old_alerts = app.core.edit().alert_center.items.clone();
     app.packets.clear();
     assert_eq!(app.alert_evidence_status(&old_alerts[0]), "0/2 retained; 2 unchecked in archive");
+    assert_eq!(app.alert_trigger_status(&old_alerts[0]), "#2: unchecked in archive");
     app.packet_archive.as_mut().unwrap().finish().unwrap();
     assert!(app.investigate_selected_alert());
     assert_eq!(app.worklist.packet_nos(), [1, 2]);
@@ -228,8 +229,12 @@ fn alert_investigation_skips_invalid_capture_lengths_without_hiding_other_frames
     );
     assert!(app.investigate_selected_alert());
     assert_eq!(app.worklist.packet_nos(), [20]);
+    assert!(matches!(app.active_investigation_item(), Some(InvestigationItem::Alert(1))));
+    assert!(app.active_investigation_context().unwrap().details.iter().any(|(label, value)|
+        label == "Trigger frame" && value == "#10: invalid capture lengths"));
+    assert!(app.status_msg.as_deref().unwrap().contains("1 unavailable (1 invalid capture lengths); trigger #10 not opened"));
+    app.worklist_next_packet();
     assert_eq!(app.worklist.active_packet_no(), Some(20));
-    assert!(app.status_msg.as_deref().unwrap().contains("1 unavailable (1 invalid capture lengths)"));
 }
 
 #[test]
