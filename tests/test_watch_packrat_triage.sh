@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Each watcher PID is captured in the shell that launches it, not a sourced subshell.
+# shellcheck disable=SC2031
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -435,6 +437,36 @@ grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"
 cmp -s "$scratch/rotation-output" "$journal"
 cmp -s "$scratch/unsafe-output" "$state.events.jsonl"
 jq -e '.journal_status=="current" and .journal_pending_events==0' "$state" >/dev/null
+
+state="$scratch/journal-loss.json"
+ln -s "$journal" "$state.events.jsonl"
+live current 100 '[]' >"$report"
+PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/loss-output" 2>"$scratch/loss-errors" &
+watch_pid=$!
+await_packets 100
+for count in {1..16}; do
+    packets=$((100 + count))
+    live current "$packets" '[]' | jq --argjson count "$count" '.health.capture_truncated_frames=$count' >"$report.next"
+    mv -- "$report.next" "$report"
+    await_packets "$packets"
+done
+jq -e '.journal_status=="write_failed" and .journal_pending_events==16
+    and .journal_unconfirmed_events==1' "$state" >/dev/null
+grep -Fq 'oldest pending event discarded' "$scratch/loss-errors"
+kill "$watch_pid"
+wait "$watch_pid"
+watch_pid=''
+rm -- "$state.events.jsonl"
+live current 117 '[]' >"$report"
+PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/loss-restart" &
+watch_pid=$!
+await_packets 117
+bash "$watch" --check "$state" | jq -e '.journal_status=="current" and .journal_pending_events==0
+    and .journal_unconfirmed_events==17' >/dev/null
+kill "$watch_pid"
+wait "$watch_pid"
+watch_pid=''
+bash "$watch" --once "$state" -- cat -- "$report" | jq -e '.journal_unconfirmed_events==17' >/dev/null
 
 history="$scratch/history.json"
 install -m 0600 "$scratch/rotation-output" "$history.events.jsonl.1"

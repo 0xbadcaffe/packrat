@@ -24,6 +24,7 @@ usage() {
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
         'alert_sample_gap warns that the watcher may have missed alerts in a bounded sample; review saved history.' \
         'Continuous mode journals sanitized changes in STATE.json.events.jsonl and one 1 MiB rotation (PACKRAT_TRIAGE_WATCH_JOURNAL=0 disables this).' \
+        'journal_unconfirmed_events counts discarded events and events whose pending writes could not be confirmed after restart.' \
         'History emits retained journal events oldest first, or asks to retry if the journal changes during the read.' \
         'Supervision retries unexpected exits with backoff; configuration errors stop the supervisor.' \
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
@@ -134,6 +135,8 @@ check_snapshot() {
               . == "disabled" or . == "not_checked" then . else null end),
            journal_pending_events:(.journal_pending_events |
               if type == "number" and . >= 0 and . <= 16 and floor == . then . else null end),
+           journal_unconfirmed_events:(.journal_unconfirmed_events |
+              if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end),
            alert_sample_gap:(.alert_sample_gap | if type == "boolean" then . else null end),
            capture_id:(.capture_id | scope_id), session_id:(.session_id | scope_id)}' <<< "$raw" 2>/dev/null); then
         printf '%s\n' '{"status":"snapshot_invalid"}'
@@ -194,6 +197,7 @@ exec {lock_fd}>>"$state.lock"
 flock -n "$lock_fd" || { printf '%s\n' 'Triage state is already being refreshed.' >&2; exit 2; }
 
 journal_failed=false journal_overflow=false
+journal_unconfirmed=0
 pending_journal=()
 
 append_journal() {
@@ -321,8 +325,10 @@ timer=''
 trap 'if [[ -n $temp ]]; then rm -f -- "$temp"; fi' EXIT
 trap 'if [[ -n $timer ]]; then kill "$timer" 2>/dev/null || :; wait "$timer" 2>/dev/null || :; fi; exit 0' HUP INT TERM
 publish_snapshot() {
-    snapshot=$(jq -c --arg journal_status "$1" --argjson pending "${#pending_journal[@]}" '
-        . + {journal_status:$journal_status,journal_pending_events:$pending}' <<< "$snapshot")
+    snapshot=$(jq -c --arg journal_status "$1" --argjson pending "${#pending_journal[@]}" \
+        --argjson unconfirmed "$journal_unconfirmed" '
+        . + {journal_status:$journal_status,journal_pending_events:$pending,
+            journal_unconfirmed_events:$unconfirmed}' <<< "$snapshot")
     temp=$(mktemp -- "$directory/.packrat-triage.XXXXXXXX")
     printf '%s\n' "$snapshot" >"$temp"
     mv -fT -- "$temp" "$state"
@@ -333,7 +339,7 @@ previous=''
 prior=null
 if [[ -f $state && -O $state ]]; then
     # A stale snapshot can still identify alerts already seen in the same capture.
-    prior=$(head -c 65537 -- "$state" |
+    saved=$(head -c 65537 -- "$state" |
         jq -Rces "$snapshot_validation"'
             select(utf8bytelength <= 65536) | fromjson | objects
             | select(.record_type == "capture_triage_watch"
@@ -341,7 +347,16 @@ if [[ -f $state && -O $state ]]; then
                 and valid_current)
             | (now - (.updated_at | fromdateiso8601) | floor) as $age
             | select($age >= -5)
-            | ($age <= .max_age_seconds) as $fresh
+            | {fresh:($age <= .max_age_seconds), snapshot:.}
+        ' 2>/dev/null) || saved=null
+    # The previous process no longer holds the lock. It cannot retry its in-memory queue.
+    journal_unconfirmed=$(jq -r '
+        def bounded($max): if type == "number" and . >= 0 and . <= $max and floor == . then . else 0 end;
+        .snapshot | [9007199254740991, ((.journal_unconfirmed_events | bounded(9007199254740991))
+            + (.journal_pending_events | bounded(16)))] | min
+        ' <<< "$saved")
+    prior=$(jq -ce '
+            .fresh as $fresh | .snapshot
             | .last_observed // .
             | select((.status == "current" or .status == "degraded") and
                 (.capture_id | type == "string") and (.session_id | type == "string") and
@@ -356,7 +371,7 @@ if [[ -f $state && -O $state ]]; then
                 highest_observed_alert_id:(
                 .highest_observed_alert_id | if type == "number" and . >= 0 and . <= 9007199254740991
                     and floor == . then . else null end)}
-        ' 2>/dev/null) || prior=null
+        ' <<< "$saved") || prior=null
 fi
 while :; do
     # Poll commands and the timer must not hold the writer lock after a crash.
@@ -414,6 +429,9 @@ while :; do
                 flush_journal
                 if (( ${#pending_journal[@]} >= 16 )); then
                     pending_journal=("${pending_journal[@]:1}")
+                    if (( journal_unconfirmed < 9007199254740991 )); then
+                        journal_unconfirmed=$((journal_unconfirmed + 1))
+                    fi
                     if ! "$journal_overflow"; then
                         printf '%s\n' 'Triage event journal backlog full; oldest pending event discarded.' >&2
                         journal_overflow=true
