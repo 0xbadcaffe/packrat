@@ -125,7 +125,7 @@ impl SecurityEngine {
                 }
             } else if control == (SYN | ACK) || control == (RST | ACK) {
                 self.record_scan_reply(pkt, signal, control == (RST | ACK));
-            } else if control == ACK && has_pending_final_ack {
+            } else if control & !PSH == ACK && has_pending_final_ack {
                 self.record_scan_final_ack(pkt, signal);
             }
             self.record_admin_tcp(pkt, signal);

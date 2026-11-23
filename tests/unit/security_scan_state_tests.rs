@@ -6,22 +6,26 @@ fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
     let tcp_frame = |no, target, flags, ack: u32, client_port: u16, vlan| {
         let client = [192, 0, 2, 1];
         let host = [198, 51, 100, target];
-        let (src, dst, sport, dport) = if matches!(flags, 0x02 | 0x10) {
+        let (src, dst, sport, dport) = if matches!(flags, 0x02 | 0x10 | 0x18) {
             (client, host, client_port, 443_u16)
         } else {
             (host, client, 443_u16, client_port)
         };
-        let mut raw = [0_u8; 54];
+        let mut raw = vec![0_u8; 54];
+        if flags == 0x18 {
+            raw.extend_from_slice(b"application data");
+        }
         raw[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
         raw[14] = 0x45;
-        raw[16..18].copy_from_slice(&40_u16.to_be_bytes());
+        let ip_length = (raw.len() - 14) as u16;
+        raw[16..18].copy_from_slice(&ip_length.to_be_bytes());
         raw[22] = 64;
         raw[23] = 6;
         raw[26..30].copy_from_slice(&src);
         raw[30..34].copy_from_slice(&dst);
         raw[34..36].copy_from_slice(&sport.to_be_bytes());
         raw[36..38].copy_from_slice(&dport.to_be_bytes());
-        let sequence = if flags == 0x10 { 0 } else { u32::MAX };
+        let sequence = if matches!(flags, 0x10 | 0x18) { 0 } else { u32::MAX };
         raw[38..42].copy_from_slice(&sequence.to_be_bytes());
         raw[42..46].copy_from_slice(&ack.to_be_bytes());
         raw[46] = 0x50;
@@ -42,10 +46,10 @@ fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
         (8, 2, 0x02, 0, 40_000, 10),
         (9, 2, 0x14, 0, 40_000, 10),
         (10, 1, 0x02, 0, 40_000, 10), // Retry after the matched SYN-ACK.
-        (11, 1, 0x10, 1, 40_000, 10), // Wrong acknowledgement.
+        (11, 1, 0x18, 1, 40_000, 10), // Wrong acknowledgement, even with data.
         (12, 1, 0x10, 0, 40_000, 20), // Different capture scope.
         (13, 2, 0x10, 0, 40_000, 10), // Reset, not a matched SYN-ACK.
-        (14, 1, 0x10, 0, 40_000, 10),
+        (14, 1, 0x18, 0, 40_000, 10), // Valid third handshake packet carries data.
     ] {
         engine.update(&tcp_frame(no, host, flags, ack, port, vlan));
     }

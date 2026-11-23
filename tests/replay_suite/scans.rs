@@ -45,19 +45,20 @@ fn write_scan_with_replies(path: &Path) {
     let mut write = |host, flags, acknowledgement: u32| {
         frame += 1;
         let reply = matches!(flags, 0x12 | 0x14);
-        let sequence = if flags == 0x10 { 101 } else { 100 };
-        let mut raw = super::support::tcp(frame, sequence, flags, &[], reply).bytes;
+        let sequence = if flags == 0x18 { 101 } else { 100 };
+        let payload: &[u8] = if flags == 0x18 { b"application data" } else { &[] };
+        let mut raw = super::support::tcp(frame, sequence, flags, payload, reply).bytes;
         raw[if reply { 29 } else { 33 }] = host;
         raw[42..46].copy_from_slice(&acknowledgement.to_be_bytes());
         capture.write_packet(&parse_ethernet(&raw, frame, frame as f64 / 100.0)).unwrap();
     };
     write(21, 0x02, 0);
     write(21, 0x12, 101);
-    write(21, 0x14, 102); // Wrong acknowledgement.
+    write(21, 0x12, 102); // Wrong acknowledgement.
     write(22, 0x02, 0);
     write(22, 0x14, 101);
     write(21, 0x02, 0); // Identical retry must not replace the matched pair.
-    write(21, 0x10, 101); // Only this matched third leg belongs in the evidence.
+    write(21, 0x18, 101); // The matching third leg also carries data.
     for host in 23..=32 {
         write(host, 0x02, 0);
     }
