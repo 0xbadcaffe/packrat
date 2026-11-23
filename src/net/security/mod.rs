@@ -183,6 +183,7 @@ pub struct SecurityEngine {
     tcp_overlap_evidence: crate::net::recent_evidence::RecentEvidence<1024, 300>,
     scan_sources: HashMap<ScanSourceKey, SourceScanState>,
     scan_packet_evidence: crate::net::recent_evidence::RecentEvidence<2048, 30>,
+    echo_sweep_evidence: crate::net::recent_evidence::RecentEvidence<1024, 30>,
     syn_flood_targets: HashMap<SynTargetKey, SynFloodState>,
     syn_arrival_evidence: crate::net::recent_evidence::RecentEvidence<1024, 3>,
     ndp_bindings: HashMap<(ServiceScope, [u8; 16]), NdpObservation>,

@@ -95,3 +95,56 @@ fn syn_arrival_archive_keeps_newest_cited_attempts_and_the_reordered_trigger() {
             (70..=100).contains(&frame) || frame == trigger);
     }
 }
+
+#[test]
+fn opted_in_echo_sweeps_archive_only_cited_requests_for_the_same_family_and_vlan() {
+    use super::{cases_3::ipv6_frame, ipv4_discovery_cases::discovery_packet};
+    use packrat_tui::net::parser::parse_ethernet;
+
+    let rule = "icmp.address_sweep";
+    for ipv6 in [false, true] {
+        for opt_in in [false, true] {
+            let scratch = tempfile::tempdir().unwrap();
+            let path = scratch.path().join("archive");
+            let mut app = start(&path, opt_in.then(|| rule.into()).into_iter().collect());
+            let echo = |frame, host: u8, v6, request, time| {
+                let mut payload = [0_u8; 8];
+                let mut packet = if v6 {
+                    payload[0] = if request { 128 } else { 129 };
+                    parse_ethernet(&ipv6_frame(host.into(), 58, &payload), frame, time)
+                } else {
+                    payload[0] = if request { 8 } else { 0 };
+                    discovery_packet(frame, host, 1, &payload)
+                };
+                packet.timestamp = time;
+                packet.vlan_id = Some(10);
+                packet
+            };
+            let chosen = echo(3, 1, ipv6, true, 1.1);
+            let mut other_vlan = echo(4, 12, ipv6, true, 2.0);
+            other_vlan.vlan_id = Some(20);
+            for packet in [echo(1, 1, ipv6, true, 1.0), echo(2, 1, ipv6, true, 0.9),
+                chosen.clone(), other_vlan, echo(5, 12, !ipv6, true, 2.0), echo(6, 13, ipv6, false, 2.0)] {
+                app.inject_packet(packet);
+            }
+            for host in 2..=11 {
+                app.inject_packet(echo(u64::from(host) + 5, host, ipv6, true, 3.0));
+            }
+            let trigger = roll_history(&mut app, 17);
+            app.inject_packet(echo(trigger, 12, ipv6, true, 2.5));
+            finish(&mut app);
+
+            let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
+                alert.provenance.as_ref().is_some_and(|p| p.rule_id == rule)).cloned()).unwrap().unwrap();
+            let refs: Vec<_> = [3].into_iter().chain(7..=16).chain([trigger]).collect();
+            assert_eq!(alert.packet_refs, refs);
+            let scope = alert.capture_id.unwrap();
+            let mut archive = PacketArchive::open_readonly(&path).unwrap();
+            assert_eq!(archive.count().unwrap(), if opt_in { 12 } else { 0 });
+            for frame in (1..=16).chain([trigger]) {
+                assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), opt_in && refs.contains(&frame));
+            }
+            assert_eq!(archive.packet_for_capture(&scope, 3).unwrap().map(|saved| saved.bytes), opt_in.then_some(chosen.bytes));
+        }
+    }
+}

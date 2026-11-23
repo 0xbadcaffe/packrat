@@ -35,6 +35,7 @@ impl SecurityEngine {
             tcp_overlap_evidence: Default::default(),
             scan_sources: HashMap::new(),
             scan_packet_evidence: Default::default(),
+            echo_sweep_evidence: Default::default(),
             syn_flood_targets: HashMap::new(),
             syn_arrival_evidence: Default::default(),
             ndp_bindings: HashMap::new(),
@@ -80,6 +81,7 @@ impl SecurityEngine {
         self.tcp_overlap_evidence = Default::default();
         self.scan_sources.clear();
         self.scan_packet_evidence = Default::default();
+        self.echo_sweep_evidence = Default::default();
         self.syn_flood_targets.clear();
         self.syn_arrival_evidence = Default::default();
         self.ndp_bindings.clear();
@@ -153,7 +155,7 @@ impl SecurityEngine {
         }
         self.check_ipv4_fragments(pkt, archive_rules);
         let tcp_payload = self.check_tcp_integrity(pkt, archive_rules);
-        self.check_scan_activity(pkt, archive_rules.is_some());
+        self.check_scan_activity(pkt, archive_rules);
         self.check_ipv6_control_plane(pkt, archive_rules);
         self.check_layer2_control_plane(pkt);
         self.check_beacon_and_exfiltration(pkt, tcp_payload, archive_rules);

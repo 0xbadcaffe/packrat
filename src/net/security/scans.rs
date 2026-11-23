@@ -3,6 +3,8 @@ use super::findings::IdsEvidenceUpdate;
 
 #[path = "scan_replies.rs"]
 mod scan_replies;
+#[path = "scan_echo.rs"]
+mod scan_echo;
 
 #[derive(Debug)]
 pub(super) struct ScanProbe {
@@ -62,10 +64,11 @@ impl ScanProbe {
 impl SecurityEngine {
     // ─── Scan and Flood Correlation ─────────────────────────────────────────
 
-    pub(super) fn check_scan_activity(&mut self, pkt: &Packet, retain: bool) {
+    pub(super) fn check_scan_activity(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
         if !pkt.timestamp.is_finite() {
             return;
         }
+        let retain = archive_rules.is_some();
         let mut has_pending_final_ack = false;
         self.scan_sources.retain(|_, state| {
             let active = pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= SCAN_WINDOW_SECS;
@@ -170,7 +173,8 @@ impl SecurityEngine {
             None
         };
         if let Some(protocol) = echo_protocol {
-            self.record_echo_request(pkt, protocol);
+            let retain_echo = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "icmp.address_sweep"));
+            self.record_echo_request(pkt, protocol, retain_echo);
         }
 
         for (signature, severity, detail) in alerts {
@@ -188,29 +192,6 @@ impl SecurityEngine {
             evict_oldest_scan_source(&mut self.scan_sources);
         }
         self.scan_sources.entry(key).or_default()
-    }
-
-    fn record_echo_request(&mut self, pkt: &Packet, protocol: &'static str) {
-        let key = scan_key(pkt, protocol);
-        let state = self.scan_state(key.clone());
-        if !matches!(state.push_probe(pkt, 0, None), ProbeChange::Distinct) {
-            return;
-        }
-        let count = state.probes.len();
-        if count < SCAN_UNIQUE_THRESHOLD || state.icmp_alerted {
-            return;
-        }
-        state.icmp_alerted = true;
-        let mut finding = scan_finding(
-            pkt,
-            &key,
-            "ICMP address sweep",
-            "echo",
-            format!("{} probed {count} hosts with {protocol} echo requests", pkt.src),
-            state.probes.iter(),
-        );
-        finding.alert.severity = Severity::Medium;
-        self.push_ids_finding(finding);
     }
 
     fn record_scan_probe(&mut self, pkt: &Packet, port: u16, transport: &'static str, tcp: Option<(u16, u32)>, retain: bool) {

@@ -240,7 +240,7 @@ fn scan_rules_rearm_after_most_evidence_expires_without_realerting_on_sustained_
                 packet.timestamp = time;
                 packet.dst = format!("198.51.100.{}", if vertical { 1 } else { target });
                 if echo {
-                    engine.record_echo_request(&packet, "ICMP");
+                    engine.record_echo_request(&packet, "ICMP", false);
                 } else {
                     engine.record_scan_probe(&packet, if vertical { target } else { 443 }, "TCP", None, false);
                 }
@@ -378,7 +378,7 @@ fn scan_and_syn_findings_never_join_evidence_across_capture_interfaces_or_sectio
                 match mode {
                     "horizontal" => engine.record_scan_probe(&packet, 443, "TCP", None, false),
                     "vertical" => engine.record_scan_probe(&packet, frame as u16, "TCP", None, false),
-                    "echo" => engine.record_echo_request(&packet, "ICMP"),
+                    "echo" => engine.record_echo_request(&packet, "ICMP", false),
                     _ => engine.record_syn_arrival(&packet, 443, 40_000, frame as u32, false),
                 }
                 packet.no += 1;
