@@ -36,7 +36,7 @@ pub(super) fn is_http_auth_evidence_candidate(packet: &crate::net::packet::Packe
 }
 
 fn http_401_exchange_frames(
-    stream: &ReassembledStream, conversation: &HttpConversation, trigger: u64,
+    stream: &ReassembledStream, conversation: &HttpConversation, trigger: u64, sequence: u32,
 ) -> Option<Vec<u64>> {
     const MAX_EXCHANGE_FRAMES: usize = 32;
     let mut matches = conversation.transactions.iter().filter_map(|exchange| {
@@ -44,6 +44,7 @@ fn http_401_exchange_frames(
         if response.status != Some(401) || !response.headers_complete
             || !matches!(response.state, MessageState::Complete | MessageState::Incomplete)
             || !response.packet_numbers.contains(&trigger)
+            || stream.anchored_sequence(response.span.direction.from_a(), response.span.start) != Some(sequence)
         {
             return None;
         }
@@ -67,11 +68,12 @@ fn http_401_exchange_frames(
 
 impl AnalysisCore {
     pub(super) fn observe_http_401(&mut self, pkt: &crate::net::packet::Packet) -> HttpAuthObservation {
+        const MAX_HEADERS_PER_PACKET: usize = 16;
         let Some((id, from_a, previous, initial, direct_offset)) = self.streams.http_auth_candidate(pkt)
             else { return HttpAuthObservation::Packet; };
         let (Some(stream), Some(conversation)) = (self.streams.get(&id), self.http_transactions(&id))
             else { return HttpAuthObservation::Packet; };
-        let mut candidates = conversation.transactions.iter().filter_map(|exchange| {
+        let candidates: Vec<_> = conversation.transactions.iter().filter_map(|exchange| {
             let response = exchange.response.as_ref()?;
             if response.status != Some(401) || !response.headers_complete
                 || !matches!(response.state, MessageState::Complete | MessageState::Incomplete)
@@ -82,18 +84,16 @@ impl AnalysisCore {
             }
             let frames = stream.packet_numbers(from_a, response.span.start, response.header_end);
             let first = *frames.first()?;
-            if !(2..=16).contains(&frames.len()) || !frames.contains(&pkt.no)
+            if frames.len() > 16 || !frames.contains(&pkt.no)
                 || exchange.request.packet_numbers.is_empty()
                 || exchange.request.packet_numbers.iter().any(|&frame| frame == 0 || frame >= first)
             {
                 return None;
             }
             Some((initial.wrapping_add(u32::try_from(response.span.start).ok()?), frames))
-        });
-        if let Some((sequence, frames)) = candidates.next()
-            && candidates.next().is_none()
-        {
-            return HttpAuthObservation::SplitHeader(sequence, frames);
+        }).take(MAX_HEADERS_PER_PACKET).collect();
+        if !candidates.is_empty() {
+            return HttpAuthObservation::Stream(candidates);
         }
         if let Some(offset) = direct_offset
             && conversation.transactions.iter().filter_map(|exchange| exchange.response.as_ref()).any(|response| {
@@ -108,12 +108,12 @@ impl AnalysisCore {
     }
 
     pub(super) fn attach_http_401_exchanges(
-        &self, samples: &[(u64, String)], packet_refs: &mut Vec<u64>,
+        &self, samples: &[(u64, String, u32)], packet_refs: &mut Vec<u64>,
     ) -> usize {
         let mut conversations = HashMap::new();
         let mut linked = 0;
         // Give recent replies first use of the remaining evidence budget.
-        for (frame, id) in samples.iter().rev() {
+        for (frame, id, sequence) in samples.iter().rev() {
             let conversation = conversations.entry(id.as_str()).or_insert_with(|| {
                 let stream = self.streams.get(id)?;
                 if stream.midstream || stream.has_gaps() || stream.reset || stream.provenance_truncated
@@ -124,7 +124,7 @@ impl AnalysisCore {
                 Some((stream, self.http_transactions(id)?))
             });
             let Some(mut frames) = conversation.as_ref()
-                .and_then(|(stream, conversation)| http_401_exchange_frames(stream, conversation, *frame)) else { continue };
+                .and_then(|(stream, conversation)| http_401_exchange_frames(stream, conversation, *frame, *sequence)) else { continue };
             frames.retain(|frame| !packet_refs.contains(frame));
             if packet_refs.len() + frames.len() <= MAX_ALERT_PACKET_REFS {
                 packet_refs.extend(frames);

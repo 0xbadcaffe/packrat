@@ -83,7 +83,7 @@ fn split_401_bursts_use_only_complete_scoped_headers_and_keep_each_frame() {
             let alert = &alerts[0]["alert"];
             assert_eq!(alerts[0]["opening"], true);
             assert_eq!(alert["packet_no"], 21);
-            assert_eq!(alert["provenance"]["revision"], 14);
+            assert_eq!(alert["provenance"]["revision"], 15);
             assert!(alert["detail"].as_str().unwrap().contains("for 5/5 sampled 401 replies"));
             let mut frames: Vec<_> = alert["packet_refs"].as_array().unwrap().iter()
                 .map(|frame| frame.as_u64().unwrap()).collect();
@@ -91,6 +91,45 @@ fn split_401_bursts_use_only_complete_scoped_headers_and_keep_each_frame() {
             assert_eq!(frames, (3..22).filter(|frame| (frame + 2) % 4 != 0).collect::<Vec<_>>());
         }
     }
+}
+
+#[test]
+fn coalesced_401_headers_keep_distinct_observations_and_unique_frames() {
+    let scratch = tempfile::tempdir().unwrap();
+    let capture = scratch.path().join("coalesced-401.pcapng");
+    let request = b"GET /status HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    let mut writer = PcapNgWriter::create(&capture).unwrap();
+    writer.write_packet(&support::tcp(1, 100, 0x02, &[], false)).unwrap();
+    writer.write_packet(&support::tcp(2, 500, 0x12, &[], true)).unwrap();
+    for index in 0..5 {
+        writer.write_packet(&support::tcp(
+            3 + u64::from(index), 101 + index * request.len() as u32, 0x18, request, false,
+        )).unwrap();
+    }
+    let coalesced = response.repeat(5);
+    for frame in [8, 9] {
+        writer.write_packet(&support::tcp(frame, 501, 0x18, &coalesced, true)).unwrap();
+    }
+    writer.flush().unwrap();
+
+    let rule = "http.unauthorized_burst";
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+        .args(["--expect-alert", &format!("{rule}=1")])
+        .arg(&capture).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let rows: Vec<Value> = String::from_utf8(output.stdout).unwrap().lines()
+        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    let [alert]: [&Value; 1] = rows.iter()
+        .filter(|row| row["alert"]["provenance"]["rule_id"] == rule)
+        .map(|row| &row["alert"]).collect::<Vec<_>>().try_into().unwrap();
+    assert_eq!(alert["packet_no"], 8);
+    assert_eq!(alert["provenance"]["revision"], 15);
+    assert!(alert["detail"].as_str().unwrap().contains("for 5/5 sampled 401 replies"));
+    let mut frames: Vec<_> = alert["packet_refs"].as_array().unwrap()
+        .iter().map(|frame| frame.as_u64().unwrap()).collect();
+    frames.sort_unstable();
+    assert_eq!(frames, (3..=8).collect::<Vec<_>>());
 }
 
 #[cfg(feature = "terminal-ui")]

@@ -76,8 +76,10 @@ impl SecurityEngine {
             445 if smb_wire::is_smb2_logon_failure(payload) => "SMB",
             80 | 443 | 8080 => match http_auth {
                 HttpAuthObservation::Packet if is_http_unauthorized(payload) => "HTTP",
-                HttpAuthObservation::SplitHeader(sequence, frames) => {
-                    self.record_service_observation(pkt, "HTTP", true, server_port, (client_port, sequence), frames);
+                HttpAuthObservation::Stream(responses) => {
+                    for (sequence, frames) in responses {
+                        self.record_service_observation(pkt, "HTTP", true, server_port, (client_port, sequence), frames);
+                    }
                     return;
                 }
                 _ => return,
@@ -164,10 +166,12 @@ impl SecurityEngine {
             if self.brute_force.len() >= MAX_ENTRIES {
                 self.brute_force.remove(0);
             }
-            let mut packet_refs: Vec<_> = window.observations.iter().map(|entry| entry.packet_no).collect();
-            for frame in window.observations.iter().flat_map(|entry| &entry.related_frames) {
-                if !packet_refs.contains(frame) {
-                    packet_refs.push(*frame);
+            let mut packet_refs = Vec::new();
+            for frame in window.observations.iter().map(|entry| entry.packet_no)
+                .chain(window.observations.iter().flat_map(|entry| entry.related_frames.iter().copied()))
+            {
+                if !packet_refs.contains(&frame) {
+                    packet_refs.push(frame);
                 }
             }
             let alert = BruteForceAlert {
@@ -178,7 +182,7 @@ impl SecurityEngine {
                 service,
                 packet_refs,
                 http_streams: window.observations.iter().filter_map(|entry| {
-                    Some((entry.packet_no, entry.http_stream.clone()?))
+                    Some((entry.packet_no, entry.http_stream.clone()?, entry.transport_token.1))
                 }).collect(),
             };
             self.findings.authentication.push(alert.clone());

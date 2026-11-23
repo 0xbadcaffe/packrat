@@ -386,7 +386,7 @@ pub struct BruteForceAlert {
     pub attempts: usize,
     pub service: &'static str,
     pub packet_refs: Vec<u64>,
-    pub(crate) http_streams: Vec<(u64, String)>,
+    pub(crate) http_streams: Vec<(u64, String, u32)>,
 }
 
 /// Internal tracking key for brute force attempts

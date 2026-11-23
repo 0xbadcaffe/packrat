@@ -73,7 +73,7 @@ use wire::*;
 pub(crate) enum HttpAuthObservation {
     Packet,
     ResponseBody,
-    SplitHeader(u32, Vec<u64>),
+    Stream(Vec<(u32, Vec<u64>)>),
 }
 
 // ─── Stream key ───────────────────────────────────────────────────────────────
@@ -191,6 +191,11 @@ pub struct ReassembledStream {
 }
 
 impl ReassembledStream {
+    pub(crate) fn anchored_sequence(&self, from_a: bool, offset: usize) -> Option<u32> {
+        let syn = if from_a { self.client_initial_syn } else { self.server_initial_syn }?;
+        Some(syn.wrapping_add(1).wrapping_add(u32::try_from(offset).ok()?))
+    }
+
     pub fn pending_segments(&self) -> usize {
         self.client_pending.len() + self.server_pending.len()
     }
