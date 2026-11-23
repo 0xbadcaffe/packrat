@@ -27,6 +27,14 @@ struct CachedConversation {
     conversation: Arc<HttpConversation>,
 }
 
+pub(super) fn is_http_auth_evidence_candidate(packet: &crate::net::packet::Packet) -> bool {
+    let http_port = |port| matches!(port, 80 | 443 | 8080);
+    packet.src_port.zip(packet.dst_port).is_some_and(|(source, destination)| {
+        (http_port(source) || http_port(destination))
+            && crate::analysis::stream::tcp_data_port_pair(packet) == Some((source, destination))
+    })
+}
+
 fn http_401_exchange_frames(
     stream: &ReassembledStream, conversation: &HttpConversation, trigger: u64,
 ) -> Option<Vec<u64>> {

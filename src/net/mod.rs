@@ -4,5 +4,6 @@ pub mod inspector;
 pub mod lua_plugin;
 pub mod packet;
 pub mod parser;
+pub(crate) mod recent_evidence;
 pub mod security;
 pub mod tree;

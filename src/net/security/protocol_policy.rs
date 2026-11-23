@@ -237,6 +237,7 @@ impl SecurityEngine {
     }
 
     pub(super) fn check_dns_transaction_integrity(&mut self, pkt: &Packet, dns: &crate::analysis::stream::DnsTcpObservation, archive_rules: Option<&[String]>) {
+        const MAX_DNS_EVIDENCE_PER_PACKET: usize = 128;
         let mut retained = std::collections::HashSet::new();
         for (id, finding) in self.dns_transactions.observe_stream(pkt, dns) {
             let (signature, severity) = match finding.kind {
@@ -273,7 +274,7 @@ impl SecurityEngine {
                 }))
             {
                 for &frame in &finding.related_packets {
-                    if retained.len() == dns_evidence::MAX_DNS_EVIDENCE_PER_PACKET { break; }
+                    if retained.len() == MAX_DNS_EVIDENCE_PER_PACKET { break; }
                     if let Some(packet) = self.dns_packet_evidence.supporting_packet(pkt, frame)
                         && retained.insert(frame)
                     {
@@ -293,7 +294,13 @@ impl SecurityEngine {
                 correlation_key: Some(correlation_key),
             });
         }
-        if archive_rules.is_some() { self.dns_packet_evidence.remember(pkt); }
+        if archive_rules.is_some() && (pkt.src_port == Some(53) || pkt.dst_port == Some(53)) {
+            let carries_dns = crate::analysis::dns_transactions::udp_payload(pkt)
+                .is_some_and(|(source, destination, bytes)| (source == 53 || destination == 53) && bytes.len() >= 12)
+                || crate::analysis::stream::tcp_data_port_pair(pkt)
+                    .is_some_and(|(source, destination)| source == 53 || destination == 53);
+            if carries_dns { self.dns_packet_evidence.remember(pkt); }
+        }
     }
 }
 

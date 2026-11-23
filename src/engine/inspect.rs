@@ -34,10 +34,13 @@ impl AnalysisCore {
         let modbus = self.streams.observe_modbus(pkt);
         let dns = self.streams.observe_tcp_dns(pkt);
         let split_http_401 = self.observe_split_http_401(pkt);
+        let retain_http_auth = self.alert_center.archive_evidence_rules.as_deref()
+            .is_some_and(|rules| rules.iter().any(|rule| rule == "http.unauthorized_burst"));
         let findings = self.security.inspect_with_context(
             pkt, modbus, segmented_tls.as_ref().map(|(selection, _)| *selection), dns, split_http_401,
             self.alert_center.archive_evidence_rules.as_deref(),
         );
+        let mut retained_evidence = findings.retained_evidence;
         for finding in &findings.ids {
             let alert = &finding.alert;
             self.operator_graph.on_ids_alert(
@@ -139,6 +142,10 @@ impl AnalysisCore {
             let mut packet_refs = alert.packet_refs.clone();
             let exchange = if alert.service == "HTTP" {
                 let linked = self.attach_http_401_exchanges(&alert.http_streams, &mut packet_refs);
+                if retain_http_auth {
+                    retained_evidence.extend(packet_refs.iter().take(crate::analysis::alert_center::MAX_ALERT_PACKET_REFS)
+                        .filter_map(|&frame| self.http_auth_evidence.supporting_packet(pkt, frame).cloned()));
+                }
                 format!("; matched retained HTTP/1 requests for {linked}/{} sampled 401 replies", alert.attempts)
             } else {
                 String::new()
@@ -354,11 +361,14 @@ impl AnalysisCore {
             }
         }
 
+        if retain_http_auth && transactions::is_http_auth_evidence_candidate(pkt) {
+            self.http_auth_evidence.remember(pkt);
+        }
         PacketAnalysis {
             disposition,
             incidents: notices,
             alert_pins: self.alert_center.drain_pending_pins(),
-            retained_evidence: findings.retained_evidence,
+            retained_evidence,
         }
     }
 }

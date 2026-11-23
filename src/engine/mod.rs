@@ -57,6 +57,7 @@ pub struct PacketAnalysis {
 
 pub struct AnalysisCore {
     transaction_cache: transactions::TransactionCache,
+    http_auth_evidence: crate::net::recent_evidence::RecentEvidence<2048, 90>,
     maintenance_ticks: u32,
     pub carver: Carver,
     pub carved_objects: Vec<CarvedObject>,
@@ -85,6 +86,7 @@ impl Default for AnalysisCore {
     fn default() -> Self {
         Self {
             transaction_cache: Default::default(),
+            http_auth_evidence: Default::default(),
             maintenance_ticks: 0,
             carver: Carver::default(),
             carved_objects: Vec::new(),
@@ -158,6 +160,7 @@ impl AnalysisCore {
     /// Clear observed traffic without discarding configured rules or keys.
     pub fn clear(&mut self) {
         self.transaction_cache = Default::default();
+        self.http_auth_evidence = Default::default();
         self.maintenance_ticks = 0;
         self.carver = Carver::default();
         self.carved_objects.clear();

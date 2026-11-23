@@ -129,7 +129,6 @@ mod behavior;
 use behavior::{BeaconSample, BeaconState, BehaviorFlowKey};
 mod control_plane;
 mod dns;
-mod dns_evidence;
 mod engine;
 mod findings;
 pub use findings::{ArpFinding, DetectionBatch, IdsFinding};
@@ -197,7 +196,8 @@ pub struct SecurityEngine {
     pub ipv6_reassembled: u64,
     http_headers: HashMap<(TcpFlowKey, bool), HttpHeaderState>,
     dns_transactions: DnsTransactionTracker,
-    dns_packet_evidence: dns_evidence::DnsPacketEvidence,
+    // Covers the pending-query lifetime plus the reply comparison window.
+    dns_packet_evidence: crate::net::recent_evidence::RecentEvidence<2048, 70>,
     // External credential count (set by caller)
     pub cred_hit_count: usize,
 }
