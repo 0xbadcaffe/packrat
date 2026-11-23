@@ -45,6 +45,7 @@ impl SecurityEngine {
             ntlm_fanout: HashMap::new(),
             dhcp_scopes: HashMap::new(),
             dhcp_server_evidence: Default::default(),
+            dhcp_client_evidence: Default::default(),
             ipv6_fragments: Ipv6FragmentReassembler::default(),
             ipv6_reassembled: 0,
             http_headers: HashMap::new(),
@@ -84,6 +85,7 @@ impl SecurityEngine {
         self.ntlm_fanout.clear();
         self.dhcp_scopes.clear();
         self.dhcp_server_evidence = Default::default();
+        self.dhcp_client_evidence = Default::default();
         self.ipv6_fragments.clear();
         self.ipv6_reassembled = 0;
         self.http_headers.clear();

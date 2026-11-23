@@ -59,9 +59,20 @@ impl SecurityEngine {
                     correlation_key: Some(format!("dhcp-server:{scope:?}:{server}")),
                 });
             }
-        } else if !message.client_identity.is_empty()
-            && let Some((count, related_packets)) = dhcp_client_burst(state, message.client_identity, pkt)
-        {
+        } else if !message.client_identity.is_empty() {
+            let (sampled, burst) = dhcp_client_burst(state, message.client_identity, pkt);
+            let retain = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "dhcp.discover_identity_burst"));
+            if retain && sampled {
+                self.dhcp_client_evidence.remember(pkt);
+            }
+            let Some((count, related_packets)) = burst else { return; };
+            if retain {
+                // A reordered frame can trigger the burst before its newest sampled capture time.
+                let window_end = state.client_high_water;
+                self.findings.retained_evidence.extend(related_packets.iter().filter_map(|&frame| {
+                    self.dhcp_client_evidence.supporting_packet_at(pkt, frame, window_end).cloned()
+                }));
+            }
             let scope_name = dhcp_scope_name(scope);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
@@ -366,11 +377,11 @@ fn observe_dhcp_server(
     previous
 }
 
-fn dhcp_client_burst(state: &mut DhcpScopeState, identity: Vec<u8>, pkt: &Packet) -> Option<(usize, Vec<u64>)> {
+fn dhcp_client_burst(state: &mut DhcpScopeState, identity: Vec<u8>, pkt: &Packet) -> (bool, Option<(usize, Vec<u64>)>) {
     state.client_high_water = state.client_high_water.max(pkt.timestamp);
     let cutoff = state.client_high_water - DHCP_CLIENT_WINDOW_SECS;
     if pkt.timestamp < cutoff {
-        return None;
+        return (false, None);
     }
     state.clients.retain(|_, (timestamp, _)| *timestamp >= cutoff);
     if state.clients.len() < DHCP_STARVATION_THRESHOLD {
@@ -388,12 +399,13 @@ fn dhcp_client_burst(state: &mut DhcpScopeState, identity: Vec<u8>, pkt: &Packet
     if pkt.timestamp > current.0 {
         *current = (pkt.timestamp, pkt.no);
     }
+    let sampled = *current == (pkt.timestamp, pkt.no);
     let count = state.clients.len();
     if count < DHCP_STARVATION_THRESHOLD || state.starvation_alerted {
-        return None;
+        return (sampled, None);
     }
     state.starvation_alerted = true;
     let mut frames: Vec<_> = state.clients.values().map(|&(_, frame)| frame).collect();
     frames.sort_unstable();
-    Some((count, frames))
+    (sampled, Some((count, frames)))
 }

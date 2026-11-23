@@ -33,9 +33,13 @@ impl<const CAPACITY: usize, const MAX_AGE_SECS: u64> RecentEvidence<CAPACITY, MA
     }
 
     pub(crate) fn supporting_packet(&self, trigger: &Packet, frame: u64) -> Option<&Packet> {
+        self.supporting_packet_at(trigger, frame, trigger.timestamp)
+    }
+
+    pub(crate) fn supporting_packet_at(&self, trigger: &Packet, frame: u64, window_end: f64) -> Option<&Packet> {
         if frame == trigger.no { return None; }
         self.packets.get(&key(trigger, frame)).filter(|packet| {
-            (0.0..=MAX_AGE_SECS as f64).contains(&(trigger.timestamp - packet.timestamp))
+            (0.0..=MAX_AGE_SECS as f64).contains(&(window_end - packet.timestamp))
         })
     }
 }

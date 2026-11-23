@@ -193,6 +193,7 @@ pub struct SecurityEngine {
     ntlm_fanout: HashMap<(String, ServiceScope), NtlmFanoutState>,
     dhcp_scopes: HashMap<(ServiceScope, Option<Ipv4Addr>), DhcpScopeState>,
     dhcp_server_evidence: crate::net::recent_evidence::RecentEvidence<1024, 3600>,
+    dhcp_client_evidence: crate::net::recent_evidence::RecentEvidence<1024, 10>,
     ipv6_fragments: Ipv6FragmentReassembler,
     pub ipv6_reassembled: u64,
     http_headers: HashMap<(TcpFlowKey, bool), HttpHeaderState>,
