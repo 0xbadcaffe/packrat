@@ -52,6 +52,8 @@ impl AnalysisCore {
                 | "Cleartext HTTP Basic authorization"
                 | "Anonymous FTP login accepted"
                 | "DNS tunnel behavior"
+                | "Horizontal host scan" | "Vertical port scan"
+                | "Large asymmetric outbound transfer" | "High-entropy outbound transfer"
             ) {
                 AlertFlow::from_packet(pkt)
             } else {

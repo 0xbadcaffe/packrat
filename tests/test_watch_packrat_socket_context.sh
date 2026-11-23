@@ -9,12 +9,15 @@ export PACKRAT_SOCKET_CALLS="$scratch/calls"
 
 ss() {
     printf '%s\n' called >>"$PACKRAT_SOCKET_CALLS"
-    [[ $* == '-H -n -t -p ( sport = :40001 and dport = :443 ) or ( sport = :443 and dport = :40001 )' ]] || return 2
+    [[ $* == '-H -n -t -p -a ( sport = :40001 and dport = :443 ) or ( sport = :443 and dport = :40001 )' ]] || return 2
     local row='ESTAB 0 0 [2001:db8::4]:40001 [2001:db8::8]:443'
     printf '%s\n' 'ESTAB 0 0 [2001:db8::9]:40001 [2001:db8::8]:443 users:(("other",pid=91,fd=2))'
     case ${PACKRAT_SOCKET_MODE:-match} in
         match) printf '%s users:(("test client",pid=56,fd=2))\n' "$row" ;;
         reverse) printf '%s\n' 'ESTAB 0 0 [2001:db8::8]:443 [2001:db8::4]:40001 users:(("https",pid=57,fd=2))' ;;
+        pending) printf '%s users:(("pending client",pid=58,fd=2))\n' "${row/ESTAB/SYN-SENT}" ;;
+        reverse_pending) printf '%s\n' 'SYN-SENT 0 0 [2001:db8::8]:443 [2001:db8::4]:40001 users:(("other",pid=59,fd=2))' ;;
+        listener) printf '%s\n' 'LISTEN 0 0 [2001:db8::8]:443 [2001:db8::4]:40001 users:(("listener",pid=59,fd=2))' ;;
         hidden) printf '%s\n' "$row" ;;
         ambiguous) printf '%s\n' "$row" "$row" ;;
         shared) printf '%s users:(("a",pid=56,fd=2),("b",pid=57,fd=3))\n' "$row" ;;
@@ -42,10 +45,14 @@ jq -e '.socket_context.status == "exact_tuple_snapshot" and .socket_context.proc
     and (.socket_context.observed_at | fromdateiso8601) > 0' <<< "$result" >/dev/null
 result=$(fixture | PACKRAT_SOCKET_MODE=reverse bash "$watch")
 jq -e '.socket_context.status == "exact_tuple_snapshot" and .socket_context.pid == 57
-    and .socket_context.local == .flow.destination' <<< "$result" >/dev/null
+    and .socket_context.tcp_state == "ESTAB" and .socket_context.local == .flow.destination' <<< "$result" >/dev/null
+result=$(fixture | PACKRAT_SOCKET_MODE=pending bash "$watch")
+jq -e '.socket_context.status == "exact_tuple_snapshot" and .socket_context.pid == 58
+    and .socket_context.tcp_state == "SYN-SENT" and .socket_context.local == .flow.source' <<< "$result" >/dev/null
 
 for spec in 'hidden socket_owner_unavailable' 'shared socket_owner_unavailable' \
-    'none socket_not_observed' 'ambiguous ambiguous_socket_snapshot' 'failure lookup_unavailable'; do
+    'none socket_not_observed' 'ambiguous ambiguous_socket_snapshot' 'failure lookup_unavailable' \
+    'reverse_pending socket_not_observed' 'listener socket_not_observed'; do
     read -r mode status <<< "$spec"
     result=$(fixture | PACKRAT_SOCKET_MODE="$mode" bash "$watch")
     jq -e --arg status "$status" '.socket_context.status == $status and (.socket_context | has("process") | not)' \
@@ -60,10 +67,10 @@ fixture | jq -c '
 [[ ! -s $PACKRAT_SOCKET_CALLS ]]
 
 export PACKRAT_SOCKET_CONTEXT_FILE="$scratch/socket context.jsonl"
-result=$(fixture | bash "$watch")
+result=$(fixture | PACKRAT_SOCKET_MODE=pending bash "$watch")
 [[ $(stat --format=%a -- "$PACKRAT_SOCKET_CONTEXT_FILE") == 600 ]]
 jq -e 'keys == ["alert_id","alert_last_seen","capture_id","flow","session_id","socket_context"]
-    and .socket_context.process == "test client" and .alert_id == 42' "$PACKRAT_SOCKET_CONTEXT_FILE" >/dev/null
+    and .socket_context.process == "pending client" and .socket_context.tcp_state == "SYN-SENT" and .alert_id == 42' "$PACKRAT_SOCKET_CONTEXT_FILE" >/dev/null
 [[ $(stat --format=%s -- "$PACKRAT_SOCKET_CONTEXT_FILE") -lt 1024 ]]
 for _ in {1..64}; do printf '%s\n' "$result"; done >"$PACKRAT_SOCKET_CONTEXT_FILE"
 fixture | bash "$watch" >/dev/null

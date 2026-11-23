@@ -115,6 +115,7 @@ pub struct AlertItem {
     pub capture_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<AlertProvenance>,
+    /// Verified endpoints of the latest triggering packet, not every contributing flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flow: Option<AlertFlow>,
 }

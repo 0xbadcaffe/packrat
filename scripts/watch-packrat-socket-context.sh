@@ -43,7 +43,7 @@ lookup_context() {
     local source=$1 destination=$2 sport dport sockets observed
     sport=${source##*:}
     dport=${destination##*:}
-    if ! sockets=$(LC_ALL=C timeout --kill-after=1s 1s ss -H -n -t -p \
+    if ! sockets=$(LC_ALL=C timeout --kill-after=1s 1s ss -H -n -t -p -a \
         "( sport = :$sport and dport = :$dport ) or ( sport = :$dport and dport = :$sport )" |
         LC_ALL=C head -c 65537) || (( ${#sockets} > 65536 )); then
         printf '%s\n' '{"status":"lookup_unavailable"}'
@@ -52,9 +52,9 @@ lookup_context() {
     observed=$(date -u +%FT%TZ)
     jq -Rsc --arg source "$source" --arg destination "$destination" --arg time "$observed" '
         [splits("\n") |
-            capture("\\AESTAB\\s+[0-9]+\\s+[0-9]+\\s+(?<local>\\S+)\\s+(?<peer>\\S+)(?:\\s+(?<owners>.*))?\\z") |
+            capture("\\A(?<tcp_state>ESTAB|SYN-SENT)\\s+[0-9]+\\s+[0-9]+\\s+(?<local>\\S+)\\s+(?<peer>\\S+)(?:\\s+(?<owners>.*))?\\z") |
             select((.local == $source and .peer == $destination)
-                or (.local == $destination and .peer == $source))]
+                or (.tcp_state == "ESTAB" and .local == $destination and .peer == $source))]
         | if length == 0 then {status:"socket_not_observed"}
           elif length > 1 then {status:"ambiguous_socket_snapshot"}
           else .[0] as $row
@@ -62,7 +62,7 @@ lookup_context() {
                 "\\Ausers:\\(\\(\"(?<process>[A-Za-z0-9_. -]{1,64})\",pid=(?<pid>[1-9][0-9]{0,9}),fd=[0-9]+\\)\\)\\z"
               )][0] // null) as $owner
             | if $owner == null then {status:"socket_owner_unavailable"}
-              else {status:"exact_tuple_snapshot", local:$row.local, peer:$row.peer,
+              else {status:"exact_tuple_snapshot", tcp_state:$row.tcp_state, local:$row.local, peer:$row.peer,
                     process:$owner.process, pid:($owner.pid | tonumber)}
               end
           end
@@ -77,7 +77,7 @@ persist_context() (
             and (.session_id | type == "string" and length <= 128 and test("\\A[0-9]+-[0-9]+\\z"))
             and (.alert_id | type == "number" and floor == . and . > 0 and . <= 9007199254740991))
         | {session_id,capture_id,alert_id,flow,alert_last_seen:.last_seen,
-           socket_context:(.socket_context | {status,observed_at,local,peer,process,pid})}
+           socket_context:(.socket_context | {status,tcp_state,observed_at,local,peer,process,pid})}
         | .flow |= {transport,source,destination}
     ' <<< "$1"); then
         return 0

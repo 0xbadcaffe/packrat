@@ -120,6 +120,10 @@ fn detects_large_high_entropy_outbound_transfer() {
             })
             .unwrap();
         assert_eq!(alert.packet_refs, frames);
+        let flow = alert.flow.unwrap();
+        assert_eq!(flow.transport, packrat_tui::analysis::alert_center::AlertTransport::Tcp);
+        assert_eq!(flow.source.ip().to_string(), "10.0.0.5");
+        assert_eq!(flow.destination.ip().to_string(), "198.51.100.10");
         assert_eq!(
             alert.provenance.as_ref().unwrap().confidence.to_string(),
             "Heuristic"

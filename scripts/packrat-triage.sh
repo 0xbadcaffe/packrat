@@ -240,14 +240,14 @@ with_socket_context() {
             | ([$snapshots[] | snapshot($alert)
                 | .alert_last_seen as $when
                 | .socket_context | objects
-                | select(.status == "exact_tuple_snapshot"
+                | select(.status == "exact_tuple_snapshot" and (.tcp_state == null or .tcp_state == "ESTAB" or .tcp_state == "SYN-SENT")
                     and ((.local == $alert.flow.source and .peer == $alert.flow.destination)
-                        or (.local == $alert.flow.destination and .peer == $alert.flow.source))
+                        or (.tcp_state != "SYN-SENT" and .local == $alert.flow.destination and .peer == $alert.flow.source))
                     and (.process | type == "string" and test("\\A[A-Za-z0-9_. -]{1,64}\\z"))
                     and (.pid | type == "number" and floor == . and . >= 1 and . <= 4294967295)
                     and ((try (.observed_at | fromdateiso8601) catch null)
                         | . != null and . >= ($when | floor) and . <= ($when | floor) + 8))
-                | {status,observed_at,local,peer,process,pid,alert_last_seen:$when}] | last) as $context
+                | {status,observed_at,local,peer,process,pid,alert_last_seen:$when} + (if .tcp_state == "ESTAB" or .tcp_state == "SYN-SENT" then {tcp_state} else {} end)] | last) as $context
             | if $context == null then . else . + {socket_context:$context} end)
     ' <<< "$alerts"
 }
