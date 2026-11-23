@@ -58,6 +58,7 @@ impl BeaconDirection {
 struct BeaconEpisode {
     direction: usize,
     last_seen: f64,
+    sizes: std::ops::RangeInclusive<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -365,6 +366,7 @@ impl SecurityEngine {
         }
         let state = self.beacon_flows.entry(key).or_default();
         state.last_seen = state.last_seen.max(pkt.timestamp);
+        let size = pkt.capture.as_ref().map_or(u32::from(pkt.length), |meta| meta.wire_length);
         if state.rearmed_at.is_some_and(|at| pkt.timestamp < at) {
             return;
         }
@@ -374,7 +376,7 @@ impl SecurityEngine {
                 state.directions = Default::default();
                 state.rearmed_at = Some(pkt.timestamp);
             } else {
-                if direction == episode.direction {
+                if direction == episode.direction && episode.sizes.contains(&size) {
                     episode.last_seen = episode.last_seen.max(pkt.timestamp);
                 }
                 return;
@@ -391,7 +393,7 @@ impl SecurityEngine {
         }
         samples.push(BeaconSample {
             timestamp: pkt.timestamp,
-            size: pkt.capture.as_ref().map_or(u32::from(pkt.length), |meta| meta.wire_length),
+            size,
             packet_no: pkt.no,
         });
         let window_match = if let Some(stats) = beacon_pattern(samples) {
@@ -407,7 +409,9 @@ impl SecurityEngine {
             if retain { window.remember(pkt); }
             return;
         };
-        state.episode = Some(BeaconEpisode { direction, last_seen: pkt.timestamp });
+        let margin = stats.size_max.div_ceil(10);
+        state.episode = Some(BeaconEpisode { direction, last_seen: pkt.timestamp,
+            sizes: stats.size_min.saturating_sub(margin)..=stats.size_max.saturating_add(margin) });
         let related_packets: Vec<_> = evidence[..evidence.len() - 1]
             .iter()
             .map(|sample| sample.packet_no)

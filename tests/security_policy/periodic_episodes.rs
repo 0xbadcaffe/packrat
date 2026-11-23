@@ -61,3 +61,24 @@ fn a_periodic_burst_after_idle_expiry_keeps_its_own_evidence_and_review_state() 
     assert_ne!(alerts[1].correlation_key, alerts[0].correlation_key);
     assert!(alerts[1].detail.contains("Timing alone does not establish command-and-control"));
 }
+
+#[test]
+fn unrelated_same_direction_sizes_cannot_keep_a_periodic_episode_open() {
+    let mut core = AnalysisCore::default();
+    let periodic = |frame, time| periodic_datagram(frame, time, 120, 50000, false);
+    for index in 0..7 {
+        core.analyze(&periodic(index + 1, index as f64 * 10.0));
+    }
+    assert_eq!(core.alert_center.items.len(), 1);
+    for (frame, time) in [(8, 1_000.0), (9, 2_750.0), (10, 3_650.0)] {
+        core.analyze(&periodic_datagram(frame, time, 450, 50000, false));
+    }
+    assert_eq!(core.alert_center.items.len(), 1);
+    for index in 0..7 {
+        core.analyze(&periodic(index + 11, 3_661.0 + index as f64 * 10.0));
+    }
+    let alerts = &core.alert_center.items;
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[1].severity, "MEDIUM");
+    assert_eq!(alerts[1].packet_refs, [11, 12, 13, 14, 15, 16, 17]);
+}

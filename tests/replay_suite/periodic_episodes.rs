@@ -7,18 +7,19 @@ fn replay_separates_periodic_episodes_after_directional_expiry_but_not_a_continu
     let root = scratch.path();
     let rule = "traffic.periodic_fixed_size";
     let mut cases = Vec::new();
-    for (file, second_start, reverse_ticks, expected) in [
-        ("continuous.pcapng", 70, &[][..], vec![7]),
-        ("renewed.pcapng", 3661, &[][..], vec![7, 14]),
-        ("reverse-background.pcapng", 3661, &[1000, 2750, 3650][..], vec![7, 17]),
+    for (file, second_start, background_ticks, background_reverse, expected) in [
+        ("continuous.pcapng", 70, &[][..], false, vec![7]),
+        ("renewed.pcapng", 3661, &[][..], false, vec![7, 14]),
+        ("reverse-background.pcapng", 3661, &[1000, 2750, 3650][..], true, vec![7, 17]),
+        ("same-direction-background.pcapng", 3661, &[1000, 2750, 3650][..], false, vec![7, 17]),
     ] {
         let mut writer = PcapNgWriter::create(&root.join(file)).unwrap();
-        let schedule = (0..7).map(|i| (i * 10, false))
-            .chain(reverse_ticks.iter().map(|&tick| (tick, true)))
-            .chain((0..7).map(|i| (second_start + i * 10, false)));
-        for (index, (ticks, reverse)) in schedule.enumerate() {
+        let schedule = (0..7).map(|i| (i * 10, false, 12))
+            .chain(background_ticks.iter().map(|&tick| (tick, background_reverse, 120)))
+            .chain((0..7).map(|i| (second_start + i * 10, false, 12)));
+        for (index, (ticks, reverse, payload_size)) in schedule.enumerate() {
             let frame = index as u64 + 1;
-            let mut packet = support::tcp(frame, 10 + index as u32 * 12, 0x18, &[1_u8; 12], reverse);
+            let mut packet = support::tcp(frame, 10 + index as u32 * 120, 0x18, &vec![1_u8; payload_size], reverse);
             let length = packet.bytes.len() as u32;
             packet.capture = Some(CaptureMetadata {
                 timestamp: Some(CaptureTimestamp {
@@ -42,5 +43,5 @@ fn replay_separates_periodic_episodes_after_directional_expiry_but_not_a_continu
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 3);
+    assert_eq!(report["passed"], 4);
 }
