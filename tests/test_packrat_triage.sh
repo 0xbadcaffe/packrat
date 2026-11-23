@@ -127,6 +127,10 @@ timeout() {
     [[ $# -gt 3 && $1 == --kill-after=2s && $2 =~ ^[1-9][0-9]*s$ ]] || return 2
     (( ${2%s} <= ${PACKRAT_TEST_TIMEOUT_SECONDS:-10} )) || return 2
     shift 2
+    if [[ ${3-} == --alert-status && ${6-} == "${PACKRAT_TEST_EVIDENCE_TIMEOUT_ID:-never}" ]]; then
+        sleep 2.2
+        return 124
+    fi
     if [[ -n ${PACKRAT_TEST_TIMEOUT_STATUS:-} ]]; then
         printf '%s\n' '[{"alert_id":999}]'
         return "$PACKRAT_TEST_TIMEOUT_STATUS"
@@ -240,6 +244,12 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
         and [.alerts[] | select(.packet_evidence_status=="not_checked") | .alert_id] == [55,54]' >/dev/null
     status=0; result=$(PACKRAT_TEST_AUTO_QUEUE=yes PACKRAT_TEST_EVIDENCE_FAIL_ID=41 run_auto) || status=$?
     jq -e --arg status "$status" '$status=="2" and [.evidence_checks[]|[.alert_id,.status]] == [[42,"checked"],[41,"unavailable"],[44,"checked"]]' <<< "$result" >/dev/null
+    status=0; result=$(PACKRAT_TEST_AUTO_QUEUE=yes PACKRAT_TEST_EVIDENCE_TIMEOUT_ID=42 PACKRAT_TRIAGE_READ_TIMEOUT=2 run_auto) || status=$?
+    [[ $status == 2 ]]
+    jq -e '[.evidence_checks[] | [.alert_id,.status]] == [[42,"timed_out"],[41,"deferred"],[44,"deferred"]]
+        and [.review_queue[] | select(.alert_id!=45) | [.packet_evidence_status,.next_evidence_step]] ==
+        [["check_timed_out","retry_evidence_check"],["check_deferred","retry_evidence_check"],["check_deferred","retry_evidence_check"]]' \
+        <<< "$result" >/dev/null
     result=$(PACKRAT_TEST_ALERT_COUNT=0 run_auto)
     jq -e '.evidence_selection == "automatic" and .evidence_status == null and .alerts == []
         and .open_priority_alerts_in_sample == 0 and .review_queue == []' <<< "$result" >/dev/null

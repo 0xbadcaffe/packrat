@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 usage() {
     printf '%s\n' 'Usage: packrat-triage HEALTH_STATE.json ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --saved SESSION_ID CAPTURE_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
@@ -25,12 +24,11 @@ usage() {
         'Automatic checks prefer CRITICAL, then HIGH, then only MEDIUM/LOW rules named in the active selective archive policy.' \
         'Within a severity, selects the newest eligible alert with frame references.' \
         '--saved-alert uses its explicit ID when an evidence source is supplied without PACKRAT_TRIAGE_EVIDENCE_ALERT_ID.' \
-        'Each alert reports packet evidence status and next_evidence_step; frame references alone do not prove retention.' \
+        'Each alert reports evidence status and next_evidence_step, including timed-out and deferred lookups.' \
         'Evidence for an alert in the recent report is withheld if its frame references changed during triage.' \
         'PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE optionally adds saved live socket snapshots for matching alerts.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
 }
-
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
 mode=live target_alert=''
 if [[ ${1-} == --saved-alert ]]; then
@@ -71,7 +69,6 @@ for log in "${previous_logs[@]}"; do
     [[ -f $log ]] || { printf 'Previous alert log is not a regular file: %s\n' "$log" >&2; exit 2; }
     previous_args+=(--previous-log "$log")
 done
-
 max_age_override=${PACKRAT_TRIAGE_MAX_AGE:-} read_timeout=${PACKRAT_TRIAGE_READ_TIMEOUT:-10}
 archive=${PACKRAT_TRIAGE_ARCHIVE:-} project=${PACKRAT_TRIAGE_PROJECT:-}
 evidence_id=${PACKRAT_TRIAGE_EVIDENCE_ALERT_ID:-}
@@ -118,7 +115,6 @@ if [[ ! $read_timeout =~ ^[1-9][0-9]{0,3}$ ]]; then
     printf '%s\n' 'PACKRAT_TRIAGE_READ_TIMEOUT must be between 1 and 9999 seconds.' >&2
     exit 2
 fi
-
 load_state() {
     head -c 65537 -- "$1" | jq -Rces --argjson now "$(date -u +%s)" \
         --arg override "$max_age_override" '
@@ -147,8 +143,9 @@ report() {
                 then "partial"
                 else "unavailable" end
             elif .evidence_frame_count == 0 then "no_references"
-            elif .alert_id == $evidence.alert_id and $evidence.status == "alert_evidence_changed" then "changed_during_review"
-            elif .alert_id == $evidence.alert_id and $evidence.status == "unavailable" then "check_failed"
+            elif .alert_id == $evidence.alert_id then
+                ($evidence.status | {alert_evidence_changed:"changed_during_review",unavailable:"check_failed",
+                    timed_out:"check_timed_out",deferred:"check_deferred"}[.] // "not_checked")
             else "not_checked" end;
         def live_archive:
             if $status != "current" and $status != "degraded" then "unknown"
@@ -161,7 +158,7 @@ report() {
             elif . == "partial" then "inspect_retained_and_recover_missing_frames"
             elif . == "unavailable" then "locate_original_capture"
             elif . == "no_references" then "corroborate_with_host_or_service_logs"
-            elif . == "check_failed" or . == "changed_during_review" then "retry_evidence_check"
+            elif . == "check_failed" or . == "changed_during_review" or . == "check_timed_out" or . == "check_deferred" then "retry_evidence_check"
             else "verify_frame_availability" end;
         .[1] as $alerts
         | (.[2] // []) as $evidence
@@ -298,7 +295,7 @@ check_evidence() {
         evidence_args=("$archive" --alert-status "$1" "$session" "$evidence_id" --capture-id "$capture")
     fi
     response=$(timeout --kill-after=2s "${2}s" packrat-archive \
-        "${evidence_args[@]}" "${previous_args[@]}") || return 1
+        "${evidence_args[@]}" "${previous_args[@]}") || return "$?"
     expected=$(jq -c --argjson id "$evidence_id" --argjson limit "$alert_limit" '
         {match:(first(.alerts[] | select(.alert_id == $id) |
             {digest:.evidence_frame_set_sha256, count:.evidence_frame_count}) // null),
@@ -325,7 +322,6 @@ check_evidence() {
           end
     ' <<< "$response"
 }
-
 scope_args=()
 if [[ $mode == live ]]; then
     if ! state=$(load_state "$health_file"); then
@@ -360,7 +356,6 @@ else
     state='{"mode":"list_saved","health":null}'
 fi
 if [[ $mode != list_saved ]]; then scope_args=(--session "$session" --capture-id "$capture"); fi
-
 if [[ ! -f $alert_log ]] ||
    ! read -r log_identity log_size <<< "$(stat -L --format='%d:%i %s' -- "$alert_log")" ||
    [[ ! $log_identity =~ ^[0-9]{1,20}:[0-9]{1,20}$ || ! $log_size =~ ^[0-9]+$ ]]; then
@@ -437,9 +432,14 @@ fi
 evidence_deadline=$((SECONDS + read_timeout))
 for evidence_id in "${evidence_ids[@]}"; do
     remaining=$((evidence_deadline - SECONDS))
-    if (( remaining <= 0 )); then break; fi
-    if ! check=$(check_evidence "$alert_log" "$remaining"); then
-        check=$(jq -cn --argjson id "$evidence_id" '{status:"unavailable",alert_id:$id,frames:null}')
+    check_status=deferred
+    if (( remaining > 0 )); then
+        check_status=''
+        check=$(check_evidence "$alert_log" "$remaining") || case $? in
+            124|137) check_status=timed_out ;; *) check_status=unavailable ;; esac
+    fi
+    if [[ -n $check_status ]]; then
+        check=$(jq -cn --argjson id "$evidence_id" --arg status "$check_status" '{status:$status,alert_id:$id,frames:null}')
     fi
     if ! jq -e '.status == "checked"' <<< "$check" >/dev/null; then evidence_failed=true; fi
     evidence=$(jq -c --argjson check "$check" '. + [$check]' <<< "$evidence")
