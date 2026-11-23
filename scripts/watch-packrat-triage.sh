@@ -68,7 +68,6 @@ journal_path_safe() {
     [[ -f $path && -O $path ]] && attrs=$(stat --format='%a:%h' -- "$path") &&
         [[ $attrs =~ ^([0-7]{3,4}):1$ ]] && (( (8#${BASH_REMATCH[1]} & 077) == 0 ))
 }
-
 journal_fingerprint() {
     local path metadata size
     for path in "$journal.1" "$journal"; do
@@ -83,7 +82,6 @@ journal_fingerprint() {
         fi
     done
 }
-
 read_journal_history() {
     local before after records path
     if ! before=$(journal_fingerprint 2>/dev/null); then
@@ -207,20 +205,23 @@ journal_failed=false journal_overflow=false
 journal_unconfirmed=0
 pending_journal=()
 
-append_journal() {
-    local size=0 line=$1
+append_journal() (
+    local size=0 line=$1 staged rotate=false
     journal_path_safe "$journal" && journal_path_safe "$journal.1" || return 1
     (( ${#line} + 1 <= journal_limit )) || return 1
     if [[ -f $journal ]]; then
         size=$(stat --format='%s' -- "$journal") || return 1
         [[ $size =~ ^[0-9]{1,7}$ ]] && (( size <= journal_limit )) || return 1
+        (( size == 0 )) || [[ $(tail -c1 -- "$journal" | od -An -tu1) =~ ^[[:space:]]*10$ ]] || return 1
     fi
-    if (( size + ${#line} + 1 > journal_limit )); then
-        mv -fT -- "$journal" "$journal.1" || return 1
-    fi
-    printf '%s\n' "$line" >>"$journal"
-}
-
+    if (( size + ${#line} + 1 > journal_limit )); then rotate=true; fi
+    staged=$(mktemp -- "$directory/.packrat-journal.XXXXXXXX") || return 1
+    trap 'rm -f -- "$staged"' EXIT
+    if ! "$rotate" && (( size > 0 )); then cp -- "$journal" "$staged" || return 1; fi
+    printf '%s\n' "$line" >>"$staged" || return 1
+    if "$rotate"; then mv -fT -- "$journal" "$journal.1" || return 1; fi
+    mv -fT -- "$staged" "$journal"
+)
 flush_journal() {
     while (( ${#pending_journal[@]} > 0 )); do
         if ! append_journal "${pending_journal[0]}"; then
@@ -234,7 +235,6 @@ flush_journal() {
     done
     journal_failed=false journal_overflow=false
 }
-
 sanitize() {
     jq -cse "$snapshot_validation"'
         def token: scope_id;

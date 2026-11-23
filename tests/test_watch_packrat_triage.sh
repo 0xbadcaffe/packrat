@@ -152,12 +152,10 @@ jq -e '.status=="triage_unavailable" and (tostring | contains("private") | not)'
 PACKRAT_TRIAGE_WATCH_TIMEOUT=1 bash "$watch" --once "$state" -- sleep 5 >/dev/null
 jq -e '.status=="triage_timeout"' "$state" >/dev/null
 check_status "$state" triage_unhealthy 1
-
 mkdir -m 0755 "$scratch/public"
 if bash "$watch" --once "$scratch/public/state" -- true >/dev/null 2>&1; then exit 1; fi
 ln -s "$state" "$scratch/alias"
 if bash "$watch" --once "$scratch/alias" -- true >/dev/null 2>&1; then exit 1; fi
-
 await_packets() {
     local packets=$1
     for _ in {1..80}; do
@@ -389,7 +387,8 @@ jq -se 'length==1 and (.[0].alert_changes | .updated==
     ' "$scratch/queue-events" >/dev/null
 state="$scratch/journal-rotation.json"
 journal="$state.events.jsonl"
-truncate -s 1048570 "$journal"
+truncate -s 1048569 "$journal"
+printf '\n' >>"$journal"
 chmod 0600 "$journal"
 live current 90 '[]' >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/rotation-output" &
@@ -470,7 +469,6 @@ kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
 bash "$watch" --once "$state" -- cat -- "$report" | jq -e '.journal_unconfirmed_events==17' >/dev/null
-
 history="$scratch/history.json"
 install -m 0600 "$scratch/rotation-output" "$history.events.jsonl.1"
 install -m 0600 "$scratch/unsafe-output" "$history.events.jsonl"
@@ -496,4 +494,6 @@ ln -s "$journal" "$scratch/linked-history.json.events.jsonl"
 status=0
 bash "$watch" --history "$scratch/linked-history.json" >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
+# shellcheck source=tests/support/watch_triage_atomic_journal.bash
+source "$root/tests/support/watch_triage_atomic_journal.bash"
 printf '%s\n' 'Packrat triage watcher tests passed'
