@@ -76,6 +76,7 @@ pub(crate) struct CapturedTransportHeader {
     pub source: SocketAddr,
     pub destination: SocketAddr,
     pub tcp_flags: Option<u8>,
+    pub tcp_sequence_pair: Option<(u32, u32)>,
     pub vlan_stack: Vec<CapturedVlanTag>,
 }
 
@@ -97,6 +98,11 @@ pub(crate) fn captured_transport_header(packet: &Packet) -> Option<CapturedTrans
     let source = read_u16(bytes, transport.offset)?;
     let destination = read_u16(bytes, transport.offset + 2)?;
     let tcp_flags = (transport.protocol == 6).then(|| bytes[transport.offset + 13]);
+    let tcp_sequence_pair = if tcp_flags.is_some() {
+        Some((read_u32(bytes, transport.offset + 4)?, read_u32(bytes, transport.offset + 8)?))
+    } else {
+        None
+    };
     let (src, dst) = crate::net::parser::ip_header_endpoints(bytes, ethernet.payload_offset, ethernet.ether_type)?;
     let vlan_stack = bytes[12..ethernet.ether_type_offset]
         .chunks_exact(4)
@@ -110,6 +116,7 @@ pub(crate) fn captured_transport_header(packet: &Packet) -> Option<CapturedTrans
         source: SocketAddr::new(src, source),
         destination: SocketAddr::new(dst, destination),
         tcp_flags,
+        tcp_sequence_pair,
         vlan_stack,
     })
 }

@@ -10,6 +10,60 @@ use packrat_tui::storage::packet_archive::PacketArchive;
 use serde_json::{Value, json};
 
 #[test]
+fn archive_links_syn_acks_only_to_preceding_reverse_syn_sequences_on_the_same_path() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive");
+    let log = root.path().join("alerts.jsonl");
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "HIGH", "Saved alert", "fixture");
+    let mut alert = center.items.remove(0);
+    alert.capture_id = Some("scope-a".into());
+    alert.packet_refs = (1..=10).collect();
+    std::fs::write(&log,
+        json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
+    ).unwrap();
+    let packet = |no, reverse, flags, sequence, ack: u32, vlan, interface_id| {
+        let mut packet = packets::tcp(no, sequence, flags, b"");
+        packet.bytes[42..46].copy_from_slice(&ack.to_be_bytes());
+        if reverse {
+            for index in 0..4 { packet.bytes.swap(26 + index, 30 + index); }
+            for index in 0..2 { packet.bytes.swap(34 + index, 36 + index); }
+        }
+        packet.bytes.splice(12..12, [0x81, 0, 0, vlan]);
+        let length = packet.bytes.len() as u32;
+        packet.capture = Some(CaptureMetadata {
+            timestamp: None, captured_length: length, wire_length: length, link_type: 1,
+            section_id: 2, interface_id, interface_name: None, comments: Vec::new(),
+        });
+        packet
+    };
+    let mut archive = PacketArchive::open(&path).unwrap();
+    archive.append_scoped("scope-a", &[
+        packet(1, false, 0x02, u32::MAX, 0, 10, 3),
+        packet(2, false, 0x02, u32::MAX, 0, 10, 3),
+        packet(3, true, 0x12, 100, 0, 10, 3),
+        packet(4, true, 0x12, 100, 8, 10, 3),
+        packet(5, false, 0x02, 7, 0, 10, 3),
+        packet(6, true, 0x12, 100, 0, 20, 3),
+        packet(7, true, 0x12, 100, 0, 10, 4),
+        packet(8, false, 0x12, 100, 0, 10, 3),
+        packet(9, true, 0x16, 100, 0, 10, 3),
+        packet(10, true, 0x12, 101, 8, 10, 3),
+    ]).unwrap();
+    drop(archive);
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&path).arg("--alert-flow-summary").arg(&log).args(["session-a", "1", "--capture-id", "scope-a"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["tcp_syn_ack_matches"], json!([
+        {"syn_ack_frame":3,"prior_syn_candidates":2,"latest_candidate_syn_frame":2},
+        {"syn_ack_frame":10,"prior_syn_candidates":1,"latest_candidate_syn_frame":5}
+    ]));
+    assert!(report["limitation"].as_str().unwrap().contains("not a completed handshake"));
+}
+
+#[test]
 fn truncated_payloads_corroborate_complete_headers_without_claiming_complete_evidence() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("archive");

@@ -54,6 +54,8 @@ struct TransportHeader {
     source_port: u16,
     destination_port: u16,
     tcp_flags: Option<u8>,
+    #[serde(skip)]
+    tcp_sequence_pair: Option<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -68,6 +70,12 @@ struct FlowKey {
     destination: SocketAddr,
 }
 
+impl FlowKey {
+    fn reversed(&self) -> Self {
+        Self { source: self.destination, destination: self.source, ..self.clone() }
+    }
+}
+
 #[derive(Default, Serialize)]
 struct FlowCounts {
     evidence_frames: usize,
@@ -78,6 +86,10 @@ struct FlowCounts {
     reset_frames: usize,
     first_seen: Option<f64>,
     last_seen: Option<f64>,
+    #[serde(skip)]
+    initial_syns: Vec<(u64, u32)>,
+    #[serde(skip)]
+    syn_acks: Vec<(u64, u32)>,
 }
 
 #[derive(Serialize)]
@@ -93,6 +105,13 @@ struct DirectionalFlow {
     #[serde(flatten)]
     counts: FlowCounts,
     reverse_evidence_frames: usize,
+}
+
+#[derive(Serialize)]
+struct SynAckMatch {
+    syn_ack_frame: u64,
+    prior_syn_candidates: usize,
+    latest_candidate_syn_frame: u64,
 }
 
 #[derive(Serialize)]
@@ -128,6 +147,7 @@ pub struct AlertFlowSummary {
     trigger_frame: Option<TriggerFrame>,
     trigger_tuple_status: TriggerTupleStatus,
     directional_flows: Vec<DirectionalFlow>,
+    tcp_syn_ack_matches: Vec<SynAckMatch>,
     unassigned_frames: Vec<FlowFrameRef>,
     limitation: &'static str,
 }
@@ -141,6 +161,7 @@ impl PacketMetadata {
             source_port: wire.source.port(),
             destination_port: wire.destination.port(),
             tcp_flags: wire.tcp_flags,
+            tcp_sequence_pair: wire.tcp_sequence_pair,
         });
         let flow = capture.zip(wire).zip(transport.as_ref()).map(|((capture, wire), transport)| {
             FlowKey {
@@ -183,8 +204,9 @@ pub fn alert_flow_summary(
             TriggerTupleStatus::NotRecorded
         },
         directional_flows: Vec::new(),
+        tcp_syn_ack_matches: Vec::new(),
         unassigned_frames: Vec::new(),
-        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Truncated frames may contribute a complete transport header, not missing payload. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
+        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. A SYN-ACK match acknowledges the SYN sequence number, not a completed handshake or a specific retransmission. Truncated frames may contribute a complete transport header, not missing payload. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
     for frame in metadata.frames {
@@ -230,9 +252,16 @@ pub fn alert_flow_summary(
         counts.frames.push(reference);
         counts.evidence_frames = counts.frames.len();
         counts.contains_trigger_frame |= is_trigger;
-        if let Some(flags) = packet.transport.and_then(|header| header.tcp_flags) {
-            counts.initial_syn_frames += usize::from(flags & 0x17 == 0x02);
-            counts.syn_ack_frames += usize::from(flags & 0x17 == 0x12);
+        if let Some(header) = packet.transport
+            && let (Some(flags), Some((sequence, acknowledgment))) = (header.tcp_flags, header.tcp_sequence_pair)
+        {
+            match flags & 0x17 {
+                0x02 => counts.initial_syns.push((frame.frame_number, sequence)),
+                0x12 => counts.syn_acks.push((frame.frame_number, acknowledgment)),
+                _ => {}
+            }
+            counts.initial_syn_frames = counts.initial_syns.len();
+            counts.syn_ack_frames = counts.syn_acks.len();
             counts.reset_frames += usize::from(flags & 0x04 != 0);
         }
         if let Some(time) = packet.timestamp {
@@ -240,13 +269,34 @@ pub fn alert_flow_summary(
             counts.last_seen = Some(counts.last_seen.map_or(time, |prior| prior.max(time)));
         }
     }
+    result.tcp_syn_ack_matches = syn_ack_matches(&flows);
     let counts: BTreeMap<_, _> = flows.iter().map(|(key, value)| (key.clone(), value.evidence_frames)).collect();
     result.directional_flows = flows.into_iter().map(|(key, counts_for_flow)| {
-        let reverse = FlowKey { source: key.destination, destination: key.source, ..key.clone() };
+        let reverse = key.reversed();
         let reverse_evidence_frames = if reverse != key { counts.get(&reverse).copied().unwrap_or(0) } else { 0 };
         DirectionalFlow { key, counts: counts_for_flow, reverse_evidence_frames }
     }).collect();
     Ok(result)
+}
+
+fn syn_ack_matches(flows: &BTreeMap<FlowKey, FlowCounts>) -> Vec<SynAckMatch> {
+    let mut matches = Vec::new();
+    for (key, response) in flows {
+        if response.syn_acks.is_empty() || key.source == key.destination {
+            continue;
+        }
+        let Some(request) = flows.get(&key.reversed()) else { continue; };
+        for &(syn_ack_frame, acknowledgment) in &response.syn_acks {
+            let (prior_syn_candidates, latest_candidate_syn_frame) = request.initial_syns.iter()
+                .filter(|&&(frame, sequence)| frame < syn_ack_frame && sequence.wrapping_add(1) == acknowledgment)
+                .fold((0, 0_u64), |(count, latest), &(frame, _)| (count + 1, latest.max(frame)));
+            if prior_syn_candidates > 0 {
+                matches.push(SynAckMatch { syn_ack_frame, prior_syn_candidates, latest_candidate_syn_frame });
+            }
+        }
+    }
+    matches.sort_unstable_by_key(|correlation| correlation.syn_ack_frame);
+    matches
 }
 
 pub fn alert_packet_metadata(
