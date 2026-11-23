@@ -31,13 +31,19 @@ pub(super) fn alert_frames(
             break;
         }
     }
+    let trigger = references.remove(&current.no).then_some(current);
+    let mut candidates = Vec::new();
+    // The worker's copy wins if a detector also retained the same frame.
+    for packet in history.iter().rev().chain(&analysis.retained_evidence) {
+        if references.is_empty() { break; }
+        if references.remove(&packet.no) { candidates.push(packet); }
+    }
+    candidates.sort_unstable_by_key(|packet| std::cmp::Reverse(packet.no));
     let mut bytes = 0;
     let mut frames = Vec::new();
-    // Prefer the trigger and newest supporting frames when the event budget is tight.
-    for packet in std::iter::once(current).chain(history.iter().rev()).chain(&analysis.retained_evidence) {
-        if !references.remove(&packet.no) || packet.bytes.len() > MAX_BYTES - bytes {
-            continue;
-        }
+    // Apply the same priority whether or not the supporting frame survived in history.
+    for packet in trigger.into_iter().chain(candidates) {
+        if packet.bytes.len() > MAX_BYTES - bytes { continue; }
         bytes += packet.bytes.len();
         frames.push(packet.clone());
         if frames.len() == MAX_FRAMES {

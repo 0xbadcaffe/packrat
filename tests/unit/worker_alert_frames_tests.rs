@@ -51,3 +51,22 @@ fn worker_handoff_prioritizes_trigger_and_bounds_payload_and_frame_count() {
     assert_eq!(frames.len(), MAX_FRAMES);
     assert_eq!(frames.last().unwrap().no, 41);
 }
+
+#[test]
+fn worker_handoff_orders_cached_evidence_and_history_under_one_budget() {
+    let mut core = AnalysisCore::default();
+    core.alert_center.archive_evidence_rules = Some(Vec::new());
+    core.alert_center.record_correlated_with_evidence(
+        (1, &[2, 3, 4, 5, 6]), 1.0, "TEST", "HIGH", "Finding", "observation", "flow",
+    );
+    let size = MAX_BYTES / 4;
+    let analysis = PacketAnalysis {
+        alert_pins: vec![1],
+        retained_evidence: vec![packet(3, size), packet(6, size + 1), packet(5, size)],
+        ..Default::default()
+    };
+    let history = VecDeque::from([packet(2, size), packet(4, size), packet(6, size)]);
+    let frames = alert_frames(&core, &analysis, &packet(1, size), &history);
+    assert_eq!(frames.iter().map(|p| p.no).collect::<Vec<_>>(), [1, 4, 5, 6]);
+    assert_eq!(frames.iter().map(|p| p.bytes.len()).sum::<usize>(), MAX_BYTES);
+}

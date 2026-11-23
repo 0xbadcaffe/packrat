@@ -110,7 +110,7 @@ fn opted_in_dhcp_client_burst_keeps_only_sampled_frames_for_a_reordered_trigger(
         // The worker archives at most 32 frames per event, including the trigger.
         assert_eq!(archive.count().unwrap(), if selected { 32 } else { 0 });
         for frame in sampled {
-            assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), selected && (frame <= 31 || frame == trigger));
+            assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), selected && (frame >= 33));
         }
         for frame in [64, 65] {
             assert!(archive.packet_for_capture(&scope, frame).unwrap().is_none());
