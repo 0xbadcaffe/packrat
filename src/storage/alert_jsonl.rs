@@ -14,7 +14,11 @@ const MAX_EXPORTED_DESCRIPTION: usize = 32 * 1024;
 const MAX_EXPORTED_LABEL: usize = 4 * 1024;
 
 type SnapshotKey = (u64, Option<[u8; 32]>);
-type SnapshotDigest = [u8; 32];
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SavedSnapshot {
+    digest: [u8; 32],
+    first_saved_unix_ms: Option<u64>,
+}
 
 enum LogSession {
     Fresh,
@@ -24,7 +28,8 @@ enum LogSession {
 pub struct AlertJsonlWriter {
     path: PathBuf,
     session_id: String,
-    latest_snapshots: BTreeMap<SnapshotKey, SnapshotDigest>,
+    latest_snapshots: BTreeMap<SnapshotKey, SavedSnapshot>,
+    new_session: bool,
     needs_separator: bool,
     writer: File,
 }
@@ -34,6 +39,8 @@ struct AlertRecord<'a> {
     schema_version: u8,
     record_type: &'static str,
     session_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    first_saved_unix_ms: Option<u64>,
     alert: &'a AlertItem,
 }
 
@@ -42,6 +49,8 @@ pub(super) struct ExistingAlertRecord {
     schema_version: u8,
     record_type: String,
     pub(super) session_id: String,
+    #[serde(default)]
+    pub(super) first_saved_unix_ms: Option<u64>,
     pub(super) alert: AlertItem,
 }
 
@@ -89,7 +98,7 @@ fn clip_exported_text(text: &mut String, max_bytes: usize) {
     }
 }
 
-fn encode_alert_record(session_id: &str, alert: &AlertItem) -> Result<Vec<u8>, String> {
+fn encode_alert_record(session_id: &str, alert: &AlertItem, first_saved_unix_ms: Option<u64>) -> Result<Vec<u8>, String> {
     let redact = alert.source == "CREDENTIAL" && alert.detail != CREDENTIAL_ALERT_DETAIL;
     let bounded = (redact || alert.detail.len() > MAX_EXPORTED_DESCRIPTION
         || alert.title.len() > MAX_EXPORTED_LABEL
@@ -110,21 +119,28 @@ fn encode_alert_record(session_id: &str, alert: &AlertItem) -> Result<Vec<u8>, S
         schema_version: 1,
         record_type: "alert",
         session_id,
+        first_saved_unix_ms,
         alert: bounded.as_ref().unwrap_or(alert),
     })
     .map_err(|error| format!("Serialize alert JSONL record: {error}"))
 }
 
 fn remember(
-    snapshots: &mut BTreeMap<SnapshotKey, SnapshotDigest>,
+    snapshots: &mut BTreeMap<SnapshotKey, SavedSnapshot>,
     key: SnapshotKey,
-    digest: SnapshotDigest,
+    snapshot: SavedSnapshot,
 ) {
-    snapshots.insert(key, digest);
+    snapshots.insert(key, snapshot);
     if snapshots.len() > MAX_SAVED_ALERTS {
         // The live alert queue evicts the oldest IDs first.
         snapshots.pop_first();
     }
+}
+
+pub(crate) fn unix_now_ms() -> Option<u64> {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .filter(|&timestamp| timestamp != 0)
 }
 
 pub fn new_session_id() -> String {
@@ -172,7 +188,8 @@ impl AlertJsonlWriter {
 
         let mut file = open_alert_file(&path)?;
         let mut latest_snapshots = BTreeMap::new();
-        if matches!(session, LogSession::Resume) {
+        let new_session = matches!(session, LogSession::Fresh);
+        if !new_session {
             let mut reader = BufReader::new(&mut file);
             let mut line = Vec::new();
             while next_alert_line(&mut reader, &mut line)
@@ -182,10 +199,12 @@ impl AlertJsonlWriter {
                     continue;
                 };
                 if record.session_id == session_id
-                    && let Ok(encoded) = encode_alert_record(session_id, &record.alert)
+                    && let Ok(encoded) = encode_alert_record(session_id, &record.alert, record.first_saved_unix_ms)
                 {
                     // Normalize parsed records rather than hashing their on-disk whitespace or key order.
-                    remember(&mut latest_snapshots, snapshot_key(&record.alert), Sha256::digest(encoded).into());
+                    remember(&mut latest_snapshots, snapshot_key(&record.alert), SavedSnapshot {
+                        digest: Sha256::digest(encoded).into(), first_saved_unix_ms: record.first_saved_unix_ms,
+                    });
                 }
             }
         }
@@ -194,6 +213,7 @@ impl AlertJsonlWriter {
             path,
             session_id: session_id.to_owned(),
             latest_snapshots,
+            new_session,
             needs_separator,
             writer: file,
         })
@@ -224,9 +244,14 @@ impl AlertJsonlWriter {
         let mut checked_rotation = false;
         for alert in alerts {
             let key = snapshot_key(alert);
-            let mut record = encode_alert_record(&self.session_id, alert)?;
+            let saved = self.latest_snapshots.get(&key);
+            let first_saved_unix_ms = saved.map_or_else(
+                || if self.new_session { unix_now_ms() } else { None },
+                |snapshot| snapshot.first_saved_unix_ms,
+            );
+            let mut record = encode_alert_record(&self.session_id, alert, first_saved_unix_ms)?;
             let digest = Sha256::digest(&record).into();
-            if self.latest_snapshots.get(&key) == Some(&digest) {
+            if saved.is_some_and(|snapshot| snapshot.digest == digest) {
                 continue;
             }
             if record.len() >= MAX_ALERT_LINE {
@@ -248,7 +273,7 @@ impl AlertJsonlWriter {
                 return Err(format!("Write alert JSONL record: {error}"));
             }
             self.needs_separator = false;
-            remember(&mut self.latest_snapshots, key, digest);
+            remember(&mut self.latest_snapshots, key, SavedSnapshot { digest, first_saved_unix_ms });
         }
         Ok(())
     }

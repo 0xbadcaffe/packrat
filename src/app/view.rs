@@ -19,8 +19,9 @@ impl App {
             .map(|alert| (alert.id, alert.capture_id.clone())));
         match target {
             Some(Some((id, capture_id))) => {
+                let reviewed_unix_ms = crate::storage::alert_jsonl::unix_now_ms();
                 self.update_core(&format!("Alert #{id} marked {disposition}"), move |core| {
-                    if core.alert_center.set_disposition(id, capture_id.as_deref(), disposition) {
+                    if core.alert_center.set_disposition_at(id, capture_id.as_deref(), disposition, reviewed_unix_ms) {
                         Ok(())
                     } else {
                         Err(format!("Alert #{id} is no longer available; review state not changed"))
@@ -148,6 +149,10 @@ impl AppView<'_> {
                         ("Severity".into(), alert.severity.clone()),
                         ("Priority".into(), alert.priority.to_string()),
                         ("State".into(), alert.disposition.to_string()),
+                        ("First recorded review".into(), alert.first_reviewed_unix_ms
+                            .and_then(|timestamp| i64::try_from(timestamp).ok())
+                            .and_then(chrono::DateTime::from_timestamp_millis)
+                            .map_or_else(|| "Not recorded".into(), |time| time.format("%Y-%m-%d %H:%M:%S UTC").to_string())),
                         ("Source".into(), alert.source.clone()),
                         (
                             "Rule".into(),

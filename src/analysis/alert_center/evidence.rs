@@ -1,4 +1,29 @@
-use super::{AUTOMATIC_EVIDENCE_PRIORITY, AlertDisposition, AlertItem};
+use super::{AUTOMATIC_EVIDENCE_PRIORITY, AlertCenter, AlertDisposition, AlertItem};
+
+impl AlertCenter {
+    pub fn set_disposition(&mut self, id: u64, capture_id: Option<&str>, disposition: AlertDisposition) -> bool {
+        self.set_disposition_at(id, capture_id, disposition, None)
+    }
+
+    pub(crate) fn set_disposition_at(
+        &mut self, id: u64, capture_id: Option<&str>, disposition: AlertDisposition, reviewed_unix_ms: Option<u64>,
+    ) -> bool {
+        let Some(item) = self.items.iter_mut().find(|item| {
+            item.id == id && item.capture_id.as_deref() == capture_id
+        }) else {
+            return false;
+        };
+        if item.disposition != disposition {
+            item.disposition = disposition;
+            item.reviewed_priority = disposition.is_resolved().then_some(item.priority);
+            if disposition != AlertDisposition::New && item.first_reviewed_unix_ms.is_none() {
+                item.first_reviewed_unix_ms = reviewed_unix_ms.filter(|&timestamp| timestamp != 0);
+            }
+            self.pending_exports.push(item.clone());
+        }
+        true
+    }
+}
 
 impl AlertDisposition {
     pub(super) fn is_resolved(self) -> bool {

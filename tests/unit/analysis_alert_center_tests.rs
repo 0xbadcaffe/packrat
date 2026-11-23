@@ -19,6 +19,21 @@ fn deduplicates_findings_and_preserves_disposition() {
 }
 
 #[test]
+fn first_operator_review_stays_with_the_scoped_alert_after_reopening() {
+    let mut center = AlertCenter { capture_id: Some("capture-a".into()), ..Default::default() };
+    center.record_correlated(1, 10.0, "IDS", "MEDIUM", "Finding", "first", "flow");
+    let id = center.items[0].id;
+    assert!(!center.set_disposition_at(id, Some("capture-b"), AlertDisposition::Reviewing, Some(900)));
+    assert!(center.set_disposition_at(id, Some("capture-a"), AlertDisposition::Reviewing, Some(1000)));
+    assert!(center.set_disposition_at(id, Some("capture-a"), AlertDisposition::Closed, Some(2000)));
+    center.record_correlated(2, 11.0, "IDS", "HIGH", "Finding", "stronger", "flow");
+    let latest = center.drain_pending_exports().pop().unwrap();
+    assert_eq!(latest.disposition, AlertDisposition::New);
+    assert_eq!(latest.first_reviewed_unix_ms, Some(1000));
+    assert_eq!(latest.first_seen, 10.0);
+}
+
+#[test]
 fn stronger_priority_with_new_evidence_reopens_only_resolved_findings() {
     for (previous, expected) in [
         (AlertDisposition::Benign, AlertDisposition::New),

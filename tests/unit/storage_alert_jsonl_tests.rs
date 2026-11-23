@@ -12,6 +12,7 @@ fn alert(hit_count: u64, packet_no: u64) -> AlertItem {
         disposition: AlertDisposition::New,
         priority: 80,
         reviewed_priority: None,
+        first_reviewed_unix_ms: None,
         recommendation: None,
         correlation_key: "flow-1".into(),
         hit_count,
@@ -118,7 +119,7 @@ fn identical_alerts_from_a_new_session_are_kept() {
 fn fresh_session_preserves_a_torn_tail_and_resuming_still_deduplicates() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("alerts.jsonl");
-    let mut old_record = encode_alert_record("old-session", &alert(1, 1)).unwrap();
+    let mut old_record = encode_alert_record("old-session", &alert(1, 1), None).unwrap();
     old_record.extend_from_slice(b"\n{\"alert\":");
     write_private_log(&path, &old_record);
 
@@ -169,6 +170,53 @@ fn write_private_log(path: &std::path::Path, contents: &[u8]) {
         options.mode(0o600);
     }
     options.open(path).unwrap().write_all(contents).unwrap();
+}
+
+#[test]
+fn first_save_and_review_delay_survive_writer_resume_and_duplicate_updates() {
+    use crate::storage::alert_history::recent_alerts;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let mut item = alert(1, 1);
+    let mut writer = AlertJsonlWriter::open_session(path.clone(), "session-a", LogSession::Fresh).unwrap();
+    writer.append_alerts(std::slice::from_ref(&item)).unwrap();
+    let first = read_log(&path)[0].first_saved_unix_ms.unwrap();
+    drop(writer);
+    let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+    writer.append_alerts(std::slice::from_ref(&item)).unwrap();
+    item.disposition = AlertDisposition::Reviewing;
+    item.first_reviewed_unix_ms = Some(first + 2500);
+    writer.append_alerts(&[item.clone(), item]).unwrap();
+    let records = read_log(&path);
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|row| row.first_saved_unix_ms == Some(first)));
+    let entries = recent_alerts(&path, Some("session-a"), None, 10).unwrap();
+    assert_eq!(entries[0].first_review_delay_ms, Some(2500));
+    assert_eq!(entries[0].first_reviewed_unix_ms, Some(first + 2500));
+}
+
+#[test]
+fn legacy_origin_and_review_before_save_do_not_yield_a_delay() {
+    use crate::storage::alert_history::recent_alerts;
+
+    let directory = tempfile::tempdir().unwrap();
+    for (name, first_saved) in [("legacy", None), ("reversed", Some(6000))] {
+        let mut item = alert(1, 1);
+        let path = directory.path().join(name);
+        let mut record = encode_alert_record("session-a", &item, first_saved).unwrap();
+        record.push(b'\n');
+        write_private_log(&path, &record);
+        let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+        item.disposition = AlertDisposition::Reviewing;
+        item.first_reviewed_unix_ms = Some(5000);
+        item.hit_count += 1;
+        writer.append_alerts(std::slice::from_ref(&item)).unwrap();
+        let history = recent_alerts(&path, Some("session-a"), None, 10).unwrap();
+        assert_eq!(history[0].first_saved_unix_ms, first_saved);
+        assert_eq!(history[0].first_reviewed_unix_ms, Some(5000));
+        assert_eq!(history[0].first_review_delay_ms, None);
+    }
 }
 
 #[test]

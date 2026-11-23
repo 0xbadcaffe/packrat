@@ -44,6 +44,7 @@ fn operational_investigation_state_round_trips() {
         disposition: AlertDisposition::Reviewing,
         priority: 80,
         reviewed_priority: None,
+        first_reviewed_unix_ms: None,
         recommendation: Some("Inspect the stream".into()),
         correlation_key: "203.0.113.9>10.0.0.5".into(),
         hit_count: 3,

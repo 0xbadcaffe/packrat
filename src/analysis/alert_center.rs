@@ -98,6 +98,8 @@ pub struct AlertItem {
     pub priority: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_priority: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_reviewed_unix_ms: Option<u64>,
     pub recommendation: Option<String>,
     #[serde(default)]
     pub correlation_key: String,
@@ -349,6 +351,7 @@ impl AlertCenter {
             disposition: AlertDisposition::New,
             priority,
             reviewed_priority: None,
+            first_reviewed_unix_ms: None,
             recommendation,
             correlation_key,
             hit_count: 1,
@@ -418,20 +421,6 @@ impl AlertCenter {
     pub fn drain_pending_exports(&mut self) -> Vec<AlertItem> {
         std::mem::take(&mut self.pending_exports)
     }
-    pub fn set_disposition(&mut self, id: u64, capture_id: Option<&str>, disposition: AlertDisposition) -> bool {
-        let Some(item) = self.items.iter_mut().find(|item| {
-            item.id == id && item.capture_id.as_deref() == capture_id
-        }) else {
-            return false;
-        };
-        if item.disposition != disposition {
-            item.disposition = disposition;
-            item.reviewed_priority = disposition.is_resolved().then_some(item.priority);
-            self.pending_exports.push(item.clone());
-        }
-        true
-    }
-
     pub fn clear(&mut self) {
         self.items.clear();
         self.fingerprints.clear();

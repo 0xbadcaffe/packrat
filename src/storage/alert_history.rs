@@ -59,6 +59,12 @@ pub struct AlertHistoryEntry {
     pub disposition: AlertDisposition,
     pub first_seen: f64,
     pub last_seen: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_saved_unix_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_reviewed_unix_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_review_delay_ms: Option<u64>,
     pub hit_count: u64,
     pub evidence_frame_count: usize,
     pub evidence_frame_set_sha256: String,
@@ -195,6 +201,10 @@ fn filtered_alerts_report(
             if evidence_frame_count == 0 {
                 review_limitations.push("no_packet_references");
             }
+            let first_saved_unix_ms = record.first_saved_unix_ms.filter(|&timestamp| timestamp != 0);
+            let first_reviewed_unix_ms = alert.first_reviewed_unix_ms.filter(|&timestamp| timestamp != 0);
+            let first_review_delay_ms = first_reviewed_unix_ms.zip(first_saved_unix_ms)
+                .and_then(|(reviewed, saved)| reviewed.checked_sub(saved));
             latest.push(AlertHistoryEntry {
                 session_id: record.session_id,
                 capture_id: alert.capture_id,
@@ -205,6 +215,9 @@ fn filtered_alerts_report(
                 disposition: alert.disposition,
                 first_seen: alert.first_seen,
                 last_seen: alert.last_seen,
+                first_saved_unix_ms,
+                first_reviewed_unix_ms,
+                first_review_delay_ms,
                 hit_count: alert.hit_count,
                 evidence_frame_count,
                 evidence_frame_set_sha256: evidence_frame_set_sha256(&evidence_frames),
