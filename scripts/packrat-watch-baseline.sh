@@ -19,6 +19,18 @@ read_baseline() {
         def token: type == "string" and test("\\A[A-Za-z0-9_.:-]{1,128}\\z");
         def scope: type == "object" and (.capture_id | token) and (.session_id | token);
         def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+        def rule_summary:
+            (.rule_id | type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z"))
+            and (.revision | count and . >= 1 and . <= 65535) and (.openings | count and . > 0);
+        def valid_breakdown:
+            .observed_openings as $observed | .opening_rule_breakdown
+            | if . == null then true else
+                ($observed | count) and type == "object"
+                and (.rules | type == "array" and length <= 64 and all(.[]; rule_summary)
+                    and length == (unique_by([.rule_id,.revision]) | length))
+                and (.unattributed_openings | count) and (.omitted_rule_openings | count)
+                and (([.rules[].openings] | add // 0) + .unattributed_openings + .omitted_rule_openings == $observed)
+              end;
         def tick:
             strings | select(test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z"))
             | . as $stamp | fromdateiso8601 | select(todateiso8601 == $stamp);
@@ -48,7 +60,7 @@ read_baseline() {
             and ($b | .record_type == "verified_capture_build" and (.interface | token)
                 and (.scope | scope) and (.capture_run_id | token) and (.packets | count)
                 and (.sha256 | strings | test("\\A[0-9a-f]{64}\\z")))
-            and ($c | .record_type == "capture_coverage_report" and (.scope | scope) and valid_counts)
+            and ($c | .record_type == "capture_coverage_report" and (.scope | scope) and valid_counts and valid_breakdown)
             and $c.scope == $b.scope and $c.healthy_packets <= $b.packets
           then [($c.first_record_at | tick),($c.last_record_at | tick),($b.observed_at | tick)] as $times
             | if ($times | length) == 3 and $times[0] <= $times[1] and $times[1] <= $times[2]
@@ -60,6 +72,8 @@ read_baseline() {
                    comparable_seconds:(if $c | has("alert_comparable_seconds") then $c.alert_comparable_seconds
                        elif $c.alert_comparable_intervals == $c.healthy_intervals then $c.healthy_seconds else null end),
                    comparable_packets:$c.alert_comparable_packets,openings:$c.observed_openings,
+                   opening_rule_breakdown:($c.opening_rule_breakdown | if . == null then null else
+                       {rules:[.rules[] | {rule_id,revision,openings}],unattributed_openings,omitted_rule_openings} end),
                    openings_per_10000_packets:(if $c.coverage_policy == "continuous_journal_v2" and $c.alert_comparable_packets > 0
                        then $c.observed_openings * 10000 / $c.alert_comparable_packets else null end)}
               else error("Inconsistent baseline observation window") end
@@ -119,6 +133,7 @@ fi
 before=$(read_baseline "$1")
 after=$(read_baseline "$2")
 printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --argjson packets "$min_packets" '
+    def fully_attributed: .opening_rule_breakdown | . != null and .unattributed_openings == 0 and .omitted_rule_openings == 0;
     .[0] as $before | .[1] as $after
     | ($before.scope.capture_id == $after.scope.capture_id
         or $before.scope.session_id == $after.scope.session_id
@@ -139,8 +154,22 @@ printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --arg
          elif ($before.comparable_seconds < $seconds or $after.comparable_seconds < $seconds
                or $before.comparable_packets < $packets or $after.comparable_packets < $packets) then "thin_alert_coverage"
          else "separate_capture_windows" end) as $status
+        | (if $status != "separate_capture_windows" then "comparison_unavailable"
+           elif ($before | fully_attributed) and ($after | fully_attributed) then "comparable"
+           else "attribution_incomplete" end) as $rule_status
         | {record_type:"capture_build_comparison",status:$status,same_build:$same_build,
            before:$before,after:$after,comparison_minimums:{seconds:$seconds,packets:$packets},
+           rule_rate_status:$rule_status,
+           rule_rate_deltas:(if $rule_status == "comparable" then
+               [$before.opening_rule_breakdown.rules[], $after.opening_rule_breakdown.rules[]]
+               | unique_by([.rule_id,.revision]) | map(
+                   . as $rule
+                   | def matches: .rule_id == $rule.rule_id and .revision == $rule.revision;
+                   (first($before.opening_rule_breakdown.rules[] | select(matches) | .openings) // 0) as $prior
+                   | (first($after.opening_rule_breakdown.rules[] | select(matches) | .openings) // 0) as $next
+                   | {rule_id,revision,before_openings:$prior,after_openings:$next,
+                      delta_per_10000_packets:($next * 10000 / $after.comparable_packets - $prior * 10000 / $before.comparable_packets)})
+               else null end),
            observed_rate_delta_per_10000_packets:(if $status == "separate_capture_windows"
                then $after.openings_per_10000_packets - $before.openings_per_10000_packets else null end)}
       end

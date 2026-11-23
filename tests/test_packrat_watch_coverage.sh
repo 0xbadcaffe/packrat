@@ -24,6 +24,7 @@ bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
     and .journal_discontinuities==0
     and .healthy_seconds==180 and .healthy_packets==80 and .alert_comparable_intervals==2
     and .alert_comparable_packets==60 and .alert_comparable_seconds==120 and .observed_openings==2
+    and .opening_rule_breakdown=={rules:[],unattributed_openings:2,omitted_rule_openings:0}
     and .unobserved_alert_id_ranges==[{first_id:7,last_id:7,recorded_at:"2023-11-14T22:16:20Z"}]
     and (.observed_openings_per_10000_packets > 333 and .observed_openings_per_10000_packets < 334)' >/dev/null
 bash "$coverage" <<< "$sample" | jq -e '.status=="insufficient_coverage" and .scope.session_id=="b-2"
@@ -31,6 +32,29 @@ bash "$coverage" <<< "$sample" | jq -e '.status=="insufficient_coverage" and .sc
 bash "$coverage" </dev/null | jq -e '.status=="no_capture_records" and .scope==null' >/dev/null
 bash "$coverage" --capture-id missing --session a-1 <<< "$sample" |
     jq -e '.status=="no_capture_records" and .scope.capture_id=="missing"' >/dev/null
+
+jq -sc '
+    {alert_id:5,rule_id:"dns.competing_responders",revision:7} as $dns |
+    {alert_id:6,rule_id:"http.unauthorized_burst",revision:13} as $http |
+    .[1], (.[2] | .recent_alerts=[$dns] | .review_queue=[$dns,$http]),
+    (.[3] | .recent_alerts=[{alert_id:8,rule_id:"dns.changed_answers",revision:10}])
+' <<< "$sample" | bash "$coverage" | jq -e '
+    .observed_openings == 2 and .opening_rule_breakdown == {
+      rules:[{rule_id:"dns.competing_responders",revision:7,openings:1},{rule_id:"http.unauthorized_burst",revision:13,openings:1}],
+      unattributed_openings:0,omitted_rule_openings:0}' >/dev/null
+jq -sc '
+    .[1], (.[2] | .recent_alerts=[{alert_id:5,rule_id:"dns.competing_responders",revision:7},
+      {alert_id:6,rule_id:"http.unauthorized_burst"}] | .review_queue=[{alert_id:5,rule_id:"dns.competing_responders",revision:8}])
+' <<< "$sample" | bash "$coverage" | jq -e '
+    .observed_openings == 2 and .opening_rule_breakdown == {rules:[],unattributed_openings:2,omitted_rule_openings:0}' >/dev/null
+jq -sc '
+    .[0] as $base | range(0;67) as $i
+    | $base + {updated_at:(1700000000 + $i | todateiso8601),packets:(10+$i),journal_sequence:($i+1),
+       highest_observed_alert_id:(4+$i),alert_changes:{newly_observed:[4+$i]},
+       recent_alerts:[{alert_id:(4+$i),rule_id:("rule."+($i|tostring)),revision:1}]}
+' <<< "$sample" | bash "$coverage" | jq -e '
+    .observed_openings == 66 and (.opening_rule_breakdown |
+      (.rules | length) == 64 and .unattributed_openings == 0 and .omitted_rule_openings == 2)' >/dev/null
 
 # Same-scope samples with a new healthy epoch or backwards timestamps are not joined.
 for patch in '.healthy_capture_since+=1' '.updated_at="2023-11-14T22:12:59Z"' \

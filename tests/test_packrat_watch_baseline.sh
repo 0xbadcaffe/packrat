@@ -34,6 +34,21 @@ PACKRAT_BASELINE_MIN_SECONDS=60 PACKRAT_BASELINE_MIN_PACKETS=2000 bash "$tool" "
     and .before.openings_per_10000_packets == 5 and .after.openings_per_10000_packets == 0
     and .before.comparable_seconds == 60 and .after.comparable_seconds == 60
     and .observed_rate_delta_per_10000_packets == -5' >/dev/null
+jq '.coverage.opening_rule_breakdown = {rules:[{rule_id:"dns.changed_answers",revision:9,openings:1}],unattributed_openings:0,omitted_rule_openings:0}' \
+    "$before" > "$tmp/rule-before.json"
+jq '.coverage.observed_openings = 2 | .coverage.opening_rule_breakdown =
+    {rules:[{rule_id:"dns.changed_answers",revision:10,openings:2}],unattributed_openings:0,omitted_rule_openings:0}' \
+    "$after" > "$tmp/rule-after.json"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/rule-before.json" "$tmp/rule-after.json" | jq -e '
+    .rule_rate_status == "comparable" and .rule_rate_deltas == [
+       {rule_id:"dns.changed_answers",revision:9,before_openings:1,after_openings:0,delta_per_10000_packets:-5},
+       {rule_id:"dns.changed_answers",revision:10,before_openings:0,after_openings:2,delta_per_10000_packets:10}]' >/dev/null
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/rule-before.json" "$after" | jq -e '
+    .rule_rate_status == "attribution_incomplete" and .rule_rate_deltas == null and .observed_rate_delta_per_10000_packets == -5' >/dev/null
+jq '.coverage.opening_rule_breakdown = {rules:[],unattributed_openings:2,omitted_rule_openings:0}' \
+    "$tmp/rule-after.json" > "$fixture"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/rule-before.json" "$fixture" | jq -e '
+    .rule_rate_status == "attribution_incomplete" and .rule_rate_deltas == null' >/dev/null
 PACKRAT_BASELINE_MIN_SECONDS=60 PACKRAT_BASELINE_MIN_PACKETS=2001 bash "$tool" "$before" "$after" | jq -e '
     .status == "thin_alert_coverage" and .observed_rate_delta_per_10000_packets == null' >/dev/null
 for invalid in 0 01 -1 '3.5'; do
@@ -78,6 +93,10 @@ reject
 jq '.build.sha256 = ("b"*64)' "$before" > "$fixture"
 reject
 jq '.coverage.observed_openings = 1.5' "$after" > "$fixture"
+reject
+jq '.coverage.opening_rule_breakdown.rules[0].openings += 1' "$tmp/rule-after.json" > "$fixture"
+reject
+jq '.coverage.observed_openings = 4 | .coverage.opening_rule_breakdown.rules |= . + .' "$tmp/rule-after.json" > "$fixture"
 reject
 jq '.coverage.healthy_seconds = 61' "$after" > "$fixture"
 reject

@@ -39,14 +39,21 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         | if ($low | counter) and ($high | counter) and $high >= $low
              and ($ids | type == "array" and length <= 55 and all(.[]; counter and . > $low and . <= $high) and . == unique)
           then $ids else null end;
-    def observed_openings($earlier; $later):
+    def verified_opening_ids($earlier; $later):
         opening_delta($earlier; $later) as $ids
         | if $earlier.alert_sample_gap == false and $later.alert_sample_gap == false and $ids != null
              and $later.highest_observed_alert_id - $earlier.highest_observed_alert_id == ($ids | length)
-          then $ids | length else null end;
+          then $ids else null end;
+    def alert_samples:
+        ((.recent_alerts | arrays | .[:50][]), (.review_queue | arrays | .[:5][])) | objects;
+    def attribute_openings($later; $ids):
+        [$later | alert_samples] as $sample
+        | [$ids[] as $id | [$sample[] | select(.alert_id == $id)
+            | if (.rule_id | type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z"))
+                 and (.revision | counter and . >= 1 and . <= 65535)
+              then {rule_id,revision} else null end] | unique | if length == 1 then .[0] else null end];
     def sampled_ids:
-        [((.recent_alerts | arrays | .[:50][]), (.review_queue | arrays | .[:5][]))
-         | objects | .alert_id | select(counter and . > 0)] | unique;
+        [alert_samples | .alert_id | select(counter and . > 0)] | unique;
     def unobserved_ranges($low; $known; $at):
         # Walk the observed IDs, not every integer in a potentially wide range.
         reduce $known[] as $id ({cursor:$low,ranges:[]};
@@ -90,8 +97,9 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
             and $earlier.healthy_capture_since == $later.healthy_capture_since
             and $later.tick > $earlier.tick and $later.packets >= $earlier.packets
             and no_capture_loss_between($earlier; $later)
-        then {seconds:($later.tick - $earlier.tick), packets:($later.packets - $earlier.packets),
-              observed_openings:observed_openings($earlier; $later)} else null end;
+        then verified_opening_ids($earlier; $later) as $ids
+          | {seconds:($later.tick - $earlier.tick), packets:($later.packets - $earlier.packets),
+             opening_rules:(if $ids == null then null else attribute_openings($later; $ids) end)} else null end;
     if utf8bytelength > 2097152 then error("Journal exceeds the 2 MiB input limit") else . end
     | split("\n") | map(select(length > 0) | fromjson
         | if valid_record then . + {tick:(.updated_at | fromdateiso8601)} else error("Invalid triage journal record") end) as $all
@@ -103,9 +111,11 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         | if journal_contiguous($before; $after) then pair($before; $after)
           else "journal_discontinuity" end] as $pairs
     | ($pairs | map(objects)) as $healthy
-    | ($healthy | map(select(.observed_openings != null))) as $comparable
+    | ($healthy | map(select(.opening_rules != null))) as $comparable
     | ([$comparable[].packets] | add // 0) as $measured_packets
-    | ([$comparable[].observed_openings] | add // 0) as $openings
+    | [$comparable[].opening_rules[]] as $openings
+    | ($openings | map(objects) | group_by([.rule_id,.revision])
+        | map(.[0] + {openings:length}) | sort_by([-.openings,.rule_id,.revision])) as $by_rule
     | [limit(65; alert_gaps($sample))] as $alert_gaps
     | {record_type:"capture_coverage_report",coverage_policy:"continuous_journal_v2",
        status:(if ($sample | length) == 0 then "no_capture_records"
@@ -120,6 +130,9 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        alert_comparable_seconds:([$comparable[].seconds] | add // 0),
        alert_sample_gap_reported:any($sample[]; .alert_sample_gap == true),
        unobserved_alert_id_ranges:$alert_gaps[:64], unobserved_alert_id_ranges_truncated:($alert_gaps | length > 64),
-       observed_openings:(if ($comparable | length) > 0 then $openings else null end),
-       observed_openings_per_10000_packets:(if $measured_packets > 0 then $openings * 10000 / $measured_packets else null end)}
+       observed_openings:(if ($comparable | length) > 0 then ($openings | length) else null end),
+       opening_rule_breakdown:(if ($comparable | length) > 0 then {rules:$by_rule[:64],
+           unattributed_openings:([$openings[] | select(. == null)] | length),
+           omitted_rule_openings:([$by_rule[64:][] | .openings] | add // 0)} else null end),
+       observed_openings_per_10000_packets:(if $measured_packets > 0 then ($openings | length) * 10000 / $measured_packets else null end)}
 '
