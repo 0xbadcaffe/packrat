@@ -261,7 +261,7 @@ grep -Fq 'retrying in 2 seconds' "$scratch/retry"
 jq -se 'length == 2 and .[0].alert_changes==null and .[0].highest_observed_alert_id==9
     and .[1].highest_observed_alert_id==12 and .[1].alert_changes.newly_observed==[12]
     and .[1].alert_changes.updated==[{alert_id:9,fields:["hit_count"]}]' "$scratch/supervised" >/dev/null
-jq -e '.highest_observed_alert_id==12 and (has("alert_changes") | not)' "$state" >/dev/null
+jq -e '.highest_observed_alert_id==12 and .alert_sample_gap and (has("alert_changes") | not)' "$state" >/dev/null
 
 printf '%s\n' 'invalid triage output' >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/outage" &
@@ -301,7 +301,7 @@ done
 kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
-jq -se 'length==3 and .[0].highest_observed_alert_id==13 and (.[0].alert_sample_gap | not)
+jq -se 'length==3 and .[0].highest_observed_alert_id==13 and .[0].alert_sample_gap
     and .[0].alert_changes=={newly_observed:[13],updated:[{alert_id:9,fields:["hit_count"]}],review_queue_entries:[],review_queue_exits:[]}
     and .[1].alert_sample_gap and .[1].alert_changes.newly_observed==[range(16;66)]
     and (.[2].alert_sample_gap | not) and .[2].alert_changes==null' \
@@ -376,7 +376,7 @@ wait "$watch_pid"
 watch_pid=''
 jq -se 'length==1 and (.[0].alert_changes | .updated==
     [{alert_id:2,fields:["hit_count","disposition"]},{alert_id:6,fields:["severity","disposition"]},{alert_id:8,fields:["disposition"]},
-     {alert_id:10,fields:["disposition"]}] and .newly_observed==[]
+     {alert_id:10,fields:["disposition"]}] and .newly_observed==[11]
     and .review_queue_exits==[{alert_id:7,disposition:null,outcome:"not_in_sample"},
      {alert_id:8,disposition:"Closed",outcome:"resolved"},{alert_id:10,disposition:"Confirmed",outcome:"still_in_recent_sample"}]
     and .review_queue_entries==[{alert_id:6,previously_in_recent_sample:true},{alert_id:11,previously_in_recent_sample:false}])

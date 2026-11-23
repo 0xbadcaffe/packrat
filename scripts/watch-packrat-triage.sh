@@ -385,6 +385,7 @@ while :; do
                 (.status == "current" or .status == "degraded") and
                 .capture_id != null and .session_id != null and (.recent_alerts | type == "array");
             def alert_index: ((.review_queue // []) + .recent_alerts) | INDEX(.alert_id | tostring);
+            def alert_ids: [((.review_queue // []) + (.recent_alerts // []))[] | .alert_id] | unique;
             def queue_index: .review_queue | INDEX(.alert_id | tostring);
             def queue_comparable($prior): (.review_queue | type) == "array" and ($prior.review_queue | type) == "array";
             def compact_alert: {alert_id,hit_count,severity,disposition,packet_evidence_status,revision,evidence_frame_count,evidence_frame_set_sha256};
@@ -410,14 +411,13 @@ while :; do
                                 or $item.disposition == "Closed" then "resolved"
                             else "still_in_recent_sample" end)}]
                 end;
-            . as $now
-            | (($prior | observed) and observed and
+            . as $now | (($prior | observed) and observed and
                $prior.capture_id == .capture_id and $prior.session_id == .session_id) as $comparable
             | ($comparable and .packets != null and $prior.packets != null and .packets < $prior.packets) as $regressed
-            | ([.recent_alerts[]?.alert_id] | max // 0) as $seen
-            | ([$prior.highest_observed_alert_id, ($prior.recent_alerts | map(.alert_id)? | max)] | max // 0) as $high
+            | alert_ids as $ids | ($ids[-1] // 0) as $seen
+            | ([$prior.highest_observed_alert_id, ($prior | alert_ids | last)] | max // 0) as $high
             | (.recent_alerts_at_limit == true or .has_older_alerts == true) as $truncated
-            | ([.recent_alerts[]?.alert_id | select(. > $high)] | unique) as $new_ids
+            | [$ids[] | select(. > $high)] as $new_ids
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
                 poll_started_at:$started,
                 packet_counter_regressed:(if observed then $regressed else null end),
@@ -429,10 +429,10 @@ while :; do
                 buffer_drops_delta:(if $comparable and .buffer_drops != null and $prior.buffer_drops != null
                     and .buffer_drops >= $prior.buffer_drops then .buffer_drops - $prior.buffer_drops else null end),
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
-                alert_sample_gap: if observed | not then null elif $comparable then
-                    $prior.alert_sample_gap == true or
-                        ($truncated and ($seen - $high > ($new_ids | length)))
-                else $truncated end,
+                alert_sample_gap: if observed | not then null elif $comparable and $high > 0 then
+                    $prior.alert_sample_gap == true or ($seen - $high > ($new_ids | length))
+                else ($comparable and $prior.alert_sample_gap == true) or $truncated
+                    or ($seen - ($ids[0] // 1) + 1 > ($ids | length)) end,
                 alert_changes: if $comparable then
                     ($prior | alert_index) as $before
                     | {

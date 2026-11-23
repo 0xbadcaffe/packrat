@@ -20,3 +20,23 @@ jq -e '.packet_counter_regressed==false and .healthy_capture_since==.poll_starte
 live current 1 '[]' '[]' | jq '.health.capture_id="new-capture"' >"$report"
 bash "$watch" --once "$state" -- cat -- "$report" >/dev/null
 bash "$watch" --check "$state" | jq -e '.status=="current" and .packet_counter_gap==false and .packets==1' >/dev/null
+
+state="$scratch/alert-id-gap.json"
+alert_rows() {
+    jq -nc --args '[ $ARGS.positional[] | {alert_id:tonumber,severity:"HIGH",disposition:"New"} ]' "$@"
+}
+live current 101 '[]' "$(alert_rows 51 52)" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '.highest_observed_alert_id==52 and .alert_sample_gap==false' "$state" >/dev/null
+live current 102 "$(alert_rows 54)" "$(alert_rows 53 52 51)" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '.highest_observed_alert_id==54 and .alert_sample_gap==false' "$state" >/dev/null
+live current 103 '[]' "$(alert_rows 56 54 53)" >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+bash "$watch" --check "$state" | jq -e '.status=="current" and .alert_sample_gap' >/dev/null
+live current 104 '[]' "$(alert_rows 200)" | jq '.health.capture_id="scope-2"' >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '.highest_observed_alert_id==200 and .alert_sample_gap==false' "$state" >/dev/null
+live current 105 '[]' "$(alert_rows 300 302)" | jq '.health.capture_id="scope-3"' >"$report"
+bash "$watch" --once "$state" -- cat "$report" >/dev/null
+jq -e '.highest_observed_alert_id==302 and .alert_sample_gap and (.has_older_alerts | not)' "$state" >/dev/null

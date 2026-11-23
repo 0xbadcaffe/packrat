@@ -5,7 +5,7 @@
     archive_candidate=''
     capture_scope='{"capture_id":"capture-a","capture_run_id":"run-a","alert_session_id":"session-a"}'
     triage='{"status":"current","capture_id":"capture-a","session_id":"session-a","packets":100,
-        "packet_counter_gap":false,"journal_status":"current","journal_pending_events":0}'
+        "packet_counter_gap":false,"alert_sample_gap":false,"journal_status":"current","journal_pending_events":0}'
     live=$(jq -c '. + {service:"packrat",status:"ok",capture_active:true,telemetry_fresh:true,packets_total:103,
         pcap_buffer_drops:0,capture_queue_full_packets:0,capture_truncated_frames:0}' <<<"$capture_scope")
     timeout() { printf '%s\n' "$triage"; }
@@ -15,6 +15,9 @@
     for patch in '.packets_total=99' '.capture_run_id="restarted"' '.alert_session_id="other"' '.telemetry_fresh=false' \
         '.capture_queue_full_packets=1' '.capture_truncated_frames=1' '.pcap_buffer_drops=1' 'del(.capture_queue_full_packets)'; do
         if live=$(jq -c "$patch" <<<"$live") triage_watcher_ready "$capture_scope" 0 1; then exit 1; fi
+    done
+    for patch in '.alert_sample_gap=true' 'del(.alert_sample_gap)'; do
+        if triage=$(jq -c "$patch" <<<"$triage") triage_watcher_ready "$capture_scope" 0 1; then exit 1; fi
     done
     triage=$(jq -c '.packet_counter_gap=true' <<<"$triage")
     triage_watcher_ready "$capture_scope" 0 0
