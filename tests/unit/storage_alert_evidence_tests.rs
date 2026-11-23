@@ -34,7 +34,7 @@ fn oversized_log_lines_do_not_hide_following_valid_records() {
 }
 
 #[test]
-fn ambiguous_or_corrupted_evidence_does_not_leave_a_bundle() {
+fn an_unscoped_alert_is_rejected_and_unreadable_evidence_has_no_packet_capture() {
     let temp = tempfile::tempdir().unwrap();
     let log = temp.path().join("alerts.jsonl");
     let output = temp.path().join("evidence");
@@ -56,9 +56,13 @@ fn ambiguous_or_corrupted_evidence_does_not_leave_a_bundle() {
     corrupted.packet_refs.push(2);
     append_record(&mut writer, &corrupted);
     drop(writer);
-    let result = export_alert_evidence(&mut archive, &log, "session", 1, &output);
-    assert!(result.err().unwrap().to_string().contains("integrity"));
-    assert!(!output.exists());
+    let result = export_alert_evidence(&mut archive, &log, "session", 1, &output).unwrap();
+    assert_eq!((result.recovered_frames, result.missing_frames), (0, 2));
+    assert_eq!((result.unreadable_frames, result.length_unknown_frames), (1, 1));
+    assert!(!output.join(PCAP).exists());
+    let verified = verify_alert_evidence(&output).unwrap();
+    assert_eq!(verified.capture_sha256_verified, None);
+    assert_eq!((verified.unreadable_frames, verified.length_unknown_frames), (1, 1));
 }
 
 #[test]

@@ -138,13 +138,15 @@ fn project_alert_status_checks_only_unique_scoped_pins_against_the_log() {
     let result = export("capture-a");
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(),
-        json!({"recovered_frames":2,"missing_frames":5}));
+        json!({"recovered_frames":2,"missing_frames":5,"unreadable_frames":2,"length_unknown_frames":1}));
 
     let manifest_path = output.join("manifest.json");
     let manifest = std::fs::read(&manifest_path).unwrap();
     let view: Value = serde_json::from_slice(&manifest).unwrap();
     assert_eq!(view["capture"]["source_frame_numbers"], json!([1, 2]));
     assert_eq!(view["missing_frame_numbers"], json!([3, 4, 5, 6, 7]));
+    assert_eq!(view["unreadable_frame_numbers"], json!([4, 5]));
+    assert_eq!(view["length_unknown_frame_numbers"], json!([6]));
     let mut payloads = Vec::new();
     packrat_tui::pcap_replay::stream_pcap(&output.join("evidence.pcapng"), |packet| {
         payloads.push((packet.capture.unwrap().wire_length, packet.bytes));
@@ -263,6 +265,32 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
             {"frame_number":5,"status":"unreadable"}
         ]
     }));
+    let recovered = directory.path().join("with-unreadable");
+    let result = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&archive_path).arg("--alert-evidence").arg(&log).args(["s", "1"])
+        .arg(&recovered).args(["--capture-id", "capture-a"]).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(), json!({
+        "recovered_frames":2,"missing_frames":3,"unreadable_frames":1,"length_unknown_frames":1
+    }));
+    let manifest_path = recovered.join("manifest.json");
+    let manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["capture"]["source_frame_numbers"], json!([1, 2]));
+    assert_eq!(manifest["missing_frame_numbers"], json!([3, 4, 5]));
+    assert_eq!(manifest["unreadable_frame_numbers"], json!([5]));
+    assert_eq!(manifest["length_unknown_frame_numbers"], json!([4]));
+    let verify = || packrat_tui::storage::alert_evidence::verify_alert_evidence(&recovered);
+    let report = verify().unwrap();
+    let verified = serde_json::to_value(report).unwrap();
+    assert_eq!(verified["unreadable_frames"], 1);
+    assert_eq!(verified["length_unknown_frames"], 1);
+    for (key, frames) in [("unreadable_frame_numbers", json!([1])),
+        ("unreadable_frame_numbers", json!([4, 5])), ("length_unknown_frame_numbers", json!([4, 4]))] {
+        let mut invalid = manifest.clone();
+        invalid[key] = frames;
+        std::fs::write(&manifest_path, invalid.to_string()).unwrap();
+        assert!(verify().is_err(), "{key}");
+    }
     let mut updated = serde_json::from_slice::<Value>(&std::fs::read(&log).unwrap()).unwrap();
     updated["alert"]["packet_refs"] = json!([6, 4, 3, 2, 1, 2]);
     let mut writer = std::fs::OpenOptions::new().append(true).open(&log).unwrap();

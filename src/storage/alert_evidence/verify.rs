@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read, path::Path};
 
-use super::{AlertItem, MANIFEST, MAX_ALERT_PACKET_REFS, PCAP, scoped_frames};
+use super::{AlertItem, MANIFEST, MAX_ALERT_PACKET_REFS, PCAP, is_zero, scoped_frames};
 use crate::storage::alert_history::{AlertLogs, ReverseAlertLines};
 use crate::storage::alert_jsonl::ExistingAlertRecord;
 
@@ -19,6 +19,10 @@ struct Manifest {
     alert: AlertItem,
     capture: Option<Capture>,
     missing_frame_numbers: Vec<u64>,
+    #[serde(default)]
+    unreadable_frame_numbers: Vec<u64>,
+    #[serde(default)]
+    length_unknown_frame_numbers: Vec<u64>,
 }
 
 #[derive(Deserialize)]
@@ -35,6 +39,10 @@ pub struct VerifiedEvidence {
     pub alert_id: u64,
     pub recovered_frames: usize,
     pub missing_frames: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub unreadable_frames: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub length_unknown_frames: usize,
     pub capture_sha256_verified: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alert_snapshot_matches_log: Option<bool>,
@@ -68,6 +76,13 @@ fn verify(directory: &Path, logs: Option<AlertLogs<'_>>) -> Result<VerifiedEvide
     let mut mapped: Vec<_> = recovered.iter().chain(missing).copied().collect();
     mapped.sort_unstable();
     ensure!(mapped == expected, "Evidence frame mapping does not match alert references");
+    let unreadable = &manifest.unreadable_frame_numbers;
+    let unknown = &manifest.length_unknown_frame_numbers;
+    ensure!(strict_order(unreadable) && strict_order(unknown)
+        && unreadable.len() + unknown.len() <= missing.len()
+        && unreadable.iter().chain(unknown).all(|number| missing.binary_search(number).is_ok())
+        && unreadable.iter().all(|number| unknown.binary_search(number).is_err()),
+        "Invalid evidence frame omission reasons");
 
     let pcap = directory.join(PCAP);
     let verified_hash = if let Some(capture) = &manifest.capture {
@@ -96,6 +111,8 @@ fn verify(directory: &Path, logs: Option<AlertLogs<'_>>) -> Result<VerifiedEvide
         alert_id: manifest.alert.id,
         recovered_frames: recovered.len(),
         missing_frames: missing.len(),
+        unreadable_frames: unreadable.len(),
+        length_unknown_frames: unknown.len(),
         capture_sha256_verified: verified_hash,
         alert_snapshot_matches_log,
     })

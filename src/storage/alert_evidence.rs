@@ -28,8 +28,15 @@ const PCAP: &str = "evidence.pcapng";
 #[derive(Serialize)]
 pub struct EvidenceExportSummary {
     pub recovered_frames: usize,
+    /// All frames not exported, including unreadable or unknown-length frames.
     pub missing_frames: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub unreadable_frames: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub length_unknown_frames: usize,
 }
+
+fn is_zero(count: &usize) -> bool { *count == 0 }
 
 #[derive(Serialize)]
 pub struct EvidenceAvailability {
@@ -73,7 +80,13 @@ struct EvidenceManifest<'a> {
     alert: &'a AlertItem,
     capture: Option<ExportedCapture>,
     missing_frame_numbers: Vec<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unreadable_frame_numbers: Vec<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    length_unknown_frame_numbers: Vec<u64>,
 }
+
+type FrameLookup = std::result::Result<Option<Packet>, ()>;
 
 pub fn export_alert_evidence(
     archive: &mut PacketArchive,
@@ -109,7 +122,7 @@ pub fn export_alert_evidence_across_logs(
     let alert = latest_alert_in_logs(logs, session_id, alert_id, capture_filter)?;
     let (capture_id, frames) = scoped_frames(&alert)?;
     export_frames(output, session_id, capture_id, &alert, &frames, |number| {
-        archive.packet_for_capture(capture_id, number).map_err(anyhow::Error::msg)
+        archive.packet_for_capture(capture_id, number).map_err(|_| ())
     })
 }
 
@@ -119,7 +132,7 @@ fn export_frames(
     capture_id: &str,
     alert: &AlertItem,
     frames: &[u64],
-    fetch: impl FnMut(u64) -> Result<Option<Packet>>,
+    fetch: impl FnMut(u64) -> FrameLookup,
 ) -> Result<EvidenceExportSummary> {
     let mut builder = DirBuilder::new();
     #[cfg(unix)]
@@ -218,11 +231,11 @@ pub fn export_project_alert_evidence(
     let project = super::project_store::load(project)?;
     let pins = project_pins(&project, capture_id, &frames);
     export_frames(output, session_id, capture_id, &alert, &frames, |number| {
-        Ok(match frames.binary_search(&number).ok().and_then(|index| pins.get(index)).copied() {
-            Some(ProjectPin::Unique(packet))
-                if matches!(frame_status(packet), FrameStatus::Complete | FrameStatus::Truncated) => Some(packet.clone()),
-            _ => None,
-        })
+        match frames.binary_search(&number).ok().and_then(|index| pins.get(index)).copied() {
+            Some(ProjectPin::Unique(packet)) => Ok(Some(packet.clone())),
+            Some(ProjectPin::Duplicate) => Err(()),
+            _ => Ok(None),
+        }
     })
 }
 
@@ -284,15 +297,23 @@ fn export_into(
     capture_id: &str,
     alert: &AlertItem,
     frames: &[u64],
-    mut fetch: impl FnMut(u64) -> Result<Option<Packet>>,
+    mut fetch: impl FnMut(u64) -> FrameLookup,
 ) -> Result<EvidenceExportSummary> {
     let pcap_path = output.join(PCAP);
     let mut writer = None;
     let mut recovered = Vec::new();
     let mut missing = Vec::new();
+    let (mut unreadable, mut length_unknown) = (Vec::new(), Vec::new());
     for &number in frames {
-        // PCAPNG has no unknown wire length; do not let the legacy writer infer one.
-        let Some(packet) = fetch(number)?.filter(|packet| frame_status(packet) != FrameStatus::LengthUnknown) else {
+        let lookup = fetch(number);
+        let status = match &lookup {
+            Ok(Some(packet)) => frame_status(packet),
+            Ok(None) => FrameStatus::Missing,
+            Err(()) => FrameStatus::Unreadable,
+        };
+        let (FrameStatus::Complete | FrameStatus::Truncated, Ok(Some(packet))) = (status, lookup) else {
+            if status == FrameStatus::Unreadable { unreadable.push(number); }
+            if status == FrameStatus::LengthUnknown { length_unknown.push(number); }
             missing.push(number);
             continue;
         };
@@ -307,6 +328,8 @@ fn export_into(
     let summary = EvidenceExportSummary {
         recovered_frames: recovered.len(),
         missing_frames: missing.len(),
+        unreadable_frames: unreadable.len(),
+        length_unknown_frames: length_unknown.len(),
     };
     let capture = if let Some(mut writer) = writer {
         writer.flush()?;
@@ -323,6 +346,8 @@ fn export_into(
         alert,
         capture,
         missing_frame_numbers: missing,
+        unreadable_frame_numbers: unreadable,
+        length_unknown_frame_numbers: length_unknown,
     };
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
