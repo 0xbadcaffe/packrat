@@ -164,7 +164,7 @@ impl App {
             packets_total: self.packet_counter,
             bytes_total: self.total_bytes,
             visible_packets: self.filtered.len(),
-            flows: core.flow_tracker.flows.len(),
+            flows: core.flow_tracker.len(),
             hosts: core.hosts.len(),
             security_findings: core.security.alert_count(),
             rule_hits: core.rule_engine.hits.len(),

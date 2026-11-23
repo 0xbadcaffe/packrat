@@ -117,7 +117,7 @@ impl std::fmt::Debug for AnalysisCore {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("AnalysisCore")
-            .field("flows", &self.flow_tracker.flows.len())
+            .field("flows", &self.flow_tracker.len())
             .field("streams", &self.streams.len())
             .field("alerts", &self.alert_center.items.len())
             .field("incidents", &self.incidents.incidents.len())

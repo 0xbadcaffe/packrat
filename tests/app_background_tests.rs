@@ -200,8 +200,7 @@ fn asynchronous_packets_keep_display_and_analysis_counts_in_agreement() {
     assert_eq!(
         app.query_core(|core| core
             .flow_tracker
-            .flows
-            .values()
+            .iter()
             .map(|flow| flow.packets)
             .sum::<u64>()),
         Some(1000)

@@ -127,7 +127,7 @@ fn draw_flow_table(f: &mut Frame, app: &App, area: Rect) {
             .border_type(BorderType::Plain)
             .border_style(Style::default().fg(C_BORDER()))
             .title(Span::styled(
-                format!(" Flows [{}] sorted by {} ", sorted.len(), sort_label),
+                format!(" Flows [{}] | {} evicted | {} ", sorted.len(), app.core.flow_tracker.evicted(), sort_label),
                 Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
             )))
         .style(Style::default().bg(C_BG()));

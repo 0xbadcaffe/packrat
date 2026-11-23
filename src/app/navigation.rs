@@ -27,7 +27,7 @@ impl App {
                 self.dyn_scroll = self.dyn_scroll.saturating_sub(1);
             }
             Tab::Flows => {
-                let Some(len) = self.query_core(|core| core.flow_tracker.flows.len()) else {
+                let Some(len) = self.query_core(|core| core.flow_tracker.len()) else {
                     return;
                 };
                 if let Some(sel) = self.flows_selected {

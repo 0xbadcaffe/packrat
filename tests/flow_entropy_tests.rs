@@ -19,6 +19,6 @@ fn flow_entropy_keeps_the_exact_threshold_and_short_frame_behavior() {
     ] {
         packet.bytes = bytes.to_vec();
         tracker.update(&packet);
-        assert_eq!(tracker.flows.values().next().unwrap().flags.encrypted, expected);
+        assert_eq!(tracker.iter().next().unwrap().flags.encrypted, expected);
     }
 }

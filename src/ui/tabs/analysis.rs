@@ -84,7 +84,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 ("Interface",        app.selected_iface.clone()),
                 ("Hosts Seen",       app.core.hosts.len().to_string()),
                 ("TLS Sessions",     app.core.tls_tracker.len().to_string()),
-                ("Flows",            app.core.flow_tracker.flows.len().to_string()),
+                ("Flows retained",   app.core.flow_tracker.len().to_string()),
                 ("Recording",        if app.recording { format!("yes → {}", app.pcap_path) } else { "no".into() }),
                 ("IOC Indicators",   format!("{} loaded, {} hits", ioc_loaded, ioc_hits)),
                 ("Rules",            format!("{} loaded, {} hits", rule_loaded, rule_hits)),

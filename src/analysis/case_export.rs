@@ -267,7 +267,7 @@ fn build<'a>(app: &'a crate::app::AppView<'_>) -> CaseBundle<'a> {
         packets_total: app.packet_counter,
         bytes_total:   app.total_bytes,
         duration_sec:  duration,
-        flows:         app.core.flow_tracker.flows.len(),
+        flows:         app.core.flow_tracker.len(),
         streams:       app.core.streams.len(),
     };
 

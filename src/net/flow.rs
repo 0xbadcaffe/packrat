@@ -1,11 +1,13 @@
 //! TCP/UDP flow tracker — RITA-style beacon scoring, JA3/HASSH, directionality, credentials.
-use std::collections::{HashMap, VecDeque};
+use std::{collections::VecDeque, hash::RandomState, num::NonZeroUsize};
+use lru::LruCache;
 use crate::net::packet::Packet;
 
 const ENCRYPTED_ENTROPY_THRESHOLD: f64 = 7.2;
 // With n bytes, the highest possible Shannon entropy is log2(n).
 const MIN_BYTES_ABOVE_ENCRYPTED_ENTROPY: usize = 148;
 const STROBE_MIN_PACKETS: usize = 101;
+const MAX_RETAINED_FLOWS: NonZeroUsize = NonZeroUsize::new(8192).unwrap();
 
 fn observe_strobe(window: &mut VecDeque<f64>, timestamp: f64) -> bool {
     if !timestamp.is_finite() {
@@ -35,7 +37,7 @@ fn observe_strobe(window: &mut VecDeque<f64>, timestamp: f64) -> bool {
     window.len() == STROBE_MIN_PACKETS
 }
 
-#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Debug)]
 pub struct FlowKey {
     pub ep1:     (String, u16),
     pub ep2:     (String, u16),
@@ -102,41 +104,54 @@ pub struct Flow {
 pub enum FlowSort { Bytes, Packets, Time, BeaconScore }
 
 pub struct FlowTracker {
-    pub flows:    HashMap<FlowKey, Flow>,
+    flows: LruCache<FlowKey, Flow, RandomState>,
+    evicted: u64,
 }
 
 impl FlowTracker {
     pub fn new() -> Self {
+        Self::with_capacity(MAX_RETAINED_FLOWS)
+    }
+
+    fn with_capacity(capacity: NonZeroUsize) -> Self {
         Self {
-            flows: HashMap::new(),
+            flows: LruCache::with_hasher(capacity, RandomState::new()),
+            evicted: 0,
         }
     }
+
+    pub fn len(&self) -> usize { self.flows.len() }
+
+    pub fn is_empty(&self) -> bool { self.flows.is_empty() }
+
+    pub fn get(&self, key: &FlowKey) -> Option<&Flow> { self.flows.peek(key) }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Flow> { self.flows.iter().map(|(_, flow)| flow) }
+
+    pub fn evicted(&self) -> u64 { self.evicted }
 
     pub fn update(&mut self, pkt: &Packet) {
         use crate::net::inspector::shannon_entropy;
         let key = FlowKey::from_packet(pkt);
 
-        // Initiator = first src we see for this flow
-        let initiator = {
-            if let Some(existing) = self.flows.get(&key) {
-                existing.initiator.clone()
-            } else {
-                pkt.src.clone()
+        let at_capacity = self.flows.len() == self.flows.cap().get();
+        let flow = self.flows.get_or_insert_mut_ref(&key, || {
+            if at_capacity {
+                self.evicted = self.evicted.saturating_add(1);
             }
-        };
-
-        let flow = self.flows.entry(key.clone()).or_insert_with(|| Flow {
-            key: key.clone(),
-            packets: 0, bytes: 0, bytes_in: 0, bytes_out: 0,
-            first_seen: pkt.timestamp, last_seen: pkt.timestamp,
-            flags: FlowFlags::default(),
-            beacon_score: 0.0, throughput: 0.0,
-            initiator: initiator.clone(),
-            ja3: None, ja3s: None, hassh: None,
-            last_ts: pkt.timestamp,
-            intervals: VecDeque::new(),
-            pkt_sizes: VecDeque::new(),
-            strobe_window: VecDeque::new(),
+            Flow {
+                key: key.clone(),
+                packets: 0, bytes: 0, bytes_in: 0, bytes_out: 0,
+                first_seen: pkt.timestamp, last_seen: pkt.timestamp,
+                flags: FlowFlags::default(),
+                beacon_score: 0.0, throughput: 0.0,
+                initiator: pkt.src.clone(),
+                ja3: None, ja3s: None, hassh: None,
+                last_ts: pkt.timestamp,
+                intervals: VecDeque::new(),
+                pkt_sizes: VecDeque::new(),
+                strobe_window: VecDeque::new(),
+            }
         });
 
         // Directional bytes
@@ -205,25 +220,26 @@ impl FlowTracker {
             | "TCP stealth scan probe" | "TCP payload after reset" | "Conflicting TCP retransmission" => (false, true),
             _ => return,
         };
-        if let Some(flow) = self.flows.get_mut(&FlowKey::from_packet(pkt)) {
+        if let Some(flow) = self.flows.peek_mut(&FlowKey::from_packet(pkt)) {
             flow.flags.scan |= scan;
             flow.flags.tcp_anomaly |= tcp_anomaly;
         }
     }
 
     pub fn sorted_flows(&self, sort: &FlowSort) -> Vec<&Flow> {
-        let mut v: Vec<&Flow> = self.flows.values().collect();
-        match sort {
-            FlowSort::Bytes       => v.sort_by(|a, b| b.bytes.cmp(&a.bytes)),
-            FlowSort::Packets     => v.sort_by(|a, b| b.packets.cmp(&a.packets)),
-            FlowSort::Time        => v.sort_by(|a, b| b.first_seen.partial_cmp(&a.first_seen).unwrap_or(std::cmp::Ordering::Equal)),
-            FlowSort::BeaconScore => v.sort_by(|a, b| b.beacon_score.partial_cmp(&a.beacon_score).unwrap_or(std::cmp::Ordering::Equal)),
-        }
+        let mut v: Vec<&Flow> = self.iter().collect();
+        v.sort_unstable_by(|a, b| match sort {
+            FlowSort::Bytes       => b.bytes.cmp(&a.bytes),
+            FlowSort::Packets     => b.packets.cmp(&a.packets),
+            FlowSort::Time        => b.first_seen.total_cmp(&a.first_seen),
+            FlowSort::BeaconScore => b.beacon_score.total_cmp(&a.beacon_score),
+        }.then_with(|| a.key.cmp(&b.key)));
         v
     }
 
     pub fn clear(&mut self) {
         self.flows.clear();
+        self.evicted = 0;
     }
 }
 
@@ -430,3 +446,7 @@ fn extract_hassh(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 #[path = "../../tests/unit/flow_strobe_tests.rs"]
 mod strobe_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/flow_retention_tests.rs"]
+mod retention_tests;

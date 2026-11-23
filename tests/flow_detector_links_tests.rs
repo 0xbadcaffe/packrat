@@ -21,11 +21,10 @@ fn flow_badges_do_not_infer_scans_or_syn_spikes_from_ordinary_ack_traffic() {
     for (no, destination) in (56..).zip(3..=9) {
         core.analyze(&observation(no, 0x10, destination, no as f64 / 1000.));
     }
-    assert_eq!(core.flow_tracker.flows.len(), 8);
+    assert_eq!(core.flow_tracker.len(), 8);
     assert!(
         core.flow_tracker
-            .flows
-            .values()
+            .iter()
             .all(|flow| !flow.flags.scan && !flow.flags.tcp_anomaly)
     );
 }
@@ -50,8 +49,7 @@ fn scan_badge_identifies_the_detector_trigger_flow_not_all_host_traffic() {
     assert_eq!(alert.packet_no, 12);
     let actual: Vec<_> = core
         .flow_tracker
-        .flows
-        .values()
+        .iter()
         .filter(|flow| flow.flags.scan)
         .map(|flow| &flow.key)
         .collect();
@@ -66,7 +64,7 @@ fn syn_spike_badge_and_saved_tuple_come_from_the_same_finding() {
         core.analyze(&observation(no, 0x02, 2, no as f64 / 1000.));
     }
     let flow = FlowKey::from_packet(&last);
-    assert!(!core.flow_tracker.flows[&flow].flags.tcp_anomaly);
+    assert!(!core.flow_tracker.get(&flow).unwrap().flags.tcp_anomaly);
     core.analyze(&last);
     let alert = core
         .alert_center
@@ -79,5 +77,5 @@ fn syn_spike_badge_and_saved_tuple_come_from_the_same_finding() {
         alert.flow.unwrap().destination,
         "10.0.0.2:80".parse().unwrap()
     );
-    assert!(core.flow_tracker.flows[&flow].flags.tcp_anomaly);
+    assert!(core.flow_tracker.get(&flow).unwrap().flags.tcp_anomaly);
 }

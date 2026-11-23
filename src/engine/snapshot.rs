@@ -61,7 +61,7 @@ impl AnalysisSnapshot {
             sequence,
             analyzed,
             skipped,
-            flows: core.flow_tracker.flows.len(),
+            flows: core.flow_tracker.len(),
             hosts: core.hosts.len(),
             alerts: core.alert_center.items.len(),
             incidents: core.incidents.incidents.len(),

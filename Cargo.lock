@@ -962,6 +962,7 @@ dependencies = [
  "landlock",
  "libc",
  "loona-hpack",
+ "lru",
  "md5",
  "mlua",
  "pcap",

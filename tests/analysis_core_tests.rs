@@ -43,8 +43,8 @@ fn terminal_adapter_and_headless_core_produce_the_same_passive_results() {
     }
     assert_eq!(core.streams.len(), app.core.read().unwrap().streams.len());
     assert_eq!(
-        core.flow_tracker.flows.len(),
-        app.core.read().unwrap().flow_tracker.flows.len()
+        core.flow_tracker.len(),
+        app.core.read().unwrap().flow_tracker.len()
     );
     assert_eq!(
         serde_json::to_value(core.incidents.snapshot()).unwrap(),
@@ -77,7 +77,7 @@ fn unsupported_or_unusable_captures_do_not_create_detection_state() {
         let result = core.analyze(&packet);
         assert_ne!(result.disposition, PacketDisposition::Analyzed);
         assert!(result.incidents.is_empty());
-        assert!(core.flow_tracker.flows.is_empty());
+        assert!(core.flow_tracker.is_empty());
         assert!(core.security.ids_alerts.is_empty());
     }
 }

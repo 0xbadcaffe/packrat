@@ -41,8 +41,7 @@ fn worker_owns_core_and_drains_every_accepted_packet_on_finish() {
     assert_eq!(sequences, (1..=100).collect::<Vec<_>>());
     assert_eq!(
         core.flow_tracker
-            .flows
-            .values()
+            .iter()
             .map(|flow| flow.packets)
             .sum::<u64>(),
         100

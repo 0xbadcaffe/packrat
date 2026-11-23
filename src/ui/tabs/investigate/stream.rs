@@ -5,7 +5,6 @@ pub(super) fn draw_flow(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
     let rows: Vec<Row> = app
         .core
         .flow_tracker
-        .flows
         .get(&key)
         .into_iter()
         .map(|flow| {
