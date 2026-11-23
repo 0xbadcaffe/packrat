@@ -144,11 +144,13 @@ triage_watcher_ready() {
     local check code=0 drops=${2:-0}
     check=$(timeout 5s "$triage_check" --check "$triage_state") || code=$?
     jq -se --argjson scope "$1" --argjson require_journal "$triage_journal_required" \
-        --argjson drops "$drops" --argjson code "$code" '
+        --argjson drops "$drops" --argjson code "$code" --arg archive "$archive_candidate" \
+        --argjson after "${triage_after:-0}" '
         length == 1 and (.[0] |
             (($code == 0 and .status == "current") or ($code == 1 and $drops > 0
                 and .status == "triage_unhealthy" and .historical_drop_total == $drops)) and
             .capture_id == $scope.capture_id and .session_id == $scope.alert_session_id and
+            ($archive == "" or (.poll_started_at | type == "number" and . > $after)) and
             ($require_journal == 0 or (.journal_status == "current" and .journal_pending_events == 0)))
     ' <<< "$check" >/dev/null
 }
@@ -202,7 +204,7 @@ await_primary_watcher() {
     local stamp attempt limit=30
     if [[ -n $triage_state ]]; then limit=90; fi
     for ((attempt=0; attempt<limit; attempt++)); do
-        if stamp=$(primary_capture_stamp) && alert_watcher_ready "$stamp"; then return 0; fi
+        if stamp=$(primary_capture_stamp) && alert_watcher_ready "$stamp" "${1:-0}"; then return 0; fi
         sleep 1
     done
     return 1

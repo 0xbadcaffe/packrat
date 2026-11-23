@@ -128,6 +128,8 @@ check_snapshot() {
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
            triage_status:.status, age_seconds:$age, max_age_seconds,
+           poll_started_at:(.poll_started_at | if type == "number" and . > 0 and floor == .
+                and . <= 9007199254740991 then . else null end),
            historical_drop_total:(if $age >= -5 and $age <= .max_age_seconds and .status == "degraded"
               and valid_scope_and_log and .issues == ["pcap_buffer_drops"] and .buffer_drops_delta == 0
               then .buffer_drops | select(type == "number" and . > 0 and . <= 4294967295 and floor == .) // null
@@ -376,9 +378,10 @@ if [[ -f $state && -O $state ]]; then
 fi
 while :; do
     # Poll commands and the timer must not hold the writer lock after a crash.
+    poll_started_at=$(date -u +%s)
     snapshot=$(exec {lock_fd}>&-; read_status "$@")
     # Allow the poll interval, the next triage deadline, and timeout cleanup/scheduling.
-    event=$(jq -c --argjson prior "$prior" --argjson max_age "$((interval + deadline + 7))" '
+    event=$(jq -c --argjson prior "$prior" --argjson started "$poll_started_at" --argjson max_age "$((interval + deadline + 7))" '
             def observed:
                 (.status == "current" or .status == "degraded") and
                 .capture_id != null and .session_id != null and (.recent_alerts | type == "array");
@@ -416,6 +419,7 @@ while :; do
             | (.recent_alerts_at_limit == true or .has_older_alerts == true) as $truncated
             | ([.recent_alerts[]?.alert_id | select(. > $high)] | unique) as $new_ids
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
+                poll_started_at:$started,
                 buffer_drops_delta:(if $comparable and .buffer_drops != null and $prior.buffer_drops != null
                     and .buffer_drops >= $prior.buffer_drops then .buffer_drops - $prior.buffer_drops else null end),
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
@@ -448,7 +452,7 @@ while :; do
               else . end' <<< "$snapshot")
     snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")
     if "$once"; then publish_snapshot not_checked; printf '%s\n' "$snapshot"; break; fi
-    key=$(jq -c 'del(.updated_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id,
+    key=$(jq -c 'del(.updated_at, .poll_started_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id,
         .last_observed, .buffer_drops_delta, .capture_queue_full_packets_delta)' <<< "$snapshot")
     if [[ $key != "$previous" ]]; then
         event=$(jq -c 'del(.last_observed)' <<< "$event")

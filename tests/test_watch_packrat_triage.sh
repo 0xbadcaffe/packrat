@@ -65,7 +65,7 @@ jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .recent_alerts==[{alert_id:9,severity:"MEDIUM",rule_id:"test.medium",disposition:"New",hit_count:1,packet_evidence_status:"partial"}]
     and .recent_alerts_at_limit==false and .has_older_alerts==false
     and .max_age_seconds==62
-    and (.updated_at | fromdateiso8601) > 0
+    and .poll_started_at > 0 and .poll_started_at <= (.updated_at | fromdateiso8601)
     and (tostring | contains("private") | not)' "$state" >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$state" >"$scratch/stale.json"
 check_status "$scratch/stale.json" snapshot_stale 1

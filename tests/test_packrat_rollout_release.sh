@@ -105,9 +105,33 @@ cmp -s -- "$archive_candidate" "$installed_archive"
 [[ $("$installed_analyzer") == 'Usage: packrat-analyze later' ]]
 
 (
+    triage_state="$scratch/post-promotion.json"
+    analyzer_candidate="$scratch/candidate"
+    printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-analyze after"' >"$analyzer_candidate"
+    printf '%s\n' '#!/usr/bin/env bash' 'echo "Usage: packrat-archive after"' >"$archive_candidate"
+    # shellcheck disable=SC2329  # Called by the sourced release helper.
+    date() { printf '%s\n' 1700000000; }
+    # shellcheck disable=SC2329  # Called by the sourced release helper.
+    await_primary_watcher() {
+        [[ $triage_after == 1700000000 && $1 == 1 ]] &&
+            cmp -s -- "$archive_candidate" "$installed_archive" &&
+            cmp -s -- "$analyzer_candidate" "$installed_analyzer" &&
+            touch -- "$triage_state"
+        return 1
+    }
+    allow_historical_drops=1
+    if update_companions_only 2>"$scratch/post-promotion-error"; then exit 1; fi
+    [[ -f $triage_state ]]
+    grep -Fq 'Triage did not verify the promoted archive tool' "$scratch/post-promotion-error"
+    cmp -s -- "$installed_archive" "$backup_dir/packrat-archive"
+    cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
+)
+
+(
     scope='{"capture_id":"00000000000000000000000000000001","capture_run_id":"0000000000000002",
         "alert_session_id":"1700000000-31"}'
     triage_state="$scratch/triage.json"
+    archive_candidate=''
     health_state="$scratch/health.json"
     triage_journal_required=1
     primary_alert_log_identity() { printf '%s\n' '1:2'; }
@@ -132,8 +156,19 @@ cmp -s -- "$archive_candidate" "$installed_archive"
     done
     printf '%s\n' "$health_sample" >"$health_state"
     if (network_sample=$(jq '.pcap_buffer_drops=101' <<< "$network_sample"); alert_watcher_ready "$scope" 1); then exit 1; fi
+    valid_triage_sample=$triage_sample
     for change in '.journal_pending_events=1' '.session_id="1700000000-32"' '.historical_drop_total=null'; do
-        if (triage_sample=$(jq "$change" <<< "$triage_sample"); alert_watcher_ready "$scope" 1); then exit 1; fi
+        if (triage_sample=$(jq "$change" <<< "$valid_triage_sample"); alert_watcher_ready "$scope" 1); then exit 1; fi
+    done
+    archive_candidate="$scratch/next-archive"
+    for started in null 1699999999 1700000000 1700000001; do
+        (
+            triage_after=1700000000
+            triage_sample=$(jq --argjson start "$started" '.poll_started_at=$start' <<< "$valid_triage_sample")
+            if [[ $started == 1700000001 ]]; then alert_watcher_ready "$scope" 1
+            elif alert_watcher_ready "$scope" 1; then exit 1
+            fi
+        )
     done
 )
 printf '%s\n' 'Packrat paired rollout tests passed'

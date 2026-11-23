@@ -83,8 +83,25 @@ replace_installed() {
     return 1
 }
 
+restore_companions() {
+    local destination previous i
+    for ((i=$#; i>0; i--)); do
+        destination=${!i} previous="$backup_dir/${!i##*/}"
+        if ! sudo -n cmp -s -- "$previous.next" "$destination" ||
+           ! replace_installed "$previous" "$destination"; then
+            error "Could not restore $destination; inspect $previous"
+        fi
+    done
+}
+
+verify_archive_promotion() {
+    [[ -n $archive_candidate && -n $triage_state ]] || return 0
+    local triage_after
+    triage_after=$(date -u +%s) && await_primary_watcher "${1:-0}"
+}
+
 promote_companions() {
-    local tool proposed destination previous i
+    local tool proposed destination previous
     local -a selected=() promoted=()
     # Check all installed companions before changing any of them.
     for tool in "${companion_tools[@]}"; do
@@ -97,17 +114,16 @@ promote_companions() {
         previous="$backup_dir/${destination##*/}"
         if ! sudo -n cmp -s -- "$previous" "$destination" ||
            ! replace_installed "$previous.next" "$destination"; then
-            for ((i=${#promoted[@]}-1; i>=0; i--)); do
-                destination=${promoted[i]} previous="$backup_dir/${promoted[i]##*/}"
-                if ! sudo -n cmp -s -- "$previous.next" "$destination" ||
-                   ! replace_installed "$previous" "$destination"; then
-                    error "Could not restore $destination; inspect $previous"
-                fi
-            done
+            restore_companions "${promoted[@]}"
             return 1
         fi
         promoted+=("$destination")
     done
+    if ! verify_archive_promotion "${1:-0}"; then
+        error "Triage did not verify the promoted archive tool; restoring companion binaries"
+        restore_companions "${promoted[@]}"
+        return 1
+    fi
     for destination in "${promoted[@]}"; do
         previous="$backup_dir/${destination##*/}"
         sudo -n rm -f -- "$previous.next" || error "Staged companion cleanup failed; inspect $previous.next"
@@ -120,7 +136,7 @@ update_companions_only() {
     for tool in "${companion_tools[@]}"; do
         proposed="${tool}_candidate" destination="installed_$tool"
         if [[ -n ${!proposed} ]] && ! cmp -s -- "${!proposed}" "${!destination}"; then
-            create_rollout_backup && stage_companion_updates && promote_companions || return 1
+            create_rollout_backup && stage_companion_updates && promote_companions "$allow_historical_drops" || return 1
             printf '%s\n' 'Companions updated; capture unchanged'
             return 0
         fi
