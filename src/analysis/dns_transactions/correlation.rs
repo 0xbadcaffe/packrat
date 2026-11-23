@@ -1,4 +1,5 @@
-use super::{PendingQuery, Question, RecentResponse, RESPONSE_TTL_SECS, TRANSACTION_TTL_SECS};
+use super::{PendingQuery, Question, RecentResponse, RESPONSE_TTL_SECS, TRANSACTION_TTL_SECS, append_evidence};
+use crate::analysis::alert_center::MAX_ALERT_PACKET_REFS;
 
 const MAX_CANDIDATES: usize = 4;
 const MAX_QUERY_REPEATS: usize = 4;
@@ -17,6 +18,7 @@ pub(super) struct Exchange {
     pub(super) repeat_frames: Vec<u64>,
     pub(super) repeats_omitted: bool,
     latest_query: (f64, u64),
+    latest_retry_frames: Vec<u64>,
 }
 
 impl Exchange {
@@ -27,6 +29,7 @@ impl Exchange {
             reply: None,
             repeat_frames: Vec::new(),
             repeats_omitted: false,
+            latest_retry_frames: Vec::new(),
         }
     }
 
@@ -45,10 +48,28 @@ impl Exchange {
             return;
         }
         self.latest_query = order;
+        self.latest_retry_frames = query.frames;
         if self.repeat_frames.len() < MAX_QUERY_REPEATS {
             self.repeat_frames.push(query.packet_no);
         } else {
             self.repeats_omitted = true;
+        }
+    }
+
+    pub(super) fn append_query_evidence(&self, evidence: &mut Vec<u64>, current_reply_frames: &[u64]) {
+        append_evidence(evidence, &self.query.frames);
+        let Some(reply) = &self.reply else { return; };
+        if reply.timestamp - self.query.timestamp <= TRANSACTION_TTL_SECS
+            || self.latest_query > (reply.timestamp, reply.first.packet)
+            || reply.timestamp - self.latest_query.0 > TRANSACTION_TTL_SECS
+        {
+            return;
+        }
+        let retry_frames = &self.latest_retry_frames;
+        // Reserve the trigger and its message segments before adding optional retry evidence.
+        if evidence.len() + current_reply_frames.len() + retry_frames.len() + 2 <= MAX_ALERT_PACKET_REFS {
+            append_evidence(evidence, &[self.latest_query.1]);
+            append_evidence(evidence, retry_frames);
         }
     }
 

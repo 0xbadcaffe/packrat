@@ -59,20 +59,45 @@ fn competing_udp_dns_archives_query_and_both_replies_after_rollover() {
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("archive");
     let mut app = start_app(&path, Vec::new());
-    for (no, reply, vlan) in [(1, false, 10), (2, true, 10), (3, false, 20), (4, true, 20)] {
+    for (no, reply, vlan) in [(1, false, 10), (2, false, 10), (3, true, 10), (4, false, 20), (5, true, 20)] {
         app.inject_packet(udp(no, reply, "10.0.0.53", vlan, no as f64));
     }
     drain(&mut app);
-    let trigger = noise(&mut app, 5, 5.0);
-    app.inject_packet(udp(trigger, true, "10.0.0.54", 10, 6.0));
-    let scope = finish_app(&mut app, "dns.competing_responders", &[1, 2, trigger]);
+    let trigger = noise(&mut app, 6, 6.0);
+    app.inject_packet(udp(trigger, true, "10.0.0.54", 10, 7.0));
+    let scope = finish_app(&mut app, "dns.competing_responders", &[1, 3, trigger]);
 
     let mut archive = PacketArchive::open_readonly(&path).unwrap();
     assert_eq!(archive.count().unwrap(), 3);
-    for frame in [1, 2, trigger] {
+    for frame in [1, 3, trigger] {
         assert!(archive.packet_for_capture(&scope, frame).unwrap().is_some());
     }
-    assert!(archive.packet_for_capture(&scope, 3).unwrap().is_none());
+    for unrelated in [2, 4, 5] {
+        assert!(archive.packet_for_capture(&scope, unrelated).unwrap().is_none());
+    }
+}
+
+#[test]
+fn dns_conflict_archives_latest_retry_when_it_kept_an_old_query_eligible() {
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("archive");
+    let mut app = start_app(&path, Vec::new());
+    let resolver = "10.0.0.53";
+    for (no, timestamp) in [(1, 1.0), (2, 8.0), (3, 10.0), (4, 13.0), (5, 17.0), (6, 27.0)] {
+        app.inject_packet(udp(no, false, resolver, 10, timestamp));
+    }
+    app.inject_packet(udp(7, true, resolver, 10, 32.0));
+    drain(&mut app);
+    let trigger = noise(&mut app, 8, 33.0);
+    app.inject_packet(udp(trigger, true, "10.0.0.54", 10, 34.0));
+    let expected = [1, 6, 7, trigger];
+    let scope = finish_app(&mut app, "dns.competing_responders", &expected);
+
+    let mut archive = PacketArchive::open_readonly(&path).unwrap();
+    assert_eq!(archive.count().unwrap(), expected.len() as u64);
+    for frame in expected {
+        assert!(archive.packet_for_capture(&scope, frame).unwrap().is_some());
+    }
 }
 
 fn tcp(no: u64, seq: u32, flags: u8, reply: bool, payload: &[u8], time: f64) -> Packet {
@@ -120,6 +145,35 @@ fn opted_in_tcp_dns_answer_change_archives_segments_of_all_three_messages() {
     let trigger = noise(&mut app, 8, 8.0);
     app.inject_packet(tcp(trigger, seq + 5, 0x18, true, &changed[5..], 9.0));
     let expected = [3, 4, 5, 6, 7, trigger];
+    let scope = finish_app(&mut app, rule, &expected);
+    let mut archive = PacketArchive::open_readonly(&path).unwrap();
+    assert_eq!(archive.count().unwrap(), expected.len() as u64);
+    for frame in expected {
+        assert!(archive.packet_for_capture(&scope, frame).unwrap().is_some());
+    }
+}
+
+#[test]
+fn delayed_tcp_dns_answer_change_archives_both_segments_of_the_query_retry() {
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("archive");
+    let rule = "dns.changed_answers";
+    let mut app = start_app(&path, vec![rule.into()]);
+    let query = framed(false, 0);
+    let response = framed(true, 1);
+    let retry_seq = 101 + query.len() as u32;
+    for packet in [
+        tcp(1, 100, 0x02, false, &[], 1.0),
+        tcp(2, 500, 0x12, true, &[], 2.0),
+        tcp(3, 101, 0x18, false, &query, 3.0),
+        tcp(4, retry_seq, 0x18, false, &query[..5], 27.0),
+        tcp(5, retry_seq + 5, 0x18, false, &query[5..], 28.0),
+        tcp(6, 501, 0x18, true, &response, 34.0),
+        tcp(7, 501 + response.len() as u32, 0x18, true, &framed(true, 2), 35.0),
+    ] {
+        app.inject_packet(packet);
+    }
+    let expected = [3, 4, 5, 6, 7];
     let scope = finish_app(&mut app, rule, &expected);
     let mut archive = PacketArchive::open_readonly(&path).unwrap();
     assert_eq!(archive.count().unwrap(), expected.len() as u64);

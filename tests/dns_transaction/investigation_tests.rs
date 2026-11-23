@@ -216,7 +216,7 @@ fn repeated_pending_dns_queries_keep_the_original_alert_anchor() {
     let conflict = core.alert_center.items.iter().find(|alert| {
         alert.provenance.as_ref().is_some_and(|rule| rule.rule_id == "dns.competing_responders")
     }).unwrap();
-    assert_eq!(conflict.packet_refs, [1, 3, 4]);
+    assert_eq!(conflict.packet_refs, [1, 3, 2, 4]);
     for frame in [&query, &retry, &reply, &alternate] {
         let evidence = core.security.dns_exchange_for_packet(frame).unwrap();
         assert_eq!(evidence.query_packet, 1);

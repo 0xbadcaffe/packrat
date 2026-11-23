@@ -288,7 +288,7 @@ impl DnsTransactionTracker {
                 ReplyOutcome::Inspect(finding) => findings.extend(finding),
                 ReplyOutcome::Repeat => return Vec::new(),
                 ReplyOutcome::Finding(mut finding) => {
-                    append_evidence(&mut finding.related_packets, &query.frames);
+                    exchange.append_query_evidence(&mut finding.related_packets, frames);
                     return vec![finding];
                 }
             }
@@ -297,7 +297,7 @@ impl DnsTransactionTracker {
             exchange.reply = Some(RecentResponse::new(packet, &message, matches));
             if !matches {
                 let mut finding = question_mismatch(query, &message);
-                append_evidence(&mut finding.related_packets, &query.frames);
+                exchange.append_query_evidence(&mut finding.related_packets, frames);
                 return vec![finding];
             }
         }
@@ -330,7 +330,7 @@ impl DnsTransactionTracker {
         }
         for finding in &mut findings {
             if finding.kind != DnsFindingKind::NxDomainBurst {
-                append_evidence(&mut finding.related_packets, &query.frames);
+                exchange.append_query_evidence(&mut finding.related_packets, frames);
             }
         }
         findings
