@@ -135,7 +135,7 @@ impl SecurityEngine {
             return;
         }
         self.check_ipv4_fragments(pkt);
-        let tcp_payload = self.check_tcp_integrity(pkt);
+        let tcp_payload = self.check_tcp_integrity(pkt, archive_rules);
         self.check_scan_activity(pkt);
         self.check_ipv6_control_plane(pkt, archive_rules);
         self.check_layer2_control_plane(pkt);

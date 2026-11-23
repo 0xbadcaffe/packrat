@@ -117,8 +117,10 @@ impl SecurityEngine {
 
     // ─── TCP Integrity / Evasion ────────────────────────────────────────────
 
-    pub(super) fn check_tcp_integrity(&mut self, pkt: &Packet) -> TcpPayloadObservation {
+    pub(super) fn check_tcp_integrity(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) -> TcpPayloadObservation {
         use TcpPayloadObservation::{Empty, Repeat, UnknownOrNew};
+        const MAX_RESET_EVIDENCE_BYTES: usize = 2_048;
+        let retain_reset = || archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "tcp.payload_after_observed_reset"));
         if !pkt.timestamp.is_finite() ||
             pkt.capture.as_ref().is_some_and(|meta| !crate::net::parser::supports_capture_link_type(meta.link_type))
         {
@@ -187,6 +189,9 @@ impl SecurityEngine {
         if in_time_order {
             state.last_seen = pkt.timestamp;
             state.last_seen_frame = pkt.no;
+            if state.reset_evidence.is_some() && state.reset.is_some_and(|reset| pkt.timestamp - reset.timestamp > TCP_STATE_TTL_SECS) {
+                state.reset_evidence = None;
+            }
         }
 
         let direction = usize::from(!segment.from_a);
@@ -251,9 +256,22 @@ impl SecurityEngine {
                 sequence: segment.sequence,
                 from_a: segment.from_a,
             });
+            state.reset_evidence = (state.post_reset_alerted.contains(&false) && retain_reset()
+                && crate::model::project::pinned_packet_cost(pkt) <= MAX_RESET_EVIDENCE_BYTES)
+                .then(|| Box::new(pkt.clone()));
         }
 
         if let Some(reset) = post_reset {
+            if retain_reset() {
+                let evidence = if state.post_reset_alerted == [true, true] {
+                    state.reset_evidence.take()
+                } else {
+                    state.reset_evidence.clone()
+                };
+                if let Some(packet) = evidence {
+                    self.findings.retained_evidence.push(*packet);
+                }
+            }
             let (src, dst) = if segment.from_a {
                 (segment.key.endpoint_a, segment.key.endpoint_b)
             } else {

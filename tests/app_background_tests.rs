@@ -23,6 +23,62 @@ fn drain(app: &mut App) {
 }
 
 #[test]
+fn opted_in_tcp_reset_evidence_survives_rollover_and_remains_vlan_scoped() {
+    use packrat_tui::engine::worker::WorkerLimits;
+    use packrat_tui::net::parser::parse_ethernet;
+    use packrat_tui::storage::packet_archive::{ArchiveLimits, ArchiveWorker, PacketArchive};
+
+    let tagged = |packet: packrat_tui::net::packet::Packet, vlan: u16, reverse: bool, time| {
+        let mut bytes = packet.bytes;
+        if reverse {
+            for index in 0..4 { bytes.swap(26 + index, 30 + index); }
+            for index in 0..2 { bytes.swap(34 + index, 36 + index); }
+        }
+        bytes.splice(12..12, [0x81, 0, 0, vlan as u8]);
+        parse_ethernet(&bytes, packet.no, time)
+    };
+    let rule = "tcp.payload_after_observed_reset";
+    for selected in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("archive");
+        let mut app = App::new_for_test();
+        let archive = ArchiveWorker::open_alert_evidence(&path, ArchiveLimits::default()).unwrap();
+        app.set_packet_archive_with_rules(archive, selected.then(|| rule.to_owned()).into_iter().collect()).unwrap();
+        app.start_background_analysis().unwrap();
+        let reset = tagged(packets::tcp(1, 100, 0x04, b""), 10, false, 1.0);
+        app.inject_packet(reset.clone());
+        app.inject_packet(tagged(packets::tcp(2, 123, 0x04, b""), 20, false, 2.0));
+        drain(&mut app);
+        let peer = WorkerLimits::default().history_packets as u64 + 4;
+        for no in 3..peer {
+            app.inject_packet(parse_ethernet(&[0; 14], no, 2.0));
+            drain(&mut app);
+        }
+        app.packets.clear();
+        app.inject_packet(tagged(packets::tcp(peer, 200, 0x18, b"peer data"), 10, true, 3.0));
+        drain(&mut app);
+        app.inject_packet(tagged(packets::tcp(peer + 1, 101, 0x18, b"same sender"), 10, false, 4.0));
+        drain(&mut app);
+        app.stop_background_analysis().unwrap();
+        app.packet_archive.as_mut().unwrap().finish().unwrap();
+
+        let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
+            alert.provenance.as_ref().is_some_and(|provenance| provenance.rule_id == rule)).cloned()).unwrap().unwrap();
+        assert_eq!(alert.packet_refs, [1, peer, peer + 1]);
+        assert_eq!(alert.hit_count, 2);
+        let scope = alert.capture_id.unwrap();
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { 3 } else { 0 });
+        assert!(archive.packet_for_capture(&scope, 2).unwrap().is_none());
+        let saved = archive.packet_for_capture(&scope, 1).unwrap();
+        assert_eq!(saved.map(|packet| packet.bytes), selected.then_some(reset.bytes));
+        for frame in [peer, peer + 1] {
+            assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), selected);
+        }
+    }
+}
+
+#[test]
 fn asynchronous_packets_keep_display_and_analysis_counts_in_agreement() {
     let mut app = App::new_for_test();
     app.start_background_analysis().unwrap();

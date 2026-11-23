@@ -89,6 +89,7 @@ pub(super) struct TcpIntegrityState {
     pub(super) started_at: Option<f64>,
     pub(super) past_opening: bool,
     pub(super) reset: Option<TcpResetObservation>,
+    pub(super) reset_evidence: Option<Box<Packet>>,
     pub(super) overlap_alerted: bool,
     pub(super) post_reset_alerted: [bool; 2],
 }
