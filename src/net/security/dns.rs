@@ -163,12 +163,17 @@ impl SecurityEngine {
     }
 
     pub(super) fn contains_str_ci(haystack: &[u8], needle: &[u8]) -> bool {
-        if needle.is_empty() || haystack.len() < needle.len() {
-            return false;
+        let Some((&first, rest)) = needle.split_first() else { return false; };
+        let Some(last) = haystack.len().checked_sub(needle.len()) else { return false; };
+        let starts = &haystack[..=last];
+        let matches_rest = |offset: usize| haystack[offset + 1..offset + needle.len()].eq_ignore_ascii_case(rest);
+        let upper = first.to_ascii_uppercase();
+        let lower = first.to_ascii_lowercase();
+        if upper == lower {
+            memchr::memchr_iter(first, starts).any(matches_rest)
+        } else {
+            memchr::memchr2_iter(upper, lower, starts).any(matches_rest)
         }
-        haystack
-            .windows(needle.len())
-            .any(|window| window.eq_ignore_ascii_case(needle))
     }
 
     pub(super) fn nop_sled_16(data: &[u8]) -> bool {
@@ -187,12 +192,15 @@ impl SecurityEngine {
     }
 
     pub(super) fn count_pattern_ascii(data: &[u8], pattern: &[u8]) -> usize {
-        if pattern.is_empty() || data.len() < pattern.len() {
-            return 0;
-        }
-        data.windows(pattern.len())
-            .filter(|w| *w == pattern)
+        let Some((&first, rest)) = pattern.split_first() else { return 0; };
+        let Some(last) = data.len().checked_sub(pattern.len()) else { return 0; };
+        memchr::memchr_iter(first, &data[..=last])
+            .filter(|&offset| &data[offset + 1..offset + pattern.len()] == rest)
             .count()
     }
 
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/security_byte_search_tests.rs"]
+mod byte_search_tests;

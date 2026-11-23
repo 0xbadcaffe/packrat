@@ -964,6 +964,7 @@ dependencies = [
  "loona-hpack",
  "lru",
  "md5",
+ "memchr",
  "mlua",
  "pcap",
  "pcap-parser",
