@@ -451,6 +451,25 @@ run_scenario success 0 backup start:packrat-stage:/candidate stop:packrat:/usr/l
     install:/candidate start:packrat:/usr/local/bin/packrat retire-stage
 run_scenario receipt_fail 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat retire-stage
+(
+    HOME="$scratch/companion-home"
+    installed="$scratch/installed"
+    printf '%s\n' original >"$installed"
+    printf '%s\n' different >"$scratch/different"
+    companion_candidates_ready() { :; }
+    preflight() { :; }
+    backup_space_ready() { :; }
+    rollout() { printf '%s\n' 'Unexpected capture rollout' >&2; return 99; }
+    update_companions_only() { touch "$HOME/companions-updated"; }
+    for mode in --check --deploy; do
+        rc=0
+        main "$mode" "$scratch/different" wlan1 --companions-only 2>"$scratch/companion-error" || rc=$?
+        [[ $rc == 1 && ! -e $HOME/companions-updated ]]
+        grep -Fq 'capture unchanged' "$scratch/companion-error"
+    done
+    main --deploy "$installed" wlan1 --companions-only
+    [[ -f $HOME/companions-updated ]]
+)
 run_scenario watcher_lost_after_cutover 1 backup start:packrat-stage:/candidate \
     stop:packrat:/usr/local/bin/packrat install:/candidate start:packrat:/usr/local/bin/packrat
 run_scenario install_fail 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \

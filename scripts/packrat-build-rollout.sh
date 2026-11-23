@@ -3,8 +3,8 @@
 set -euo pipefail
 
 if (( $# < 2 || $# > 3 )) || [[ $1 != --check && $1 != --deploy ]] ||
-   [[ ! $2 =~ ^[A-Za-z0-9_.-]+$ || ( $# == 3 && $3 != --enable-alert-evidence ) ]]; then
-    printf '%s\n' 'Usage: git archive REV | bash packrat-build-rollout.sh --check|--deploy INTERFACE [--enable-alert-evidence]' >&2
+   [[ ! $2 =~ ^[A-Za-z0-9_.-]+$ || ( $# == 3 && $3 != --enable-alert-evidence && $3 != --archive-only ) ]]; then
+    printf '%s\n' 'Usage: git archive REV | bash packrat-build-rollout.sh --check|--deploy INTERFACE [--enable-alert-evidence|--archive-only]' >&2
     exit 2
 fi
 
@@ -46,14 +46,23 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 tar --extract --file=- --directory="$stage" --no-same-owner --no-same-permissions
 [[ -f $stage/Cargo.toml && -f $stage/Cargo.lock ]]
+binaries=(packrat packrat-analyze packrat-archive)
+if [[ ${3-} == --archive-only ]]; then binaries=(packrat-archive); fi
+build_args=()
+for binary in "${binaries[@]}"; do build_args+=(--bin "$binary"); done
 (
     cd -- "$stage"
     cargo build --locked --release --features real-capture -j "$jobs" \
-        --bin packrat --bin packrat-analyze --bin packrat-archive </dev/null
+        "${build_args[@]}" </dev/null
 )
 
-for binary in packrat packrat-analyze packrat-archive; do
+for binary in "${binaries[@]}"; do
     install -m 0755 -- "$CARGO_TARGET_DIR/release/$binary" "$stage/$binary"
 done
-PACKRAT_ROLLOUT_ANALYZER="$stage/packrat-analyze" PACKRAT_ROLLOUT_ARCHIVE="$stage/packrat-archive" \
-    "$rollout" "$1" "$stage/packrat" "${@:2}" </dev/null 8>&-
+if [[ ${3-} == --archive-only ]]; then
+    PACKRAT_ROLLOUT_ANALYZER='' PACKRAT_ROLLOUT_ARCHIVE="$stage/packrat-archive" \
+        "$rollout" "$1" /usr/local/bin/packrat "$2" --companions-only </dev/null 8>&-
+else
+    PACKRAT_ROLLOUT_ANALYZER="$stage/packrat-analyze" PACKRAT_ROLLOUT_ARCHIVE="$stage/packrat-archive" \
+        "$rollout" "$1" "$stage/packrat" "${@:2}" </dev/null 8>&-
+fi

@@ -13,8 +13,17 @@ tar -cf "$scratch/source.tar" -C "$scratch/source" Cargo.toml Cargo.lock
 touch -- "$HOME/.cache/alert-evidence"
 
 cargo() {
-    [[ $* == 'build --locked --release --features real-capture -j 2 --bin packrat --bin packrat-analyze --bin packrat-archive' && $CARGO_INCREMENTAL == 0 ]]
+    local options='build --locked --release --features real-capture -j 2'
+    [[ $CARGO_INCREMENTAL == 0 ]]
     [[ $PWD == "$HOME/.cache/packrat-native-source."* && -f Cargo.toml && -f Cargo.lock ]]
+    if [[ ${TEST_ARCHIVE_ONLY:-0} == 1 ]]; then
+        [[ $* == "$options --bin packrat-archive" ]]
+        printf '%s\n' build-archive >>"$TEST_TRACE"
+        mkdir -p -- "$CARGO_TARGET_DIR/release"
+        printf '%s\n' archive >"$CARGO_TARGET_DIR/release/packrat-archive"
+        return
+    fi
+    [[ $* == "$options --bin packrat --bin packrat-analyze --bin packrat-archive" ]]
     printf '%s\n' build >>"$TEST_TRACE"
     [[ ${TEST_BUILD_FAIL:-0} != 1 ]] || return 37
     mkdir -p -- "$CARGO_TARGET_DIR/release"
@@ -37,6 +46,14 @@ export -f df
 
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
+    'if [[ ${TEST_ARCHIVE_ONLY:-0} == 1 ]]; then' \
+    '  [[ $# == 4 && $2 == /usr/local/bin/packrat && $4 == --companions-only && -z $PACKRAT_ROLLOUT_ANALYZER ]]' \
+    '  [[ $PACKRAT_ROLLOUT_ARCHIVE == "$HOME/.cache/packrat-native-source."*/packrat-archive && -x $PACKRAT_ROLLOUT_ARCHIVE ]]' \
+    '  [[ ! -e ${PACKRAT_ROLLOUT_ARCHIVE%/*}/packrat && ! -e ${PACKRAT_ROLLOUT_ARCHIVE%/*}/packrat-analyze ]]' \
+    '  [[ $(<"$PACKRAT_ROLLOUT_ARCHIVE") == archive ]]' \
+    '  printf "%s\n" "$1 $3 $4" >>"$TEST_TRACE"' \
+    '  exit "${TEST_ROLLOUT_STATUS:-0}"' \
+    'fi' \
     '[[ $2 == "$HOME/.cache/packrat-native-source."*/packrat && $PACKRAT_ROLLOUT_ANALYZER == "${2%/*}/packrat-analyze" ]]' \
     '[[ -x $2 && -x $PACKRAT_ROLLOUT_ANALYZER && $(<"$2") == capture && $(<"$PACKRAT_ROLLOUT_ANALYZER") == analyzer ]]' \
     '[[ $PACKRAT_ROLLOUT_ARCHIVE == "${2%/*}/packrat-archive" && -x $PACKRAT_ROLLOUT_ARCHIVE && $(<"$PACKRAT_ROLLOUT_ARCHIVE") == archive ]]' \
@@ -53,6 +70,12 @@ bash "$wrapper" --check wlan1 <"$scratch/source.tar"
 assert_clean
 bash "$wrapper" --deploy wlan1 --enable-alert-evidence <"$scratch/source.tar"
 assert_clean
+for mode in --check --deploy; do
+    TEST_ARCHIVE_ONLY=1 PACKRAT_ROLLOUT_ANALYZER=/not-a-candidate \
+        bash "$wrapper" "$mode" wlan1 --archive-only <"$scratch/source.tar"
+    assert_clean
+done
+if bash "$wrapper" --deploy wlan1 --archive-only --enable-alert-evidence <"$scratch/source.tar" 2>/dev/null; then exit 1; fi
 status=0
 TEST_BUILD_FAIL=1 bash "$wrapper" --deploy wlan1 <"$scratch/source.tar" || status=$?
 [[ $status == 37 ]]
@@ -76,5 +99,6 @@ assert_clean
 ) 8>"$HOME/.cache/packrat-native-build.lock"
 assert_clean
 diff -u <(printf '%s\n' build '--check wlan1 ' build '--deploy wlan1 --enable-alert-evidence' \
+    build-archive '--check wlan1 --companions-only' build-archive '--deploy wlan1 --companions-only' \
     build build '--deploy wlan1 ') "$TEST_TRACE"
 printf '%s\n' 'Packrat native build and rollout tests passed'

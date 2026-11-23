@@ -445,8 +445,8 @@ main() {
         return 0
     fi
     if (( $# < 3 || $# > 4 )) || [[ $1 != --check && $1 != --deploy ]] ||
-       [[ $# == 4 && $4 != --enable-alert-evidence ]]; then
-        error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE [--enable-alert-evidence]'
+       [[ $# == 4 && $4 != --enable-alert-evidence && $4 != --companions-only ]]; then
+        error 'Usage: bash packrat-rollout.sh --check|--deploy BUILT_PACKRAT INTERFACE [--enable-alert-evidence|--companions-only]'
         error 'Use --identify INTERFACE to read the running executable fingerprint and capture scope.'
         error 'The opt-in enables a new private archive for HIGH/CRITICAL evidence only (64 MiB packet bytes, 8192 frames).'
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
@@ -483,9 +483,12 @@ main() {
         error "Insufficient or unverified free space for the alert log and rollback backup; current capture not stopped"
         return 1
     fi
+    if [[ ${4-} == --companions-only ]] && ! cmp -s -- "$candidate" "$installed"; then
+        error "Companion-only rollout requires the installed capture binary; capture unchanged"; return 1
+    fi
     if [[ $mode == --check ]]; then
         printf 'Preflight passed for %s; no changes made\n' "$interface"
-    elif ! "$enable_alert_evidence" && cmp -s "$candidate" "$installed"; then
+    elif [[ ${4-} == --companions-only ]] || { ! "$enable_alert_evidence" && cmp -s "$candidate" "$installed"; }; then
         update_companions_only
     else
         rollout
