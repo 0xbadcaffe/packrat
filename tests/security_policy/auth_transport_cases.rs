@@ -38,7 +38,14 @@ fn authentication_reply_bursts_require_tcp_data_with_ack(
     assert_eq!(alert.packet_refs, [6, 7, 8, 9, 10]);
     let (old_id, scope) = (alert.id, alert.capture_id.clone());
     assert!(core.alert_center.set_disposition(old_id, scope.as_deref(), AlertDisposition::Benign));
-    for no in 46..=50 {
+    for (no, original) in (46..=50).zip(6..=10) {
+        let mut duplicate = make(original, 0x18);
+        duplicate.no = no;
+        duplicate.timestamp = no as f64;
+        core.analyze(&duplicate);
+    }
+    assert_eq!(core.alert_center.items.iter().filter(|alert| alert.source == "AUTH").count(), 1);
+    for no in 51..=55 {
         core.analyze(&make(no, 0x18));
     }
     let episodes: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "AUTH").collect();
@@ -47,7 +54,7 @@ fn authentication_reply_bursts_require_tcp_data_with_ack(
     assert_eq!(episodes[0].packet_refs, [6, 7, 8, 9, 10]);
     assert_ne!(episodes[1].id, old_id);
     assert_eq!(episodes[1].disposition, AlertDisposition::New);
-    assert_eq!(episodes[1].packet_refs, [46, 47, 48, 49, 50]);
+    assert_eq!(episodes[1].packet_refs, [51, 52, 53, 54, 55]);
 }
 
 #[test]

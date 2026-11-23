@@ -431,6 +431,7 @@ pub(super) fn service_scope(pkt: &Packet) -> ServiceScope {
 
 pub(super) struct BfWindow {
     pub(super) observations: Vec<AuthObservation>,
+    pub(super) recent_tokens: super::vulnerabilities::AuthRetryHistory,
     pub(super) last_seen: f64,
     pub(super) alerted: bool,
 }

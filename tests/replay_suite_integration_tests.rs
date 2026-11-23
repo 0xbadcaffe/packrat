@@ -21,6 +21,8 @@ mod scans;
 mod dhcp;
 #[path = "replay_suite/periodic_episodes.rs"]
 mod periodic_episodes;
+#[path = "replay_suite/auth_retries.rs"]
+mod auth_retries;
 use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use serde_json::{Value, json};
@@ -104,7 +106,6 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
     );
     assert_eq!(passing.stdout, run().stdout);
     assert!(!String::from_utf8_lossy(&passing.stdout).contains("401 Unauthorized"));
-
     labels["cases"][1]["expect_counts"]["http.unauthorized_burst"] = json!(2);
     labels["cases"][1]["opening_frames"]["http.unauthorized_burst"] = json!([4]);
     std::fs::write(&manifest, serde_json::to_vec(&labels).unwrap()).unwrap();
@@ -120,7 +121,6 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
         "scored_cases": 2, "missed_opening_frames": 1, "unexpected_openings": 1,
         "count_deficit": 0, "count_surplus": 0
     }));
-
     labels["cases"][1]["expect_counts"] = json!({"scan.horizontal": 0});
     labels["cases"][1]["opening_frames"] = json!({});
     std::fs::write(&manifest, serde_json::to_vec(&labels).unwrap()).unwrap();

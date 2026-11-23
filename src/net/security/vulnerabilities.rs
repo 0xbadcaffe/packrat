@@ -2,6 +2,28 @@ use super::*;
 
 const AUTH_WINDOW_SECS: f64 = 30.0;
 const AUTH_BURST_THRESHOLD: usize = 5;
+const AUTH_RETRY_HISTORY_SECS: f64 = 2.0 * AUTH_WINDOW_SECS;
+const MAX_AUTH_RETRY_TOKENS: usize = 64;
+
+#[derive(Default)]
+pub(super) struct AuthRetryHistory(Vec<(f64, (u16, u32))>);
+
+impl AuthRetryHistory {
+    fn remember(&mut self, now: f64, last_seen: f64, token: (u16, u32)) -> bool {
+        self.0.retain(|(seen, _)| last_seen - seen <= AUTH_RETRY_HISTORY_SECS);
+        if self.0.iter().any(|(_, previous)| *previous == token) {
+            return false;
+        }
+        if self.0.len() == MAX_AUTH_RETRY_TOKENS {
+            let oldest = self.0.iter().enumerate()
+                .min_by(|(_, (a, _)), (_, (b, _))| a.total_cmp(b))
+                .map_or(0, |(index, _)| index);
+            self.0.remove(oldest);
+        }
+        self.0.push((now, token));
+        true
+    }
+}
 
 impl SecurityEngine {
     // ─── Vulnerability Patterns ───────────────────────────────────────────────
@@ -89,6 +111,7 @@ impl SecurityEngine {
         }
         let window = self.bf_windows.entry(key.clone()).or_insert(BfWindow {
             observations: Vec::new(),
+            recent_tokens: AuthRetryHistory::default(),
             last_seen: now,
             alerted: false,
         });
@@ -103,7 +126,9 @@ impl SecurityEngine {
         if window.observations.len() < AUTH_BURST_THRESHOLD.div_ceil(2) {
             window.alerted = false;
         }
-        if window.observations.iter().any(|entry| entry.transport_token == token) {
+        if window.observations.iter().any(|entry| entry.transport_token == token)
+            || !window.recent_tokens.remember(now, window.last_seen, token)
+        {
             return;
         }
         window.observations.push(AuthObservation {
@@ -145,6 +170,10 @@ impl SecurityEngine {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/auth_retry_history_tests.rs"]
+mod tests;
 
 fn is_ftp_not_logged_in(payload: &[u8]) -> bool {
     payload.strip_prefix(b"530 ").is_some_and(|line| {
