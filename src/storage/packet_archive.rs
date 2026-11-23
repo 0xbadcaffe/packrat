@@ -1,10 +1,10 @@
 //! Durable packet bytes and a transactional, rebuildable metadata index.
 
 use crate::net::packet::Packet;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 #[path = "packet_archive_policy.rs"]
@@ -163,9 +163,7 @@ impl PacketArchive {
             .seek(SeekFrom::End(0))
             .map_err(|error| error.to_string())?;
         for (capture_id, packet) in entries.clone() {
-            let mut metadata = packet.clone();
-            metadata.bytes.clear();
-            let metadata = serde_json::to_string(&metadata).map_err(|error| error.to_string())?;
+            let metadata = reader::encode_metadata(packet, capture_id)?;
             let digest = format!("{:x}", Sha256::digest(&packet.bytes));
             let frame_number = packet.no.to_string();
             transaction.execute("INSERT INTO packets(frame_number,timestamp,source,destination,protocol,byte_offset,byte_length,sha256,metadata)
@@ -213,62 +211,6 @@ impl PacketArchive {
         rows.collect::<rusqlite::Result<Vec<i64>>>().map_err(|error| error.to_string())
     }
 
-    pub fn packet(&mut self, id: i64) -> Result<Packet, String> {
-        let (offset, length, digest, metadata): (i64, i64, String, String) = self
-            .db
-            .query_row(
-                "SELECT byte_offset,byte_length,sha256,metadata FROM packets WHERE id=?1",
-                [id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .map_err(|error| error.to_string())?;
-        if !(0..=1_048_576).contains(&length) || offset < 0 {
-            return Err("Invalid archived packet length".into());
-        }
-        let mut bytes = vec![0; length as usize];
-        self.bytes
-            .seek(SeekFrom::Start(offset as u64))
-            .map_err(|error| error.to_string())?;
-        self.bytes
-            .read_exact(&mut bytes)
-            .map_err(|error| error.to_string())?;
-        if format!("{:x}", Sha256::digest(&bytes)) != digest {
-            return Err("Packet archive integrity check failed".into());
-        }
-        let mut packet: Packet =
-            serde_json::from_str(&metadata).map_err(|error| error.to_string())?;
-        packet.bytes = bytes;
-        Ok(packet)
-    }
-
-    pub fn packet_for_capture(
-        &mut self,
-        capture_id: &str,
-        frame_number: u64,
-    ) -> Result<Option<Packet>, String> {
-        if !valid_capture_id(capture_id) {
-            return Err("Invalid archive capture ID".into());
-        }
-        let has_scoped_index: bool = self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='capture_frames')",
-            [],
-            |row| row.get(0),
-        ).map_err(|error| error.to_string())?;
-        if !has_scoped_index {
-            return Ok(None);
-        }
-        let id = self.db.query_row(
-            "SELECT packet_id FROM capture_frames WHERE capture_id=?1 AND frame_number=?2",
-            params![capture_id, frame_number.to_string()],
-            |row| row.get(0),
-        ).optional().map_err(|error| error.to_string())?;
-        let Some(id) = id else { return Ok(None) };
-        let packet = self.packet(id)?;
-        if packet.no != frame_number {
-            return Err("Archive capture index points to a different frame".into());
-        }
-        Ok(Some(packet))
-    }
 }
 
 pub(crate) fn valid_capture_id(id: &str) -> bool {

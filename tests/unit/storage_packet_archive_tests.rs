@@ -144,6 +144,32 @@ fn scoped_archive_recovers_only_the_requested_capture_and_frame() {
 }
 
 #[test]
+fn scoped_lookup_rejects_wrong_capture_rows_with_the_same_frame_number() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archive");
+    let mut writer = PacketArchive::open(&path).unwrap();
+    let frame = |value| parse_ethernet(&[value], 7, 1.0);
+    writer.append_scoped("capture-a", &[frame(1)]).unwrap();
+    writer.append_scoped("capture-b", &[frame(2)]).unwrap();
+    writer.append(&[frame(3)]).unwrap();
+    writer.append_scoped("legacy", &[frame(4)]).unwrap();
+    let mut legacy = frame(4);
+    legacy.bytes.clear();
+    writer.db.execute("UPDATE packets SET metadata=?1 WHERE id=4", [serde_json::to_string(&legacy).unwrap()]).unwrap();
+    let metadata: String = writer.db.query_row("SELECT metadata FROM packets WHERE id=2", [], |row| row.get(0)).unwrap();
+    let old_reader_packet: Packet = serde_json::from_str(&metadata).unwrap();
+    assert_eq!(old_reader_packet.no, 7);
+    let mut reader = PacketArchive::open_readonly(&path).unwrap();
+    assert_eq!(reader.packet_for_capture("legacy", 7).unwrap().unwrap().bytes, [4]);
+    assert_eq!(reader.packet_for_capture("capture-a", 7).unwrap().unwrap().bytes, [1]);
+    for wrong_row in [2, 3] {
+        writer.db.execute("UPDATE capture_frames SET packet_id=?1 WHERE capture_id='capture-a'", [wrong_row]).unwrap();
+        assert!(reader.packet_for_capture("capture-a", 7).unwrap_err().contains("scope"));
+        assert_eq!(reader.packet_for_capture("capture-b", 7).unwrap().unwrap().bytes, [2]);
+    }
+}
+
+#[test]
 fn scoped_lookup_does_not_guess_for_legacy_archives() {
     let dir = tempfile::tempdir().unwrap();
     let archive = dir.path().join("archive");
