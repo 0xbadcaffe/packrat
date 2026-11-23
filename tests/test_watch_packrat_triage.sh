@@ -67,6 +67,18 @@ jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .max_age_seconds==62
     and .healthy_capture_since==.poll_started_at and .poll_started_at > 0 and .poll_started_at <= (.updated_at | fromdateiso8601)
     and (tostring | contains("private") | not)' "$state" >/dev/null
+failed_state="$scratch/failed.json"
+for code in 70 126 127 143; do
+    bash "$watch" --once "$failed_state" -- bash -c 'cat -- "$1"; exit "$2"' mock "$report" "$code" >/dev/null
+    jq -e '.status=="triage_unavailable" and .capture_id==null' "$failed_state" >/dev/null
+    check_status "$failed_state" triage_unhealthy 1
+done
+jq '.evidence_checks[0].status="unavailable"' "$report" >"$scratch/evidence-error.json"
+bash "$watch" --once "$failed_state" -- bash -c 'cat -- "$1"; exit 2' mock "$scratch/evidence-error.json" >/dev/null
+bash "$watch" --check "$failed_state" | jq -e '.status=="current" and .evidence_check_failures==1' >/dev/null
+jq '.updated_at=(now - 120 | todateiso8601)' "$failed_state" >"$scratch/old-evidence-error.json"
+{ bash "$watch" --check "$scratch/old-evidence-error.json" || [[ $? == 1 ]]; } |
+    jq -e '.status=="snapshot_stale" and .evidence_check_failures==null' >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$state" >"$scratch/stale.json"
 check_status "$scratch/stale.json" snapshot_stale 1
 jq '.updated_at=(now + 120 | todateiso8601)' "$state" >"$scratch/future.json"

@@ -7,6 +7,10 @@ snapshot_validation='
     def counter: if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end;
     def flow_cache: if type == "object" then {retained_summaries:(.retained_summaries | counter),summary_evictions:(.summary_evictions | counter)}
         | if any(.[]; . == null) then null else . end else null end;
+    def evidence_check_failures:
+        if type == "array" and length <= 5 and
+            all(.[]; type == "object" and (.status | scope_id) != null)
+        then map(select(.status != "checked")) | length else null end;
     def packet_evidence_counts: (.evidence_frame_count | counter) as $refs
         | if (.evidence_availability | type == "object" and length > 0 and
               all(to_entries[]; (.key | IN("complete","truncated","missing","length_unknown","unreadable"))
@@ -126,6 +130,8 @@ check_snapshot() {
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
            triage_status:.status, age_seconds:$age, max_age_seconds, packets:(.packets | counter), flow_cache:(if $age >= -5 and $age <= .max_age_seconds then .flow_cache | flow_cache else null end),
+           evidence_check_failures:(if $age >= -5 and $age <= .max_age_seconds
+               then .evidence_checks | evidence_check_failures else null end),
            packet_counter_gap:(.packet_counter_gap | if type == "boolean" then . else null end),
            poll_started_at:(.poll_started_at | if type == "number" and . > 0 and floor == .
                 and . <= 9007199254740991 then . else null end),
@@ -314,7 +320,8 @@ read_status() {
     raw=$(timeout --kill-after=2s "${deadline}s" "$@" 2>/dev/null | head -c 2097153) || status=$?
     if (( status == 124 || status == 137 )); then
         printf '%s\n' '{"status":"triage_timeout"}'
-    elif (( ${#raw} <= 2097152 )) && result=$(sanitize <<< "$raw" 2>/dev/null); then
+    # The triage command uses 1 for degraded reports and 2 for failed evidence reads.
+    elif (( status <= 2 && ${#raw} <= 2097152 )) && result=$(sanitize <<< "$raw" 2>/dev/null); then
         printf '%s\n' "$result"
     else
         printf '%s\n' '{"status":"triage_unavailable"}'
