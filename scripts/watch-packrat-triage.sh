@@ -22,7 +22,7 @@ usage() {
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
-        'review_queue_exits distinguishes observed terminal dispositions from alerts no longer in the queue sample.' \
+        'review_queue_entries and review_queue_exits report bounded queue changes, not incident openings or inferred resolutions.' \
         'alert_sample_gap warns that the watcher may have missed alerts in a bounded sample; review saved history.' \
         'Continuous mode journals sanitized changes in STATE.json.events.jsonl and one 1 MiB rotation (PACKRAT_TRIAGE_WATCH_JOURNAL=0 disables this).' \
         'journal_unconfirmed_events counts discarded events and events whose pending writes could not be confirmed after restart.' \
@@ -383,9 +383,20 @@ while :; do
                 (.status == "current" or .status == "degraded") and
                 .capture_id != null and .session_id != null and (.recent_alerts | type == "array");
             def alert_index: ((.review_queue // []) + .recent_alerts) | INDEX(.alert_id | tostring);
+            def queue_index: .review_queue | INDEX(.alert_id | tostring);
+            def queue_comparable($prior):
+                (.review_queue | type) == "array" and ($prior.review_queue | type) == "array";
+            def queue_entries($prior):
+                if queue_comparable($prior) | not then []
+                else ($prior | queue_index) as $queued
+                | ($prior.recent_alerts | INDEX(.alert_id | tostring)) as $recent
+                | ([.review_queue[].alert_id] | unique)
+                | map(. as $id | ($id | tostring) as $key | select($queued[$key] == null)
+                    | {alert_id:$id, previously_in_recent_sample:($recent[$key] != null)})
+                end;
             def queue_exits($prior):
-                if (.review_queue | type) != "array" or ($prior.review_queue | type) != "array" then []
-                else (.review_queue | INDEX(.alert_id | tostring)) as $queued
+                if queue_comparable($prior) | not then []
+                else queue_index as $queued
                 | alert_index as $current
                 | ([$prior.review_queue[].alert_id] | unique) as $previous_ids
                 | [$previous_ids[] | . as $id | ($id | tostring) as $key
@@ -416,6 +427,7 @@ while :; do
                     ($prior | alert_index) as $before
                     | {
                         newly_observed: $new_ids,
+                        review_queue_entries: ($now | queue_entries($prior)),
                         review_queue_exits: ($now | queue_exits($prior)),
                         updated: [
                             ($now | alert_index | [.[]] | sort_by(.alert_id))[] as $item

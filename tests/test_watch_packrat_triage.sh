@@ -306,7 +306,7 @@ kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
 jq -se 'length==3 and .[0].highest_observed_alert_id==13 and (.[0].alert_sample_gap | not)
-    and .[0].alert_changes=={newly_observed:[13],updated:[{alert_id:9,fields:["hit_count"]}],review_queue_exits:[]}
+    and .[0].alert_changes=={newly_observed:[13],updated:[{alert_id:9,fields:["hit_count"]}],review_queue_entries:[],review_queue_exits:[]}
     and .[1].alert_sample_gap and .[1].alert_changes.newly_observed==[range(16;66)]
     and (.[2].alert_sample_gap | not) and .[2].alert_changes==null' \
     "$scratch/recovered" >/dev/null
@@ -364,10 +364,10 @@ done
 
 state="$scratch/queue-updates.json"
 backlog=$(jq -c '.[0] as $base | [2,7,8,9,10 | $base + {alert_id:.,in_recent_alerts:(.==9),disposition:"New",hit_count:1}]' <<<"$queue")
-live current 80 "$backlog" "$(jq -c '. + [.[0] + {alert_id:8}, .[0] + {alert_id:10}]' <<<"$medium")" >"$report"
+live current 80 "$backlog" "$(jq -c '. + [.[0] | . + {alert_id:6}, . + {alert_id:8}, . + {alert_id:10}]' <<<"$medium")" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 bash "$watch" --once "$state" -- printf '%s\n' 'invalid triage output' >/dev/null
-backlog=$(jq -c '[.[0] + {disposition:"Reviewing",hit_count:2}, .[3] + {hit_count:2}]' <<<"$backlog")
+backlog=$(jq -c '[.[0] + {disposition:"Reviewing",hit_count:2}, .[3] + {hit_count:2}, .[0] + {alert_id:6,hit_count:2}, .[0] + {alert_id:11}]' <<<"$backlog")
 recent=$(jq -c '. + [.[0] + {alert_id:8,disposition:"Closed"}, .[0] + {alert_id:10,disposition:"Confirmed"}]' <<<"$medium")
 live current 81 "$backlog" "$recent" >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/queue-events" &
@@ -381,12 +381,12 @@ kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
 jq -se 'length==1 and (.[0].alert_changes | .updated==
-    [{alert_id:2,fields:["hit_count","disposition"]},{alert_id:8,fields:["disposition"]},
+    [{alert_id:2,fields:["hit_count","disposition"]},{alert_id:6,fields:["severity"]},{alert_id:8,fields:["disposition"]},
      {alert_id:10,fields:["disposition"]}] and .newly_observed==[]
     and .review_queue_exits==[{alert_id:7,disposition:null,outcome:"not_in_sample"},
-     {alert_id:8,disposition:"Closed",outcome:"resolved"},{alert_id:10,disposition:"Confirmed",outcome:"still_in_recent_sample"}])
+     {alert_id:8,disposition:"Closed",outcome:"resolved"},{alert_id:10,disposition:"Confirmed",outcome:"still_in_recent_sample"}]
+    and .review_queue_entries==[{alert_id:6,previously_in_recent_sample:true},{alert_id:11,previously_in_recent_sample:false}])
     ' "$scratch/queue-events" >/dev/null
-
 state="$scratch/journal-rotation.json"
 journal="$state.events.jsonl"
 truncate -s 1048570 "$journal"
