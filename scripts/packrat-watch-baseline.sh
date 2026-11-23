@@ -45,11 +45,11 @@ read_baseline() {
             | if ($times | length) == 3 and $times[0] <= $times[1] and $times[1] <= $times[2]
                 and $c.healthy_seconds <= $times[1] - $times[0] then
                   {interface:$b.interface,scope:$b.scope,capture_run_id:$b.capture_run_id,sha256:$b.sha256,
-                   coverage_policy:(if $c.coverage_policy == "capture_loss_counters_v1" then $c.coverage_policy else null end),
+                   coverage_policy:(if $c.coverage_policy | IN("capture_loss_counters_v1","continuous_journal_v2") then $c.coverage_policy else null end),
                    first_record_at:$c.first_record_at,last_record_at:$c.last_record_at,
                    healthy_seconds:$c.healthy_seconds,excluded_intervals:$c.excluded_intervals,
                    comparable_packets:$c.alert_comparable_packets,openings:$c.observed_openings,
-                   openings_per_10000_packets:(if $c.alert_comparable_packets > 0
+                   openings_per_10000_packets:(if $c.coverage_policy == "continuous_journal_v2" and $c.alert_comparable_packets > 0
                        then $c.observed_openings * 10000 / $c.alert_comparable_packets else null end)}
               else error("Inconsistent baseline observation window") end
           else error("Invalid or mismatched build and coverage baseline") end
@@ -114,7 +114,7 @@ printf '%s\n' "$before" "$after" | jq -cs '
         (if $shared then "same_capture"
          elif $before.interface != $after.interface then "different_interfaces"
          elif $before.last_record_at > $after.first_record_at then "overlapping_or_reversed_windows"
-         elif $before.coverage_policy == null or $before.coverage_policy != $after.coverage_policy then
+         elif $before.coverage_policy != "continuous_journal_v2" or $before.coverage_policy != $after.coverage_policy then
            "coverage_policy_unverified"
          elif $before.openings_per_10000_packets == null or $after.openings_per_10000_packets == null then
            "insufficient_alert_coverage"

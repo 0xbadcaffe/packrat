@@ -32,10 +32,7 @@ usage() {
         'PACKRAT_TRIAGE_WATCH_INTERVAL sets polling (default 30s); PACKRAT_TRIAGE_WATCH_CHECKPOINT_INTERVAL sets checkpoints (default 300s).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
 }
-once=false
-check=false
-read_only=false
-supervise=false
+once=false check=false read_only=false supervise=false
 case ${1-} in
     --help|-h) usage; exit 0 ;;
     --once) once=true; shift ;;
@@ -198,8 +195,8 @@ if "$supervise"; then
 fi
 exec {lock_fd}>>"$state.lock"
 flock -n "$lock_fd" || { printf '%s\n' 'Triage state is already being refreshed.' >&2; exit 2; }
-journal_failed=false journal_overflow=false
-journal_unconfirmed=0
+journal_failed=false journal_overflow=false journal_unconfirmed=0 journal_writer='' journal_sequence=0
+if [[ $journal_enabled == 1 ]] && ! "$once"; then journal_writer="$BASHPID-$(date -u +%s%N)"; fi
 pending_journal=()
 append_journal() (
     local size=0 line=$1 staged rotate=false
@@ -335,8 +332,7 @@ publish_snapshot() {
     mv -fT -- "$temp" "$state"
     temp=''
 }
-previous='' next_checkpoint=0
-prior=null
+previous='' next_checkpoint=0 prior=null
 if [[ -f $state && -O $state ]]; then
     # A stale snapshot can still identify alerts already seen in the same capture.
     saved=$(head -c 65537 -- "$state" |
@@ -465,7 +461,10 @@ while :; do
         checkpoint=$(jq -c '(.status == "current" or .status == "degraded") and .capture_id != null and .session_id != null and .packets != null' <<< "$snapshot")
     fi
     if [[ $key != "$previous" ]] || "$checkpoint"; then
-        event=$(jq -c --argjson checkpoint "$checkpoint" 'del(.last_observed) | if $checkpoint then . + {checkpoint:true,alert_changes:null} else . end' <<< "$event")
+        journal_sequence=$((journal_sequence + 1))
+        event=$(jq -c --argjson checkpoint "$checkpoint" --arg writer "$journal_writer" --argjson sequence "$journal_sequence" '
+            del(.last_observed) | if $checkpoint then . + {checkpoint:true,alert_changes:null} else . end
+            | if $writer == "" then . else . + {journal_writer:$writer,journal_sequence:$sequence} end' <<< "$event")
         if [[ $journal_enabled == 1 ]]; then
             if (( ${#pending_journal[@]} >= 16 )); then
                 flush_journal

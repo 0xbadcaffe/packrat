@@ -22,5 +22,18 @@ watch_pid=''
 jq -se 'length==1 and .[0].packets==100 and .[0].checkpoint==null' "$scratch/quiet-events" >/dev/null
 bash "$watch" --history "$state" | jq -se 'length>=2 and .[0].checkpoint==null
     and any(.[]; .checkpoint==true and .packets==120)
+    and ([.[].journal_writer] | unique | length) == 1
+    and ([.[].journal_sequence] == [range(1; length + 1)])
     and all(.[1:][]; .checkpoint==true and .alert_changes==null and .capture_id=="a" and .buffer_drops==0)' >/dev/null
 jq -e '.status=="current" and .packets==120 and .journal_status=="current" and .journal_pending_events==0' "$state" >/dev/null
+
+live current 130 '[]' '[]' >"$report"
+PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/restart-events" &
+watch_pid=$!
+await_packets 130
+kill "$watch_pid"
+wait "$watch_pid"
+watch_pid=''
+bash "$watch" --history "$state" | jq -se '
+    .[-1].packets == 130 and .[-1].journal_sequence == 1
+    and .[-1].journal_writer != .[-2].journal_writer' >/dev/null

@@ -7,6 +7,7 @@ usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh --history STATE.json | packrat-watch-coverage.sh [--capture-id ID --session ID]' \
         'Reads retained journal records from stdin; defaults to the last observed capture scope.' \
         'Rates describe retained intervals with known coverage, not all traffic or all alerts.' \
+        'Intervals spanning watcher restarts, missing journal records, or older unsequenced records are excluded.' \
         'Alert-ID gaps identify records not observed in the retained sample, not proven missing from the saved log.'
 }
 
@@ -69,6 +70,11 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
              $earlier.truncated_frames, $later.truncated_frames][]; counter)
         and $earlier.capture_queue_full_packets == $later.capture_queue_full_packets
         and $earlier.truncated_frames == $later.truncated_frames;
+    def journal_contiguous($earlier; $later):
+        ($earlier.journal_writer | id) and $earlier.journal_writer == $later.journal_writer
+        and ($earlier.journal_sequence | counter and . > 0)
+        and ($later.journal_sequence | counter and . > 0)
+        and $later.journal_sequence - $earlier.journal_sequence == 1;
     def pair($earlier; $later):
         if ($earlier | healthy) and ($later | healthy)
             and $earlier.healthy_capture_since == $later.healthy_capture_since
@@ -84,19 +90,21 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
     | [$all[] | select($key != null and same($key))] as $sample
     | [range(1; $all | length) as $i | $all[$i - 1] as $before | $all[$i] as $after
         | select($key != null and ($before | same($key)) and ($after | same($key)))
-        | pair($before; $after)] as $pairs
-    | ($pairs | map(select(. != null))) as $healthy
+        | if journal_contiguous($before; $after) then pair($before; $after)
+          else "journal_discontinuity" end] as $pairs
+    | ($pairs | map(objects)) as $healthy
     | ($healthy | map(select(.observed_openings != null))) as $comparable
     | ([$comparable[].packets] | add // 0) as $measured_packets
     | ([$comparable[].observed_openings] | add // 0) as $openings
     | [limit(65; alert_gaps($sample))] as $alert_gaps
-    | {record_type:"capture_coverage_report",coverage_policy:"capture_loss_counters_v1",
+    | {record_type:"capture_coverage_report",coverage_policy:"continuous_journal_v2",
        status:(if ($sample | length) == 0 then "no_capture_records"
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
        scope:$key, journal_tail_status:$all[-1].status,
        first_record_at:$sample[0].updated_at,last_record_at:$sample[-1].updated_at,
        scoped_records:($sample | length),
        healthy_intervals:($healthy | length), excluded_intervals:([($sample | length) - 1,0] | max) - ($healthy | length),
+       journal_discontinuities:([$pairs[] | select(. == "journal_discontinuity")] | length),
        healthy_seconds:([$healthy[].seconds] | add // 0), healthy_packets:([$healthy[].packets] | add // 0),
        alert_comparable_intervals:($comparable | length), alert_comparable_packets:$measured_packets,
        alert_sample_gap_reported:any($sample[]; .alert_sample_gap == true),
