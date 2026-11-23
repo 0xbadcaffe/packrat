@@ -70,9 +70,14 @@ fn snapshot_key(alert: &AlertItem) -> SnapshotKey {
     )
 }
 
-fn snapshot_digest(alert: &AlertItem) -> Result<SnapshotDigest, String> {
-    let bytes = serde_json::to_vec(alert).map_err(|error| format!("Serialize alert snapshot: {error}"))?;
-    Ok(Sha256::digest(bytes).into())
+fn encode_alert_record(session_id: &str, alert: &AlertItem) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(&AlertRecord {
+        schema_version: 1,
+        record_type: "alert",
+        session_id,
+        alert,
+    })
+    .map_err(|error| format!("Serialize alert JSONL record: {error}"))
 }
 
 fn remember(
@@ -129,8 +134,11 @@ impl AlertJsonlWriter {
                 let Some(record) = ExistingAlertRecord::decode(&line) else {
                     continue;
                 };
-                if record.session_id == session_id && let Ok(digest) = snapshot_digest(&record.alert) {
-                    remember(&mut latest_snapshots, snapshot_key(&record.alert), digest);
+                if record.session_id == session_id
+                    && let Ok(encoded) = encode_alert_record(session_id, &record.alert)
+                {
+                    // Normalize parsed records rather than hashing their on-disk whitespace or key order.
+                    remember(&mut latest_snapshots, snapshot_key(&record.alert), Sha256::digest(encoded).into());
                 }
             }
         }
@@ -169,17 +177,11 @@ impl AlertJsonlWriter {
         let mut checked_rotation = false;
         for alert in alerts {
             let key = snapshot_key(alert);
-            let digest = snapshot_digest(alert)?;
+            let mut record = encode_alert_record(&self.session_id, alert)?;
+            let digest = Sha256::digest(&record).into();
             if self.latest_snapshots.get(&key) == Some(&digest) {
                 continue;
             }
-            let mut record = serde_json::to_vec(&AlertRecord {
-                schema_version: 1,
-                record_type: "alert",
-                session_id: &self.session_id,
-                alert,
-            })
-            .map_err(|error| format!("Serialize alert JSONL record: {error}"))?;
             if record.len() >= MAX_ALERT_LINE {
                 return Err("Alert JSONL record exceeds the export size limit".into());
             }
