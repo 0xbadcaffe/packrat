@@ -45,8 +45,8 @@ live() {
         alerts:($alerts | map(. + {detail:"private payload", flow:{src:"10.2.3.4"}, last_seen:$packets}))
     }'
 }
-queue='[{"alert_id":7,"severity":"HIGH","rule_id":"test.rule","confidence":"correlated","packet_evidence_status":"partial","next_evidence_step":"inspect_retained_and_recover_missing_frames"}]'
-medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","disposition":"New","hit_count":1,"packet_evidence_status":"partial"}]'
+queue='[{"alert_id":7,"severity":"HIGH","rule_id":"test.rule","revision":10,"confidence":"correlated","packet_evidence_status":"partial","next_evidence_step":"inspect_retained_and_recover_missing_frames"}]'
+medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","revision":65536,"disposition":"New","hit_count":1,"packet_evidence_status":"partial"}]'
 live current 12 "$queue" "$medium" >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
@@ -56,7 +56,7 @@ jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .journal_status=="not_checked" and .journal_pending_events==0
     and .link_type==1 and .link_decodable and .truncated_frames==0 and .disk_free_mib==2048
     and .capture_queue_full_packets==8 and .capture_queue_full_packets_delta==3
-    and .review_queue[0].packet_evidence_status=="partial"
+    and .review_queue[0].packet_evidence_status=="partial" and .review_queue[0].revision==10
     and .archive_mode=="alert_evidence" and .archive_rule_ids==["traffic.periodic_fixed_size"]
     and .archive_usage=={frames:1,max_frames:100,payload_bytes:1024,max_payload_bytes:65536}
     and .archive_near_limit==false
@@ -172,13 +172,14 @@ if bash "$watch" --once "$state" -- true >/dev/null 2>&1; then exit 1; fi
 live current 31 '[]' | jq '.health.disk_free_mib=2047 | .health.archive_usage.frames=2' >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 31
+medium=$(jq -c '.[0].revision=9' <<<"$medium")
 live current 32 '[]' "$medium" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 32
 live current 33 '[]' "$medium" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 33
-medium=$(jq -c '.[0].hit_count=2' <<<"$medium")
+medium=$(jq -c '.[0].hit_count=2 | .[0].revision=10' <<<"$medium")
 live current 34 '[]' "$medium" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 34
@@ -227,7 +228,8 @@ jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_ale
         invalid_records:2,oversized_records:0,stopped_at_limit:false,stopped_at_scan_budget:true}
     and .[6].truncated_frames==3 and .[7].archive_pause_reason=="disk_reserve"
     and .[0].alert_changes==null and .[1].alert_changes.newly_observed==[9]
-    and .[2].alert_changes.updated==[{alert_id:9,fields:["hit_count"]}]
+    and .[1].recent_alerts[0].revision==9 and .[2].recent_alerts[0].revision==10
+    and .[2].alert_changes.updated==[{alert_id:9,fields:["hit_count","revision"]}]
     and .[8].alert_changes.updated==[{alert_id:9,fields:["disposition","packet_evidence_status"]}]
     and .[9].highest_observed_alert_id==9 and .[10].alert_changes.newly_observed==[]
     and .[11].highest_observed_alert_id==12 and .[11].alert_changes==null' "$scratch/events" >/dev/null

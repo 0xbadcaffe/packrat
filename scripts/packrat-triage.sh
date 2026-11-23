@@ -171,7 +171,7 @@ report() {
             | ($severity == "MEDIUM" or $severity == "LOW") as $opt_in
             | select(($opt_in | not) or (.rule_id as $rule | any($rules[]; . == $rule)))
             | .packet_evidence_status = packet_evidence($evidence)
-            | {alert_id,title,rule_id,severity,disposition,hit_count,confidence,verify,packet_evidence_status,
+            | {alert_id,title,rule_id,revision,severity,disposition,hit_count,confidence,verify,packet_evidence_status,
                archive_rule:$opt_in,in_recent_alerts:$recent,next_evidence_step:(.packet_evidence_status | evidence_step)}
           ] end) as $review
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
@@ -207,7 +207,7 @@ report_saved_index() {
             sampled_unscoped_alerts:((.alerts | length) - ($scoped | length)),
             sampled_unscoped_open_high_or_critical:([.alerts[] | select((scoped | not) and priority and unresolved)] | length),
             review_shortlist_truncated:($review | length > 5),
-            review_shortlist:($review[:5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,confidence,evidence_frame_count,last_seen})),
+            review_shortlist:($review[:5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,revision,confidence,evidence_frame_count,last_seen})),
             alert_log_integrity:$integrity, review_latency:((.review_latency | objects | {sampled_alerts,measured_alerts,unmeasured_alerts,min_ms,median_ms,max_ms}) // null),
             captures:($scoped | group_by([.session_id, .capture_id]) | map(
               map(select(priority)) as $priority

@@ -238,6 +238,12 @@ sanitize() {
         def severity: if . == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" then . else null end;
         def disposition: if . == "New" or . == "Reviewing" or . == "Confirmed" or
             . == "Benign" or . == "Contained" or . == "Closed" then . else null end;
+        def alert_fields:
+            {alert_id:(.alert_id | counter), severity:(.severity | severity), rule_id:(.rule_id | token),
+             disposition:(.disposition | disposition), hit_count:(.hit_count | counter),
+             packet_evidence_status:(.packet_evidence_status | token), revision}
+            | if .rule_id != null and (.revision | type == "number" and . >= 1 and . <= 65535 and floor == .)
+              then . else del(.revision) end;
         def archive_mode:
             if .archive_enabled == false then "disabled"
             elif .archive_enabled != true then null
@@ -291,15 +297,10 @@ sanitize() {
                 else null end),
             recent_alerts_at_limit:(.alerts | if type == "array" then length > 50 else null end),
             has_older_alerts:(.has_more_alerts | flag),
-            recent_alerts:(.alerts | if type == "array" then .[:50] | map(objects
-                | {alert_id:(.alert_id | counter), severity:(.severity | severity), rule_id:(.rule_id | token),
-                   disposition:(.disposition | disposition), hit_count:(.hit_count | counter),
-                   packet_evidence_status:(.packet_evidence_status | token)}
+            recent_alerts:(.alerts | if type == "array" then .[:50] | map(objects | alert_fields
                 | select(.alert_id > 0 and .severity != null)) | sort_by(.alert_id) else null end),
             review_queue:(.review_queue | if type == "array" then .[:5] | map(objects
-                | {alert_id:(.alert_id | counter), severity:(.severity | token), rule_id:(.rule_id | token),
-                   disposition:(.disposition | disposition), hit_count:(.hit_count | counter),
-                   confidence:(.confidence | token), packet_evidence_status:(.packet_evidence_status | token),
+                | alert_fields + {confidence:(.confidence | token),
                    archive_rule:(.archive_rule | flag), in_recent_alerts:(.in_recent_alerts | flag),
                    next_evidence_step:(.next_evidence_step | token)}
                 | select(.alert_id > 0 and (.severity == "HIGH" or .severity == "CRITICAL" or
@@ -320,8 +321,7 @@ read_status() {
         printf '%s\n' '{"status":"triage_unavailable"}'
     fi
 }
-temp=''
-timer=''
+temp='' timer=''
 trap 'if [[ -n $temp ]]; then rm -f -- "$temp"; fi' EXIT
 trap 'if [[ -n $timer ]]; then kill "$timer" 2>/dev/null || :; wait "$timer" 2>/dev/null || :; fi; exit 0' HUP INT TERM
 publish_snapshot() {
@@ -442,8 +442,9 @@ while :; do
                             ($now | alert_index | [.[]] | sort_by(.alert_id))[] as $item
                             | $before[$item.alert_id | tostring] as $old | select($old != null)
                             | {alert_id:$item.alert_id, fields:[
-                                ("hit_count", "severity", "disposition", "packet_evidence_status") as $field
-                                | select($old[$field] != $item[$field]) | $field]}
+                                ("hit_count", "severity", "disposition", "packet_evidence_status", "revision") as $field
+                                | select($old[$field] != $item[$field])
+                                | select($field != "revision" or ($old.revision != null and $item.revision != null)) | $field]}
                             | select(.fields | length > 0)
                         ]
                     }
@@ -451,8 +452,8 @@ while :; do
             | if (observed | not) and ($prior | observed) then
                 .last_observed = ($prior | {
                     status,capture_id,session_id,highest_observed_alert_id,alert_sample_gap,packets,packet_counter_gap,
-                    review_queue: [(.review_queue // [])[] | {alert_id,hit_count,severity,disposition,packet_evidence_status}],
-                    recent_alerts: [.recent_alerts[] | {alert_id,hit_count,severity,disposition,packet_evidence_status}]
+                    review_queue: [(.review_queue // [])[] | {alert_id,hit_count,severity,disposition,packet_evidence_status,revision}],
+                    recent_alerts: [.recent_alerts[] | {alert_id,hit_count,severity,disposition,packet_evidence_status,revision}]
                 })
               else . end' <<< "$snapshot")
     snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")

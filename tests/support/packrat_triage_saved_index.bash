@@ -14,6 +14,7 @@ jq -e '.record_type == "saved_capture_index" and .status == "saved"
     and (.captures | map(.sampled_open_high_or_critical)) == [1,2]
     and (.captures | map(.next_review_alert_id)) == [1,3]
     and .review_shortlist_truncated==false
+    and all(.review_shortlist[]; .rule_id == "test.rule" and .revision == 10)
     and [.review_shortlist[] | [.session_id,.alert_id,.severity]] ==
         [["1700000000-123",1,"CRITICAL"],["1700000000-432",3,"CRITICAL"],["1700000000-432",1,"HIGH"]]
     and .captures[1].first_seen == 10 and .captures[1].last_seen == 22

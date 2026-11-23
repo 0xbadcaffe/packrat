@@ -83,7 +83,8 @@ mock_archive() {
     elif [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then
         jq -cn '
             {session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
-             alert_id:1,first_seen:10,last_seen:20,severity:"HIGH",disposition:"New",detail:"not in index"} as $base
+             alert_id:1,first_seen:10,last_seen:20,severity:"HIGH",disposition:"New",detail:"not in index",
+             rule_id:"test.rule",revision:10} as $base
             | [$base, ($base + {alert_id:2,first_seen:12,last_seen:22,severity:"HIGH",disposition:"Benign"}),
                ($base + {alert_id:3,first_seen:13,last_seen:19,severity:"CRITICAL",disposition:"Reviewing"}),
                ($base + {session_id:"1700000000-123",last_seen:30,severity:"CRITICAL",disposition:"Confirmed"}),
@@ -100,7 +101,7 @@ mock_archive() {
                   ({Benign:46,Contained:47,Closed:48} | to_entries[] | $valid + {alert_id:.value,severity:"CRITICAL",disposition:.key}),
                   ($valid + {alert_id:45,severity:"CRITICAL",disposition:"New",evidence_frame_count:0}),
                   ($valid + {alert_id:44,severity:"HIGH",disposition:"New"}),
-                  ($valid + {severity:"CRITICAL",disposition:"Confirmed"}),
+                  ($valid + {severity:"CRITICAL",disposition:"Confirmed",rule_id:"test.rule",revision:10}),
                   ($valid + {alert_id:41,severity:"CRITICAL",disposition:"New"})
               ] elif $queue == "many" then [range(60;53;-1) | $valid + {alert_id:.,severity:"HIGH",disposition:"New"}]
                 elif $queue == "configured" then [
@@ -238,6 +239,7 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
         and [.evidence_checks[].alert_id] == [42,41,44]
         and [.alerts[].packet_evidence_status] == ["not_checked","not_checked","not_checked","no_references","partial","partial","partial"]
         and .open_priority_alerts_in_sample == 4 and [.review_queue[].alert_id] == [45,42,41,44] and .review_queue[1].disposition=="Confirmed"
+        and .review_queue[1].rule_id=="test.rule" and .review_queue[1].revision==10 and .review_queue[0].revision==null
         and [.review_queue[].next_evidence_step] == ["corroborate_with_host_or_service_logs",
             "inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames"]' \
         <<< "$result" >/dev/null
