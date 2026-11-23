@@ -20,14 +20,17 @@ if [[ ${TEST_MODE:-normal} == by_rule || ${TEST_MODE:-normal} == wrong_rule ]]; 
 fi
 if [[ $1 == --list-saved ]]; then
     shift
-    offset=0 rule=''
+    offset=0 rule='' review_session='' review_capture=''
+    if [[ $1 == --review-scope ]]; then review_session=$2 review_capture=$3; shift 3; fi
     if [[ $1 == --review-rule ]]; then rule=$2; shift 2; fi
     if [[ $1 == --review-offset ]]; then offset=$2; shift 2; fi
     [[ $# == 2 && $1 == "$TEST_DIR/alerts.jsonl" && $2 == "$TEST_DIR/previous.jsonl" ]]
-    jq -nc --arg session "$session" --arg capture "$capture" --argjson base "$base" --arg mode "${TEST_MODE:-normal}" --argjson offset "$offset" --arg rule "$rule" '
+    jq -nc --arg session "$session" --arg capture "$capture" --argjson base "$base" --arg mode "${TEST_MODE:-normal}" --argjson offset "$offset" --arg rule "$rule" \
+        --arg selected_session "$review_session" --arg selected_capture "$review_capture" '
         (if $mode == "empty" then 0 elif $rule != "" then 1 else 7 end) as $eligible |
         {record_type:"saved_capture_index",status:"saved",sampled_alerts:12,
          review_rule:(if $rule == "" then null else $rule end),
+         review_scope:(if $selected_capture == "" then null else {session_id:$selected_session,capture_id:$selected_capture} end),
          sampled_unscoped_open_high_or_critical:3,sample_scan_complete:($mode != "bounded"),
          unscoped_review_queue:[{session_id:$session,alert_id:9,severity:"CRITICAL",disposition:"Reviewing",
            capture_id:"private scope",title:"private title",
@@ -36,7 +39,8 @@ if [[ $1 == --list-saved ]]; then
          review_shortlist_truncated:($eligible > $offset + 5),
          next_review_offset:(if $eligible > $offset + 5 then $offset + 5 else null end),
          review_shortlist:[range($offset + 1;[($eligible + 1),($offset + (if $mode == "extra" then 7 else 6 end))] | min)
-           | $base + {session_id:$session,capture_id:$capture,alert_id:.}]}'
+           | $base + {session_id:$session,capture_id:$capture,alert_id:.}]}
+         | if $selected_capture == "" then . else .sampled_unscoped_open_high_or_critical = 0 | .unscoped_review_queue = [] end'
     exit
 fi
 [[ $1 == --saved-alert && $2 == "$session" && $3 == "$capture" &&
@@ -96,6 +100,14 @@ TEST_MODE=by_rule run_review --review-rule ipv6.ra_router_link_change | jq -e '
 [[ $(cat "$dir/checks") == 1 ]]
 : > "$dir/checks"
 if TEST_MODE=wrong_rule run_review --review-rule other.rule >/dev/null 2>&1; then exit 1; fi
+[[ ! -s $dir/checks ]]
+TEST_MODE=by_rule run_review --review-scope session-a 00000000000000000000000000000001 \
+    --review-rule ipv6.ra_router_link_change | jq -e '
+    .review_scope == {session_id:"session-a",capture_id:"00000000000000000000000000000001"}
+    and .unscoped_review_queue == [] and [.findings[].packet_evidence_status] == ["complete"]' >/dev/null
+[[ $(cat "$dir/checks") == 1 ]]
+: > "$dir/checks"
+if run_review --review-scope session-b 00000000000000000000000000000001 >/dev/null 2>&1; then exit 1; fi
 [[ ! -s $dir/checks ]]
 if TEST_MODE=extra run_review >"$dir/output" 2>/dev/null; then exit 1; fi
 [[ ! -s $dir/output && ! -s $dir/checks ]]

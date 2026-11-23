@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 triage="$root/scripts/packrat-triage.sh"
 scratch=$(mktemp -d)
@@ -40,7 +39,7 @@ mock_archive() {
         return
     fi
     local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' selector='--limit 512'
-    if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope=''; fi
+    if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope=${PACKRAT_TEST_INDEX_SCOPE:-}; fi
     if [[ -n ${PACKRAT_TEST_TARGET:-} ]]; then selector="--alert-id $PACKRAT_TEST_TARGET"; fi
     if [[ ${PACKRAT_TEST_INDEX:-0} == 1 && $* != *" --scan-bytes 8388608 --report-integrity"* ]]; then return 2; fi
     if [[ $* == *" --scan-bytes 8388608 --report-integrity"* ]]; then selector+=' --scan-bytes 8388608'; elif [[ ${PACKRAT_TEST_SCAN_STOPPED:-false} == true ]]; then return 2; fi
@@ -81,7 +80,7 @@ mock_archive() {
                 + (if $large == "1" then {detail: ("\ud83d\udd0d" * 512), title: ("\ud83d\udd0d" * 160)}
                    else {} end)]'
     elif [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then
-        jq -cn --argjson extra "${PACKRAT_TEST_INDEX_EXTRA:-[]}" '
+        jq -cn --argjson extra "${PACKRAT_TEST_INDEX_EXTRA:-[]}" --arg scoped "${PACKRAT_TEST_INDEX_SCOPE:-}" --arg mismatch "${PACKRAT_TEST_INDEX_SCOPE_MISMATCH:-0}" '
             {session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
              alert_id:1,first_seen:10,last_seen:20,severity:"HIGH",disposition:"New",detail:"not in index",
              rule_id:"test.rule",revision:10,evidence_frame_set_sha256:("0"*64)} as $base
@@ -89,7 +88,8 @@ mock_archive() {
                ($base + {alert_id:3,first_seen:13,last_seen:19,severity:"CRITICAL",disposition:"Reviewing"}),
                ($base + {session_id:"1700000000-123",last_seen:30,severity:"CRITICAL",disposition:"Confirmed"}),
                ($base + {capture_id:null,rule_id:null,revision:null,legacy_rule_hint:"dns.competing_responders"}),
-               ($base + {capture_id:"legacy",disposition:"Benign"})] + ($extra | map($base + .))
+               ($base + {capture_id:"legacy",disposition:"Benign"})] + ($extra | map($base + .)) |
+            if $scoped == "" or $mismatch == "1" then . else map(select(.session_id == $base.session_id and .capture_id == $base.capture_id)) end
         '
     else
         jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" --arg queue "${PACKRAT_TEST_AUTO_QUEUE:-}" \

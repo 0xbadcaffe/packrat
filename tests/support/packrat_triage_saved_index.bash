@@ -5,6 +5,7 @@ list_saved() {
 result=$(list_saved "$PACKRAT_TEST_LOG")
 jq -e '.record_type == "saved_capture_index" and .status == "saved"
     and .review_rule == null
+    and .review_scope == null
     and .review_latency == null
     and .sampled_alerts == 6 and .sampled_unscoped_alerts == 2
     and .sampled_unscoped_open_high_or_critical == 1
@@ -49,6 +50,17 @@ PACKRAT_TEST_INDEX_EXTRA="$extra" list_saved --review-rule test.rule "$PACKRAT_T
 PACKRAT_TEST_INDEX_EXTRA="$extra" list_saved --review-rule other.rule --review-offset 1 "$PACKRAT_TEST_LOG" | jq -e '
     .review_rule == "other.rule" and .review_eligible_in_sample == 1 and .review_shortlist == []' >/dev/null
 if list_saved --review-rule 'bad rule' "$PACKRAT_TEST_LOG" >/dev/null 2>&1; then exit 1; fi
+requested=' --session 1700000000-432 --capture-id 00000000000000000000000000000001'
+PACKRAT_TEST_INDEX_SCOPE="$requested" PACKRAT_TEST_INDEX_EXTRA="$extra" list_saved \
+    --review-scope 1700000000-432 00000000000000000000000000000001 --review-rule test.rule "$PACKRAT_TEST_LOG" | jq -e '
+    .review_scope == {session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"}
+    and .sampled_alerts == 7 and .sampled_unscoped_alerts == 0 and .unscoped_review_queue == []
+    and [.review_shortlist[].alert_id] == [3,1,4,5]' >/dev/null
+status=0
+result=$(PACKRAT_TEST_INDEX_SCOPE="$requested" PACKRAT_TEST_INDEX_SCOPE_MISMATCH=1 list_saved \
+    --review-scope 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 2 ]]
+jq -e '.status == "alert_log_scope_mismatch"' <<< "$result" >/dev/null
 for offset in 512 005 -1 bad; do
     status=0
     list_saved --review-offset "$offset" "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?

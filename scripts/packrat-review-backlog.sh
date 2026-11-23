@@ -4,13 +4,19 @@ set -euo pipefail
 export LC_ALL=C
 
 usage() {
-    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-rule RULE_ID] [--review-offset N] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
+    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
 
 if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
-offset=0 rule='' index_args=()
+offset=0 rule='' session_scope='' capture_scope='' index_args=()
+if [[ ${1-} == --review-scope ]]; then
+    session_scope=${2-} capture_scope=${3-}
+    [[ $session_scope =~ ^[A-Za-z0-9_-]{1,128}$ && $capture_scope =~ ^[0-9a-f]{32}$ ]] || { usage >&2; exit 2; }
+    index_args+=(--review-scope "$session_scope" "$capture_scope")
+    shift 3
+fi
 if [[ ${1-} == --review-rule ]]; then
     rule=${2-}
     [[ $rule =~ ^[a-z0-9][a-z0-9_.-]{0,127}$ ]] || { usage >&2; exit 2; }
@@ -47,7 +53,8 @@ triage_with_budget() {
 
 rc=0
 raw=$(triage_with_budget "$budget" --list-saved "${index_args[@]}" "$@") || rc=$?
-if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --argjson offset "$offset" '
+if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --argjson offset "$offset" \
+    --arg session "$session_scope" --arg capture "$capture_scope" '
     def count: type == "number" and . >= 0 and . <= 512 and floor == .;
     def valid_reference:
         type == "object" and (.session_id | strings | test("\\A[A-Za-z0-9_-]{1,128}\\z"))
@@ -56,6 +63,7 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --a
     def priority: .severity == "HIGH" or .severity == "CRITICAL";
     def selected: if $rule == "" then priority else .rule_id == $rule and (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW")) end;
     def valid_entry: valid_reference and selected
+        and ($capture == "" or (.session_id == $session and .capture_id == $capture))
         and (.capture_id | strings | test("\\A[0-9a-f]{32}\\z"))
         and (.evidence_frame_set_sha256 | strings | test("\\A[0-9a-f]{64}\\z"))
         and (.evidence_frame_count | numbers | . >= 0 and . <= 131 and floor == .)
@@ -68,6 +76,8 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --a
         and (.last_seen == null or (.last_seen | numbers | isfinite and . > 0));
     if length == 1 then .[0] else error("Expected one saved capture index") end
     | select(.record_type == "saved_capture_index" and (.status == "saved" or .status == "saved_log_degraded")
+        and .review_scope == (if $capture == "" then null else {session_id:$session,capture_id:$capture} end)
+        and ($capture == "" or (.sampled_unscoped_open_high_or_critical == 0 and .unscoped_review_queue == []))
         and .review_rule == (if $rule == "" then null else $rule end)
         and .review_offset == $offset and (.sampled_alerts | count)
         and (.sample_scan_complete | type == "boolean")
@@ -80,7 +90,7 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --a
         and .next_review_offset == (if $eligible > $offset + 5 then $offset + 5 else null end)
         and (.unscoped_review_queue | type == "array" and length <= 5 and all(.[]; unscoped_reference)))
     | {index_status:.status,sampled_alerts,sampled_unscoped_open_high_or_critical,sample_scan_complete,
-       review_rule,review_offset,review_eligible_in_sample,review_shortlist_truncated,next_review_offset,
+       review_scope,review_rule,review_offset,review_eligible_in_sample,review_shortlist_truncated,next_review_offset,
        unscoped_review_queue:(.unscoped_review_queue | map({session_id,alert_id,severity,disposition,last_seen,
              legacy_rule_hint,next_evidence_step:"locate_original_capture_or_host_logs"})),
        review_shortlist:(.review_shortlist | map({session_id,capture_id,alert_id,rule_id,revision,confidence,
