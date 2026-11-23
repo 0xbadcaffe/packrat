@@ -244,7 +244,7 @@ fn labeled_http_replay_distinguishes_retransmissions_from_distinct_responses() {
         writer.write_packet(&support::tcp(no, no as u32 * 100, 0x18, response, true)).unwrap();
     }
     writer.flush().unwrap();
-    let options = ["--expect-alert", "http.unauthorized_burst=1", "--expect-alert", "scan.horizontal=0"];
+    let options = ["--expect-alert", "http.unauthorized_burst=2", "--expect-alert", "scan.horizontal=0"];
     let first = run_with(&suspicious, &options);
     let second = run_with(&suspicious, &options);
     assert_eq!(first.stdout, second.stdout);
@@ -254,31 +254,35 @@ fn labeled_http_replay_distinguishes_retransmissions_from_distinct_responses() {
         .collect();
     assert_eq!(auth.len(), 2);
     assert_eq!(auth[0]["alert"]["packet_refs"], serde_json::json!([1, 2, 3, 4, 5]));
-    assert_eq!(auth[1]["alert"]["id"], auth[0]["alert"]["id"]);
-    assert_eq!(auth[1]["alert"]["hit_count"], 2);
+    assert_ne!(auth[1]["alert"]["id"], auth[0]["alert"]["id"]);
+    assert_eq!(auth[1]["alert"]["hit_count"], 1);
+    assert_eq!(auth[1]["alert"]["packet_refs"], serde_json::json!([6, 7, 8, 9, 10]));
     let summary = replay_events.last().unwrap();
-    assert_eq!(summary["rule_counts"]["http.unauthorized_burst"], 1);
+    assert_eq!(summary["rule_counts"]["http.unauthorized_burst"], 2);
     assert_eq!(summary["alert_expectations"]["verdict"], "passed");
 
-    let frame = run_with(&suspicious, &["--expect-alert-frame", "http.unauthorized_burst=5"]);
+    let frame = run_with(&suspicious, &[
+        "--expect-alert-frame", "http.unauthorized_burst=5",
+        "--expect-alert-frame", "http.unauthorized_burst=10",
+    ]);
     let frame_events = events(&frame);
     let report = &frame_events.last().unwrap()["alert_expectations"];
     assert_eq!(report["verdict"], "passed");
-    assert_eq!(report["frame_checks"][0]["expected_frames"], serde_json::json!([5]));
+    assert_eq!(report["frame_checks"][0]["expected_frames"], serde_json::json!([5, 10]));
     assert_eq!(report["frame_checks"][0]["unexpected_openings"], 0);
 
-    // A correlated update at frame 10 is not an opening; the grouped count
-    // alone is still correct and would not catch this wrong label.
+    // A label with the correct count but the wrong opening frame still fails.
     let wrong_frame = run_with(&suspicious, &[
-        "--expect-alert", "http.unauthorized_burst=1",
+        "--expect-alert", "http.unauthorized_burst=2",
+        "--expect-alert-frame", "http.unauthorized_burst=4",
         "--expect-alert-frame", "http.unauthorized_burst=10",
     ]);
     assert!(!wrong_frame.status.success());
     let wrong_frame_events = read_events(&wrong_frame);
     let report = &wrong_frame_events.last().unwrap()["alert_expectations"];
     assert_eq!(report["verdict"], "failed");
-    assert_eq!(report["checks"][0]["observed"], 1);
-    assert_eq!(report["frame_checks"][0]["missing_frames"], serde_json::json!([10]));
+    assert_eq!(report["checks"][0]["observed"], 2);
+    assert_eq!(report["frame_checks"][0]["missing_frames"], serde_json::json!([4]));
     assert_eq!(report["frame_checks"][0]["unexpected_openings"], 1);
 
     for (labels, error) in [
@@ -344,7 +348,7 @@ fn http_burst_replay_keeps_sustained_traffic_grouped_and_records_a_renewed_burst
     }
     writer.flush().unwrap();
 
-    let output = run_with(&path, &["--expect-alert", "http.unauthorized_burst=1"]);
+    let output = run_with(&path, &["--expect-alert", "http.unauthorized_burst=2"]);
     let rows = events(&output);
     let auth: Vec<_> = rows.iter()
         .filter(|row| row["alert"]["provenance"]["rule_id"] == "http.unauthorized_burst")
@@ -352,9 +356,9 @@ fn http_burst_replay_keeps_sustained_traffic_grouped_and_records_a_renewed_burst
         .collect();
     assert_eq!(auth.len(), 2);
     assert_eq!(auth[0]["packet_refs"], serde_json::json!([1, 2, 3, 4, 5]));
-    assert_eq!(auth[1]["id"], auth[0]["id"]);
-    assert_eq!(auth[1]["hit_count"], 2);
-    assert_eq!(auth[1]["packet_refs"], serde_json::json!([1, 2, 3, 4, 5, 8, 9, 10, 11, 12]));
+    assert_ne!(auth[1]["id"], auth[0]["id"]);
+    assert_eq!(auth[1]["hit_count"], 1);
+    assert_eq!(auth[1]["packet_refs"], serde_json::json!([8, 9, 10, 11, 12]));
 }
 
 #[test]

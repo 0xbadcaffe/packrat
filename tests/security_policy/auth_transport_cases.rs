@@ -1,4 +1,5 @@
 use super::*;
+use packrat_tui::analysis::alert_center::AlertDisposition;
 use packrat_tui::engine::AnalysisCore;
 
 #[rstest::rstest]
@@ -35,6 +36,18 @@ fn authentication_reply_bursts_require_tcp_data_with_ack(
     let alert = core.alert_center.items.iter().find(|alert| alert.source == "AUTH").unwrap();
     assert_eq!(alert.provenance.as_ref().unwrap().rule_id, rule);
     assert_eq!(alert.packet_refs, [6, 7, 8, 9, 10]);
+    let (old_id, scope) = (alert.id, alert.capture_id.clone());
+    assert!(core.alert_center.set_disposition(old_id, scope.as_deref(), AlertDisposition::Benign));
+    for no in 46..=50 {
+        core.analyze(&make(no, 0x18));
+    }
+    let episodes: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "AUTH").collect();
+    assert_eq!(episodes.len(), 2);
+    assert_eq!(episodes[0].disposition, AlertDisposition::Benign);
+    assert_eq!(episodes[0].packet_refs, [6, 7, 8, 9, 10]);
+    assert_ne!(episodes[1].id, old_id);
+    assert_eq!(episodes[1].disposition, AlertDisposition::New);
+    assert_eq!(episodes[1].packet_refs, [46, 47, 48, 49, 50]);
 }
 
 #[test]

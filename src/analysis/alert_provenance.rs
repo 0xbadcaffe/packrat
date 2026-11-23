@@ -321,19 +321,19 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the receiving application uses an affected library. Corroborate with application and outbound connection logs before escalating.",
         ),
         (
-            "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 6, DirectObservation,
+            "AUTH", "HTTP authentication burst", "http.unauthorized_burst", 7, DirectObservation,
             "Compare the distinct 401 responses with application logs; check expected challenges.",
         ),
         (
-            "AUTH", "SSH connection-start burst", "ssh.connection_start_burst", 3, DirectObservation,
+            "AUTH", "SSH connection-start burst", "ssh.connection_start_burst", 4, DirectObservation,
             "Check handshake completion and compare with SSH server logs for authentication outcomes.",
         ),
         (
-            "AUTH", "FTP not-logged-in reply burst", "ftp.not_logged_in_burst", 4, DirectObservation,
+            "AUTH", "FTP not-logged-in reply burst", "ftp.not_logged_in_burst", 5, DirectObservation,
             "Inspect the preceding FTP commands and server logs; a 530 reply can reject a non-login command.",
         ),
         (
-            "AUTH", "SMB2 logon failure burst", "smb2.logon_failure_burst", 4, DirectObservation,
+            "AUTH", "SMB2 logon failure burst", "smb2.logon_failure_burst", 5, DirectObservation,
             "Compare session setup replies with Windows logon events; check for stale credentials or scheduled jobs.",
         ),
     ]

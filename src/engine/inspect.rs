@@ -139,7 +139,8 @@ impl AnalysisCore {
                     "{} {observation} for client {} and service {}:{}",
                     alert.attempts, alert.src_ip, alert.dst_ip, alert.port
                 ),
-                format!("{scope:?}:{}>{}:{}", alert.src_ip, alert.dst_ip, alert.port),
+                // The detector emits once per burst; a rearmed burst needs a fresh review.
+                format!("{scope:?}:{}>{}:{}:burst:{}", alert.src_ip, alert.dst_ip, alert.port, pkt.no),
             );
         }
         for weakness in &findings.tls {
