@@ -68,12 +68,19 @@ struct FlowKey {
 #[derive(Default, Serialize)]
 struct FlowCounts {
     evidence_frames: usize,
+    frames: Vec<FlowFrameRef>,
     contains_trigger_frame: bool,
     initial_syn_frames: usize,
     syn_ack_frames: usize,
     reset_frames: usize,
     first_seen: Option<f64>,
     last_seen: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct FlowFrameRef {
+    frame_number: u64,
+    status: FrameStatus,
 }
 
 #[derive(Serialize)]
@@ -108,6 +115,7 @@ pub struct AlertFlowSummary {
     max_vlan_tags: usize,
     trigger_frame: Option<TriggerFrame>,
     directional_flows: Vec<DirectionalFlow>,
+    unassigned_frames: Vec<FlowFrameRef>,
     limitation: &'static str,
 }
 
@@ -157,6 +165,7 @@ pub fn alert_flow_summary(
         max_vlan_tags: MAX_EVIDENCE_VLAN_TAGS,
         trigger_frame: None,
         directional_flows: Vec::new(),
+        unassigned_frames: Vec::new(),
         limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
@@ -176,10 +185,19 @@ pub fn alert_flow_summary(
             FrameStatus::LengthUnknown => result.length_unknown_frames += 1,
             FrameStatus::Complete => {}
         }
-        let Some(packet) = frame.packet else { continue };
-        let Some(flow) = packet.flow else { result.retained_frames_without_flow += 1; continue };
+        let reference = FlowFrameRef { frame_number: frame.frame_number, status: frame.status };
+        let Some(packet) = frame.packet else {
+            result.unassigned_frames.push(reference);
+            continue;
+        };
+        let Some(flow) = packet.flow else {
+            result.retained_frames_without_flow += 1;
+            result.unassigned_frames.push(reference);
+            continue;
+        };
         let counts = flows.entry(flow).or_default();
-        counts.evidence_frames += 1;
+        counts.frames.push(reference);
+        counts.evidence_frames = counts.frames.len();
         counts.contains_trigger_frame |= is_trigger;
         if let Some(flags) = packet.transport.and_then(|header| header.tcp_flags) {
             counts.initial_syn_frames += usize::from(flags & 0x17 == 0x02);

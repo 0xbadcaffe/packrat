@@ -150,6 +150,11 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
     assert_eq!(report["truncated_frames"], 1);
     assert_eq!(report["unreadable_frames"], 1);
     assert_eq!(report["retained_frames_without_flow"], 1);
+    assert_eq!(report["unassigned_frames"], json!([
+        {"frame_number":5,"status":"missing"},
+        {"frame_number":6,"status":"truncated"},
+        {"frame_number":7,"status":"unreadable"}
+    ]));
     let flows = report["directional_flows"].as_array().unwrap();
     assert_eq!(flows.len(), 4);
     for flow in flows {
@@ -161,13 +166,17 @@ fn alert_flow_summary_counts_only_cited_headers_in_each_vlan_and_interface() {
             assert_eq!(flow["reverse_evidence_frames"], 1);
             if flow["source"] == "10.0.0.1:40000" {
                 assert_eq!(flow["initial_syn_frames"], 1);
+                assert_eq!(flow["frames"], json!([{"frame_number":1,"status":"complete"}]));
             } else {
                 assert_eq!(flow["source"], "10.0.0.2:80");
                 assert_eq!(flow["syn_ack_frames"], 1);
+                assert_eq!(flow["frames"], json!([{"frame_number":2,"status":"complete"}]));
             }
         } else {
             assert_eq!(flow["reverse_evidence_frames"], 0);
             assert_eq!(flow["reset_frames"], 1);
+            let number = if flow["vlan_id"] == 20 { 3 } else { 4 };
+            assert_eq!(flow["frames"], json!([{"frame_number":number,"status":"complete"}]));
         }
     }
     for (id, expected) in [
@@ -229,6 +238,7 @@ fn alert_flow_summary_distinguishes_full_vlan_stacks_and_bounds_depth() {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["max_vlan_tags"], 16);
     assert_eq!(report["retained_frames_without_flow"], 1);
+    assert_eq!(report["unassigned_frames"], json!([{"frame_number":5,"status":"complete"}]));
     let flows = report["directional_flows"].as_array().unwrap();
     assert_eq!(flows.len(), 4);
     let matching_stack = json!([{"tpid":0x88a8,"vid":10},{"tpid":0x8100,"vid":20},{"tpid":0x8100,"vid":30}]);
