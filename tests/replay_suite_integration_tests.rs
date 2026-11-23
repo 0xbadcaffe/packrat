@@ -182,7 +182,6 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         "missed_opening_frames": 0,
         "unexpected_openings": 0, "count_deficit": 0, "count_surplus": 0
     }));
-
     for (capture, rule, severity, confidence) in [
         ("answer.pcapng", "dns.changed_answers", "MEDIUM", "correlated"),
         ("wire.pcapng", "dns.changed_wire_reply", "LOW", "heuristic"),
@@ -196,6 +195,7 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         assert_eq!(alerts.len(), 1);
         let alert = &alerts[0]["alert"];
         assert_eq!(alert["provenance"]["rule_id"], rule);
+        assert_eq!(alert["provenance"]["revision"], 10);
         assert_eq!(alert["provenance"]["confidence"], confidence);
         assert_eq!(alert["severity"], severity);
         assert_eq!(alert["packet_refs"], json!([1, 2, 4]));
