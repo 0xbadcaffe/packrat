@@ -2,6 +2,8 @@
 
 evidence_max_mib=64
 evidence_max_frames=8192
+retain_rule=${PACKRAT_ROLLOUT_ADD_EVIDENCE_RULE:-}
+remove_rule=${PACKRAT_ROLLOUT_REMOVE_EVIDENCE_RULE:-}
 
 read_launch_profile() {
     local flag value path='' mode=--archive max_mib='' max_frames=''
@@ -59,12 +61,34 @@ archive_rule_enabled() {
     return 1
 }
 
+archive_policy_changes() {
+    "$enable_alert_evidence" ||
+        { [[ -n $retain_rule ]] && ! archive_rule_enabled "$retain_rule"; } ||
+        { [[ -n $remove_rule ]] && archive_rule_enabled "$remove_rule"; }
+}
+
 apply_requested_profile() {
-    if [[ -n $retain_rule ]]; then
+    local requested=${retain_rule:-$remove_rule}
+    if [[ -n $requested ]]; then
+        if [[ -n $retain_rule && -n $remove_rule ]]; then
+            error "Add and remove evidence rule requests are mutually exclusive"
+            return 1
+        fi
         if "$enable_alert_evidence" || [[ -z $archive_path || $archive_flag != --archive-alert-evidence ||
-                                          ! $retain_rule =~ ^[a-z0-9][a-z0-9_.-]{0,127}$ ]]; then
+                                          ! $requested =~ ^[a-z0-9][a-z0-9_.-]{0,127}$ ]]; then
             error "The requested rule requires an existing selective archive and a valid rule ID"
             return 1
+        fi
+        if [[ -n $remove_rule ]]; then
+            local i
+            local -a remaining=()
+            for ((i=1; i<${#archive_rule_args[@]}; i+=2)); do
+                if [[ ${archive_rule_args[i]} != "$remove_rule" ]]; then
+                    remaining+=("${archive_rule_args[i-1]}" "${archive_rule_args[i]}")
+                fi
+            done
+            archive_rule_args=("${remaining[@]}")
+            return 0
         fi
         if archive_rule_enabled "$retain_rule"; then return 0; fi
         if (( ${#archive_rule_args[@]} >= 32 )); then

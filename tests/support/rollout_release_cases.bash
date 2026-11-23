@@ -7,18 +7,31 @@ run_scenario analyzer_watcher_fail 1 backup start:packrat-stage:/candidate stop:
     install:/candidate start:packrat:/usr/local/bin/packrat stop:packrat:/usr/local/bin/packrat \
     install:/backup/packrat start:packrat:/usr/local/bin/packrat allow-existing-drops retire-stage
 prepare_retention_case() {
-    archive_path=/existing archive_flag=--archive-alert-evidence retain_rule=ipv6.ra_router_link_change
-    archive_rule_args=(--archive-evidence-rule tcp.payload_after_observed_reset)
+    archive_path=/existing archive_flag=--archive-alert-evidence
+    if [[ $scenario == retain_rule_health_fail ]]; then
+        retain_rule=ipv6.ra_router_link_change
+        archive_rule_args=(--archive-evidence-rule tcp.payload_after_observed_reset)
+    else
+        remove_rule=ipv6.ra_router_link_change
+        archive_rule_args=(--archive-evidence-rule "$remove_rule")
+    fi
 }
 retention_trace() {
-    local expected='--archive-evidence-rule tcp.payload_after_observed_reset'
-    if [[ $1 != false ]]; then expected+=' --archive-evidence-rule ipv6.ra_router_link_change'; fi
+    local expected=''
+    if [[ $scenario == retain_rule_health_fail ]]; then
+        expected='--archive-evidence-rule tcp.payload_after_observed_reset'
+        if [[ $1 != false ]]; then expected+=' --archive-evidence-rule ipv6.ra_router_link_change'; fi
+    elif [[ $1 == false ]]; then
+        expected='--archive-evidence-rule ipv6.ra_router_link_change'
+    fi
     [[ ${archive_rule_args[*]} == "$expected" ]] || return 2
     trace+=("retention:$1")
 }
-run_scenario retain_health_fail 1 backup start:packrat-stage:/candidate retention:true stop:packrat:/usr/local/bin/packrat \
-    install:/candidate start:packrat:/usr/local/bin/packrat retention:true stop:packrat:/usr/local/bin/packrat \
-    install:/backup/packrat start:packrat:/usr/local/bin/packrat allow-existing-drops retention:false retire-stage
+for operation in retain remove; do
+    run_scenario "${operation}_rule_health_fail" 1 backup start:packrat-stage:/candidate retention:true stop:packrat:/usr/local/bin/packrat \
+        install:/candidate start:packrat:/usr/local/bin/packrat retention:true stop:packrat:/usr/local/bin/packrat \
+        install:/backup/packrat start:packrat:/usr/local/bin/packrat allow-existing-drops retention:false retire-stage
+done
 
 (
     retain_rule=ipv6.ra_router_link_change enable_alert_evidence=false archive_path=/existing archive_flag=--archive-alert-evidence
@@ -34,4 +47,17 @@ run_scenario retain_health_fail 1 backup start:packrat-stage:/candidate retentio
     if archive_flag=--archive apply_requested_profile 2>/dev/null; then exit 1; fi
     if retain_rule='bad choice' apply_requested_profile 2>/dev/null; then exit 1; fi
     if enable_alert_evidence=true apply_requested_profile 2>/dev/null; then exit 1; fi
+
+    remove_rule=$retain_rule other=tcp.payload_after_observed_reset
+    if apply_requested_profile 2>/dev/null; then exit 1; fi
+    retain_rule=''
+    archive_policy_changes
+    apply_requested_profile
+    if archive_policy_changes; then exit 1; fi
+    apply_requested_profile
+    [[ ${archive_rule_args[*]} == "--archive-evidence-rule $other" ]]
+    remove_rule=$other
+    apply_requested_profile
+    [[ ${#archive_rule_args[@]} == 0 && $archive_path == /existing && $archive_flag == --archive-alert-evidence &&
+        ${archive_limits[*]} == '--archive-max-mib 64 --archive-max-frames 8192' ]]
 )

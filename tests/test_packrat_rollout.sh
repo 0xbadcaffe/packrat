@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=scripts/packrat-rollout.sh
 source "$root/scripts/packrat-rollout.sh"
@@ -29,7 +28,6 @@ source "$root/scripts/packrat-rollout.sh"
     mock_fd="$stage_log (deleted)"
     if capture_file_open 42 "$stage_log"; then exit 1; fi
 )
-
 (
     backup_dir=/backup
     archive='/root/private packet archive'
@@ -123,6 +121,11 @@ source "$root/scripts/packrat-rollout.sh"
     sample=$(jq -c --arg rule "$rule" '.archive_alert_evidence_only = true | .archive_evidence_rules = [$rule]' <<< "$good")
     [[ $(capture_health_sample) == legacy ]]
     if sample=$(jq -c 'del(.archive_evidence_rules)' <<< "$sample") capture_health_sample; then exit 1; fi
+    remove_rule=$rule apply_requested_profile
+    if capture_health_sample; then exit 1; fi
+    if sample=$(jq -c 'del(.archive_evidence_rules)' <<< "$sample") capture_health_sample; then exit 1; fi
+    sample=$(jq -c '.archive_evidence_rules = []' <<< "$sample")
+    [[ $(capture_health_sample) == legacy ]]
     if read_launch_profile "${profile[@]}" --single-tag-interface --archive; then exit 1; fi
     read_launch_profile "${profile[@]}" --single-tag-interface 'Access Link' --archive "$archive"
     [[ $(launch_capture "$main_session" /candidate) == *$'<--single-tag-interface>\n<Access Link>\n<--archive>'* ]]
@@ -329,19 +332,16 @@ test_backup_copies() {
     cmp -s "$installed" "$backup_dir/packrat"
     cmp -s "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl"
 }
-
 prepare_backup_and_stage() {
     trace+=("backup")
     backup_dir=/backup
     stage_binary=/candidate
     [[ $scenario != backup_fail ]]
 }
-
 primary_capture_stamp() {
     [[ $primary_stamp != unavailable ]] || return 1
     printf '{"pid":"42","capture_id":"%s"}\n' "$primary_stamp"
 }
-
 start_capture() {
     local session=$1 binary=$2 require_zero=${3:-true}
     trace+=("start:$session:$binary")
@@ -355,7 +355,7 @@ start_capture() {
         fi
     fi
     if [[ $require_zero == false ]]; then trace+=("allow-existing-drops"); fi
-    if [[ $scenario == retain_health_fail ]] && ! retention_trace "$require_zero"; then return 2; fi
+    if [[ $scenario == *_rule_health_fail ]] && ! retention_trace "$require_zero"; then return 2; fi
     if [[ $session == "$bridge_session" ]]; then
         case $scenario in
             new_alert) printf '%s\n' 'new finding in primary' >>"$data_dir/alerts.jsonl" ;;
@@ -368,10 +368,9 @@ start_capture() {
     else
         main_starts=$((main_starts + 1))
         if [[ $scenario == rollback_fail ]]; then return 1; fi
-        [[ ( $scenario != health_fail && $scenario != evidence_health_fail && $scenario != retain_health_fail ) || $main_starts == 2 ]]
+        [[ $scenario != *health_fail || $main_starts == 2 ]]
     fi
 }
-
 stop_capture() {
     trace+=("stop:$1:$2")
     if [[ $primary_cutover == true && $1 == "$main_session" ]]; then
@@ -410,9 +409,9 @@ run_scenario() {
     local main_starts=0
     local primary_cutover=true
     local primary_stamp=original
-    local archive_path='' archive_flag=--archive enable_alert_evidence=false analyzer_candidate='' retain_rule=''
+    local archive_path='' archive_flag=--archive enable_alert_evidence=false analyzer_candidate='' retain_rule='' remove_rule=''
     local -a archive_limits=() archive_rule_args=()
-    if [[ $scenario == retain_health_fail ]]; then prepare_retention_case; fi
+    if [[ $scenario == *_rule_health_fail ]]; then prepare_retention_case; fi
     if [[ $scenario == evidence_* ]]; then enable_alert_evidence=true; fi
     if [[ $scenario == primary_missing ]]; then primary_stamp=unavailable; elif [[ $scenario == analyzer_* ]]; then analyzer_candidate=/candidate-analyzer; fi
     rollout >"$scratch/rollout-output" 2>&1 || actual=$?
@@ -469,6 +468,7 @@ run_scenario receipt_fail 1 backup start:packrat-stage:/candidate stop:packrat:/
     done
     main --deploy "$installed" wlan1 --companions-only
     [[ -f $HOME/companions-updated ]]
+    if remove_rule=example.rule main --check "$installed" wlan1 --companions-only 2>/dev/null; then exit 1; fi
 )
 run_scenario watcher_lost_after_cutover 1 backup start:packrat-stage:/candidate \
     stop:packrat:/usr/local/bin/packrat install:/candidate start:packrat:/usr/local/bin/packrat

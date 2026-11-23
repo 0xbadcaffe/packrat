@@ -25,7 +25,7 @@ stage_binary=
 archive_path=
 archive_flag=--archive
 archive_limits=() archive_rule_args=() vlan_policy_args=()
-enable_alert_evidence=false retain_rule=${PACKRAT_ROLLOUT_ADD_EVIDENCE_RULE:-}
+enable_alert_evidence=false
 
 error() { printf '%s\n' "$*" >&2; }
 
@@ -84,7 +84,7 @@ capture_health_sample() {
                  else .capture_interface == null or .capture_interface == $interface end)
             and ($archive == "" or (.archive_enabled == true and .archive_paused == false
                 and (if $evidence_only then .archive_alert_evidence_only == true and
-                    ($rules == "" or (.archive_evidence_rules | arrays | sort) == ($rules | split(" ") | map(select(. != "--archive-evidence-rule")) | sort))
+                    ((.archive_evidence_rules | arrays | sort) == ($rules | split(" ") | map(select(. != "--archive-evidence-rule")) | sort))
                      else .archive_alert_evidence_only != true end))))
             | if has("packets_total") then
                 select(scoped and (.packets_total | type == "number" and . >= 0
@@ -452,7 +452,7 @@ main() {
         error 'The opt-in enables a new private archive for HIGH/CRITICAL evidence only (64 MiB packet bytes, 8192 frames).'
         error 'Set PACKRAT_ROLLOUT_HEALTH_STATE to override the watcher snapshot path.'
         error 'Set PACKRAT_ROLLOUT_ANALYZER to stage and promote a matching packrat-analyze binary.'
-        error 'Set PACKRAT_ROLLOUT_ARCHIVE to update packrat-archive, or PACKRAT_ROLLOUT_ADD_EVIDENCE_RULE to add one rule to an existing selective archive.'
+        error 'Set PACKRAT_ROLLOUT_ARCHIVE for packrat-archive, or PACKRAT_ROLLOUT_ADD_EVIDENCE_RULE / PACKRAT_ROLLOUT_REMOVE_EVIDENCE_RULE to change one selective archive rule.'
         error 'Set PACKRAT_ROLLOUT_TRIAGE_STATE to require fresh triage for the same capture.'
         error 'PACKRAT_ROLLOUT_TRIAGE_CHECK overrides the triage watcher executable.'
         error 'PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL=1 requires healthy journal writes and no backlog.'
@@ -484,12 +484,12 @@ main() {
         error "Insufficient or unverified free space for the alert log and rollback backup; current capture not stopped"
         return 1
     fi
-    if [[ ${4-} == --companions-only ]] && { [[ -n $retain_rule ]] || ! cmp -s -- "$candidate" "$installed"; }; then
-        error "Companion-only rollout requires the installed capture binary; capture unchanged"; return 1
+    if [[ ${4-} == --companions-only ]] && { [[ -n $retain_rule || -n $remove_rule ]] || ! cmp -s -- "$candidate" "$installed"; }; then
+        error "Companion-only rollout requires the installed capture binary and no rule changes; capture unchanged"; return 1
     fi
     if [[ $mode == --check ]]; then
         printf 'Preflight passed for %s; no changes made\n' "$interface"
-    elif [[ ${4-} == --companions-only ]] || { ! "$enable_alert_evidence" && { [[ -z $retain_rule ]] || archive_rule_enabled "$retain_rule"; } && cmp -s "$candidate" "$installed"; }; then
+    elif [[ ${4-} == --companions-only ]] || { ! archive_policy_changes && cmp -s "$candidate" "$installed"; }; then
         update_companions_only
     else
         rollout
