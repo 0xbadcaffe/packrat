@@ -152,6 +152,23 @@ fn tcp_dns_exchange_requires_one_complete_message_and_matches_the_resolver() {
     );
 }
 
+#[test]
+fn tcp_dns_fallback_does_not_treat_a_truncated_segment_as_exactly_one_message() {
+    let reply = tcp_dns(1, true, 53, "sample.test");
+    let actual = reply.bytes.len() as u32;
+    let mut partial = reply.clone();
+    let declared = u16::from_be_bytes(partial.bytes[16..18].try_into().unwrap()) + 8;
+    partial.bytes[16..18].copy_from_slice(&declared.to_be_bytes());
+    assert!(DnsTransactionTracker::default().observe(&partial).is_empty());
+    partial.capture = Some(CaptureMetadata {
+        timestamp: None, captured_length: actual, wire_length: actual + 8, link_type: 1,
+        section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+    });
+    assert!(DnsTransactionTracker::default().observe(&partial).is_empty());
+    assert_eq!(DnsTransactionTracker::default().observe(&reply)[0].kind,
+        DnsFindingKind::ReplyWithoutObservedQuery);
+}
+
 fn tcp_dns_slice(template: &Packet, no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
     let mut wire = template.bytes[..54].to_vec();
     wire[16..18].copy_from_slice(&((40 + payload.len()) as u16).to_be_bytes());

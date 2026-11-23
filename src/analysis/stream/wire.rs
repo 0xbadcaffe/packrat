@@ -17,6 +17,14 @@ pub(crate) fn tcp_segment_payload(packet: &Packet) -> Option<(u32, &[u8])> {
     segment_payload(packet, tcp_view(packet)?)
 }
 
+pub(crate) fn tcp_complete_segment_payload(packet: &Packet) -> Option<(u32, &[u8])> {
+    let view = tcp_view(packet)?;
+    if view.truncated {
+        return None;
+    }
+    segment_payload(packet, view)
+}
+
 pub(crate) fn tcp_payload_with_ack(packet: &Packet, ports: (u16, u16)) -> Option<(u32, &[u8])> {
     const ACK: u8 = 0x10;
     const SYN_OR_RST: u8 = 0x06;
@@ -53,14 +61,14 @@ fn ports_for_view(packet: &Packet, view: TcpView) -> Option<(u16, u16)> {
 }
 
 pub(super) fn tcp_view(packet: &Packet) -> Option<TcpView> {
-    if packet
-        .capture
-        .as_ref()
-        .is_some_and(|capture| capture.link_type != 1)
-    {
-        return None;
-    }
     let raw = &packet.bytes;
+    let wire_end = match packet.capture.as_ref() {
+        Some(capture) if capture.link_type == 1
+            && capture.captured_length as usize == raw.len()
+            && capture.wire_length >= capture.captured_length => Some(capture.wire_length as usize),
+        Some(_) => return None,
+        None => None,
+    };
     let (ip, ether_type) = ethernet_network_header(raw)?;
     let (header, declared_end) = match ether_type {
         0x0800 => {
@@ -91,6 +99,9 @@ pub(super) fn tcp_view(packet: &Packet) -> Option<TcpView> {
         }
         _ => return None,
     };
+    if wire_end.is_some_and(|length| declared_end > length) {
+        return None;
+    }
     let end = declared_end.min(raw.len());
     let length = usize::from(*raw.get(header + 12)? >> 4) * 4;
     let payload = header.checked_add(length)?;

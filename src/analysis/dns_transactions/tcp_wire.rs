@@ -1,4 +1,4 @@
-use crate::analysis::stream::{tcp_port_pair, tcp_segment_payload};
+use crate::analysis::stream::{tcp_complete_segment_payload, tcp_port_pair};
 use crate::net::packet::Packet;
 
 pub(super) fn dns_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
@@ -9,7 +9,7 @@ pub(super) fn dns_payload(packet: &Packet) -> Option<(u16, u16, &[u8])> {
     if source != 53 && destination != 53 {
         return None;
     }
-    let (_, payload) = tcp_segment_payload(packet)?;
+    let (_, payload) = tcp_complete_segment_payload(packet)?;
     let length = usize::from(u16::from_be_bytes(*payload.first_chunk::<2>()?));
     // A single packet observation needs an unambiguous message boundary.
     (length >= 12 && length + 2 == payload.len()).then(|| (source, destination, &payload[2..]))

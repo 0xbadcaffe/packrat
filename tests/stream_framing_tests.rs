@@ -48,6 +48,27 @@ fn truncated_capture_is_explicit_and_every_prefix_is_safe() {
         .unwrap();
     assert!(stream.truncated);
     assert_eq!(stream.client_data, b"hello");
+
+    let captured_length = packet.bytes.len() as u32;
+    packet.capture = Some(CaptureMetadata {
+        timestamp: None, captured_length, wire_length: captured_length + 6, link_type: 1,
+        section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+    });
+    let mut assembler = StreamAssembler::default();
+    assembler.ingest(&packet);
+    let stream = assembler.get(&StreamKey::from_packet(&packet).unwrap().id()).unwrap();
+    assert!(stream.truncated);
+    assert_eq!(stream.client_data, b"hello");
+    packet.capture.as_mut().unwrap().wire_length -= 1;
+    let mut impossible = StreamAssembler::default();
+    impossible.ingest(&packet);
+    assert!(impossible.is_empty());
+    let capture = packet.capture.as_mut().unwrap();
+    capture.wire_length += 1;
+    capture.captured_length -= 1;
+    let mut inconsistent = StreamAssembler::default();
+    inconsistent.ingest(&packet);
+    assert!(inconsistent.is_empty());
 }
 
 #[test]
