@@ -47,6 +47,7 @@ jobs:
           shellcheck scripts/packrat-watch-coverage.sh tests/test_packrat_watch_coverage.sh
           shellcheck scripts/packrat-watch-baseline.sh tests/test_packrat_watch_baseline.sh
           shellcheck scripts/packrat-review-backlog.sh tests/test_packrat_review_backlog.sh
+          shellcheck scripts/packrat-review-alert-gaps.sh tests/test_packrat_review_alert_gaps.sh
           shellcheck scripts/packrat-replay-suite.sh tests/test_packrat_replay_suite.sh
           bash tests/test_watch_packrat_health.sh
           bash tests/test_watch_packrat_alerts.sh
@@ -56,6 +57,7 @@ jobs:
           bash tests/test_packrat_watch_coverage.sh
           bash tests/test_packrat_watch_baseline.sh
           bash tests/test_packrat_review_backlog.sh
+          bash tests/test_packrat_review_alert_gaps.sh
           bash tests/test_packrat_replay_suite.sh
 
       - name: Test supervised capture rollout
