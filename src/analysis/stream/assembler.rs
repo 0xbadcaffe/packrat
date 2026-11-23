@@ -162,7 +162,7 @@ impl StreamAssembler {
         let direction = usize::from(from_client);
         let checked = &mut stream.tls_prefix_checked[direction];
         let track_tls_prefix = observe_tls && !*checked && data.first().is_none_or(|&kind| kind == 0x16);
-        let track_dns = observe_tls && stream.dns_offsets[direction].is_some()
+        let track_dns = stream.dns_offsets[direction].is_some()
             && (sport == 53 || pkt.dst_port == Some(53));
         // An uppercase prefix can be cleartext HTTP; avoid scanning encrypted HTTPS overlaps.
         let track_http = !stream.http_overlap_conflict

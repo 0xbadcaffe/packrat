@@ -349,3 +349,46 @@ fn coalesced_dns_evidence_keeps_the_keyboard_selected_transaction() {
     assert_eq!(app.worklist.active_packet_no(), Some(4));
     assert_eq!(selected(&app), 42);
 }
+
+#[test]
+fn offline_case_does_not_reconstruct_dns_from_conflicting_tcp_overlaps() {
+    use crate::model::project::{ProjectSaveMode, ProjectState, SavedInvestigationItem};
+
+    let query = two_dns_messages(false);
+    let reply = tcp_frame(6, 201, 0x18, true, &two_dns_messages(true));
+    let scope = "saved-capture";
+    for conflicting in [false, true] {
+        let mut overlap = query[4..8].to_vec();
+        if conflicting {
+            overlap[0] ^= 1;
+        }
+        let mut state = ProjectState::new("Saved DNS case", ProjectSaveMode::Lightweight);
+        state.pinned_packets = vec![
+            tcp_frame(1, 100, 0x02, false, &[]),
+            tcp_frame(2, 200, 0x12, true, &[]),
+            tcp_frame(3, 101, 0x18, false, &query[..8]),
+            tcp_frame(4, 105, 0x18, false, &overlap),
+            tcp_frame(5, 109, 0x18, false, &query[8..]),
+            reply.clone(),
+        ];
+        state.pinned_packet_scopes = (1..=6).map(|frame| (frame, scope.into())).collect();
+        state.investigation_items = (1..=6).map(SavedInvestigationItem::Packet).collect();
+        let mut alerts = crate::analysis::alert_center::AlertCenter::default();
+        alerts.capture_id = Some(scope.into());
+        alerts.record(6, "IDS", "HIGH", "Saved finding", "fixture");
+        state.alert_items = alerts.items;
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let mut app = App::new_with_mode(tx, StartupMode::OfflineReview);
+        app.apply_project_state(state).unwrap();
+        app.query_core(|core| {
+            let exchanges = app.dns_exchanges(core, &reply);
+            assert_eq!(exchanges.len(), if conflicting { 0 } else { 2 });
+            if !conflicting {
+                assert!(exchanges.iter().any(|exchange| exchange.query_frames == [3, 5]));
+                assert!(exchanges.iter().all(|exchange| !exchange.query_frames.contains(&4)));
+            }
+            assert_eq!(core.alert_center.items.len(), 1);
+            assert!(core.security.ids_alerts.is_empty());
+        }).unwrap();
+    }
+}
