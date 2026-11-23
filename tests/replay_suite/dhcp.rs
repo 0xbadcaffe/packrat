@@ -55,3 +55,31 @@ fn dhcp_replay_keeps_the_latest_server_evidence_for_tied_capture_times() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn dhcp_replay_does_not_compare_different_relay_networks() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let mut writer = PcapNgWriter::create(&root.join("relayed-dhcp.pcapng")).unwrap();
+    for (frame, server, relay) in [(1, 1, None), (2, 2, Some(1)), (3, 3, Some(2)), (4, 4, Some(1))] {
+        let reply = fixture::dhcp_packet(frame, 2, [2, 0, 0, 0, 0, server], [2; 6], Some([10, 0, 0, server]));
+        let packet = if let Some(relay) = relay {
+            fixture::relayed_packet(reply, [192, 0, 2, relay])
+        } else {
+            reply
+        };
+        writer.write_packet(&packet).unwrap();
+    }
+    writer.flush().unwrap();
+    let rule = "dhcp.new_server_identifier";
+    let manifest = root.join("dhcp-relay.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":[{
+        "name":"different relay paths and a server change on one path","capture":"relayed-dhcp.pcapng",
+        "expect_snapshots":1,"expect_counts":{(rule):1},"opening_frames":{(rule):[4]},
+        "opening_evidence":[{"rule_id":rule,"opening_frame":4,"frames":[2,4],
+            "classification":{"severity":"MEDIUM","confidence":"correlated","revision":5}}]
+    }]}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+}

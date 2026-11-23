@@ -191,7 +191,7 @@ pub struct SecurityEngine {
     admin_fanout: admin_fanout::AdminFanout,
     ftp_control: ftp_control::FtpControl,
     ntlm_fanout: HashMap<(String, ServiceScope), NtlmFanoutState>,
-    dhcp_scopes: HashMap<ServiceScope, DhcpScopeState>,
+    dhcp_scopes: HashMap<(ServiceScope, Option<Ipv4Addr>), DhcpScopeState>,
     ipv6_fragments: Ipv6FragmentReassembler,
     pub ipv6_reassembled: u64,
     http_headers: HashMap<(TcpFlowKey, bool), HttpHeaderState>,

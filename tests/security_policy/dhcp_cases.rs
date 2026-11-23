@@ -60,6 +60,26 @@ fn dhcp_server_comparison_prefers_the_latest_frame_at_the_same_timestamp() {
     assert!(finding.alert.detail.contains("previously observed 10.0.0.1"));
 }
 
+#[test]
+fn dhcp_relay_replies_compare_servers_only_within_the_advertised_relay_context() {
+    let a = [192, 0, 2, 1];
+    let b = [192, 0, 2, 2];
+    let mut engine = SecurityEngine::default();
+    engine.update(&server_reply(1, 2, 1, Some(1), 1.0));
+    engine.update(&dhcp_fixture::relayed_packet(server_reply(2, 2, 2, Some(2), 2.0), a));
+    engine.update(&dhcp_fixture::relayed_packet(server_reply(3, 2, 3, Some(3), 3.0), b));
+    let mut inconsistent = dhcp_fixture::relayed_packet(server_reply(4, 5, 4, Some(4), 4.0), a);
+    inconsistent.bytes[30..34].copy_from_slice(&b);
+    engine.update(&inconsistent);
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != SERVER_CHANGE));
+
+    let result = engine.inspect(&dhcp_fixture::relayed_packet(server_reply(5, 5, 4, Some(4), 5.0), a));
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == SERVER_CHANGE).unwrap();
+    assert_eq!(finding.related_packets, [2]);
+    assert!(finding.alert.detail.contains("advertised relay address 192.0.2.1"));
+    assert!(finding.alert.detail.contains("previously observed 10.0.0.2"));
+}
+
 fn discovery(frame: u64, identity: u8, timestamp: f64) -> Packet {
     let mac = [2, 0, 0, 0, 0, identity];
     let mut packet = dhcp_packet(frame, 1, mac, mac, None);
@@ -140,7 +160,30 @@ fn dhcp_identity_burst_keeps_one_frame_per_identity_and_explains_uncertainty() {
     assert_eq!(alerts[0].packet_refs, std::iter::once(1).chain(81..=143).collect::<Vec<_>>());
     let rule = alerts[0].provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "dhcp.discover_identity_burst");
-    assert_eq!(rule.revision, 3);
+    assert_eq!(rule.revision, 4);
+}
+
+#[test]
+fn relayed_discovery_counts_distinct_clients_without_combining_relay_contexts() {
+    let a = [192, 0, 2, 1];
+    let b = [192, 0, 2, 2];
+    let mut engine = SecurityEngine::default();
+    for identity in 0..64_u8 {
+        let relay = if identity < 32 { a } else { b };
+        engine.update(&dhcp_fixture::relayed_packet(
+            discovery(u64::from(identity) + 1, identity, 1.0), relay,
+        ));
+    }
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != BURST));
+    for identity in 64..95_u8 {
+        engine.update(&dhcp_fixture::relayed_packet(
+            discovery(u64::from(identity) + 1, identity, 2.0), a,
+        ));
+    }
+    let result = engine.inspect(&dhcp_fixture::relayed_packet(discovery(96, 95, 2.0), a));
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == BURST).unwrap();
+    assert_eq!(finding.related_packets, (1..=32).chain(65..=96).collect::<Vec<_>>());
+    assert!(finding.alert.detail.contains("advertised relay address 192.0.2.1"));
 }
 
 #[rstest]

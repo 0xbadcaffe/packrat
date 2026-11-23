@@ -19,7 +19,7 @@ impl SecurityEngine {
         if !matches!(message.message_type, 1 | 2 | 5) {
             return;
         }
-        let scope = service_scope(pkt);
+        let scope = (service_scope(pkt), message.relay_address);
         if self.dhcp_scopes.len() >= MAX_DHCP_SCOPES
             && !self.dhcp_scopes.contains_key(&scope)
             && let Some(oldest) = self.dhcp_scopes.iter()
@@ -35,7 +35,7 @@ impl SecurityEngine {
                 && let Some((previous, frame)) = observe_dhcp_server(state, server, pkt)
             {
                 let kind = if message.message_type == 2 { "OFFER" } else { "ACK" };
-                let scope_name = network_scope_name(scope);
+                let scope_name = dhcp_scope_name(scope);
                 self.push_ids_finding(IdsFinding {
                     alert: IdsAlert {
                         pkt_no: pkt.no,
@@ -52,7 +52,7 @@ impl SecurityEngine {
         } else if !message.client_identity.is_empty()
             && let Some((count, related_packets)) = dhcp_client_burst(state, message.client_identity, pkt)
         {
-            let scope_name = network_scope_name(scope);
+            let scope_name = dhcp_scope_name(scope);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
@@ -315,6 +315,14 @@ fn network_scope_name(scope: ServiceScope) -> String {
         (_, Some(vlan)) | (Some(vlan), _) => format!("{interface}, VLAN {vlan}"),
         _ => format!("{interface}, untagged"),
     }
+}
+
+fn dhcp_scope_name((path, relay): (ServiceScope, Option<Ipv4Addr>)) -> String {
+    let mut name = network_scope_name(path);
+    if let Some(relay) = relay {
+        name.push_str(&format!(", advertised relay address {relay}"));
+    }
+    name
 }
 
 fn observe_dhcp_server(

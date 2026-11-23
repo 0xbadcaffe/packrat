@@ -270,6 +270,7 @@ pub(super) struct DhcpScopeState {
 }
 
 pub(super) struct DhcpMessage {
+    pub relay_address: Option<std::net::Ipv4Addr>,
     pub(super) message_type: u8,
     pub(super) client_identity: Vec<u8>,
     pub(super) server_identifier: Option<std::net::Ipv4Addr>,

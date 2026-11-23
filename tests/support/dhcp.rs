@@ -46,3 +46,15 @@ pub fn dhcp_packet(
     bytes.extend_from_slice(&bootp);
     parse_ethernet(&bytes, no, no as f64 / 100.0)
 }
+
+pub fn relayed_packet(mut packet: Packet, relay: [u8; 4]) -> Packet {
+    packet.bytes[34..38].copy_from_slice(&[0, 67, 0, 67]);
+    packet.bytes[66..70].copy_from_slice(&relay);
+    if packet.bytes[42] == 2 {
+        packet.bytes[30..34].copy_from_slice(&relay);
+    } else {
+        packet.bytes[26..30].copy_from_slice(&relay);
+        packet.bytes[30..34].copy_from_slice(&[10, 0, 0, 1]);
+    }
+    parse_ethernet(&packet.bytes, packet.no, packet.timestamp)
+}

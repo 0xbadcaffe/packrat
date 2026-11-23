@@ -130,17 +130,24 @@ pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
     }
     let ip = raw.get(ip_offset..ip_offset.checked_add(total_len)?)?;
     let udp = ip.get(ip_header_len..)?;
-    let direction = match (u16_be_at(udp, 0), u16_be_at(udp, 2)) {
-        (68, 67) => 1, // BOOTREQUEST
-        (67, 68) => 2, // BOOTREPLY
-        _ => return None,
-    };
     let udp_len = usize::from(u16_be_at(udp, 4));
     let payload = udp.get(8..udp_len)?;
     let options = payload.get(240..)?;
-    if payload[0] != direction || payload[236..240] != [99, 130, 83, 99] {
+    if payload[236..240] != [99, 130, 83, 99] {
         return None;
     }
+    let gateway = Ipv4Addr::from(<[u8; 4]>::try_from(&payload[24..28]).ok()?);
+    if gateway.is_broadcast() || gateway.is_multicast() {
+        return None;
+    }
+    let relay_address = (!gateway.is_unspecified()).then_some(gateway);
+    let direction = match (u16_be_at(udp, 0), u16_be_at(udp, 2), payload[0]) {
+        (68, 67, 1) if relay_address.is_none() => 1, // Direct BOOTREQUEST
+        (67, 68, 2) => 2, // BOOTREPLY on the client-facing leg
+        (67, 67, 1) if relay_address.is_some() => 1, // Relayed BOOTREQUEST
+        (67, 67, 2) if relay_address.is_some() && ip[16..20] == gateway.octets() => 2,
+        _ => return None,
+    };
 
     let mut decoded = DhcpOptions::default();
     decoded.read(options, true)?;
@@ -170,6 +177,7 @@ pub(super) fn parse_dhcp_message(raw: &[u8]) -> Option<DhcpMessage> {
         None => None,
     };
     Some(DhcpMessage {
+        relay_address,
         message_type,
         client_identity,
         server_identifier,
