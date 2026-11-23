@@ -55,6 +55,7 @@ fn write_scan_with_replies(path: &Path) {
     write(21, 0x14, 102); // Wrong acknowledgement.
     write(22, 0x02, 0);
     write(22, 0x14, 101);
+    write(21, 0x02, 0); // Identical retry must not replace the matched pair.
     for host in 23..=32 {
         write(host, 0x02, 0);
     }
@@ -107,11 +108,11 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
     .collect();
     let capture = "fan-out-with-replies.pcapng";
     write_scan_with_replies(&root.join(capture));
-    let frames = (1..=15).filter(|&frame| frame != 3).collect::<Vec<_>>();
+    let frames = (1..=16).filter(|frame| !matches!(frame, 3 | 6)).collect::<Vec<_>>();
     cases.push(json!({
         "name":"scoped-reply-evidence", "capture":capture, "expect_snapshots":1,
-        "expect_counts":{(horizontal):1,(vertical):0}, "opening_frames":{(horizontal):[15]},
-        "opening_evidence":[{"rule_id":horizontal,"opening_frame":15,"frames":frames}],
+        "expect_counts":{(horizontal):1,(vertical):0}, "opening_frames":{(horizontal):[16]},
+        "opening_evidence":[{"rule_id":horizontal,"opening_frame":16,"frames":frames}],
     }));
     let manifest = root.join("scan-suite.json");
     std::fs::write(

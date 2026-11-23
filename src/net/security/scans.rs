@@ -322,6 +322,12 @@ impl SourceScanState {
             prior.destination == pkt.dst && prior.port == port
         }) {
             let probe = &mut self.probes[index];
+            // An identical SYN retry is not a new attempt or a new evidence window.
+            if probe.tcp.as_ref().zip(tcp.as_ref()).is_some_and(|(old, new)| {
+                old.source_port == new.source_port && old.sequence == new.sequence
+            }) {
+                return false;
+            }
             if (probe.timestamp, probe.packet_no) < (pkt.timestamp, pkt.no) {
                 probe.timestamp = pkt.timestamp;
                 probe.packet_no = pkt.no;

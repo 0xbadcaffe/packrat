@@ -40,19 +40,44 @@ fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
         (7, 1, 0x12, 0, 40_000, 10), // Retransmitted reply.
         (8, 2, 0x02, 0, 40_000, 10),
         (9, 2, 0x14, 0, 40_000, 10),
+        (10, 1, 0x02, 0, 40_000, 10), // Retry after the matched SYN-ACK.
     ] {
         engine.update(&tcp_frame(no, host, flags, ack, port, vlan));
     }
     for host in 3..=12 {
-        engine.update(&tcp_frame(u64::from(host) + 7, host, 0x02, 0, 40_000, 10));
+        engine.update(&tcp_frame(u64::from(host) + 8, host, 0x02, 0, 40_000, 10));
     }
     let finding = engine.findings.ids.iter().find(|f| f.alert.signature == "Horizontal host scan").unwrap();
-    assert_eq!(finding.alert.pkt_no, 19);
+    assert_eq!(finding.alert.pkt_no, 20);
     assert!(finding.alert.detail.contains("matched replies at alert time: SYN-ACK=1, RST-ACK=1"));
     assert!(finding.alert.detail.contains("handshake completion and intent unverified"));
-    assert_eq!(finding.related_packets, [2, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
-    engine.update(&tcp_frame(20, 12, 0x12, 0, 40_000, 10));
+    assert_eq!(finding.related_packets, [2, 6, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+    engine.update(&tcp_frame(21, 12, 0x12, 0, 40_000, 10));
     assert!(!engine.findings.ids.iter().any(|f| f.alert.signature == "Horizontal host scan"));
+}
+
+#[test]
+fn tcp_scan_retries_do_not_extend_the_evidence_window_but_new_attempts_can() {
+    let mut engine = SecurityEngine::default();
+    let mut packet = parse_ethernet(&[], 1, 1.0);
+    packet.src = "192.0.2.1".into();
+    packet.dst = "198.51.100.1".into();
+    let key = scan_key(&packet, "TCP");
+    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 100)));
+    packet.no = 2;
+    packet.timestamp = 10.0;
+    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 100)));
+    assert_eq!(engine.scan_sources[&key].probes[0].packet_no, 1);
+
+    packet.no = 3;
+    packet.timestamp = 11.0;
+    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 101)));
+    assert_eq!(engine.scan_sources[&key].probes[0].packet_no, 3);
+
+    packet.no = 4;
+    packet.timestamp = 27.0;
+    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 101)));
+    assert_eq!(engine.scan_sources[&key].probes[0].packet_no, 4);
 }
 
 #[test]
