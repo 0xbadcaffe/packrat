@@ -387,6 +387,7 @@ replace_installed() {
 }
 
 retire_bridge() { trace+=("retire-stage"); }
+write_capture_receipt() { [[ $scenario != receipt_fail ]]; }
 capture_health_sample() { [[ $* == "$stage_health_addr true" && $scenario != stage_loss_before_cutover ]]; }
 alert_watcher_ready() {
     if [[ $scenario == last_moment_alert ]]; then printf '%s\n' late >>"$data_dir/alerts.jsonl"; fi
@@ -414,8 +415,15 @@ run_scenario() {
     local -a archive_limits=()
     if [[ $scenario == evidence_* ]]; then enable_alert_evidence=true; fi
     if [[ $scenario == primary_missing ]]; then primary_stamp=unavailable; elif [[ $scenario == analyzer_* ]]; then analyzer_candidate=/candidate-analyzer; fi
-    rollout >/dev/null 2>&1 || actual=$?
-    [[ $actual == "$expected" ]]
+    rollout >"$scratch/rollout-output" 2>&1 || actual=$?
+    if [[ $actual != "$expected" ]]; then
+        printf 'Unexpected %s exit: got %s, expected %s\n' "$scenario" "$actual" "$expected" >&2
+        return 1
+    fi
+    if [[ $scenario == receipt_fail ]]; then
+        grep -Fq 'Replacement remains live; rollout was not verified' "$scratch/rollout-output"
+        if grep -Fxq 'Rollout verified' "$scratch/rollout-output"; then return 1; fi
+    fi
     if [[ "${trace[*]}" != "$*" ]]; then
         printf 'Unexpected %s trace: %s\n' "$scenario" "${trace[*]}" >&2
         return 1
@@ -440,6 +448,8 @@ run_scenario staged_log_missing 1 backup start:packrat-stage:/candidate retire-s
 run_scenario stage_loss_before_cutover 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario cannot_stop 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat
 run_scenario success 0 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
+    install:/candidate start:packrat:/usr/local/bin/packrat retire-stage
+run_scenario receipt_fail 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat retire-stage
 run_scenario watcher_lost_after_cutover 1 backup start:packrat-stage:/candidate \
     stop:packrat:/usr/local/bin/packrat install:/candidate start:packrat:/usr/local/bin/packrat

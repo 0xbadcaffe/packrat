@@ -406,7 +406,10 @@ rollout() {
             error "Replacement alert monitoring could not be verified; companions not promoted"
         elif promote_companions 0 1; then
             retire_bridge || { error "Replacement is live; inspect the staging session"; return 1; }
-            write_capture_receipt || error "Replacement is live; could not record its capture build receipt"
+            if ! write_capture_receipt; then
+                error "Replacement remains live; rollout was not verified because its capture build receipt could not be recorded under $backup_dir"
+                return 1
+            fi
             printf '%s\n' 'Rollout verified'
             return 0
         else
