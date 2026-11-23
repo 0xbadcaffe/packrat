@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|value| value != "--help" && value != "-h")
     else {
         println!(
-            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--alert-id ALERT_ID | --limit COUNT] [--report-integrity [--scan-bytes BYTES]]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --project-alert-evidence PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID OUTPUT_DIR [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR [--alert-log ALERT_LOG [--previous-log PATH]...]\nAn exact alert ID requires both --session and --capture-id. List previous alert logs oldest first. Log matching corroborates the alert snapshot, not the origin of the packet bytes. Integrity counts describe only the records examined."
+            "Usage: packrat-archive DIRECTORY [PACKET_ID | --capture-frame CAPTURE_ID FRAME_NUMBER | --import CAPTURE | --export OUTPUT.pcapng | --host ADDRESS [AFTER_ID]]\n       packrat-archive --alerts ALERT_LOG [--previous-log PATH]... [--session SESSION_ID] [--capture-id CAPTURE_ID] [--alert-id ALERT_ID | --limit COUNT] [--report-integrity [--scan-bytes BYTES]]\n       packrat-archive DIRECTORY --alert-status ALERT_LOG SESSION_ID ALERT_ID [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive DIRECTORY --alert-evidence ALERT_LOG SESSION_ID ALERT_ID OUTPUT_DIR [--capture-id CAPTURE_ID] [--previous-log PATH]...\n       packrat-archive --project-alert-status PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID [--previous-log PATH]...\n       packrat-archive --project-alert-evidence PROJECT ALERT_LOG SESSION_ID CAPTURE_ID ALERT_ID OUTPUT_DIR [--previous-log PATH]...\n       packrat-archive --verify-evidence EVIDENCE_DIR [--alert-log ALERT_LOG [--previous-log PATH]...] [--archive DIRECTORY]\nAn exact alert ID requires both --session and --capture-id. List previous alert logs oldest first. Log matching corroborates the alert snapshot. Archive verification compares the exact PCAPNG stream regenerated from the listed frames, not omitted frames. Integrity counts describe only the records examined."
         );
         println!("       packrat-archive DIRECTORY --alert-project ALERT_LOG SESSION_ID ALERT_ID OUTPUT_JSON --capture-id CAPTURE_ID [--previous-log PATH]...\nOpen the resulting JSON with packrat --project OUTPUT_JSON. It contains packet bytes.\nAlert evidence bundles count all omitted frames as missing and identify unreadable and unknown-length frames separately.");
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
@@ -134,26 +134,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn verify_evidence(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
-    use packrat_tui::storage::alert_evidence::{verify_alert_evidence, verify_logged_alert_evidence};
+    use packrat_tui::storage::alert_evidence::{verify_alert_evidence, verify_archived_alert_evidence, verify_logged_alert_evidence};
     use std::path::Path;
 
     let directory = args.next().ok_or("--verify-evidence requires an evidence directory")?;
     let mut log = None;
+    let mut archive = None;
     let mut previous = Vec::new();
     while let Some(flag) = args.next() {
         let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
             .ok_or_else(|| format!("{flag} requires a value"))?;
         match flag.as_str() {
             "--alert-log" if log.is_none() => log = Some(value),
+            "--archive" if archive.is_none() => archive = Some(value),
             "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(PathBuf::from(value)),
             _ => return Err(format!("Unexpected or repeated evidence option: {flag}").into()),
         }
     }
     let directory = Path::new(&directory);
-    let summary = match log {
-        Some(log) => verify_logged_alert_evidence(directory, AlertLogs::new(Path::new(&log), &previous)?)?,
-        None if previous.is_empty() => verify_alert_evidence(directory)?,
-        None => return Err("--previous-log requires --alert-log when verifying evidence".into()),
+    if log.is_none() && !previous.is_empty() {
+        return Err("--previous-log requires --alert-log when verifying evidence".into());
+    }
+    let logs = log.as_deref().map(|log| AlertLogs::new(Path::new(log), &previous)).transpose()?;
+    let summary = match (archive.as_deref(), logs) {
+        (Some(archive), logs) => verify_archived_alert_evidence(directory, Path::new(archive), logs)?,
+        (None, Some(logs)) => verify_logged_alert_evidence(directory, logs)?,
+        (None, None) => verify_alert_evidence(directory)?,
     };
     println!("{}", serde_json::to_string(&summary)?);
     Ok(())

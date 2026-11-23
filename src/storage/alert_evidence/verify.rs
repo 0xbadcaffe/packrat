@@ -3,9 +3,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read, path::Path};
 
-use super::{AlertItem, MANIFEST, MAX_ALERT_PACKET_REFS, PCAP, is_zero, scoped_frames};
+use super::{AlertItem, FrameStatus, MANIFEST, MAX_ALERT_PACKET_REFS, PCAP, frame_status, is_zero, scoped_frames};
+use crate::export::pcapng::PcapNgWriter;
 use crate::storage::alert_history::{AlertLogs, ReverseAlertLines};
 use crate::storage::alert_jsonl::ExistingAlertRecord;
+use crate::storage::packet_archive::PacketArchive;
 
 const MAX_MANIFEST_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_CAPTURE_BYTES: u64 = (MAX_ALERT_PACKET_REFS as u64 + 3) * 2 * 1024 * 1024;
@@ -46,18 +48,25 @@ pub struct VerifiedEvidence {
     pub capture_sha256_verified: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alert_snapshot_matches_log: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_frames_verified: Option<usize>,
 }
 
 pub fn verify_alert_evidence(directory: &Path) -> Result<VerifiedEvidence> {
-    verify(directory, None)
+    verify(directory, None, None)
 }
 
 /// Check bundle integrity and require the exported alert snapshot in the supplied logs.
 pub fn verify_logged_alert_evidence(directory: &Path, logs: AlertLogs<'_>) -> Result<VerifiedEvidence> {
-    verify(directory, Some(logs))
+    verify(directory, Some(logs), None)
 }
 
-fn verify(directory: &Path, logs: Option<AlertLogs<'_>>) -> Result<VerifiedEvidence> {
+/// Require the exported stream to match the claimed frame IDs in a supplied read-only archive.
+pub fn verify_archived_alert_evidence(directory: &Path, archive: &Path, logs: Option<AlertLogs<'_>>) -> Result<VerifiedEvidence> {
+    verify(directory, logs, Some(archive))
+}
+
+fn verify(directory: &Path, logs: Option<AlertLogs<'_>>, archive: Option<&Path>) -> Result<VerifiedEvidence> {
     let (file, _) = open_regular(&directory.join(MANIFEST), MAX_MANIFEST_BYTES)?;
     let mut bytes = Vec::new();
     file.take(MAX_MANIFEST_BYTES + 1).read_to_end(&mut bytes)?;
@@ -105,6 +114,14 @@ fn verify(directory: &Path, logs: Option<AlertLogs<'_>>) -> Result<VerifiedEvide
     } else {
         None
     };
+    let archive_frames_verified = if let Some(archive) = archive {
+        let capture = manifest.capture.as_ref()
+            .context("Evidence bundle contains no packets to compare with the archive")?;
+        verify_archive_capture(archive, scope, capture)?;
+        Some(recovered.len())
+    } else {
+        None
+    };
     Ok(VerifiedEvidence {
         session_id: manifest.session_id,
         capture_id: manifest.capture_id,
@@ -115,7 +132,27 @@ fn verify(directory: &Path, logs: Option<AlertLogs<'_>>) -> Result<VerifiedEvide
         length_unknown_frames: unknown.len(),
         capture_sha256_verified: verified_hash,
         alert_snapshot_matches_log,
+        archive_frames_verified,
     })
+}
+
+fn verify_archive_capture(directory: &Path, scope: &str, capture: &Capture) -> Result<()> {
+    let mut archive = PacketArchive::open_readonly(directory).map_err(anyhow::Error::msg)?;
+    let mut hash = Sha256::new();
+    {
+        let mut writer = PcapNgWriter::new(&mut hash);
+        for &frame in &capture.source_frame_numbers {
+            let packet = archive.packet_for_capture(scope, frame).map_err(anyhow::Error::msg)
+                .with_context(|| format!("Read archived frame {frame}"))?
+                .with_context(|| format!("Archived frame {frame} is missing from the supplied capture scope"))?;
+            ensure!(matches!(frame_status(&packet), FrameStatus::Complete | FrameStatus::Truncated),
+                "Archived frame {frame} lacks usable capture metadata");
+            writer.write_packet(&packet).with_context(|| format!("Encode archived frame {frame}"))?;
+        }
+    }
+    let actual_hash = format!("{:x}", hash.finalize());
+    ensure!(actual_hash.eq_ignore_ascii_case(&capture.sha256), "Evidence capture does not match the archived frames");
+    Ok(())
 }
 
 fn contains_snapshot(logs: AlertLogs<'_>, manifest: &Manifest) -> Result<bool> {

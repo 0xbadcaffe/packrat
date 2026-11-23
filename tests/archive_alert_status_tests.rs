@@ -284,6 +284,10 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
     let verified = serde_json::to_value(report).unwrap();
     assert_eq!(verified["unreadable_frames"], 1);
     assert_eq!(verified["length_unknown_frames"], 1);
+    let archived = packrat_tui::storage::alert_evidence::verify_archived_alert_evidence(
+        &recovered, &archive_path, None,
+    ).unwrap();
+    assert_eq!(archived.archive_frames_verified, Some(2));
     for (key, frames) in [("unreadable_frame_numbers", json!([1])),
         ("unreadable_frame_numbers", json!([4, 5])), ("length_unknown_frame_numbers", json!([4, 4]))] {
         let mut invalid = manifest.clone();
@@ -337,6 +341,16 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
         "session_id":"s", "capture_id":"capture-b", "alert_id":1, "recovered_frames":1,
         "missing_frames":0, "capture_sha256_verified":true
     }));
+    let verify_archive = || Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--verify-evidence").arg(&export).arg("--archive").arg(&archive_path)
+        .arg("--alert-log").arg(&log).arg("--previous-log").arg(&previous).output().unwrap();
+    let checked = verify_archive();
+    assert!(checked.status.success(), "{}", String::from_utf8_lossy(&checked.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&checked.stdout).unwrap(), json!({
+        "session_id":"s", "capture_id":"capture-b", "alert_id":1, "recovered_frames":1,
+        "missing_frames":0, "capture_sha256_verified":true, "alert_snapshot_matches_log":true,
+        "archive_frames_verified":1
+    }));
 
     let manifest = export.join("manifest.json");
     let original = std::fs::read(&manifest).unwrap();
@@ -352,8 +366,17 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
     let mut bytes = std::fs::read(&capture).unwrap();
     let frame = bytes.windows(14).position(|slice| slice == [9; 14]).unwrap();
     bytes[frame] = 8;
-    std::fs::write(&capture, bytes).unwrap();
+    std::fs::write(&capture, &bytes).unwrap();
     let result = verify();
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("SHA-256 mismatch"));
+    // A replaced packet and rewritten manifest digest pass local checksum validation.
+    use sha2::{Digest, Sha256};
+    let mut forged: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    forged["capture"]["sha256"] = json!(format!("{:x}", Sha256::digest(&bytes)));
+    std::fs::write(&manifest, forged.to_string()).unwrap();
+    assert!(verify().status.success());
+    let rejected = verify_archive();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("does not match the archived frames"));
 }
