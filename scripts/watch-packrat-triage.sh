@@ -24,11 +24,12 @@ usage() {
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
         'review_queue_entries and review_queue_exits report bounded queue changes, not incident openings or inferred resolutions.' \
         'alert_sample_gap warns that the watcher may have missed alerts in a bounded sample; review saved history.' \
-        'Continuous mode journals sanitized changes in STATE.json.events.jsonl and one 1 MiB rotation (PACKRAT_TRIAGE_WATCH_JOURNAL=0 disables this).' \
+        'Continuous mode journals changes and quiet capture checkpoints in STATE.json.events.jsonl with one 1 MiB rotation.' \
+        'Set PACKRAT_TRIAGE_WATCH_JOURNAL=0 to disable the journal and checkpoints.' \
         'journal_unconfirmed_events counts discarded events and events whose pending writes could not be confirmed after restart.' \
         'History emits retained journal events oldest first, or asks to retry if the journal changes during the read.' \
         'Supervision retries unexpected exits with backoff; configuration errors stop the supervisor.' \
-        'PACKRAT_TRIAGE_WATCH_INTERVAL sets the poll interval in seconds (default: 30).' \
+        'PACKRAT_TRIAGE_WATCH_INTERVAL sets polling (default 30s); PACKRAT_TRIAGE_WATCH_CHECKPOINT_INTERVAL sets checkpoints (default 300s).' \
         'PACKRAT_TRIAGE_WATCH_TIMEOUT sets the triage command deadline in seconds (default: 25).'
 }
 once=false
@@ -150,7 +151,6 @@ check_snapshot() {
     printf '%s\n' "$result"
     jq -e '.status == "current"' <<< "$result" >/dev/null
 }
-
 if "$read_only"; then
     command -v jq >/dev/null || { printf '%s\n' 'Missing dependency: jq' >&2; exit 2; }
     if "$check"; then check_snapshot; else read_journal_history; fi
@@ -159,9 +159,9 @@ fi
 shift 2
 interval=${PACKRAT_TRIAGE_WATCH_INTERVAL:-30}
 deadline=${PACKRAT_TRIAGE_WATCH_TIMEOUT:-25}
-journal_enabled=${PACKRAT_TRIAGE_WATCH_JOURNAL:-1}
-if [[ ! $interval =~ ^[1-9][0-9]{0,4}$ || ! $deadline =~ ^[1-9][0-9]{0,4}$ ]]; then
-    printf '%s\n' 'Triage interval and deadline must be positive seconds.' >&2
+journal_enabled=${PACKRAT_TRIAGE_WATCH_JOURNAL:-1} checkpoint_interval=${PACKRAT_TRIAGE_WATCH_CHECKPOINT_INTERVAL:-300}
+if [[ ! $interval =~ ^[1-9][0-9]{0,4}$ || ! $deadline =~ ^[1-9][0-9]{0,4}$ || ! $checkpoint_interval =~ ^[1-9][0-9]{0,4}$ ]]; then
+    printf '%s\n' 'Triage interval, deadline, and checkpoint interval must be positive seconds.' >&2
     exit 2
 fi
 if [[ $journal_enabled != 0 && $journal_enabled != 1 ]]; then
@@ -171,7 +171,6 @@ fi
 for command in jq timeout flock; do
     command -v "$command" >/dev/null || { printf 'Missing dependency: %s\n' "$command" >&2; exit 2; }
 done
-
 supervise_watcher() {
     local child='' status delay=2 started
     # On termination, reap the current watcher or its retry timer.
@@ -193,18 +192,15 @@ supervise_watcher() {
         delay=$((delay < 16 ? delay * 2 : 30))
     done
 }
-
 if "$supervise"; then
     supervise_watcher "$@"
     exit 0
 fi
 exec {lock_fd}>>"$state.lock"
 flock -n "$lock_fd" || { printf '%s\n' 'Triage state is already being refreshed.' >&2; exit 2; }
-
 journal_failed=false journal_overflow=false
 journal_unconfirmed=0
 pending_journal=()
-
 append_journal() (
     local size=0 line=$1 staged rotate=false
     journal_path_safe "$journal" && journal_path_safe "$journal.1" || return 1
@@ -338,7 +334,7 @@ publish_snapshot() {
     mv -fT -- "$temp" "$state"
     temp=''
 }
-previous=''
+previous='' next_checkpoint=0
 prior=null
 if [[ -f $state && -O $state ]]; then
     # A stale snapshot can still identify alerts already seen in the same capture.
@@ -463,8 +459,12 @@ while :; do
     if "$once"; then publish_snapshot not_checked; printf '%s\n' "$snapshot"; break; fi
     key=$(jq -c 'del(.updated_at, .poll_started_at, .packets, .disk_free_mib, .archive_usage, .highest_observed_alert_id,
         .last_observed, .buffer_drops_delta, .capture_queue_full_packets_delta)' <<< "$snapshot")
-    if [[ $key != "$previous" ]]; then
-        event=$(jq -c 'del(.last_observed)' <<< "$event")
+    checkpoint=false
+    if [[ $key == "$previous" && $journal_enabled == 1 ]] && (( SECONDS >= next_checkpoint )); then
+        checkpoint=$(jq -c '(.status == "current" or .status == "degraded") and .capture_id != null and .session_id != null and .packets != null' <<< "$snapshot")
+    fi
+    if [[ $key != "$previous" ]] || "$checkpoint"; then
+        event=$(jq -c --argjson checkpoint "$checkpoint" 'del(.last_observed) | if $checkpoint then . + {checkpoint:true,alert_changes:null} else . end' <<< "$event")
         if [[ $journal_enabled == 1 ]]; then
             if (( ${#pending_journal[@]} >= 16 )); then
                 flush_journal
@@ -481,8 +481,8 @@ while :; do
             fi
             pending_journal+=("$event")
         fi
-        printf '%s\n' "$event"
-        previous=$key
+        if ! "$checkpoint"; then printf '%s\n' "$event"; fi
+        previous=$key next_checkpoint=$((SECONDS + checkpoint_interval))
     fi
     journal_status=disabled
     if [[ $journal_enabled == 1 ]]; then

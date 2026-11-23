@@ -2,7 +2,7 @@
 # Each watcher PID is captured in the shell that launches it, not a sourced subshell.
 # shellcheck disable=SC2031
 set -euo pipefail
-
+unset PACKRAT_TRIAGE_WATCH_CHECKPOINT_INTERVAL
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 watch="$root/scripts/watch-packrat-triage.sh"
 scratch=$(mktemp -d)
@@ -89,7 +89,6 @@ for change in 'del(.capture_id)' '.session_id="bad session"' '.recent_alerts=nul
     jq "$change" "$state" >"$scratch/invalid.json"
     check_status "$scratch/invalid.json" snapshot_invalid 2
 done
-
 mixed_queue=$(jq -c '. + [.[0] + {alert_id:8,severity:"MEDIUM",archive_rule:true},
     .[0] + {alert_id:9,severity:"MEDIUM",archive_rule:false}] | .[1].in_recent_alerts=false' <<<"$queue")
 live current 13 "$mixed_queue" "$medium" | jq '
@@ -103,11 +102,11 @@ live current 14 '[]' | jq '.health.archive_evidence_rules=["unsafe data"]
     | .health.archive_usage.frames=90' >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 jq -e '.archive_rule_ids==null and .archive_near_limit and .archive_usage.frames==90' "$state" >/dev/null
-
 (
     # shellcheck source=scripts/packrat-rollout.sh
     source "$root/scripts/packrat-rollout.sh"
-    scope='{"capture_id":"a","alert_session_id":"1-2"}'
+    scope='{"capture_id":"a","capture_run_id":"run-a","alert_session_id":"1-2"}'
+    curl() { jq -c '. + {service:"packrat",status:"ok",telemetry_fresh:true,capture_active:true,packets_total:14}' <<< "$scope"; }
     triage_check=$watch
     triage_state=
     triage_watcher_ready "$scope"
@@ -131,7 +130,6 @@ jq -e '.archive_rule_ids==null and .archive_near_limit and .archive_usage.frames
     triage_state="$scratch/missing.json"
     if triage_watcher_ready "$scope"; then exit 1; fi
 )
-
 for change in 'del(.health.capture_id)' '.health.alert_session_id="bad session"' '.alerts=null' 'del(.health.packets_total)' \
     '.health.alert_saving=false' '.health.issues=[null]' '.alert_log_integrity.invalid_records=1'; do
     live current 12 '[]' "$medium" | jq "$change" >"$report"
@@ -496,4 +494,6 @@ bash "$watch" --history "$scratch/linked-history.json" >/dev/null 2>&1 || status
 source "$root/tests/support/watch_triage_atomic_journal.bash"
 # shellcheck source=tests/support/watch_triage_counter_gap.bash
 source "$root/tests/support/watch_triage_counter_gap.bash"
+# shellcheck source=tests/support/watch_triage_checkpoints.bash
+source "$root/tests/support/watch_triage_checkpoints.bash"
 printf '%s\n' 'Packrat triage watcher tests passed'
