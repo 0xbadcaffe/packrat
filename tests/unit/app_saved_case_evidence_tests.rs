@@ -231,3 +231,50 @@ fn alert_investigation_skips_invalid_capture_lengths_without_hiding_other_frames
     assert_eq!(app.worklist.active_packet_no(), Some(20));
     assert!(app.status_msg.as_deref().unwrap().contains("1 unavailable (1 invalid capture lengths)"));
 }
+
+#[test]
+fn alert_open_repairs_unreadable_pin_from_verified_same_capture_archive_only() {
+    use crate::net::packet::CaptureMetadata;
+    use crate::storage::packet_archive::ArchiveWorker;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let mut app = App::new_for_test();
+    let path = scratch.path().join("archive");
+    app.set_packet_archive(ArchiveWorker::open(&path).unwrap()).unwrap();
+    let scope = app.capture_id.clone().unwrap();
+    let complete = |frame| {
+        let mut pkt = packet(frame);
+        let length = pkt.bytes.len() as u32;
+        pkt.capture = Some(CaptureMetadata {
+            captured_length: length, wire_length: length, timestamp: None, link_type: 1,
+            section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+        });
+        pkt
+    };
+    let archived = complete(10);
+    let archive = app.packet_archive.as_mut().unwrap();
+    archive.record_scoped(&scope, &archived).unwrap();
+    archive.record_scoped(&std::sync::Arc::from("other-capture"), &complete(20)).unwrap();
+    archive.finish().unwrap();
+
+    let unreadable = |frame| {
+        let mut pkt = complete(frame);
+        pkt.bytes.push(99);
+        pkt
+    };
+    app.worklist.pin_packet(&unreadable(10)).unwrap();
+    app.packets.push_back(unreadable(20));
+    let alert = {
+        let mut core = app.core.edit();
+        core.alert_center.record(10, "IDS", "HIGH", "Scoped archive fallback", "test");
+        core.alert_center.items[0].packet_refs = vec![10, 20];
+        core.alert_center.items[0].clone()
+    };
+    assert_eq!(alert.capture_id.as_deref(), Some(scope.as_ref()));
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.worklist.packet_nos(), [10]);
+    assert_eq!(app.worklist.retained_packet(10).unwrap().bytes, archived.bytes);
+    assert_eq!(app.worklist.retained_bytes, crate::model::project::pinned_packet_cost(&archived));
+    assert_eq!(app.worklist.active_packet_no(), Some(10));
+    assert!(app.status_msg.as_deref().unwrap().contains("opened 1 matching packets (1 archived); 1 unavailable (1 invalid capture lengths)"));
+}

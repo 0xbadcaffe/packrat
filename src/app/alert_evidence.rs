@@ -35,6 +35,52 @@ impl AlertEvidenceScope {
     }
 }
 
+#[derive(Default)]
+pub(super) struct AlertEvidenceReader {
+    archive: Option<crate::storage::packet_archive::PacketArchive>,
+    attempted: bool,
+    pub(super) archive_error: bool,
+    pub(super) invalid_lengths: usize,
+}
+
+impl AlertEvidenceReader {
+    pub(super) fn resolve(&mut self, app: &App, alert: &AlertItem, frame: u64, location: Option<LocalAlertPacket>,
+    ) -> Option<(Packet, bool, FrameStatus)> {
+        let mut invalid = false;
+        if let Some(packet) = location.and_then(|slot| slot.get(app)) {
+            let status = frame_status(packet);
+            if status != FrameStatus::Unreadable { return Some((packet.clone(), false, status)); }
+            invalid = true;
+        }
+        if app.frame_may_be_local(app.alert_evidence_scope(alert), frame)
+            && let Some(scope) = alert.capture_id.as_deref()
+        {
+            if !self.attempted {
+                self.attempted = true;
+                if let Some(worker) = &app.packet_archive {
+                    match worker.reader() {
+                        Ok(archive) => self.archive = Some(archive),
+                        Err(_) => self.archive_error = true,
+                    }
+                }
+            }
+            if let Some(archive) = &mut self.archive {
+                match archive.packet_for_capture(scope, frame) {
+                    Ok(Some(packet)) => {
+                        let status = frame_status(&packet);
+                        if status != FrameStatus::Unreadable { return Some((packet, true, status)); }
+                        invalid = true;
+                    }
+                    Ok(None) => {}
+                    Err(_) => self.archive_error = true,
+                }
+            }
+        }
+        self.invalid_lengths += usize::from(invalid);
+        None
+    }
+}
+
 impl App {
     pub(super) fn archive_alert_packets(&mut self, alert: &AlertItem, evidence: &[Packet]) {
         let Some(archive) = self.packet_archive.as_ref()

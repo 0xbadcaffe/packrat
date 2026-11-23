@@ -188,6 +188,24 @@ impl InvestigationTray {
         Ok(self.add_packet(packet.no))
     }
 
+    pub(super) fn reserve_verified_archive_packet(&mut self, packet: &Packet) -> Result<bool, String> {
+        use crate::storage::alert_evidence::{FrameStatus, frame_status};
+        if let Some(prior) = self.retained_packets.get_mut(&packet.no)
+            && frame_status(prior) == FrameStatus::Unreadable
+        {
+            let without_prior = self.retained_bytes - crate::model::project::pinned_packet_cost(prior);
+            let cost = crate::model::project::pinned_packet_cost(packet);
+            if cost > Self::MAX_RETAINED_BYTES.saturating_sub(without_prior) {
+                return Err("Investigation retention limit reached; remove a pinned packet first".into());
+            }
+            *prior = packet.clone();
+            self.retained_bytes = without_prior + cost;
+            return Ok(true);
+        }
+        self.retain_packet(packet)?;
+        Ok(false)
+    }
+
     pub fn retained_packet(&self, no: u64) -> Option<&Packet> {
         self.retained_packets.get(&no)
     }

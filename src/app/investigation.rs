@@ -1,5 +1,5 @@
 use super::*;
-use super::alert_evidence::{AlertEvidenceScope, LocalAlertPacket};
+use super::alert_evidence::AlertEvidenceReader;
 
 #[cfg(test)]
 #[path = "../../tests/unit/app_alert_capacity_tests.rs"]
@@ -203,7 +203,7 @@ impl App {
     }
 
     pub(super) fn investigate_alert(&mut self, target: Option<&AlertSearchRef>) -> bool {
-        use crate::storage::alert_evidence::{FrameStatus, frame_status};
+        use crate::storage::alert_evidence::FrameStatus;
 
         if !self.analysis_generation_ready() {
             self.set_status("Analysis busy; retry alert investigation");
@@ -234,52 +234,19 @@ impl App {
 
         let alert_item = InvestigationItem::Alert(alert.id);
         self.project_dirty |= self.worklist.add(alert_item.clone());
-        let scope = alert.capture_id.as_deref();
         let evidence_scope = self.alert_evidence_scope(&alert);
-        let same_capture = evidence_scope == AlertEvidenceScope::CurrentCapture;
         let scope_mismatch = evidence_scope.local_mismatch();
         let local_packets = self.local_alert_packets(&alert, evidence_scope, &packet_refs);
-        let mut reader = None;
-        let mut archive_error = false;
-        let mut invalid_lengths = 0;
-        let mut resolve_frame = |app: &Self, packet_no, location: Option<LocalAlertPacket>| {
-            let local = location.and_then(|location| location.get(app)).cloned();
-            let from_archive = local.is_none() && same_capture;
-            let packet = if from_archive {
-                if reader.is_none() && !archive_error {
-                    match app.packet_archive.as_ref().map(|archive| archive.reader()) {
-                        Some(Ok(opened)) => reader = Some(opened),
-                        Some(Err(_)) => archive_error = true,
-                        None => {}
-                    }
-                }
-                reader.as_mut().and_then(|reader| {
-                    match reader.packet_for_capture(scope.unwrap_or_default(), packet_no) {
-                        Ok(packet) => packet,
-                        Err(_) => {
-                            archive_error = true;
-                            None
-                        }
-                    }
-                })
-            } else {
-                local
-            };
-            packet.and_then(|packet| {
-                let status = frame_status(&packet);
-                if status == FrameStatus::Unreadable {
-                    invalid_lengths += 1;
-                    None
-                } else {
-                    Some((packet, from_archive, status))
-                }
-            })
-        };
+        let mut reader = AlertEvidenceReader::default();
         let mut trigger = packet_refs.binary_search(&alert.packet_no).ok()
-            .and_then(|index| resolve_frame(self, alert.packet_no, local_packets[index]));
-        if let Some((packet, _, _)) = &trigger {
+            .and_then(|index| reader.resolve(self, &alert, alert.packet_no, local_packets[index]));
+        if let Some((packet, from_archive, _)) = &trigger {
             // Reserve bytes before processing older evidence; add the tray item in order below.
-            let _ = self.worklist.retain_packet(packet);
+            if *from_archive {
+                self.project_dirty |= self.worklist.reserve_verified_archive_packet(packet).unwrap_or(false);
+            } else {
+                let _ = self.worklist.retain_packet(packet);
+            }
         }
 
         let mut unavailable = 0;
@@ -292,13 +259,20 @@ impl App {
             let frame = if packet_no == alert.packet_no {
                 trigger.take()
             } else {
-                resolve_frame(self, packet_no, location)
+                reader.resolve(self, &alert, packet_no, location)
             };
             let Some((packet, from_archive, status)) = frame else {
                 unavailable += 1;
                 continue;
             };
-            match self.worklist.pin_packet(&packet) {
+            let pinned = if from_archive {
+                self.worklist.reserve_verified_archive_packet(&packet).map(|replaced| {
+                    self.worklist.add_packet(packet.no) || replaced
+                })
+            } else {
+                self.worklist.pin_packet(&packet)
+            };
+            match pinned {
                 Ok(added) => {
                     self.project_dirty |= added;
                     retained.push(packet.no);
@@ -339,9 +313,9 @@ impl App {
             archived,
             unavailable,
             if at_capacity > 0 { format!(" ({at_capacity} hit the tray limit)") } else { String::new() },
-            if invalid_lengths > 0 { format!(" ({invalid_lengths} invalid capture lengths)") } else { String::new() },
+            if reader.invalid_lengths > 0 { format!(" ({} invalid capture lengths)", reader.invalid_lengths) } else { String::new() },
             scope_mismatch.map(|reason| if retained.is_empty() { reason } else { "saved case" })
-                .or(archive_error.then_some("archive read failed"))
+                .or(reader.archive_error.then_some("archive read failed"))
                 .map_or_else(String::new, |reason| format!(" ({reason})"))
         ));
         true
