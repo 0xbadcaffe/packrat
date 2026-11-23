@@ -202,6 +202,67 @@ fn two_dns_messages(response: bool) -> Vec<u8> {
 }
 
 #[test]
+fn offline_case_rebuilds_stream_and_dns_context_without_crossing_capture_scopes() {
+    use crate::model::project::{ProjectSaveMode, ProjectState, SavedInvestigationItem};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let query = tcp_frame(3, 101, 0x18, false, &two_dns_messages(false));
+    let reply = tcp_frame(4, 201, 0x18, true, &two_dns_messages(true));
+    let packets = [
+        reply.clone(),
+        tcp_frame(1, 100, 0x02, false, &[]),
+        query.clone(),
+        tcp_frame(2, 200, 0x12, true, &[]),
+        tcp_frame(5, 250, 0x10, false, &[]),
+    ];
+    let scope = "saved-capture";
+    for second_scope in [Some(scope), Some("different-capture"), None] {
+        let complete_scope = second_scope == Some(scope);
+        let mut state = ProjectState::new("Saved DNS case", ProjectSaveMode::Lightweight);
+        state.pinned_packets = packets.to_vec();
+        state.investigation_items = (1..=5).map(SavedInvestigationItem::Packet).collect();
+        state.active_investigation = Some(3);
+        state.investigation_tray_open = true;
+        state.active_tab = Tab::Investigate.index();
+        for frame in [1, 2, 4, 5] { state.pinned_packet_scopes.insert(frame, scope.into()); }
+        if let Some(other) = second_scope { state.pinned_packet_scopes.insert(3, other.into()); }
+        let mut alerts = crate::analysis::alert_center::AlertCenter::default();
+        alerts.capture_id = Some(scope.into());
+        alerts.record(4, "IDS", "HIGH", "Saved finding", "fixture");
+        state.alert_items = alerts.items;
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let mut app = App::new_with_mode(tx, StartupMode::OfflineReview);
+        app.apply_project_state(state).unwrap();
+        app.inject_packet(tcp_frame(5, 250, 0x18, false, &[]));
+        app.load_pcap_instant("must-not-be-opened.pcapng");
+        assert!(app.status_msg.as_deref().unwrap().contains("preserve offline review evidence scope"));
+        assert_eq!(app.active_investigation_packet().unwrap().no, 4);
+        assert!(app.packets.is_empty());
+        assert_eq!(app.active_investigation_stream().is_some(), complete_scope);
+        app.query_core(|core| {
+            assert_eq!(app.dns_exchanges(core, &reply).len(), if complete_scope { 2 } else { 0 });
+            assert_eq!(core.alert_center.items.len(), 1);
+            assert_eq!(core.alert_center.items[0].title, "Saved finding");
+            assert!(core.security.ids_alerts.is_empty());
+            assert!(core.incidents.incidents.is_empty());
+        }).unwrap();
+        if complete_scope {
+            let mut terminal = Terminal::new(TestBackend::new(110, 28)).unwrap();
+            terminal.draw(|frame| crate::ui::draw(frame, &app)).unwrap();
+            let rendered = terminal.backend().to_string();
+            assert!(rendered.contains("offline review"));
+            assert!(rendered.contains("5 retained frames"));
+            assert!(rendered.contains("Retained evidence subset | Capture: saved-capture"));
+            app.worklist_next_packet();
+            assert_eq!(app.active_investigation_packet().unwrap().no, 5);
+            assert!(app.active_investigation_stream().is_none());
+            app.open_active_investigation_stream_overlay();
+            assert!(app.stream_overlay.is_none());
+        }
+    }
+}
+
+#[test]
 fn coalesced_dns_evidence_keeps_the_keyboard_selected_transaction() {
     let mut app = App::new_for_test();
     app.active_tab = Tab::Investigate;

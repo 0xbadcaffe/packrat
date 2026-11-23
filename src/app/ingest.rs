@@ -60,6 +60,10 @@ impl App {
     }
 
     pub(super) fn ingest_packet_inner(&mut self, pkt: Packet) {
+        if self.offline_review && !self.restoring_project {
+            self.set_status("Packet injection is unavailable in offline review");
+            return;
+        }
         if self.analysis_worker.is_some() {
             if let Err(error) = self.enqueue_offline_packets(vec![pkt], self.restoring_project) {
                 self.set_status(error);

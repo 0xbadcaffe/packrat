@@ -1,6 +1,18 @@
 use super::*;
 
 impl App {
+    pub(crate) fn offline_review(&self) -> bool {
+        self.offline_review
+    }
+
+    pub(crate) fn saved_packet_capture(&self, frame: u64) -> Option<&str> {
+        self.worklist.restored_packet_scopes.get(&frame).map(String::as_str)
+    }
+
+    pub(crate) fn retained_evidence_count(&self) -> usize {
+        self.worklist.retained_packets.len()
+    }
+
     // ─── Project save / load ──────────────────────────────────────────────────
 
     /// Open the project manager overlay and refresh the recent list.
@@ -167,6 +179,12 @@ impl App {
         if state.embedded_packets.len() > 100_000 || bytes > 256 * 1024 * 1024 {
             return Err("Saved packet history exceeds analysis budget".into());
         }
+        let derive_saved_context = self.offline_review && state.embedded_packets.is_empty()
+            && state.pcap_refs.is_empty() && state.pinned_packets.first().is_some_and(|first| {
+                let Some(scope) = state.pinned_packet_scopes.get(&first.no) else { return false; };
+                state.pinned_packets.iter().all(|packet| state.pinned_packet_scopes.get(&packet.no) == Some(scope))
+                    && state.alert_items.iter().any(|alert| alert.capture_id.as_ref() == Some(scope))
+            });
         self.try_clear_packets()?;
         self.restored_project_max_frame = state
             .pinned_packets
@@ -206,7 +224,14 @@ impl App {
         self.alert_overlay_open = incidents
             .as_ref()
             .is_some_and(|store| store.active().is_some());
+        let mut evidence = if derive_saved_context { std::mem::take(&mut state.pinned_packets) } else { Vec::new() };
+        evidence.sort_unstable_by_key(|packet| packet.no);
         self.configure_core(move |core| {
+            for packet in &evidence {
+                if crate::storage::alert_evidence::frame_status(packet) != crate::storage::alert_evidence::FrameStatus::Unreadable {
+                    core.observe_saved_evidence(packet);
+                }
+            }
             if let Some(incidents) = incidents {
                 core.incidents = incidents;
             }

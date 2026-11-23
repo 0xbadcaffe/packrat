@@ -98,8 +98,12 @@ pub fn draw_view(f: &mut Frame, app: &App) {
 }
 
 fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
-    let cap_str = if app.capturing { "● capturing" } else { "○ idle" };
-    let cap_color = if app.capturing { C_GREEN() } else { C_FG3() };
+    let (cap_str, cap_color, traffic) = if app.offline_review() {
+        ("○ offline review", C_CYAN(), format!("  {} retained frames", app.retained_evidence_count()))
+    } else {
+        let (label, color) = if app.capturing { ("● capturing", C_GREEN()) } else { ("○ idle", C_FG3()) };
+        (label, color, format!("  iface: {}  {} pkts  {} total", app.selected_iface, app.packets.len(), app.packet_counter))
+    };
     let rec_span = if app.recording {
         Span::styled(
             format!("  ◉ recording → {}", app.pcap_path),
@@ -156,11 +160,7 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" packrat ", Style::default().fg(C_YELLOW()).add_modifier(Modifier::BOLD)),
         Span::styled("─ packet analyzer  ", Style::default().fg(C_FG3())),
         Span::styled(cap_str, Style::default().fg(cap_color)),
-        Span::styled(
-            format!("  iface: {}  {} pkts  {} total",
-                app.selected_iface, app.packets.len(), app.packet_counter),
-            Style::default().fg(C_FG3()),
-        ),
+        Span::styled(traffic, Style::default().fg(C_FG3())),
         rec_span,
         project_span,
         sec_span,
@@ -193,7 +193,7 @@ fn draw_filterbar(f: &mut Frame, app: &App, area: Rect) {
         )
     } else {
         Span::styled(
-            "  [L] load pcap  [B] baseline  [?] search  [h] help",
+            if app.offline_review() { "  [?] search  [h] help" } else { "  [L] load pcap  [B] baseline  [?] search  [h] help" },
             Style::default().fg(C_FG3()),
         )
     };
@@ -386,7 +386,9 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
     } else {
         Span::raw("")
     };
-    let cap_indicator = if app.capturing {
+    let cap_indicator = if app.offline_review() {
+        Span::styled("○ OFFLINE ", Style::default().fg(C_CYAN()))
+    } else if app.capturing {
         Span::styled("● LIVE ", Style::default().fg(C_GREEN()).add_modifier(Modifier::BOLD))
     } else {
         Span::styled("○ IDLE ", Style::default().fg(C_FG3()))
@@ -421,22 +423,29 @@ fn draw_statusbar(f: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(" ", Style::default()),
         cap_indicator,
         rec_indicator,
         archive_span,
         drop_span,
         Span::styled("│ ", Style::default().fg(C_FG3())),
-        Span::styled(format!("pkts:{} ", app.filtered.len()), Style::default().fg(C_FG2())),
-        Span::styled(format!("total:{} ", app.packets.len()), Style::default().fg(C_FG2())),
-        Span::styled(format!("bytes:{} ", fmt_bytes(app.total_bytes)), Style::default().fg(C_FG2())),
-        Span::styled(format!("rate:{}/s ", app.current_rate()), Style::default().fg(C_GREEN())),
+    ];
+    if !app.offline_review() {
+        spans.extend([
+            Span::styled(format!("pkts:{} ", app.filtered.len()), Style::default().fg(C_FG2())),
+            Span::styled(format!("total:{} ", app.packets.len()), Style::default().fg(C_FG2())),
+            Span::styled(format!("bytes:{} ", fmt_bytes(app.total_bytes)), Style::default().fg(C_FG2())),
+            Span::styled(format!("rate:{}/s ", app.current_rate()), Style::default().fg(C_GREEN())),
+        ]);
+    }
+    spans.extend([
         lua_span,
         sec_span,
         Span::styled("│ ", Style::default().fg(C_FG3())),
         hints,
     ]);
+    let line = Line::from(spans);
     f.render_widget(Paragraph::new(line).style(Style::default().bg(C_BG2())), area);
 }
 

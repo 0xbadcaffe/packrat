@@ -274,6 +274,6 @@ impl AppView<'_> {
         }
         let packet = self.active_investigation_packet()?;
         let key = StreamKey::from_packet(packet)?;
-        self.core.streams.get(&key.id())
+        self.core.streams.get(&key.id()).filter(|stream| self.investigation_stream_has_evidence(stream))
     }
 }

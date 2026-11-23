@@ -24,7 +24,8 @@ impl App {
         let snapshot = self.inspection.snapshot.as_ref()?;
         let worker = self.analysis_worker.as_ref()?;
         (snapshot.generation == worker.generation()
-            && self.investigation_stream_id().as_deref() == Some(snapshot.stream.key.id().as_str()))
+            && self.investigation_stream_id().as_deref() == Some(snapshot.stream.key.id().as_str())
+            && self.investigation_stream_has_evidence(&snapshot.stream))
         .then_some(snapshot)
     }
 
@@ -52,7 +53,7 @@ impl App {
         };
         let generation = worker.generation();
         let Some(Some(revision)) =
-            self.query_core(|core| core.streams.get(&id).map(|stream| stream.revision))
+            self.query_core(|core| core.streams.get(&id).filter(|stream| self.investigation_stream_has_evidence(stream)).map(|stream| stream.revision))
         else {
             return;
         };

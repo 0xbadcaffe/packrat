@@ -40,6 +40,15 @@ impl App {
             .cloned()
     }
 
+    pub(super) fn investigation_stream_has_evidence(&self, stream: &ReassembledStream) -> bool {
+        let Some(InvestigationItem::Packet(frame)) = self.active_investigation_item() else { return true; };
+        if !self.offline_review || self.saved_packet_capture(*frame).is_none() {
+            return true;
+        }
+        stream.segments.iter().any(|segment| segment.packet_no == *frame)
+            || stream.client_fin_packet == Some(*frame) || stream.server_fin_packet == Some(*frame)
+    }
+
     pub fn open_active_investigation_stream_overlay(&mut self) {
         if let Some(stream) = self.active_investigation_stream() {
             let id = stream.key.id();
@@ -50,6 +59,10 @@ impl App {
             self.set_status("No packet selected for stream follow");
             return;
         };
+        if self.offline_review && self.saved_packet_capture(packet.no).is_some() {
+            self.set_status("No retained TCP stream bytes are linked to this frame");
+            return;
+        }
         let Some(key) = StreamKey::from_packet(packet) else {
             self.set_status("Active packet is not TCP-backed");
             return;

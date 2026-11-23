@@ -61,9 +61,9 @@ fn draw_context_header(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
     )];
     let navigation = if app.investigation_view == InvestigationView::Bytes {
-        "h/l byte  j/k row  n/p packet  v live"
+        "h/l byte  j/k row  n/p packet  v packets"
     } else {
-        "n/p item  w tray  l live"
+        "n/p item  w tray  l packets"
     };
     spans.push(Span::styled(
         format!(
@@ -225,7 +225,7 @@ fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
     } else {
         Style::default().fg(C_YELLOW())
     };
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![Span::styled(
             format!("Frame #{}", packet.no),
             Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
@@ -268,6 +268,9 @@ fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
         )),
         Line::from(format!("Investigation items: {}", app.worklist.items.len())),
     ];
+    if let Some(scope) = app.saved_packet_capture(packet.no) {
+        lines.insert(1, Line::from(format!("Retained evidence subset | Capture: {scope}")));
+    }
     f.render_widget(
         Paragraph::new(scrolled(lines, app.investigation_scroll, area))
             .block(panel("Summary"))

@@ -37,6 +37,10 @@ impl App {
     /// Load a PCAP file and ingest all packets instantly into the live capture pipeline.
     /// This is suitable for offline analysis; does not affect replay state.
     pub fn load_pcap_instant(&mut self, path: &str) {
+        if self.offline_review {
+            self.set_status("Open captures separately to preserve offline review evidence scope");
+            return;
+        }
         let path_buf = std::path::PathBuf::from(path.trim());
         match crate::pcap_replay::read_pcap(&path_buf) {
             Ok(packets) => {

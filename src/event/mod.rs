@@ -228,7 +228,11 @@ pub fn handle(app: &mut App, event: Event) -> bool {
 
         // PCAP instant import with 'L' from any tab
         if key.code == KeyCode::Char('L') {
-            app.pcap_import_editing = true;
+            if app.offline_review() {
+                app.set_status("Open captures separately to preserve offline review evidence scope");
+            } else {
+                app.pcap_import_editing = true;
+            }
             return false;
         }
 

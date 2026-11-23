@@ -1,6 +1,10 @@
 use super::*;
 
 impl SecurityEngine {
+    pub(crate) fn observe_saved_dns_context(&mut self, packet: &Packet, tcp: &crate::analysis::stream::DnsTcpObservation) {
+        let _ = self.dns_transactions.observe_stream(packet, tcp);
+    }
+
     pub fn dns_exchange_for_packet(&self, packet: &Packet) -> Option<crate::analysis::dns_transactions::DnsExchangeEvidence> {
         self.dns_transactions.exchange_for_packet(packet)
     }

@@ -141,6 +141,18 @@ impl AnalysisCore {
         PacketDisposition::Analyzed
     }
 
+    /// Reconstruct protocol context from a saved packet subset without producing new findings.
+    pub(crate) fn observe_saved_evidence(&mut self, packet: &Packet) {
+        if Self::disposition(packet) != PacketDisposition::Analyzed {
+            return;
+        }
+        self.flow_tracker.update(packet);
+        self.streams.ingest(packet);
+        let dns = self.streams.observe_tcp_dns(packet);
+        self.security.observe_saved_dns_context(packet, &dns);
+        self.tls_tracker.ingest(packet);
+    }
+
     /// Clear observed traffic without discarding configured rules or keys.
     pub fn clear(&mut self) {
         self.transaction_cache = Default::default();

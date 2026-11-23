@@ -90,6 +90,9 @@ pub(super) fn draw_stream_context(f: &mut Frame, app: &App, area: Rect) {
         )),
         Line::raw(""),
     ];
+    if app.offline_review() {
+        lines.insert(0, Line::from("Retained evidence only; stream coverage may be incomplete"));
+    }
     lines.extend(stream_segment_lines(stream));
     f.render_widget(
         Paragraph::new(scrolled(lines, app.investigation_scroll, area))
