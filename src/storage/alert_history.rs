@@ -202,10 +202,80 @@ fn filtered_alerts_report(
     scan_bytes: Option<std::num::NonZeroU64>,
 ) -> Result<AlertHistoryReport> {
     ensure!((1..=MAX_HISTORY_LIMIT).contains(&limit), "Alert history limit must be 1..={MAX_HISTORY_LIMIT}");
-    let logs = AlertLogs::new(active, previous)?;
     let mut latest = Vec::with_capacity(limit);
-    let mut integrity = AlertHistoryIntegrity::default();
     let mut seen = HashSet::with_capacity(limit);
+    let integrity = scan_alert_records(previous, active, scan_bytes, |record| {
+        let alert = record.alert;
+        if session_filter.is_some_and(|id| record.session_id != id)
+            || capture_filter.is_some_and(|id| alert.capture_id.as_deref() != Some(id))
+            || (!ranges.is_empty() && !ranges.iter().any(|range| range.contains(&alert.id)))
+            || !seen.insert((record.session_id.clone(), alert.capture_id.clone(), alert.id))
+        {
+            return false;
+        }
+        let evidence_frames = alert.evidence_frame_numbers();
+        let evidence_frame_count = evidence_frames.len();
+        let credential = alert.source == "CREDENTIAL";
+        let provenance = alert.provenance.as_ref().filter(|_| !credential);
+        let mut review_limitations = Vec::new();
+        if alert.capture_id.is_none() {
+            review_limitations.push("capture_scope_not_recorded");
+        }
+        if alert.provenance.is_none() {
+            review_limitations.push("rule_provenance_not_recorded");
+        }
+        if credential {
+            review_limitations.push("credential_metadata_redacted");
+        }
+        if evidence_frame_count == 0 {
+            review_limitations.push("no_packet_references");
+        }
+        let first_saved_unix_ms = record.first_saved_unix_ms.filter(|&timestamp| timestamp != 0);
+        let first_reviewed_unix_ms = alert.first_reviewed_unix_ms.filter(|&timestamp| timestamp != 0);
+        let first_review_delay_ms = first_reviewed_unix_ms.zip(first_saved_unix_ms)
+            .and_then(|(reviewed, saved)| reviewed.checked_sub(saved));
+        let legacy_rule_hint = if alert.capture_id.is_none() && alert.provenance.is_none() {
+            legacy_rule_hint(&alert.source, &alert.title)
+        } else {
+            None
+        };
+        latest.push(AlertHistoryEntry {
+            session_id: record.session_id,
+            capture_id: alert.capture_id,
+            alert_id: alert.id,
+            title: limited(if credential { credential_label(&alert.title) } else { &alert.title }, 160),
+            severity: limited(&alert.severity, 16),
+            detail: limited(if credential { CREDENTIAL_ALERT_DETAIL } else { &alert.detail }, 512),
+            disposition: alert.disposition,
+            first_seen: alert.first_seen,
+            last_seen: alert.last_seen,
+            first_saved_unix_ms,
+            first_reviewed_unix_ms,
+            first_review_delay_ms,
+            hit_count: alert.hit_count,
+            evidence_frame_count,
+            evidence_frame_set_sha256: evidence_frame_set_sha256(&evidence_frames),
+            flow: alert.flow,
+            rule_id: provenance.map(|rule| limited(&rule.rule_id, 128)),
+            legacy_rule_hint,
+            revision: provenance.map(|rule| rule.revision),
+            confidence: provenance.map(|rule| rule.confidence),
+            verify: provenance.map(|rule| limited(&rule.verification_hint, 240)),
+            review_limitations,
+        });
+        latest.len() == limit
+    })?;
+    Ok(AlertHistoryReport::new(latest, integrity))
+}
+
+pub(super) fn scan_alert_records(
+    previous: &[PathBuf],
+    active: &Path,
+    scan_bytes: Option<std::num::NonZeroU64>,
+    mut stop: impl FnMut(ExistingAlertRecord) -> bool,
+) -> Result<AlertHistoryIntegrity> {
+    let logs = AlertLogs::new(active, previous)?;
+    let mut integrity = AlertHistoryIntegrity::default();
     let mut line = Vec::new();
     let mut remaining = scan_bytes.map(std::num::NonZeroU64::get);
     for (path, file) in logs.open_newest()? {
@@ -223,74 +293,16 @@ fn filtered_alerts_report(
                 integrity.invalid_records += 1;
                 continue;
             };
-            let alert = record.alert;
             if record.session_id.is_empty() || record.session_id.len() > 128
-                || alert.capture_id.as_ref().is_some_and(|id| id.is_empty() || id.len() > 128)
-                || alert.packet_refs.len() > MAX_ALERT_PACKET_REFS
+                || record.alert.capture_id.as_ref().is_some_and(|id| id.is_empty() || id.len() > 128)
+                || record.alert.packet_refs.len() > MAX_ALERT_PACKET_REFS
             {
                 integrity.invalid_records += 1;
                 continue;
             }
-            if session_filter.is_some_and(|id| record.session_id != id)
-                || capture_filter.is_some_and(|id| alert.capture_id.as_deref() != Some(id))
-                || (!ranges.is_empty() && !ranges.iter().any(|range| range.contains(&alert.id)))
-                || !seen.insert((record.session_id.clone(), alert.capture_id.clone(), alert.id))
-            {
-                continue;
-            }
-            let evidence_frames = alert.evidence_frame_numbers();
-            let evidence_frame_count = evidence_frames.len();
-            let credential = alert.source == "CREDENTIAL";
-            let provenance = alert.provenance.as_ref().filter(|_| !credential);
-            let mut review_limitations = Vec::new();
-            if alert.capture_id.is_none() {
-                review_limitations.push("capture_scope_not_recorded");
-            }
-            if alert.provenance.is_none() {
-                review_limitations.push("rule_provenance_not_recorded");
-            }
-            if credential {
-                review_limitations.push("credential_metadata_redacted");
-            }
-            if evidence_frame_count == 0 {
-                review_limitations.push("no_packet_references");
-            }
-            let first_saved_unix_ms = record.first_saved_unix_ms.filter(|&timestamp| timestamp != 0);
-            let first_reviewed_unix_ms = alert.first_reviewed_unix_ms.filter(|&timestamp| timestamp != 0);
-            let first_review_delay_ms = first_reviewed_unix_ms.zip(first_saved_unix_ms)
-                .and_then(|(reviewed, saved)| reviewed.checked_sub(saved));
-            let legacy_rule_hint = if alert.capture_id.is_none() && alert.provenance.is_none() {
-                legacy_rule_hint(&alert.source, &alert.title)
-            } else {
-                None
-            };
-            latest.push(AlertHistoryEntry {
-                session_id: record.session_id,
-                capture_id: alert.capture_id,
-                alert_id: alert.id,
-                title: limited(if credential { credential_label(&alert.title) } else { &alert.title }, 160),
-                severity: limited(&alert.severity, 16),
-                detail: limited(if credential { CREDENTIAL_ALERT_DETAIL } else { &alert.detail }, 512),
-                disposition: alert.disposition,
-                first_seen: alert.first_seen,
-                last_seen: alert.last_seen,
-                first_saved_unix_ms,
-                first_reviewed_unix_ms,
-                first_review_delay_ms,
-                hit_count: alert.hit_count,
-                evidence_frame_count,
-                evidence_frame_set_sha256: evidence_frame_set_sha256(&evidence_frames),
-                flow: alert.flow,
-                rule_id: provenance.map(|rule| limited(&rule.rule_id, 128)),
-                legacy_rule_hint,
-                revision: provenance.map(|rule| rule.revision),
-                confidence: provenance.map(|rule| rule.confidence),
-                verify: provenance.map(|rule| limited(&rule.verification_hint, 240)),
-                review_limitations,
-            });
-            if latest.len() == limit {
+            if stop(record) {
                 integrity.stopped_at_limit = true;
-                return Ok(AlertHistoryReport::new(latest, integrity));
+                return Ok(integrity);
             }
         }
         if reader.start != 0 {
@@ -299,7 +311,7 @@ fn filtered_alerts_report(
         }
         remaining = remaining.map(|budget| budget.saturating_sub(file_bytes));
     }
-    Ok(AlertHistoryReport::new(latest, integrity))
+    Ok(integrity)
 }
 
 const READ_CHUNK: usize = 64 * 1024;

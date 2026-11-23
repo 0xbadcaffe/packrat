@@ -1,6 +1,7 @@
 //! Nearby saved alerts with a matching recorded transport tuple.
 
 use std::{
+    collections::HashSet,
     num::NonZeroU64,
     path::{Path, PathBuf},
 };
@@ -9,13 +10,10 @@ use anyhow::{Result, ensure};
 use serde::Serialize;
 
 use super::{
-    alert_history::{
-        AlertHistoryEntry, AlertHistoryIntegrity, MAX_HISTORY_LIMIT,
-        recent_alerts_report_with_budget,
-    },
+    alert_history::{AlertHistoryIntegrity, scan_alert_records},
     packet_archive::valid_capture_id,
 };
-use crate::analysis::alert_center::{AlertDisposition, AlertFlow};
+use crate::analysis::alert_center::{AlertDisposition, AlertFlow, AlertItem};
 
 const WINDOW_SECONDS: u64 = 300;
 const SCAN_BYTES: NonZeroU64 = NonZeroU64::new(8 * 1024 * 1024).unwrap();
@@ -41,14 +39,24 @@ pub struct RelatedAlertReport {
 
 #[derive(Serialize)]
 struct RelatedAlert {
+    #[serde(flatten)]
+    snapshot: TriggerSnapshot,
+    seconds_from_anchor_trigger: f64,
+    direction: &'static str,
+}
+
+#[derive(Serialize)]
+struct TriggerSnapshot {
     alert_id: u64,
     rule_id: Option<String>,
     revision: Option<u16>,
     severity: &'static str,
     disposition: AlertDisposition,
-    seconds_from_anchor_trigger: f64,
-    direction: &'static str,
     evidence_frame_count: usize,
+    #[serde(skip)]
+    flow: AlertFlow,
+    #[serde(skip)]
+    time: f64,
 }
 
 fn usable_flow(flow: AlertFlow) -> bool {
@@ -56,14 +64,14 @@ fn usable_flow(flow: AlertFlow) -> bool {
 }
 
 // AlertCenter replaces flow and last_seen together when a newer hit is recorded.
-fn trigger_time(alert: &AlertHistoryEntry) -> Option<f64> {
+fn trigger_time(alert: &AlertItem) -> Option<f64> {
     let time = alert.last_seen;
     (time.is_finite() && time != 0.0).then_some(time)
 }
 
-fn classify(candidate: AlertHistoryEntry, anchor: AlertFlow, trigger: f64) -> Option<RelatedAlert> {
-    let flow = candidate.flow.filter(|&flow| usable_flow(flow))?;
-    let delta = trigger_time(&candidate)? - trigger;
+fn classify(snapshot: TriggerSnapshot, anchor: AlertFlow, trigger: f64) -> Option<RelatedAlert> {
+    let flow = snapshot.flow;
+    let delta = snapshot.time - trigger;
     if !delta.is_finite()
         || delta.abs() > WINDOW_SECONDS as f64
         || flow.transport != anchor.transport
@@ -78,27 +86,42 @@ fn classify(candidate: AlertHistoryEntry, anchor: AlertFlow, trigger: f64) -> Op
         return None;
     };
     Some(RelatedAlert {
-        alert_id: candidate.alert_id,
-        rule_id: candidate.rule_id.filter(|rule| {
-            !rule.is_empty()
-                && rule.len() <= 128
-                && rule
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.'))
-        }),
-        revision: candidate.revision,
-        severity: match candidate.severity.as_str() {
+        snapshot,
+        seconds_from_anchor_trigger: delta,
+        direction,
+    })
+}
+
+fn snapshot(alert: &AlertItem, flow: AlertFlow, time: f64) -> TriggerSnapshot {
+    let provenance = alert
+        .provenance
+        .as_ref()
+        .filter(|_| alert.source != "CREDENTIAL");
+    TriggerSnapshot {
+        alert_id: alert.id,
+        rule_id: provenance
+            .map(|rule| &rule.rule_id)
+            .filter(|rule| {
+                !rule.is_empty()
+                    && rule.len() <= 128
+                    && rule
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.'))
+            })
+            .cloned(),
+        revision: provenance.map(|rule| rule.revision),
+        severity: match alert.severity.as_str() {
             "CRITICAL" => "CRITICAL",
             "HIGH" => "HIGH",
             "MEDIUM" => "MEDIUM",
             "LOW" => "LOW",
             _ => "UNKNOWN",
         },
-        disposition: candidate.disposition,
-        seconds_from_anchor_trigger: delta,
-        direction,
-        evidence_frame_count: candidate.evidence_frame_count,
-    })
+        disposition: alert.disposition,
+        evidence_frame_count: alert.evidence_frame_numbers().len(),
+        flow,
+        time,
+    }
 }
 
 pub fn related_alerts(
@@ -112,26 +135,32 @@ pub fn related_alerts(
         anchor_id > 0 && valid_capture_id(session) && valid_capture_id(capture),
         "Expected a positive ID and explicit session and capture IDs"
     );
-    let history = recent_alerts_report_with_budget(
-        previous,
-        active,
-        Some(session),
-        Some(capture),
-        MAX_HISTORY_LIMIT,
-        Some(SCAN_BYTES),
-    )?;
-    let scan_complete = history.integrity.invalid_records == 0
-        && history.integrity.oversized_records == 0
-        && !history.integrity.stopped_at_limit
-        && !history.integrity.stopped_at_scan_budget;
-    let anchor = history
-        .alerts
-        .iter()
-        .find(|item| item.alert_id == anchor_id);
-    let anchor_flow = anchor
-        .and_then(|item| item.flow)
-        .filter(|&flow| usable_flow(flow));
-    let trigger = anchor.and_then(trigger_time);
+    let mut seen = HashSet::new();
+    let mut anchor = None;
+    let mut candidates = Vec::new();
+    let integrity = scan_alert_records(previous, active, Some(SCAN_BYTES), |entry| {
+        let alert = entry.alert;
+        if entry.session_id != session
+            || alert.capture_id.as_deref() != Some(capture)
+            || alert.id == 0
+            || !seen.insert(alert.id)
+        {
+            return false;
+        }
+        // Deduplicate before checking the tuple so an obsolete match never wins.
+        let flow = alert.flow.filter(|&flow| usable_flow(flow));
+        let time = trigger_time(&alert);
+        if alert.id == anchor_id {
+            anchor = Some((flow, time));
+        } else if let Some((flow, time)) = flow.zip(time) {
+            candidates.push(snapshot(&alert, flow, time));
+        }
+        false
+    })?;
+    let scan_complete = integrity.invalid_records == 0
+        && integrity.oversized_records == 0
+        && !integrity.stopped_at_scan_budget;
+    let (anchor_flow, trigger) = anchor.unwrap_or_default();
     let status = if anchor.is_none() {
         "anchor_not_in_sample"
     } else if anchor_flow.is_none() || trigger.is_none() {
@@ -139,14 +168,12 @@ pub fn related_alerts(
     } else {
         "sampled"
     };
-    let sampled_alerts = history.alerts.len();
+    let sampled_alerts = seen.len();
     let mut matches = anchor_flow
         .zip(trigger)
         .map_or_else(Vec::new, |(flow, trigger)| {
-            history
-                .alerts
+            candidates
                 .into_iter()
-                .filter(|alert| alert.alert_id != anchor_id)
                 .filter_map(|alert| classify(alert, flow, trigger))
                 .collect()
         });
@@ -154,7 +181,7 @@ pub fn related_alerts(
         left.seconds_from_anchor_trigger
             .abs()
             .total_cmp(&right.seconds_from_anchor_trigger.abs())
-            .then(left.alert_id.cmp(&right.alert_id))
+            .then(left.snapshot.alert_id.cmp(&right.snapshot.alert_id))
     });
     let matching_alerts_in_sample = matches.len();
     matches.truncate(MAX_MATCHES);
@@ -169,7 +196,7 @@ pub fn related_alerts(
         trigger_window_seconds: WINDOW_SECONDS,
         sampled_alerts,
         scan_complete,
-        integrity: history.integrity,
+        integrity,
         matching_alerts_in_sample,
         matches,
         limitation: "Recorded tuple matches do not establish the same connection, VLAN, interface, process, or incident.",

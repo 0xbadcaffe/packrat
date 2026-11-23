@@ -175,3 +175,50 @@ fn caps_returned_matches_without_hiding_the_sample_count() {
     assert_eq!(matches.len(), 32);
     assert_eq!(matches.last().unwrap()["alert_id"], 33);
 }
+
+#[test]
+fn finds_older_anchor_beyond_unrelated_scope_churn_and_ignores_obsolete_matches() {
+    let mut log = tempfile::NamedTempFile::new().unwrap();
+    for (id, tuple) in [(1, Some(flow())), (2, Some(flow())), (3, Some(flow()))] {
+        writeln!(log, "{}", record(id, 100., tuple, "session-a", "capture-a")).unwrap();
+    }
+    for id in 4..=620 {
+        writeln!(
+            log,
+            "{}",
+            record(id, 600., Some(flow()), "session-a", "capture-a")
+        )
+        .unwrap();
+    }
+    writeln!(log, "{}", record(3, 101., None, "session-a", "capture-a")).unwrap();
+    let report = run(log.path(), "1", &[]);
+    assert_eq!(report["status"], "sampled");
+    assert_eq!(report["sampled_alerts"], 620);
+    assert_eq!(report["scan_complete"], true);
+    assert_eq!(report["matching_alerts_in_sample"], 1);
+    assert_eq!(report["matches"][0]["alert_id"], 2);
+}
+
+#[test]
+fn byte_budget_still_applies_even_when_no_recent_alerts_match_the_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let earlier = dir.path().join("earlier.jsonl");
+    let active = dir.path().join("active.jsonl");
+    std::fs::write(
+        &earlier,
+        record(1, 100., Some(flow()), "session-a", "capture-a").to_string(),
+    )
+    .unwrap();
+    let mut log = std::fs::File::create(&active).unwrap();
+    let mut unrelated = record(1, 100., Some(flow()), "session-b", "capture-a");
+    unrelated["alert"]["detail"] = json!("x".repeat(900_000));
+    let line = unrelated.to_string();
+    for _ in 0..10 {
+        writeln!(log, "{line}").unwrap();
+    }
+    let report = run(&active, "1", &["--previous-log", earlier.to_str().unwrap()]);
+    assert_eq!(report["status"], "anchor_not_in_sample");
+    assert_eq!(report["sampled_alerts"], 0);
+    assert_eq!(report["scan_complete"], false);
+    assert_eq!(report["integrity"]["stopped_at_scan_budget"], true);
+}
