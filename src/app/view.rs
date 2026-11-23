@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::alert_center::AlertDisposition;
 
 pub struct AppView<'a> {
     app: &'a App,
@@ -13,6 +14,24 @@ impl std::ops::Deref for AppView<'_> {
 }
 
 impl App {
+    pub fn review_selected_alert(&mut self, disposition: AlertDisposition) {
+        let target = self.query_core(|core| core.alert_center.selected_item()
+            .map(|alert| (alert.id, alert.capture_id.clone())));
+        match target {
+            Some(Some((id, capture_id))) => {
+                self.update_core(&format!("Alert #{id} marked {disposition}"), move |core| {
+                    if core.alert_center.set_disposition(id, capture_id.as_deref(), disposition) {
+                        Ok(())
+                    } else {
+                        Err(format!("Alert #{id} is no longer available; review state not changed"))
+                    }
+                });
+            }
+            Some(None) => self.set_status("No alert selected to review"),
+            None => self.set_status("Analysis is busy; retry alert review"),
+        }
+    }
+
     pub fn configure_core(&mut self, apply: impl FnOnce(&mut AnalysisCore) + Send + 'static) {
         self.update_core("", move |core| {
             apply(core);

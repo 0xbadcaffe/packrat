@@ -196,6 +196,30 @@ async fn alert_center_collects_findings_and_tracks_review_state() {
     );
 }
 
+#[test]
+fn queued_review_changes_the_alert_selected_at_the_keypress() {
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+
+    let mut app = sec_app();
+    app.configure_core(|core| {
+        core.alert_center.record(1, "IDS", "HIGH", "First", "first");
+        core.alert_center.record(2, "IDS", "HIGH", "Second", "second");
+    });
+    app.start_background_analysis().unwrap();
+    event::handle(&mut app, key(KeyCode::Down));
+    event::handle(&mut app, key(KeyCode::Char('z')));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !app.analysis_idle() {
+        app.poll_analysis();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let core = app.core.read().unwrap();
+    assert_eq!(core.alert_center.selected_item().unwrap().id, 2);
+    assert_eq!(core.alert_center.items[0].disposition, AlertDisposition::Benign);
+    assert_eq!(core.alert_center.items[1].disposition, AlertDisposition::New);
+}
+
 #[tokio::test]
 async fn alert_center_filter_and_navigation_are_bounded() {
     let mut app = sec_app();

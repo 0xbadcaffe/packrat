@@ -8,7 +8,13 @@ fn deduplicates_findings_and_preserves_disposition() {
     assert_eq!(center.items[0].hit_count, 2);
     assert_eq!(center.items[0].first_packet, 7);
     assert_eq!(center.items[0].last_packet, 8);
-    assert!(center.set_selected_disposition(AlertDisposition::Reviewing));
+    center.drain_pending_exports();
+    assert!(!center.set_disposition(1, Some("other-capture"), AlertDisposition::Confirmed));
+    assert!(center.set_disposition(1, None, AlertDisposition::Reviewing));
+    assert!(center.set_disposition(1, None, AlertDisposition::Reviewing));
+    let updates = center.drain_pending_exports();
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].disposition, AlertDisposition::Reviewing);
     assert_eq!(center.selected_item().unwrap().disposition, AlertDisposition::Reviewing);
 }
 

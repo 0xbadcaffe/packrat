@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::alert_center::AlertDisposition;
 
 // ─── Security tab ─────────────────────────────────────────────────────────────
 
@@ -55,43 +56,23 @@ pub(super) fn handle_security(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Enter => {
-                app.configure_core(|core| {
-                    core.alert_center.set_selected_disposition(
-                        crate::analysis::alert_center::AlertDisposition::Reviewing,
-                    );
-                });
+                app.review_selected_alert(AlertDisposition::Reviewing);
                 return;
             }
             KeyCode::Char('C') => {
-                app.configure_core(|core| {
-                    core.alert_center.set_selected_disposition(
-                        crate::analysis::alert_center::AlertDisposition::Confirmed,
-                    );
-                });
+                app.review_selected_alert(AlertDisposition::Confirmed);
                 return;
             }
             KeyCode::Char('z') => {
-                app.configure_core(|core| {
-                    core.alert_center.set_selected_disposition(
-                        crate::analysis::alert_center::AlertDisposition::Benign,
-                    );
-                });
+                app.review_selected_alert(AlertDisposition::Benign);
                 return;
             }
             KeyCode::Char('K') => {
-                app.configure_core(|core| {
-                    core.alert_center.set_selected_disposition(
-                        crate::analysis::alert_center::AlertDisposition::Contained,
-                    );
-                });
+                app.review_selected_alert(AlertDisposition::Contained);
                 return;
             }
             KeyCode::Char('x') => {
-                app.configure_core(|core| {
-                    core.alert_center.set_selected_disposition(
-                        crate::analysis::alert_center::AlertDisposition::Closed,
-                    );
-                });
+                app.review_selected_alert(AlertDisposition::Closed);
                 return;
             }
             _ => {}

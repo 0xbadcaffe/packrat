@@ -413,12 +413,16 @@ impl AlertCenter {
         std::mem::take(&mut self.pending_exports)
     }
 
-    pub fn set_selected_disposition(&mut self, disposition: AlertDisposition) -> bool {
-        let Some(index) = self.visible_indices().get(self.selected).copied() else {
+    pub fn set_disposition(&mut self, id: u64, capture_id: Option<&str>, disposition: AlertDisposition) -> bool {
+        let Some(item) = self.items.iter_mut().find(|item| {
+            item.id == id && item.capture_id.as_deref() == capture_id
+        }) else {
             return false;
         };
-        self.items[index].disposition = disposition;
-        self.pending_exports.push(self.items[index].clone());
+        if item.disposition != disposition {
+            item.disposition = disposition;
+            self.pending_exports.push(item.clone());
+        }
         true
     }
 
