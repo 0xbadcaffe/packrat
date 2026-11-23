@@ -4,9 +4,88 @@ mod packets;
 use std::process::Command;
 
 use packrat_tui::analysis::alert_center::{AlertCenter, AlertFlow, AlertTransport};
+use packrat_tui::analysis::packet_fields::extract_fields;
 use packrat_tui::net::packet::CaptureMetadata;
 use packrat_tui::storage::packet_archive::PacketArchive;
 use serde_json::{Value, json};
+
+#[test]
+fn truncated_payloads_corroborate_complete_headers_without_claiming_complete_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive");
+    let log = root.path().join("alerts.jsonl");
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "HIGH", "Saved alert", "fixture");
+    let mut alert = center.items.remove(0);
+    alert.capture_id = Some("scope-a".into());
+    alert.packet_refs = (1..=6).collect();
+    alert.flow = Some(AlertFlow {
+        transport: AlertTransport::Tcp,
+        source: "10.0.0.1:40000".parse().unwrap(),
+        destination: "10.0.0.2:80".parse().unwrap(),
+    });
+    std::fs::write(&log,
+        json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
+    ).unwrap();
+
+    let truncate = |mut packet: packrat_tui::net::packet::Packet, len: u32| {
+        let wire_length = packet.bytes.len() as u32;
+        packet.bytes.truncate(len as usize);
+        packet.capture = Some(CaptureMetadata {
+            timestamp: None, captured_length: len, wire_length, link_type: 1,
+            section_id: 2, interface_id: 3, interface_name: None, comments: Vec::new(),
+        });
+        packet
+    };
+    let tcp = truncate(packets::tcp(1, 100, 0x02, &[0; 32]), 54);
+    let mut wrong_wire_length = tcp.clone();
+    wrong_wire_length.no = 2;
+    wrong_wire_length.capture.as_mut().unwrap().wire_length -= 1;
+
+    let mut ipv6_udp = packets::tcp(3, 100, 0x02, b"");
+    let mut headers = [0; 56];
+    headers[0] = 0x60;
+    headers[4..6].copy_from_slice(&48_u16.to_be_bytes());
+    headers[6] = 60; // Destination Options, then UDP.
+    headers[23] = 1;
+    headers[39] = 2;
+    headers[40] = 17;
+    headers[48..54].copy_from_slice(&[0x9c, 0x40, 0x01, 0xbb, 0x00, 40]);
+    ipv6_udp.bytes[12..14].copy_from_slice(&[0x86, 0xdd]);
+    ipv6_udp.bytes.truncate(14);
+    ipv6_udp.bytes.extend_from_slice(&headers);
+    ipv6_udp.bytes.extend_from_slice(&[0; 32]);
+    let mut cut_udp_header = truncate(ipv6_udp.clone(), 69);
+    cut_udp_header.no = 4;
+    let mut wrong_udp_length = truncate(ipv6_udp.clone(), 70);
+    wrong_udp_length.no = 5;
+    wrong_udp_length.bytes[67] = 41;
+    let mut missing_metadata = truncate(ipv6_udp.clone(), 70);
+    missing_metadata.no = 6;
+    missing_metadata.capture = None;
+    let udp = truncate(ipv6_udp, 70);
+    assert!(extract_fields(&tcp).iter().any(|field| field.path == "tcp.seq"));
+    assert!(extract_fields(&udp).iter().any(|field| field.path == "udp.length"));
+    assert!(!extract_fields(&missing_metadata).iter().any(|field| field.path == "udp.length"));
+
+    let mut archive = PacketArchive::open(&path).unwrap();
+    archive.append_scoped("scope-a", &[tcp, wrong_wire_length, udp, cut_udp_header, wrong_udp_length, missing_metadata]).unwrap();
+    drop(archive);
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&path).arg("--alert-flow-summary").arg(&log).args(["session-a", "1", "--capture-id", "scope-a"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["trigger_tuple_status"], "matches_wire");
+    assert_eq!(report["trigger_frame"], json!({"frame_number":1,"status":"truncated","transport_header_observed":true}));
+    assert_eq!(report["truncated_frames"], 5);
+    assert_eq!(report["unassigned_frames"].as_array().unwrap().iter()
+        .map(|frame| frame["frame_number"].as_u64().unwrap()).collect::<Vec<_>>(), [2, 4, 5, 6]);
+    let flows = report["directional_flows"].as_array().unwrap();
+    assert_eq!(flows.len(), 2);
+    assert!(flows.iter().any(|flow| flow["protocol"] == "udp" && flow["frames"] ==
+        json!([{"frame_number":3,"status":"truncated"}])));
+}
 
 #[test]
 fn alert_packet_metadata_is_scoped_and_has_no_packet_payload_or_comments() {

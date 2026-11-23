@@ -184,7 +184,7 @@ pub fn alert_flow_summary(
         },
         directional_flows: Vec::new(),
         unassigned_frames: Vec::new(),
-        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
+        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Truncated frames may contribute a complete transport header, not missing payload. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
     for frame in metadata.frames {

@@ -90,7 +90,7 @@ pub(crate) fn captured_transport_header(packet: &Packet) -> Option<CapturedTrans
     if ethernet.vlan_tags > MAX_EVIDENCE_VLAN_TAGS {
         return None;
     }
-    let transport = transport_layout(bytes, ethernet)?;
+    let transport = transport_layout(bytes, ethernet, truncated_wire_end(packet))?;
     if transport.fragmented {
         return None;
     }
@@ -159,7 +159,7 @@ pub fn extract_fields(packet: &Packet) -> Vec<PacketField> {
             _ => {}
         }
 
-        if let Some(transport) = transport_layout(bytes, eth) {
+        if let Some(transport) = transport_layout(bytes, eth, truncated_wire_end(packet)) {
             match transport.protocol {
                 6 => add_tcp_fields(bytes, transport.offset, &mut fields),
                 17 => add_udp_fields(bytes, transport.offset, &mut fields),
@@ -301,10 +301,17 @@ fn add_ipv6_fields(bytes: &[u8], ip: usize, fields: &mut Vec<PacketField>) {
     fields.push(PacketField::new("IPv6", "ipv6.dst", "Destination Address", ipv6(bytes, ip + 24), Some(ip + 24), Some(16)));
 }
 
-fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
+fn truncated_wire_end(packet: &Packet) -> Option<usize> {
+    let capture = packet.capture.as_ref()?;
+    (capture.truncated() && capture.captured_length as usize == packet.bytes.len())
+        .then_some(capture.wire_length as usize)
+}
+
+fn transport_layout(bytes: &[u8], eth: EtherLayout, wire_end: Option<usize>) -> Option<TransportLayout> {
+    let limit = wire_end.unwrap_or(bytes.len());
     let ip = eth.payload_offset;
     let mut fragmented = false;
-    let (protocol, offset, end) = match eth.ether_type {
+    let (protocol, offset, ip_end) = match eth.ether_type {
         0x0800 => {
             if bytes.len() < ip + 20 || bytes[ip] >> 4 != 4 {
                 return None;
@@ -313,7 +320,7 @@ fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
             let offset = ip + ihl;
             let end = ip.checked_add(read_u16(bytes, ip + 2)? as usize)?;
             let fragment = read_u16(bytes, ip + 6)?;
-            if ihl < 20 || end < offset || end > bytes.len() || fragment & 0x1fff != 0 { return None; }
+            if ihl < 20 || end < offset || end > limit || fragment & 0x1fff != 0 { return None; }
             fragmented = fragment & 0x2000 != 0;
             (bytes[ip + 9], offset, end)
         }
@@ -321,8 +328,9 @@ fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
             if bytes.len() < ip + 40 || bytes[ip] >> 4 != 6 {
                 return None;
             }
-            let end = ip.checked_add(40 + read_u16(bytes, ip + 4)? as usize)?;
-            if end > bytes.len() { return None; }
+            let ip_end = ip.checked_add(40 + read_u16(bytes, ip + 4)? as usize)?;
+            if ip_end > limit { return None; }
+            let end = ip_end.min(bytes.len());
             let mut offset = ip + 40;
             let mut protocol = bytes[ip + 6];
             for _ in 0..16 {
@@ -341,10 +349,11 @@ fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
                 offset = offset.checked_add(length)?;
                 if offset > end { return None; }
             }
-            (protocol, offset, end)
+            (protocol, offset, ip_end)
         }
         _ => return None,
     };
+    let end = ip_end.min(bytes.len());
     let payload_offset = match protocol {
         6 if offset + 20 <= end => {
             let length = usize::from(bytes[offset + 12] >> 4) * 4;
@@ -353,8 +362,8 @@ fn transport_layout(bytes: &[u8], eth: EtherLayout) -> Option<TransportLayout> {
         }
         17 if offset + 8 <= end => {
             let length = read_u16(bytes, offset + 4)? as usize;
-            if length < 8 || offset + length > end { return None; }
-            return Some(TransportLayout { protocol, offset, payload_offset: offset + 8, end: offset + length, fragmented });
+            if length < 8 || offset + length > ip_end { return None; }
+            return Some(TransportLayout { protocol, offset, payload_offset: offset + 8, end: end.min(offset + length), fragmented });
         }
         _ => return None,
     };
