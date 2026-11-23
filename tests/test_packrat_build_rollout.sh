@@ -30,6 +30,9 @@ cargo() {
     printf '%s\n' capture >"$CARGO_TARGET_DIR/release/packrat"
     printf '%s\n' analyzer >"$CARGO_TARGET_DIR/release/packrat-analyze"
     printf '%s\n' archive >"$CARGO_TARGET_DIR/release/packrat-archive"
+    if [[ -n ${TEST_IO_DURING_BUILD:-} ]]; then
+        printf '%s\n' "$TEST_IO_DURING_BUILD" >"$TEST_IO_SAMPLE"
+    fi
 }
 export -f cargo
 
@@ -123,4 +126,6 @@ assert_clean
 diff -u <(printf '%s\n' build '--check wlan1 ' build '--check wlan1 ' build '--deploy wlan1 --enable-alert-evidence' \
     build-archive '--check wlan1 --companions-only' build-archive '--deploy wlan1 --companions-only' \
     build build '--deploy wlan1 ') "$TEST_TRACE"
+# shellcheck source=tests/support/build_rollout_io_pressure.bash
+source "$root/tests/support/build_rollout_io_pressure.bash"
 printf '%s\n' 'Packrat native build and rollout tests passed'
