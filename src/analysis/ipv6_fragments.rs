@@ -76,10 +76,12 @@ pub struct Ipv6FragmentReassembler {
 
 impl Ipv6FragmentReassembler {
     pub fn ingest(&mut self, packet: &Packet) -> Ipv6FragmentOutcome {
-        self.ingest_tracking(packet, |_| {})
+        self.ingest_tracking(packet, |_| {}, |_| {})
     }
 
-    pub(crate) fn ingest_tracking(&mut self, packet: &Packet, pending: impl FnOnce(&Packet)) -> Ipv6FragmentOutcome {
+    pub(crate) fn ingest_tracking(
+        &mut self, packet: &Packet, pending: impl FnOnce(&Packet), mut rejected_frame: impl FnMut(u64),
+    ) -> Ipv6FragmentOutcome {
         let Some(fragment) = parse_fragment(&packet.bytes) else {
             return Ipv6FragmentOutcome::Ignored;
         };
@@ -141,13 +143,20 @@ impl Ipv6FragmentReassembler {
             };
         }
         if state.fragments.len() >= MAX_FRAGMENTS {
+            state.fragments.iter().for_each(|fragment| rejected_frame(fragment.frame));
             state.discard();
             return Ipv6FragmentOutcome::Rejected { reason: "IPv6 datagram exceeds fragment-count limit" };
         }
 
-        if state.final_len.is_some_and(|length| end > length || !fragment.more_fragments)
-            || (!fragment.more_fragments && state.fragments.iter().any(|f| f.offset + f.data.len() >= end))
-        {
+        let prior = if state.final_len.is_some_and(|length| end > length || !fragment.more_fragments) {
+            state.fragments.iter().find(|f| !f.more_fragments)
+        } else if !fragment.more_fragments {
+            state.fragments.iter().find(|f| f.offset + f.data.len() >= end)
+        } else {
+            None
+        };
+        if let Some(prior) = prior {
+            rejected_frame(prior.frame);
             state.discard();
             return Ipv6FragmentOutcome::Rejected { reason: "Inconsistent IPv6 final fragment length" };
         }

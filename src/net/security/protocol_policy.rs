@@ -91,9 +91,10 @@ impl SecurityEngine {
 
     pub(super) fn check_ipv6_fragment_reassembly(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
         let candidates = &mut self.ipv6_fragment_evidence;
+        let mut rejected_frames = Vec::new();
         match self.ipv6_fragments.ingest_tracking(pkt, |accepted| {
             if archive_rules.is_some() { candidates.remember(accepted); }
-        }) {
+        }, |frame| rejected_frames.push(frame)) {
             Ipv6FragmentOutcome::Ignored | Ipv6FragmentOutcome::Pending { .. } => {}
             Ipv6FragmentOutcome::Overlap { identification, previous_frame, conflicting_bytes } => {
                 if archive_rules.is_some_and(|rules| conflicting_bytes || rules.iter().any(|rule| rule == "ipv6.reassembly_rejected"))
@@ -113,12 +114,17 @@ impl SecurityEngine {
                 });
             }
             Ipv6FragmentOutcome::Rejected { reason } => {
-                self.push_ids(IdsAlert {
+                if archive_rules.is_some() {
+                    self.findings.retained_evidence.extend(rejected_frames.iter().filter_map(|&frame| {
+                        candidates.cited_packet(pkt, frame).cloned()
+                    }));
+                }
+                self.push_ids_with_evidence(IdsAlert {
                     pkt_no: pkt.no,
                     signature: "IPv6 fragment reassembly rejected",
                     severity: Severity::High,
                     detail: format!("{reason} from {}", pkt.src),
-                });
+                }, rejected_frames);
             }
             Ipv6FragmentOutcome::Complete { datagram } => {
                 self.ipv6_reassembled = self.ipv6_reassembled.saturating_add(1);

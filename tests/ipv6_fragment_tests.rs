@@ -127,16 +127,17 @@ fn reassembled_ipv6_payload_runs_through_security_signatures() {
 #[test]
 fn rejects_excessive_ipv6_fragment_count() {
     let mut security = SecurityEngine::default();
-    for index in 0..=128_u64 {
+    for index in 0..128_u64 {
         let payload = [(index & 0xff) as u8; 8];
         let mut fragment = fragment_packet(index + 1, 10, index as u16 * 8, true, &payload);
         fragment.timestamp = index as f64 / 100.0;
         security.update(&fragment);
     }
-    assert!(security
-        .ids_alerts
-        .iter()
-        .any(|alert| alert.signature == "IPv6 fragment reassembly rejected"));
+    let mut excess = fragment_packet(129, 10, 128 * 8, true, &[128; 8]);
+    excess.timestamp = 1.28;
+    let result = security.inspect(&excess);
+    let finding = result.ids.iter().find(|finding| finding.alert.signature == "IPv6 fragment reassembly rejected").unwrap();
+    assert_eq!(finding.related_packets, (1..=128).collect::<Vec<_>>());
 }
 
 #[test]
@@ -210,6 +211,22 @@ fn ipv6_fragment_cannot_extend_past_the_final_length() {
     }));
     let first = fragment_packet(3, 16, 0, true, b"abcdefgh");
     assert!(matches!(reassembler.ingest(&first), Ipv6FragmentOutcome::Ignored));
+}
+
+#[test]
+fn ipv6_rejection_cites_the_frame_that_conflicts_with_the_final_length() {
+    for (prior_offset, prior_final, offset, final_fragment) in [(8, true, 16, false), (16, false, 8, true)] {
+        let mut security = SecurityEngine::default();
+        if !prior_final {
+            security.update(&fragment_packet(1, 16, 0, true, b"abcdefgh"));
+        }
+        let prior = fragment_packet(2, 16, prior_offset, !prior_final, b"ijklmnop");
+        security.update(&prior);
+        let result = security.inspect(&fragment_packet(3, 16, offset, !final_fragment, b"qrstuvwx"));
+        let finding = result.ids.iter().find(|finding| finding.alert.signature == "IPv6 fragment reassembly rejected").unwrap();
+        assert_eq!(finding.related_packets, [2]);
+        assert!(finding.alert.detail.contains("Inconsistent IPv6 final fragment length"));
+    }
 }
 
 #[test]
