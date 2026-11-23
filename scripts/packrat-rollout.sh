@@ -18,6 +18,7 @@ health_state=${PACKRAT_ROLLOUT_HEALTH_STATE:-"$HOME/.cache/packrat-health/latest
 triage_state=${PACKRAT_ROLLOUT_TRIAGE_STATE:-}
 triage_check=${PACKRAT_ROLLOUT_TRIAGE_CHECK:-"$HOME/.local/bin/packrat-watch-triage"}
 triage_journal_required=${PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL:-0}
+allow_historical_drops=${PACKRAT_ROLLOUT_ALLOW_HISTORICAL_DROPS:-0}
 backup_reserve_mib=${PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB:-512}
 backup_dir=
 stage_binary=
@@ -140,28 +141,32 @@ primary_capture_stamp() {
 
 triage_watcher_ready() {
     [[ -n $triage_state ]] || return 0
-    timeout 5s "$triage_check" --check "$triage_state" |
-        jq -e --argjson scope "$1" --argjson require_journal "$triage_journal_required" '
-            .status == "current" and .capture_id == $scope.capture_id and
-            .session_id == $scope.alert_session_id and
-            ($require_journal == 0 or (.journal_status == "current" and .journal_pending_events == 0))
-        ' >/dev/null
+    local check code=0 drops=${2:-0}
+    check=$(timeout 5s "$triage_check" --check "$triage_state") || code=$?
+    jq -se --argjson scope "$1" --argjson require_journal "$triage_journal_required" \
+        --argjson drops "$drops" --argjson code "$code" '
+        length == 1 and (.[0] |
+            (($code == 0 and .status == "current") or ($code == 1 and $drops > 0
+                and .status == "triage_unhealthy" and .historical_drop_total == $drops)) and
+            .capture_id == $scope.capture_id and .session_id == $scope.alert_session_id and
+            ($require_journal == 0 or (.journal_status == "current" and .journal_pending_events == 0)))
+    ' <<< "$check" >/dev/null
 }
 
 alert_watcher_ready() {
-    local capture_stamp=$1 identity latest_identity
+    local capture_stamp=$1 identity latest_identity drops
     [[ -f $health_state ]] || return 1
     identity=$(primary_alert_log_identity) && [[ $identity =~ ^[0-9]{1,20}:[0-9]{1,20}$ ]] || return 1
-    if ! head -c 65537 -- "$health_state" |
+    if ! drops=$(head -c 65537 -- "$health_state" |
         jq -Rse --argjson scope "$capture_stamp" --arg log "$data_dir/alerts.jsonl" --arg identity "$identity" \
-            --argjson now "$(date -u +%s)" '
+            --argjson now "$(date -u +%s)" --argjson allow "${2:-0}" '
             select(utf8bytelength <= 65536) | fromjson | objects
             | . as $sample
             | (.timestamp | fromdateiso8601) as $observed
             | (.poll_interval_seconds | select(
                 type == "number" and floor == . and . >= 1 and . <= 999999
               )) as $interval
-            | $sample.record_type == "capture_health"
+            | select($sample.record_type == "capture_health"
               and $now >= $observed and $now - $observed <= $interval * 3 + 5
               and $sample.capture_active == true and $sample.telemetry_fresh == true
               and ($scope.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"))
@@ -175,12 +180,22 @@ alert_watcher_ready() {
               and $sample.alert_watcher_source_matches == true
               and $sample.alert_watcher_open_log_required == true
               and $sample.alert_log_identity == $identity
-              and $sample.alert_watcher_log == $log and $sample.alert_log_storage == "private"
-        ' >/dev/null 2>&1; then
+              and $sample.alert_watcher_log == $log and $sample.alert_log_storage == "private")
+            | if $allow == 0 or (.issues == [] and .pcap_buffer_drops == 0) then 0
+              elif .issues == ["pcap_buffer_drops"] and .pcap_buffer_drops_delta == 0
+              then .pcap_buffer_drops | select(type == "number" and . > 0 and . <= 4294967295 and floor == .)
+              else empty end
+        ' 2>/dev/null); then
         return 1
     fi
+    if (( drops > 0 )) && ! curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$health_addr/health" |
+        jq -e --argjson scope "$capture_stamp" --argjson drops "$drops" '
+            .capture_id == $scope.capture_id and .capture_run_id == $scope.capture_run_id and
+            .alert_session_id == $scope.alert_session_id and .pcap_buffer_drops == $drops and
+            .status == "ok" and .telemetry_fresh == true and .capture_active == true
+        ' >/dev/null; then return 1; fi
     latest_identity=$(primary_alert_log_identity) && [[ $latest_identity == "$identity" ]] &&
-        triage_watcher_ready "$capture_stamp"
+        triage_watcher_ready "$capture_stamp" "$drops"
 }
 
 await_primary_watcher() {
@@ -220,7 +235,7 @@ preflight() {
     capture_storage_ready "$pid" "$main_session" || return 1
     primary_alert_log_stamp >/dev/null || { error "Primary alert log is not a private, root-owned regular file with one link"; return 1; }
     local stamp
-    if ! stamp=$(primary_capture_stamp) || ! alert_watcher_ready "$stamp"; then
+    if ! stamp=$(primary_capture_stamp) || ! alert_watcher_ready "$stamp" "$allow_historical_drops"; then
         error "Cannot verify primary alert monitoring; check $health_state and any configured triage state"
         return 1
     fi
@@ -357,7 +372,7 @@ rollout() {
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi
-    if ! alert_watcher_ready "$primary_now"; then
+    if ! alert_watcher_ready "$primary_now" "$allow_historical_drops"; then
         error "Could not verify primary alert monitoring; current capture not stopped"
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
@@ -432,11 +447,16 @@ main() {
         error 'Set PACKRAT_ROLLOUT_TRIAGE_STATE to require fresh triage for the same capture.'
         error 'PACKRAT_ROLLOUT_TRIAGE_CHECK overrides the triage watcher executable.'
         error 'PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL=1 requires healthy journal writes and no backlog.'
+        error 'PACKRAT_ROLLOUT_ALLOW_HISTORICAL_DROPS=1 allows replacing a capture with verified past drops only.'
         error 'The health watcher must run with PACKRAT_ALERT_VERIFY_OPEN=1 and verify the current alert log.'
         error 'PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB sets free space to leave after backing up (default: 512).'
         return 2
     fi
     mode=$1 candidate=$2 interface=$3
+    if [[ ! $allow_historical_drops =~ ^[01]$ || ( $allow_historical_drops == 1 && $triage_journal_required != 1 ) ]]; then
+        error 'The historical-drop override requires PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL=1.'
+        return 2
+    fi
     if [[ ! $triage_journal_required =~ ^[01]$ || ( $triage_journal_required == 1 && -z $triage_state ) ]]; then
         error 'Journal verification requires PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL=0 or 1, and a triage state when enabled.'
         return 2

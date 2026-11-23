@@ -67,6 +67,17 @@ jq '.updated_at=(now + 120 | todateiso8601)' "$state" >"$scratch/future.json"
 check_status "$scratch/future.json" snapshot_future 1
 jq '.updated_at="invalid"' "$state" >"$scratch/invalid.json"
 check_status "$scratch/invalid.json" snapshot_invalid 2
+jq '.status="degraded" | .issues=["pcap_buffer_drops"] | .buffer_drops=100 | .buffer_drops_delta=0' \
+    "$state" >"$scratch/historical.json"
+check_status "$scratch/historical.json" triage_unhealthy 1
+{ bash "$watch" --check "$scratch/historical.json" || [[ $? == 1 ]]; } |
+    jq -e '.historical_drop_total==100' >/dev/null
+for change in '.buffer_drops_delta=1' 'del(.buffer_drops_delta)' '.issues+=["capture_queue_high"]' \
+    '.alert_log_integrity.invalid_records=1' '.alert_saving=false' '.updated_at=(now - 120 | todateiso8601)'; do
+    jq "$change" "$scratch/historical.json" >"$scratch/not-historical.json"
+    { bash "$watch" --check "$scratch/not-historical.json" || [[ $? == 1 ]]; } |
+        jq -e '.historical_drop_total==null' >/dev/null
+done
 for change in 'del(.capture_id)' '.session_id="bad session"' '.recent_alerts=null' '.alert_saving=false' 'del(.packets)' \
     '.issues=["capture_stalled"]' '.alert_log_integrity.invalid_records=1' '.alert_log_integrity.stopped_at_scan_budget=true'; do
     jq "$change" "$state" >"$scratch/invalid.json"

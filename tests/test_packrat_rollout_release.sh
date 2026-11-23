@@ -70,4 +70,37 @@ grep -Fq 'Staged analyzer cleanup failed' "$scratch/warning"
 cmp -s -- "$analyzer_candidate" "$installed_analyzer"
 cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
 [[ $("$backup_dir/packrat-analyze") == 'Usage: packrat-analyze new' ]]
+
+(
+    scope='{"capture_id":"00000000000000000000000000000001","capture_run_id":"0000000000000002",
+        "alert_session_id":"1700000000-31"}'
+    triage_state="$scratch/triage.json"
+    health_state="$scratch/health.json"
+    triage_journal_required=1
+    primary_alert_log_identity() { printf '%s\n' '1:2'; }
+    date() { printf '%s\n' 1700000000; }
+    timeout() { printf '%s\n' "$triage_sample"; return 1; }
+    network_sample=$(jq -c '. + {status:"ok", telemetry_fresh:true, capture_active:true, pcap_buffer_drops:100}' <<< "$scope")
+    curl() { printf '%s\n' "$network_sample"; }
+    health_sample=$(jq -c --arg log "$data_dir/alerts.jsonl" '. + {
+        record_type:"capture_health",timestamp:"2023-11-14T22:13:10Z",poll_interval_seconds:15,
+        capture_active:true,telemetry_fresh:true,alert_watcher_alive:true,alert_watcher_pipeline_alive:true,
+        alert_watcher_source_matches:true,alert_watcher_open_log_required:true,alert_log_identity:"1:2",
+        alert_watcher_log:$log,alert_log_storage:"private",issues:["pcap_buffer_drops"],
+        pcap_buffer_drops:100,pcap_buffer_drops_delta:0}' <<< "$scope")
+    triage_sample=$(jq -c '{capture_id,session_id:.alert_session_id,status:"triage_unhealthy",
+        historical_drop_total:100,journal_status:"current",journal_pending_events:0}' <<< "$scope")
+    printf '%s\n' "$health_sample" >"$health_state"
+    if alert_watcher_ready "$scope"; then exit 1; fi
+    alert_watcher_ready "$scope" 1
+    for change in '.pcap_buffer_drops_delta=1' '.issues+=["capture_queue_high"]' '.pcap_buffer_drops=101'; do
+        jq "$change" <<< "$health_sample" >"$health_state"
+        if alert_watcher_ready "$scope" 1; then exit 1; fi
+    done
+    printf '%s\n' "$health_sample" >"$health_state"
+    if (network_sample=$(jq '.pcap_buffer_drops=101' <<< "$network_sample"); alert_watcher_ready "$scope" 1); then exit 1; fi
+    for change in '.journal_pending_events=1' '.session_id="1700000000-32"' '.historical_drop_total=null'; do
+        if (triage_sample=$(jq "$change" <<< "$triage_sample"); alert_watcher_ready "$scope" 1); then exit 1; fi
+    done
+)
 printf '%s\n' 'Packrat paired rollout tests passed'

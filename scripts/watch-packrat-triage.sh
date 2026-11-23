@@ -5,13 +5,14 @@ export LC_ALL=C
 
 snapshot_validation='
     def scope_id: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
+    def valid_scope_and_log:
+        (.capture_id | scope_id) != null and (.session_id | scope_id) != null and
+        (.packets | type == "number" and . >= 0 and . <= 9007199254740991 and floor == .) and
+        .alert_saving == true and (.recent_alerts | type == "array") and
+        .alert_log_integrity.invalid_records == 0 and .alert_log_integrity.oversized_records == 0 and
+        (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null);
     def valid_current:
-        .status != "current" or (
-            (.capture_id | scope_id) != null and (.session_id | scope_id) != null and
-            (.packets | type == "number" and . >= 0 and . <= 9007199254740991 and floor == .) and
-            .alert_saving == true and .issues == [] and (.recent_alerts | type == "array") and
-            .alert_log_integrity.invalid_records == 0 and .alert_log_integrity.oversized_records == 0 and
-            (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null));
+        .status != "current" or (valid_scope_and_log and .issues == []);
 '
 
 usage() {
@@ -125,6 +126,10 @@ check_snapshot() {
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
            triage_status:.status, age_seconds:$age, max_age_seconds,
+           historical_drop_total:(if $age >= -5 and $age <= .max_age_seconds and .status == "degraded"
+              and valid_scope_and_log and .issues == ["pcap_buffer_drops"] and .buffer_drops_delta == 0
+              then .buffer_drops | select(type == "number" and . > 0 and . <= 4294967295 and floor == .) // null
+              else null end),
            journal_status:(.journal_status | if . == "current" or . == "write_failed" or
               . == "disabled" or . == "not_checked" then . else null end),
            journal_pending_events:(.journal_pending_events |
