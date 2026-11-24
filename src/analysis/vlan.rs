@@ -1,12 +1,11 @@
-//! VLAN intelligence engine — per-VLAN stats, host inventory, and attack detection.
+//! VLAN intelligence engine: per-VLAN stats, host inventory, and wire observations.
 //!
 //! Detects:
 //!   • Stacked VLAN tags observed on the wire
-//!   • Native VLAN 1 usage (industry best-practice violation)
+//!   • VLAN ID 1 observed in a tag
 //!   • DTP negotiation observations
 //!   • MAC appearing on multiple VLANs (potential VLAN-hopping or misconfiguration)
-//!   • PCP=7 (Network Control priority) from a non-router source
-//!   • Untagged traffic on a VLAN-aware segment
+//!   • PCP=7 (Network Control marking) observed in a tag
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -42,6 +41,9 @@ fn vlan_stack_prefix(raw: &[u8]) -> Option<([(u16, u16); 2], bool)> {
     }
     Some(([(outer, field(14)? & 0x0fff), (inner, field(18)? & 0x0fff)], deeper))
 }
+
+pub(super) const VLAN_ID_ONE: &str = "VLAN ID 1 observed";
+pub(super) const VLAN_PCP_SEVEN: &str = "VLAN PCP 7 observed";
 
 // ─── Data types ───────────────────────────────────────────────────────────────
 
@@ -187,6 +189,8 @@ impl VlanIntel {
             );
         }
 
+        self.observe_tag_markings(pkt);
+
         let policy_interface = pkt.capture.as_ref().and_then(|meta| meta.interface_name.as_deref())
             .filter(|name| self.policy.expects_single_tag(name));
         if let Some(([(outer_type, outer), (inner_type, inner)], deeper)) = vlan_stack_prefix(&pkt.bytes)
@@ -234,17 +238,6 @@ impl VlanIntel {
                 }
             }
 
-            // Native VLAN 1 alert (fire once)
-            if vid == 1 {
-                self.raise(
-                    AlertSeverity::Warning,
-                    "Native-VLAN",
-                    format!("Traffic on VLAN 1 (native/default VLAN) from {} — violates network hardening best practice", pkt.src),
-                    pkt.no, pkt.timestamp,
-                    "NATIVE_VLAN1".into(),
-                );
-            }
-
             // MAC-on-multiple-VLANs
             let scope = (pkt.capture.as_ref().map(|meta| (meta.section_id, meta.interface_id)), pkt.outer_vlan_id);
             if let Some(mac) = pkt.bytes.get(6..12).and_then(|bytes| <[u8; 6]>::try_from(bytes).ok())
@@ -264,25 +257,53 @@ impl VlanIntel {
                 });
             }
 
-            // PCP=7 from non-router source (802.1p priority abuse)
-            if let Some(pcp) = pkt.vlan_pcp {
-                if pcp == 7 {
-                    self.raise(
-                        AlertSeverity::Warning,
-                        "PCP-Abuse",
-                        format!("PCP=7 (Network Control) from {} VLAN {} — priority marking abuse or misconfigured QoS",
-                            pkt.src, vid),
-                        pkt.no, pkt.timestamp,
-                        format!("PCP7:{}:{}", pkt.src, vid),
-                    );
-                }
-            }
         }
         let added = self.alerts.len() - before;
         if self.alerts.len() > MAX_RECENT_VLAN_ALERTS {
             self.alerts.drain(..self.alerts.len() - MAX_RECENT_VLAN_ALERTS);
         }
         added
+    }
+
+    fn observe_tag_markings(&mut self, pkt: &Packet) {
+        use crate::net::parser::{ethernet_network_header, supports_capture_link_type};
+        let raw = &pkt.bytes;
+        if !matches!(raw.get(12..14), Some([0x81, 0] | [0x88, 0xa8]))
+            || pkt.capture.as_ref().is_some_and(|meta| !supports_capture_link_type(meta.link_type))
+        {
+            return;
+        }
+        let Some((network_offset, _)) = ethernet_network_header(raw) else { return };
+        let tags = &raw[12..network_offset - 2];
+        let scope = pkt.capture.as_ref().map(|meta| (meta.section_id, meta.interface_id));
+        let outer = (tags.len() == 8).then(|| u16::from_be_bytes([tags[2], tags[3]]) & 0x0fff);
+        for (index, tag) in tags.chunks_exact(4).enumerate() {
+            let tpid = u16::from_be_bytes([tag[0], tag[1]]);
+            let tci = u16::from_be_bytes([tag[2], tag[3]]);
+            let vid = tci & 0x0fff;
+            let role = match (outer, index) {
+                (None, _) => "single",
+                (Some(_), 0) => "outer",
+                _ => "inner",
+            };
+            for (observed, title, meaning) in [
+                (vid == 1, VLAN_ID_ONE, "the port's native VLAN and policy are unverified"),
+                (tci >> 13 == 7, VLAN_PCP_SEVEN, "PCP=7 (Network Control); QoS policy and treatment are unverified"),
+            ] {
+                if !observed { continue; }
+                let key = format!("{title}:{scope:?}:{outer:?}:{index}:{tpid:04x}:{vid}");
+                if !self.allow_alert(key.clone(), pkt.no) { continue; }
+                let location = scope.map_or_else(|| "unknown capture interface".to_owned(),
+                    |(section, interface)| format!("capture section {section}, interface {interface}"));
+                self.alerts.push_back(VlanAlert {
+                    severity: AlertSeverity::Info,
+                    category: title.into(),
+                    detail: format!("{role} tag 0x{tpid:04x}, VID {vid} at {location}; {meaning}"),
+                    pkt_no: pkt.no, timestamp: pkt.timestamp, related_packet: None,
+                    correlation_key: Some(key),
+                });
+            }
+        }
     }
 
     /// Raise an alert, deduplicating by `dedup_key` so the same condition

@@ -198,8 +198,9 @@ customer VLAN; `vlan.outer` is the provider tag in a QinQ frame.
 ## Deep VLAN Inspection
 
 Open Defense > Security and select VLAN Intelligence. It reports per-VLAN
-traffic and detects QinQ double tagging, DTP traffic, MAC movement between
-VLANs, priority-code-point abuse, and native VLAN 1 exposure.
+traffic and reports tag stacks, DTP traffic, and MAC addresses seen on multiple
+VLANs. Tags with VID 1 or PCP 7 are informational observations. Verify native
+VLAN configuration and QoS policy on the switch before escalating either.
 
 ```text
 vlan.id == 30 and ip.src == 10.30.0.5

@@ -62,13 +62,14 @@ fn vlan_replay_detects_double_tag_native_pcp_and_dtp() {
     qinq.bytes.splice(12..12, [0x88, 0xa8, 0, 100, 0x81, 0, 0, 20]);
     intel.ingest(&qinq);
 
-    let native = ethernet_packet(
+    let mut tagged = ethernet_packet(
         2,
         [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x02],
         [0, 1, 2, 3, 4, 5],
         Some(1),
     );
-    intel.ingest(&native);
+    tagged.bytes.splice(12..12, [0x81, 0, 0, 1]);
+    intel.ingest(&tagged);
 
     let mut pcp = ethernet_packet(
         3,
@@ -77,6 +78,7 @@ fn vlan_replay_detects_double_tag_native_pcp_and_dtp() {
         Some(30),
     );
     pcp.vlan_pcp = Some(7);
+    pcp.bytes.splice(12..12, [0x81, 0, 0xe0, 30]);
     intel.ingest(&pcp);
 
     let dtp = dtp::fixture(4, 0x2004, None);
@@ -92,13 +94,13 @@ fn vlan_replay_detects_double_tag_native_pcp_and_dtp() {
         intel
             .alerts
             .iter()
-            .any(|alert| alert.category == "Native-VLAN")
+            .any(|alert| alert.category == "VLAN ID 1 observed" && alert.severity == AlertSeverity::Info)
     );
     assert!(
         intel
             .alerts
             .iter()
-            .any(|alert| alert.category == "PCP-Abuse")
+            .any(|alert| alert.category == "VLAN PCP 7 observed" && alert.severity == AlertSeverity::Info)
     );
     assert!(
         intel

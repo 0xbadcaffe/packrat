@@ -31,11 +31,10 @@ pub(super) fn draw_vlan_intel(f: &mut Frame, app: &App, area: Rect) {
         .skip(scroll)
         .take(chunks[0].height.saturating_sub(4) as usize)
         .map(|s| {
-            let vlan_color = if s.vlan_id == 1 { C_RED() } else { C_CYAN() };
             Row::new(vec![
                 Cell::from(Span::styled(
                     s.vlan_id.to_string(),
-                    Style::default().fg(vlan_color).add_modifier(Modifier::BOLD),
+                    Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
                 )),
                 Cell::from(Span::styled(
                     s.packets.to_string(),
@@ -104,8 +103,6 @@ pub(super) fn draw_vlan_intel(f: &mut Frame, app: &App, area: Rect) {
             };
             let cat_color = match a.category.as_str() {
                 "MAC-VLAN-Cross" => C_ORANGE(),
-                "PCP-Abuse" => C_YELLOW(),
-                "Native-VLAN" => C_CYAN(),
                 _ => C_FG2(),
             };
             Row::new(vec![

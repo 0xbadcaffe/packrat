@@ -165,6 +165,14 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the capture-interface mapping and expected switch-port policy, then check switch logs before inferring forwarding.",
         ),
         (
+            "VLAN", super::vlan::VLAN_ID_ONE, "vlan.vid_one_observed", 1, DirectObservation,
+            "Read the switch port's configured native VLAN and allowed VLANs. A tagged VID 1 frame does not establish either setting.",
+        ),
+        (
+            "VLAN", super::vlan::VLAN_PCP_SEVEN, "vlan.pcp_seven_observed", 1, DirectObservation,
+            "Compare the marking with the port's QoS trust policy and switch counters before inferring priority misuse.",
+        ),
+        (
             "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 13, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
