@@ -66,3 +66,38 @@ fn rule_delivery_does_not_depend_on_which_actions_fit_in_history() {
     assert_eq!(core.rule_engine.rules.len(), 3);
     assert!(core.rule_engine.rules.iter().all(|rule| rule.hits == 0));
 }
+
+#[test]
+fn rule_review_keeps_action_details_and_observed_flows_separate() {
+    let mut core = AnalysisCore::default();
+    core.rule_engine.add_rule(Rule::new(
+        "watched", "Watched service",
+        Condition::Num { field: "tcp.srcport".into(), op: packrat_tui::analysis::rules::CmpOp::Eq, value: 40_000 },
+        vec![Action::Alert { severity: Severity::High, message: "Review service".into() }, log()],
+    ));
+    for (no, tpid, tci, destination_port) in [
+        (1, 0x8100_u16, 20_u16, 80_u16),
+        (2, 0x8100, 0xb014, 80),
+        (3, 0x88a8, 20, 80),
+        (4, 0x8100, 20, 443),
+    ] {
+        let mut ethernet = packets::tcp(no, 100, 0x10, b"").bytes;
+        ethernet[36..38].copy_from_slice(&destination_port.to_be_bytes());
+        let mut tagged = ethernet[..12].to_vec();
+        tagged.extend(tpid.to_be_bytes());
+        tagged.extend(tci.to_be_bytes());
+        tagged.extend(&ethernet[12..]);
+        core.analyze(&packrat_tui::net::parser::parse_ethernet(&tagged, no, no as f64));
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "RULE").collect();
+    assert_eq!(alerts.len(), 6);
+    for (index, references) in [&[1, 2][..], &[3][..], &[4][..]].into_iter().enumerate() {
+        let (alert, log) = (alerts[index * 2], alerts[index * 2 + 1]);
+        assert_eq!((alert.detail.as_str(), alert.severity.as_str()), ("Review service", "HIGH"));
+        assert_eq!((log.detail.as_str(), log.severity.as_str()), ("Routine observation", "LOW"));
+        for item in [alert, log] {
+            assert_eq!(item.packet_refs, references);
+            assert_eq!(item.flow.unwrap().destination.port(), if index == 2 { 443 } else { 80 });
+        }
+    }
+}

@@ -257,6 +257,7 @@ impl AnalysisCore {
 
         // Critical alert actions in user rules share the same review workflow.
         let mut critical_rule_hits = Vec::new();
+        let mut rule_context = None;
         self.rule_engine.evaluate_with_hits(pkt, |hit| {
             self.operator_graph.on_rule_hit(
                 &hit.rule_id,
@@ -265,26 +266,37 @@ impl AnalysisCore {
                 hit.pkt_no,
                 hit.ts,
             );
-            let severity = match &hit.action {
+            let (action, severity) = match &hit.action {
                 RuleAction::Alert { severity, .. } => {
                     if *severity == EvidenceSeverity::Critical {
                         critical_rule_hits.push((
                             hit.rule_id.clone(), hit.rule_name.clone(), hit.message.clone(), hit.auto_contain,
                         ));
                     }
-                    severity.to_string()
+                    ("alert", severity.to_string())
                 }
-                RuleAction::Tag { .. } => "INFO".to_string(),
-                RuleAction::Log { .. } => "LOW".to_string(),
+                RuleAction::Tag { .. } => ("tag", "INFO".to_string()),
+                RuleAction::Log { .. } => ("log", "LOW".to_string()),
             };
-            self.alert_center.record_correlated(
-                hit.pkt_no,
+            let (flow, conversation) = rule_context.get_or_insert_with(|| {
+                let scope = service_alert_scope();
+                let flow = AlertFlow::from_packet(pkt);
+                let conversation = match flow {
+                    Some(key) => format!("{scope:?}:{key:?}"),
+                    None => format!("{scope:?}:{:?}:{:?}:{:?}>{:?}:{:?}",
+                        pkt.protocol, pkt.src, pkt.src_port, pkt.dst, pkt.dst_port),
+                };
+                (flow, conversation)
+            });
+            let correlation = format!("{conversation}:{:?}:{action}:{severity}:{:?}", hit.rule_id, hit.message);
+            self.alert_center.record_with_context(
+                (hit.pkt_no, &[], *flow),
                 pkt.timestamp,
                 "RULE",
                 severity,
                 &hit.rule_name,
                 &hit.message,
-                format!("{}:{}>{}", hit.rule_id, pkt.src, pkt.dst),
+                correlation,
             );
         });
 
