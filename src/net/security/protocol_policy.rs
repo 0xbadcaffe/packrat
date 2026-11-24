@@ -320,7 +320,13 @@ impl SecurityEngine {
             {
                 for &frame in &finding.related_packets {
                     if retained.len() == MAX_DNS_EVIDENCE_PER_PACKET { break; }
-                    if let Some(packet) = self.dns_packet_evidence.supporting_packet(pkt, frame)
+                    let packet = if finding.kind == DnsFindingKind::NxDomainBurst {
+                        // The burst validates names against its watermark, which can be ahead of the trigger.
+                        self.dns_packet_evidence.cited_packet(pkt, frame)
+                    } else {
+                        self.dns_packet_evidence.supporting_packet(pkt, frame)
+                    };
+                    if let Some(packet) = packet
                         && retained.insert(frame)
                     {
                         self.findings.retained_evidence.push(packet.clone());

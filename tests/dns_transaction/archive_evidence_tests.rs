@@ -186,8 +186,10 @@ fn delayed_tcp_dns_answer_change_archives_both_segments_of_the_query_retry() {
     }
 }
 
-#[test]
-fn opted_in_nxdomain_burst_retains_cited_queries_and_replies_after_rollover() {
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn opted_in_nxdomain_burst_retains_cited_queries_and_replies_after_rollover(#[case] reordered: bool) {
     let scratch = tempfile::tempdir().unwrap();
     let rule = "dns.nxdomain_distinct_names";
     let (client, resolver) = ("10.0.0.5", "10.0.0.53");
@@ -207,10 +209,11 @@ fn opted_in_nxdomain_burst_retains_cited_queries_and_replies_after_rollover() {
             app.inject_packet(packet(first, index, false, time));
             app.inject_packet(packet(first + 1, index, true, time + 0.1));
         }
-        app.inject_packet(packet(39, 19, false, 5.0));
+        let reply_time = if reordered { 2.0 } else { 7.0 };
+        app.inject_packet(packet(39, 19, false, reply_time - 0.5));
         drain(&mut app);
         let trigger = if selected { noise(&mut app, 40, 6.0) } else { 40 };
-        app.inject_packet(packet(trigger, 19, true, 7.0));
+        app.inject_packet(packet(trigger, 19, true, reply_time));
         let expected: Vec<_> = (1..=39).chain([trigger]).collect();
         let scope = finish_app(&mut app, rule, &expected);
         let mut archive = PacketArchive::open_readonly(&path).unwrap();
@@ -218,6 +221,9 @@ fn opted_in_nxdomain_burst_retains_cited_queries_and_replies_after_rollover() {
         if selected {
             for frame in expected {
                 assert!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), "frame {frame}");
+            }
+            if reordered {
+                assert!(archive.packet_for_capture(&scope, 38).unwrap().unwrap().timestamp > reply_time);
             }
         }
     }
