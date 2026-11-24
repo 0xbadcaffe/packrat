@@ -359,6 +359,7 @@ fn arp_replay_scores_distinct_claim_patterns_and_capture_scopes() {
         ("ordinary", &[(0, 10, 1), (0, 10, 1)][..], "", json!({})),
         ("vrrp", &[(0, 10, 1)][..], "vrrp", json!({})),
         ("separate-scopes", &[(0, 10, 1), (1, 10, 2), (0, 20, 2), (0, 10, 1)][..], "", json!({})),
+        ("same-id-separate-tag-types", &[(0, 10, 1), (0, 10, 2), (0, 10, 1)][..], "split-tag-types", json!({})),
         ("same-interface-vlan-shift", &[(0, 10, 1), (0, 20, 1)][..], "", json!({
             "expect_counts":{(vlan_shift):1}, "expect_snapshots":1, "opening_frames":{(vlan_shift):[2]},
             "opening_evidence":[{"rule_id":vlan_shift,"opening_frame":2,"frames":[1,2]}],
@@ -387,6 +388,7 @@ fn arp_replay_scores_distinct_claim_patterns_and_capture_scopes() {
             match wire_change {
                 "vrrp" => packet.bytes[26..32].copy_from_slice(&[0, 0, 0x5e, 0, 1, 7]),
                 "mismatch" => packet.bytes[11] = 0x25,
+                "split-tag-types" if index == 1 => packet.bytes[12..14].copy_from_slice(&0x88a8_u16.to_be_bytes()),
                 _ => {}
             }
             let (length, ticks) = (packet.bytes.len() as u32, if wire_change == "tied-time" { 1 } else { frame });
@@ -408,7 +410,7 @@ fn arp_replay_scores_distinct_claim_patterns_and_capture_scopes() {
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 7);
+    assert_eq!(report["passed"], 8);
 }
 
 #[test]

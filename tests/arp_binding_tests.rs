@@ -8,6 +8,33 @@ const SOURCE_MISMATCH: &str = "ARP reply sender differs from Ethernet source";
 const ANNOUNCEMENT_CHANGE: &str = "ARP announcement binding changed";
 
 #[test]
+fn arp_ownership_and_alternation_stay_on_the_observed_tag_path() {
+    let claim = |frame, host, tpid: u16, tci: u16| {
+        let mut raw = reply(frame, frame as f64, 10, host).bytes;
+        raw[12..14].copy_from_slice(&tpid.to_be_bytes());
+        raw[14..16].copy_from_slice(&tci.to_be_bytes());
+        packrat_tui::net::parser::parse_ethernet(&raw, frame, frame as f64)
+    };
+    let mut core = AnalysisCore::default();
+    for packet in [
+        claim(1, 1, 0x8100, 10), claim(2, 2, 0x88a8, 10), claim(3, 1, 0x8100, 0xb00a),
+    ] {
+        core.analyze(&packet);
+    }
+    assert!(core.alert_center.items.is_empty());
+    core.analyze(&claim(4, 3, 0x8100, 10));
+    core.analyze(&claim(5, 4, 0x88a8, 0xb00a));
+    let changed: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == TITLE).collect();
+    assert_eq!(changed.len(), 2);
+    assert_eq!(changed[0].packet_refs, [3, 4]);
+    assert_eq!(changed[1].packet_refs, [2, 5]);
+
+    core.analyze(&claim(6, 1, 0x8100, 10));
+    let alternation = core.alert_center.items.iter().find(|alert| alert.title == "Alternating ARP claims").unwrap();
+    assert_eq!(alternation.packet_refs, [3, 4, 6]);
+}
+
+#[test]
 fn arp_announcements_track_owners_without_treating_probes_as_claims() {
     let announcement = |no, vlan, host| {
         let mut packet = reply(no, no as f64, vlan, host);

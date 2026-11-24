@@ -1,4 +1,5 @@
 use super::*;
+use super::scans::scan_scope;
 use std::net::Ipv4Addr;
 
 const ARP_COMPARISON_WINDOW_SECS: f64 = 300.0;
@@ -41,7 +42,7 @@ impl SecurityEngine {
             return;
         }
         let Some((ip, mac, announcement)) = arp_claim_sender(&pkt.bytes) else { return };
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let Some(ethernet_mac) = pkt.bytes.get(6..12).and_then(|bytes| <[u8; 6]>::try_from(bytes).ok())
         else { return };
         // VRRP IPv4 replies can put a physical MAC in Ethernet and a virtual MAC in ARP.

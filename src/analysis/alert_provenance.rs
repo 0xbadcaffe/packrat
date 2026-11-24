@@ -101,11 +101,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the retained transport payload and expected application format; a repeated byte alone does not identify executable content.",
         ),
         (
-            "ARP", "ARP binding changed", "arp.reply_binding_change", 3, Correlated,
+            "ARP", "ARP binding changed", "arp.reply_binding_change", 4, Correlated,
             "Compare both ARP replies with DHCP leases, failover events, and the affected host's neighbor table.",
         ),
         (
-            "ARP", "ARP announcement binding changed", "arp.announcement_binding_change", 2, Correlated,
+            "ARP", "ARP announcement binding changed", "arp.announcement_binding_change", 3, Correlated,
             "Compare the claims with address assignments, failover logs, and endpoint neighbor tables. An announcement does not prove cache poisoning.",
         ),
         (
@@ -113,7 +113,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the Ethernet source and ARP sender with switch and neighbor tables. Check for authorized address rewriting or gateway redundancy.",
         ),
         (
-            "IDS", "Alternating ARP claims", "arp.alternating_claims", 3, Correlated,
+            "IDS", "Alternating ARP claims", "arp.alternating_claims", 4, Correlated,
             "Compare all three claims with switch learning, DHCP leases, and failover logs; check whether endpoint neighbor entries actually changed.",
         ),
         (
