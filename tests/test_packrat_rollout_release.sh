@@ -26,12 +26,15 @@ sudo() {
             ;;
         mv) if "$fail_replace" || [[ ${*: -1} == "$fail_destination" ]]; then return 1; fi; command "$@" ;;
         rm) if "$fail_cleanup" && [[ ${*: -1} == */packrat-analyze.next ]]; then return 1; fi; command "$@" ;;
-        mktemp|cmp|sha256sum) command "$@" ;;
+        mktemp|cmp|sha256sum|test|env|find|stat) command "$@" ;;
         *) return 1 ;;
     esac
 }
 
 mkdir -- "$data_dir"
+backup_inventory | jq -e '.record_type == "rollout_backup_inventory"
+    and .allocated_kib == 0 and .available_kib > 0
+    and .rollout_directories == 0 and .budget_mib == null' >/dev/null
 printf '%s\n' 'previous capture' >"$installed"
 printf '%s\n' 'alert evidence' >"$data_dir/alerts.jsonl"
 printf '%s\n' '#!/usr/bin/env bash' 'echo wrong-candidate' >"$analyzer_candidate"
@@ -44,6 +47,36 @@ create_rollout_backup
 stage_companion_updates
 cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
 cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
+(
+    export LC_ALL=C
+    backup_inventory | jq -e '.allocated_kib > 0 and .rollout_directories == 1' >/dev/null
+    backup_reserve_mib=1
+    backup_limit_mib=1
+    backup_space_ready --companions-only
+    dd if=/dev/zero of="$backup_dir/private-fixture" bs=1024 count=2048 status=none
+    if backup_space_ready --companions-only 2>"$scratch/backup-budget"; then exit 1; fi
+    grep -Fq 'Rollout backup budget would be exceeded' "$scratch/backup-budget"
+    [[ -f $backup_dir/private-fixture ]]
+    backup_limit_mib=8
+    backup_space_ready --companions-only
+    backup_inventory | jq -e '.allocated_kib >= 2048 and .rollout_directories == 1 and .budget_mib == 8' >/dev/null
+    enable_alert_evidence=true
+    evidence_max_mib=4
+    backup_limit_mib=4
+    if backup_space_ready --enable-alert-evidence 2>"$scratch/stage-budget"; then exit 1; fi
+    grep -Fq 'Rollout backup budget would be exceeded' "$scratch/stage-budget"
+    backup_limit_mib=8
+    backup_space_ready --enable-alert-evidence
+    backup_limit_mib=01
+    if backup_inventory; then exit 1; fi
+    if backup_space_ready --companions-only; then exit 1; fi
+)
+(
+    linked_data="$scratch/linked-data"
+    mkdir -- "$linked_data"
+    ln -s -- "$backup_dir" "$linked_data/backups"
+    if data_dir="$linked_data" backup_inventory; then exit 1; fi
+)
 (
     baseline_recorder="$scratch/recorder"
     triage_state="$scratch/triage.json"

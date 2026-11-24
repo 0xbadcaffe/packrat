@@ -118,9 +118,40 @@ companion_candidates_ready() {
     done
 }
 
+backup_usage_kib() {
+    local destination="$data_dir/backups"
+    sudo -n test -d "$data_dir" || return 1
+    if sudo -n test -L "$destination"; then
+        return 1
+    fi
+    if sudo -n test -d "$destination"; then
+        sudo -n env LC_ALL=C du -skx -- "$destination" | awk 'NR == 1 && $1 ~ /^[0-9]+$/ && length($1) <= 15 { value = $1 }
+            END { if (NR != 1 || value == "") exit 1; print value }'
+    elif sudo -n test -e "$destination"; then
+        return 1
+    else
+        printf '0\n'
+    fi
+}
+
+backup_inventory() {
+    local destination="$data_dir/backups" used free count=0
+    used=$(backup_usage_kib) || return 1
+    if sudo -n test -d "$destination"; then
+        count=$(sudo -n find "$destination" -mindepth 1 -maxdepth 1 -type d -name 'rollout.????????' -printf . | wc -c) || return 1
+    else
+        destination=$data_dir
+    fi
+    free=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 {print $4}') || return 1
+    [[ $free =~ ^[0-9]{1,15}$ && $count =~ ^[0-9]{1,15}$ && $backup_limit_mib =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 1
+    jq -nc --argjson used "$used" --argjson free "$free" --argjson count "$count" --argjson limit "$backup_limit_mib" \
+        '{record_type:"rollout_backup_inventory", allocated_kib:$used, available_kib:$free,
+          rollout_directories:$count, budget_mib:(if $limit == 0 then null else $limit end)}'
+}
+
 backup_space_ready() {
     local destination="$data_dir/backups" free_kib sizes reserve=$backup_reserve_mib tool proposed current
-    local staging_mib=256 i
+    local staging_mib=256 backup_staging_mib=0 used=0 i
     local -a files=("$installed" "$data_dir/alerts.jsonl")
     for tool in "${companion_tools[@]}"; do
         proposed="${tool}_candidate" current="installed_$tool"
@@ -129,9 +160,11 @@ backup_space_ready() {
     sudo -n test -d "$destination" || destination=$data_dir
     free_kib=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 { print $4 }') || return 1
     sizes=$(sudo -n stat --format='%s' -- "${files[@]}") || return 1
-    [[ $free_kib =~ ^[0-9]{1,15}$ && $backup_reserve_mib =~ ^[1-9][0-9]{0,5}$ ]] || return 1
+    [[ $free_kib =~ ^[0-9]{1,15}$ && $backup_reserve_mib =~ ^[1-9][0-9]{0,5}$ &&
+        $backup_limit_mib =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 1
     if "$enable_alert_evidence"; then
         reserve=$((reserve + 2 * evidence_max_mib))
+        backup_staging_mib=$evidence_max_mib
     elif [[ -n $archive_path && ${1-} != --companions-only ]] &&
             { archive_policy_changes || ! cmp -s -- "${candidate-}" "$installed"; }; then
         # The staging capture writes a separate archive under the rollback directory.
@@ -143,10 +176,21 @@ backup_space_ready() {
             fi
         done
         reserve=$((reserve + staging_mib))
+        backup_staging_mib=$staging_mib
     fi
-    awk -v free="$free_kib" -v reserve="$reserve" -v expected="${#files[@]}" '
+    if (( backup_limit_mib > 0 )); then
+        used=$(backup_usage_kib) || return 1
+    fi
+    awk -v free="$free_kib" -v reserve="$reserve" -v expected="${#files[@]}" \
+        -v used="$used" -v limit="$backup_limit_mib" -v staging="$backup_staging_mib" '
         /^[0-9]+$/ && length($0) <= 15 { size_kib += int(($0 + 1023) / 1024); sizes++ }
-        END { exit !(NR == expected && sizes == expected && free >= reserve * 1024 + size_kib) }
+        END {
+            if (NR != expected || sizes != expected || free < reserve * 1024 + size_kib) exit 1
+            if (limit > 0 && used + staging * 1024 + size_kib > limit * 1024) {
+                printf "Rollout backup budget would be exceeded (%d MiB); inspect --backup-inventory.\n", limit > "/dev/stderr"
+                exit 1
+            }
+        }
     ' <<< "$sizes"
 }
 

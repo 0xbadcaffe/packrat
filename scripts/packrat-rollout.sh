@@ -20,6 +20,7 @@ triage_check=${PACKRAT_ROLLOUT_TRIAGE_CHECK:-"$HOME/.local/bin/packrat-watch-tri
 triage_journal_required=${PACKRAT_ROLLOUT_REQUIRE_TRIAGE_JOURNAL:-0}
 allow_historical_drops=${PACKRAT_ROLLOUT_ALLOW_HISTORICAL_DROPS:-0}
 backup_reserve_mib=${PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB:-512}
+backup_limit_mib=${PACKRAT_ROLLOUT_BACKUP_LIMIT_MIB:-0}
 backup_dir=
 stage_binary=
 archive_path=
@@ -428,6 +429,11 @@ rollout() {
 }
 
 main() {
+    if [[ ${1-} == --backup-inventory ]]; then
+        (( $# == 1 )) || { error 'Usage: packrat-rollout.sh --backup-inventory'; return 2; }
+        backup_inventory || { error 'Could not verify rollout backup usage'; return 1; }
+        return 0
+    fi
     if [[ ${1-} == --identify ]]; then
         if (( $# != 2 )) || [[ ! $2 =~ ^[A-Za-z0-9_.-]+$ ]]; then
             error 'Usage: bash packrat-rollout.sh --identify INTERFACE'
@@ -450,6 +456,7 @@ main() {
         error 'PACKRAT_ROLLOUT_ALLOW_HISTORICAL_DROPS=1 allows replacing a capture with verified past drops only.'
         error 'The health watcher must run with PACKRAT_ALERT_VERIFY_OPEN=1 and verify the current alert log.'
         error 'PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB sets free space to leave after backing up (default: 512).'
+        error 'Use --backup-inventory to inspect disk usage; PACKRAT_ROLLOUT_BACKUP_LIMIT_MIB sets an optional backup budget (default: disabled).'
         return 2
     fi
     mode=$1 candidate=$2 interface=$3
