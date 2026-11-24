@@ -36,7 +36,7 @@ fn arp_claim_sender(raw: &[u8]) -> Option<(Ipv4Addr, [u8; 6], bool)> {
 impl SecurityEngine {
     // ─── ARP Anomaly ─────────────────────────────────────────────────────────
 
-    pub(super) fn check_arp(&mut self, pkt: &Packet) {
+    pub(super) fn check_arp(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
         if !pkt.protocol.eq_ignore_ascii_case("ARP") || !pkt.timestamp.is_finite() {
             return;
         }
@@ -81,18 +81,30 @@ impl SecurityEngine {
             if entry.latest.mac == mac { entry.previous_owner } else { Some(entry.latest) }
         });
         self.ip_to_mac.insert(key, ArpClaimHistory { latest, previous_owner });
+        let selected = |rule: &str| archive_rules.is_some_and(|rules| rules.iter().any(|id| id == rule));
+        let retain_reply = selected("arp.reply_binding_change");
+        let retain_announcement = selected("arp.announcement_binding_change");
+        let retain_alternation = selected("arp.alternating_claims");
 
         if let Some(history) = known
             && history.latest.mac != mac
             && pkt.timestamp - history.latest.timestamp <= ARP_COMPARISON_WINDOW_SECS
         {
             let known = history.latest;
+            let involves_announcement = announcement || known.announcement;
+            let mut retain_previous = if involves_announcement { retain_announcement } else { retain_reply };
             if let Some(first) = history.previous_owner
                 && first.mac == mac
                 && first.precedes(known) && known.precedes(latest)
                 && pkt.timestamp - first.timestamp <= ARP_ALTERNATION_WINDOW_SECS
                 && first.frame != known.frame && first.frame != pkt.no && known.frame != pkt.no
             {
+                if retain_alternation {
+                    retain_previous = true;
+                    if let Some(packet) = self.arp_evidence.supporting_packet(pkt, first.frame) {
+                        self.findings.retained_evidence.push(packet.clone());
+                    }
+                }
                 let returning = format_mac(mac);
                 let other = format_mac(known.mac);
                 let (a, b) = if mac < known.mac { (&returning, &other) } else { (&other, &returning) };
@@ -109,6 +121,9 @@ impl SecurityEngine {
                     correlation_key: Some(format!("{scope:?}:{ip}:{a}:{b}")),
                 });
             }
+            if retain_previous && let Some(packet) = self.arp_evidence.supporting_packet(pkt, known.frame) {
+                self.findings.retained_evidence.push(packet.clone());
+            }
             if self.arp_anomalies.len() >= MAX_ENTRIES {
                 self.arp_anomalies.remove(0);
             }
@@ -122,9 +137,12 @@ impl SecurityEngine {
             self.findings.arp.push(ArpFinding {
                 anomaly,
                 previous_frame: known.frame,
-                involves_announcement: announcement || known.announcement,
+                involves_announcement,
                 correlation_key: format!("{scope:?}:{ip}"),
             });
+        }
+        if retain_reply || retain_announcement || retain_alternation {
+            self.arp_evidence.remember(pkt);
         }
     }
 

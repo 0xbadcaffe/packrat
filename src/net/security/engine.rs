@@ -26,6 +26,7 @@ impl SecurityEngine {
             tls_weaknesses: Vec::new(),
             dns_suspects: Vec::new(),
             ip_to_mac: HashMap::new(),
+            arp_evidence: Default::default(),
             os_by_ip: HashMap::new(),
             bf_windows: HashMap::new(),
             dns_tunnel: Default::default(),
@@ -72,6 +73,7 @@ impl SecurityEngine {
         self.tls_weaknesses.clear();
         self.dns_suspects.clear();
         self.ip_to_mac.clear();
+        self.arp_evidence = Default::default();
         self.os_by_ip.clear();
         self.bf_windows.clear();
         self.dns_tunnel.clear();
@@ -166,7 +168,7 @@ impl SecurityEngine {
         self.check_industrial_policy(pkt, modbus);
         self.check_dns_transaction_integrity(pkt, &dns, archive_rules);
         self.check_ids(pkt);
-        self.check_arp(pkt);
+        self.check_arp(pkt, archive_rules);
         self.check_os_fingerprint(pkt);
         self.check_vuln(pkt);
         self.check_ftp_control(pkt);

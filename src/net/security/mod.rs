@@ -174,6 +174,7 @@ pub struct SecurityEngine {
 
     // Internal state
     ip_to_mac: HashMap<(ServiceScope, std::net::Ipv4Addr), ArpClaimHistory>,
+    arp_evidence: crate::net::recent_evidence::RecentEvidence<2048, 300>,
     os_by_ip: HashMap<String, &'static str>,
     bf_windows: HashMap<BfKey, BfWindow>,
     dns_tunnel: dns::DnsTunnelTracker,
