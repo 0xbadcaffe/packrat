@@ -144,6 +144,7 @@ fn selected_alert_archive_export_fills_missing_frames_from_matching_local_eviden
 
     let project = project_store::load(&output).unwrap();
     let report = project.alert_archive_report.as_ref().unwrap();
+    assert_eq!(report.session_id.as_deref(), Some(app.alert_session_id.as_ref()));
     assert_eq!(report.local_fallback_frames.iter().copied().collect::<Vec<_>>(), [2]);
     assert_eq!(report.frames.get(&4), Some(&ArchivedFrameOutcome::Missing));
     assert!(!report.frames.contains_key(&3));
@@ -156,4 +157,35 @@ fn selected_alert_archive_export_fills_missing_frames_from_matching_local_eviden
     review.worklist.active = Some(0);
     assert!(review.active_investigation_context().unwrap().details.iter()
         .any(|(label, value)| label == "Local evidence at export" && value == "#2"));
+}
+
+#[test]
+fn reexport_preserves_the_recorded_historical_session_without_relabeling_it() {
+    let scratch = tempfile::tempdir().unwrap();
+    let archive = scratch.path().join("archive");
+    let mut app = App::new_for_test();
+    app.set_packet_archive(ArchiveWorker::open(&archive).unwrap()).unwrap();
+    let scope = app.capture_id.clone().unwrap();
+    app.packet_archive.as_ref().unwrap().record_scoped(&scope, &packet(1)).unwrap();
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+    app.core.edit().alert_center.record(1, "IDS", "HIGH", "Saved finding", "fixture");
+
+    let original = scratch.path().join("original.json");
+    app.start_alert_archive_case(original.clone()).unwrap();
+    finish_export(&mut app);
+    let project = project_store::load(&original).unwrap();
+    let expected_session = project.alert_archive_report.as_ref().unwrap().session_id.clone().unwrap();
+
+    let mut review = App::new_for_test();
+    review.set_packet_archive(ArchiveWorker::open(&archive).unwrap()).unwrap();
+    assert_ne!(review.alert_session_id.as_ref(), expected_session);
+    review.apply_project_state(project).unwrap();
+    review.worklist.active = Some(0);
+    let context = review.active_investigation_context().unwrap();
+    assert!(context.details.iter().any(|(label, value)| label == "Alert session" && value == &expected_session));
+    let reexport = scratch.path().join("reexport.json");
+    review.start_alert_archive_case(reexport.clone()).unwrap();
+    finish_export(&mut review);
+    let saved = project_store::load(&reexport).unwrap();
+    assert_eq!(saved.alert_archive_report.unwrap().session_id.as_deref(), Some(expected_session.as_str()));
 }

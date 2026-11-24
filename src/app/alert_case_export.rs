@@ -1,4 +1,4 @@
-use super::App;
+use super::{App, alert_evidence::AlertEvidenceScope};
 use crate::model::project::{MAX_PINNED_BYTES, pinned_packet_cost};
 use crate::storage::alert_evidence::{AlertProjectSummary, FrameStatus, frame_status, save_alert_archive_project};
 use std::path::PathBuf;
@@ -31,7 +31,13 @@ impl App {
         }
         let mut archive = self.packet_archive.as_ref().ok_or("no packet archive is attached")?.reader()?;
         let frames = alert.evidence_frame_numbers();
-        let slots = self.local_alert_packets(&alert, self.alert_evidence_scope(&alert), &frames);
+        let scope = self.alert_evidence_scope(&alert);
+        let session = if scope == AlertEvidenceScope::CurrentCapture && !self.offline_review() {
+            Some(self.alert_session_id.to_string())
+        } else {
+            self.matching_saved_alert_archive_report(&alert).and_then(|report| report.session_id.clone())
+        };
+        let slots = self.local_alert_packets(&alert, scope, &frames);
         let mut bytes_left = MAX_PINNED_BYTES;
         let trigger = frames.binary_search(&alert.packet_no).ok();
         let order = trigger.into_iter().chain((0..frames.len()).filter(|&index| Some(index) != trigger));
@@ -44,7 +50,8 @@ impl App {
         }).collect();
         let destination = output.clone();
         let worker = Builder::new().name("packrat-alert-case".into()).spawn(move || {
-            save_alert_archive_project(&mut archive, &alert, None, &destination, local).map_err(|error| error.to_string())
+            save_alert_archive_project(&mut archive, &alert, session.as_deref(), &destination, local)
+                .map_err(|error| error.to_string())
         }).map_err(|error| format!("could not start export: {error}"))?;
         self.alert_case_export = Some(PendingAlertCase { output, worker });
         Ok(())

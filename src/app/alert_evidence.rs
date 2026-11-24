@@ -177,13 +177,17 @@ impl App {
         self.describe_alert_evidence(alert, true)
     }
 
+    pub(super) fn matching_saved_alert_archive_report(&self, alert: &AlertItem) -> Option<&crate::model::project::AlertArchiveReport> {
+        self.saved_alert_archive_report.as_ref().filter(|report| {
+            report.alert_id == alert.id && Some(report.capture_id.as_str()) == alert.capture_id.as_deref()
+                && report.frames.keys().copied().eq(alert.evidence_frame_numbers())
+        })
+    }
+
     pub(super) fn saved_alert_archive_details(&self, alert: &AlertItem) -> Vec<(String, String)> {
         use crate::model::project::ArchivedFrameOutcome;
 
-        let Some(report) = self.saved_alert_archive_report.as_ref().filter(|report| {
-            report.alert_id == alert.id && Some(report.capture_id.as_str()) == alert.capture_id.as_deref()
-                && report.frames.keys().copied().eq(alert.evidence_frame_numbers())
-        }) else { return Vec::new() };
+        let Some(report) = self.matching_saved_alert_archive_report(alert) else { return Vec::new() };
         let mut details: Vec<_> = [
             (ArchivedFrameOutcome::Missing, "Missing at export"),
             (ArchivedFrameOutcome::Unreadable, "Unreadable at export"),
@@ -195,6 +199,9 @@ impl App {
                 .map(|(frame, _)| format!("#{frame}")).collect();
             (!numbers.is_empty()).then(|| (label.into(), numbers.join(", ")))
         }).collect();
+        if let Some(session) = &report.session_id {
+            details.push(("Alert session".into(), session.clone()));
+        }
         if report.frames.values().all(|outcome| outcome.included()) {
             details.push(("Archive export".into(), "All cited frames included at export".into()));
         }
