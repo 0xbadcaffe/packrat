@@ -107,6 +107,7 @@ companion_candidates_ready() {
 
 backup_space_ready() {
     local destination="$data_dir/backups" free_kib sizes reserve=$backup_reserve_mib tool proposed current
+    local staging_mib=256 i
     local -a files=("$installed" "$data_dir/alerts.jsonl")
     for tool in "${companion_tools[@]}"; do
         proposed="${tool}_candidate" current="installed_$tool"
@@ -116,7 +117,20 @@ backup_space_ready() {
     free_kib=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 { print $4 }') || return 1
     sizes=$(sudo -n stat --format='%s' -- "${files[@]}") || return 1
     [[ $free_kib =~ ^[0-9]{1,15}$ && $backup_reserve_mib =~ ^[1-9][0-9]{0,5}$ ]] || return 1
-    if "$enable_alert_evidence"; then reserve=$((reserve + 2 * evidence_max_mib)); fi
+    if "$enable_alert_evidence"; then
+        reserve=$((reserve + 2 * evidence_max_mib))
+    elif [[ -n $archive_path && ${1-} != --companions-only ]] &&
+            { archive_policy_changes || ! cmp -s -- "${candidate-}" "$installed"; }; then
+        # The staging capture writes a separate archive under the rollback directory.
+        for ((i=0; i<${#archive_limits[@]}; i+=2)); do
+            if [[ ${archive_limits[i]} == --archive-max-mib ]]; then
+                staging_mib=${archive_limits[i+1]}
+                [[ $staging_mib =~ ^[1-9][0-9]{0,8}$ ]] || return 1
+                break
+            fi
+        done
+        reserve=$((reserve + staging_mib))
+    fi
     awk -v free="$free_kib" -v reserve="$reserve" -v expected="${#files[@]}" '
         /^[0-9]+$/ && length($0) <= 15 { size_kib += int(($0 + 1023) / 1024); sizes++ }
         END { exit !(NR == expected && sizes == expected && free >= reserve * 1024 + size_kib) }

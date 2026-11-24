@@ -273,6 +273,24 @@ mv -T -- "$data_dir/replacement" "$data_dir/alerts.jsonl"
     mv -- "$data_dir/original" "$log"
 )
 
+test_staging_archive_budget() {
+    local archive_path="$data_dir/packet-archive" candidate="$test_mount/candidate"
+    local -a archive_limits=(--archive-max-frames 10 --archive-max-mib 8)
+    if backup_space_ready; then exit 1; fi
+    backup_space_ready --companions-only
+    free=$((1028 + 8 * 1024))
+    backup_space_ready
+    ((free-=1))
+    if backup_space_ready; then exit 1; fi
+    archive_limits=()
+    free=$((1028 + 256 * 1024))
+    backup_space_ready
+    ((free-=1))
+    if backup_space_ready; then exit 1; fi
+    archive_limits=(--archive-max-mib 9999999999999999999999)
+    if backup_space_ready; then exit 1; fi
+}
+
 (
     backup_reserve_mib=1
     test_mount=$data_dir
@@ -298,6 +316,8 @@ mv -T -- "$data_dir/replacement" "$data_dir/alerts.jsonl"
     free=1028
     test_sizes=unexpected
     if backup_space_ready; then exit 1; fi
+    test_sizes=$'1025\n2048'
+    test_staging_archive_budget
 )
 
 test_backup_copies() {

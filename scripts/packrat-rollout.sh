@@ -480,8 +480,8 @@ main() {
     fi
     companion_candidates_ready || { error "Companion candidate or installed rollback binary is not usable"; return 1; }
     preflight || return 1
-    if ! backup_space_ready; then
-        error "Insufficient or unverified free space for the alert log and rollback backup; current capture not stopped"
+    if ! backup_space_ready "${4-}"; then
+        error "Insufficient or unverified free space for rollout backups and staging; current capture not stopped"
         return 1
     fi
     if [[ ${4-} == --companions-only ]] && { [[ -n $retain_rule || -n $remove_rule ]] || ! cmp -s -- "$candidate" "$installed"; }; then
