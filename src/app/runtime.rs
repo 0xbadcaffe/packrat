@@ -167,6 +167,7 @@ impl App {
             visible_packets: self.filtered.len(),
             flows: core.flow_tracker.len(),
             flow_summary_evictions: core.flow_tracker.evicted(),
+            dns_capacity: Some(core.security.dns_capacity_stats()),
             hosts: core.hosts.len(),
             security_findings: core.security.alert_count(),
             rule_hits: core.rule_engine.hits.len(),

@@ -51,6 +51,8 @@ fn full_dns_transaction_table_does_not_expire_queries_from_another_clock() {
         let findings = tracker.observe(&reply);
         assert_eq!(tracker.exchange_for_packet(&reply).is_some(), !admit);
         assert_eq!(findings.iter().any(|finding| finding.kind == DnsFindingKind::ReplyWithoutObservedQuery), admit);
+        assert_eq!(tracker.capacity_stats().query_key_declines, u64::from(!admit));
+        assert_eq!(tracker.capacity_stats().query_candidate_declines, 0);
     }
 }
 
@@ -70,6 +72,7 @@ fn full_nxdomain_tracker_keeps_distinct_names_from_another_clock() {
         exchange(&mut tracker, &mut frame, [LOCAL, RESOLVER], (marker_path, 100), 20, "marker.test", true);
         let final_reply = exchange(&mut tracker, &mut frame, [LOCAL, RESOLVER], (PRIMARY, 20), 21, "last.test", true);
         assert_eq!(final_reply.contains(&DnsFindingKind::NxDomainBurst), marker_path != PRIMARY);
+        assert_eq!(tracker.capacity_stats().nxdomain_client_declines, u64::from(marker_path != PRIMARY));
     }
 }
 
@@ -90,5 +93,37 @@ fn full_external_resolver_tracker_does_not_reset_another_clocks_repeat_suppressi
         assert_eq!(marker.contains(&DnsFindingKind::ExternalResolver), marker_path == PRIMARY);
         let repeat = exchange(&mut tracker, &mut frame, [LOCAL, resolver], (PRIMARY, 20), 3, "example.test", false);
         assert_eq!(repeat.contains(&DnsFindingKind::ExternalResolver), marker_path == PRIMARY);
+        assert_eq!(tracker.capacity_stats().external_resolver_pair_declines, u64::from(marker_path != PRIMARY));
+        tracker.clear();
+        assert_eq!(tracker.capacity_stats(), Default::default());
+    }
+}
+
+#[test]
+fn dns_replay_reports_candidate_declines_separately_from_retries_and_packet_loss() {
+    use packrat_tui::export::pcapng::PcapNgWriter;
+    use std::process::Command;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("dns-capacity.pcapng");
+    let mut file = PcapNgWriter::create(&path).unwrap();
+    for (index, name) in ["a.test", "b.test", "c.test", "d.test", "a.test", "e.test"].iter().enumerate() {
+        let packet = dns_packet(index as u64 + 1, false, LOCAL, RESOLVER, 1, name);
+        file.write_packet(&packet).unwrap();
+    }
+    file.flush().unwrap();
+    for args in [&[][..], &["--alerts-only"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze")).args(args).arg(&path).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let summary = String::from_utf8(output.stdout).unwrap().lines().find_map(|line| {
+            let row: serde_json::Value = serde_json::from_str(line).unwrap();
+            (row["type"] == "summary").then_some(row)
+        }).unwrap();
+        assert_eq!(summary["analyzed"], 6);
+        assert_eq!(summary["skipped"], 0);
+        assert_eq!(summary["dns_capacity"], serde_json::json!({
+            "query_key_declines":0, "query_candidate_declines":1,
+            "nxdomain_client_declines":0, "external_resolver_pair_declines":0,
+        }));
     }
 }

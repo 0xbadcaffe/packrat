@@ -10,12 +10,16 @@ const MAX_PAIRS: usize = 512;
 #[derive(Debug, Default)]
 pub(super) struct ExternalResolvers {
     pairs: HashMap<(DnsScope, IpAddr, IpAddr), f64>,
+    capacity_declines: u64,
 }
 
 impl ExternalResolvers {
     pub(super) fn clear(&mut self) {
         self.pairs.clear();
+        self.capacity_declines = 0;
     }
+
+    pub(super) fn capacity_declines(&self) -> u64 { self.capacity_declines }
 
     pub(super) fn observe(
         &mut self,
@@ -47,6 +51,7 @@ impl ExternalResolvers {
                 observed.interface != scope.interface || timestamp - *seen <= TTL_SECS
             });
             if self.pairs.len() >= MAX_PAIRS {
+                self.capacity_declines = self.capacity_declines.saturating_add(1);
                 return None;
             }
         }

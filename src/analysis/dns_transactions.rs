@@ -18,6 +18,7 @@ mod udp_wire;
 pub(crate) use udp_wire::{udp_payload, udp_port_pair};
 
 use correlation::{ExchangeBucket, ReplyMatch};
+pub use correlation::DnsCapacityStats;
 pub use investigation::{DnsExchangeEvidence, DnsQueryRetryEvidence, DnsReplyEvidence};
 use replies::{RecentResponse, ReplyOutcome, question_mismatch};
 
@@ -173,6 +174,8 @@ pub struct DnsTransactionTracker {
     exchanges: HashMap<TransactionKey, ExchangeBucket>,
     negative_answers: negative_answers::NegativeAnswers,
     external_resolvers: external_resolver::ExternalResolvers,
+    query_key_declines: u64,
+    query_candidate_declines: u64,
 }
 
 impl DnsTransactionTracker {
@@ -346,6 +349,8 @@ impl DnsTransactionTracker {
         self.exchanges.clear();
         self.negative_answers.clear();
         self.external_resolvers.clear();
+        self.query_key_declines = 0;
+        self.query_candidate_declines = 0;
     }
 
     fn insert_query(&mut self, key: TransactionKey, query: PendingQuery) {
@@ -357,10 +362,13 @@ impl DnsTransactionTracker {
                 !bucket.is_empty()
             });
             if self.exchanges.len() >= MAX_TRANSACTIONS {
+                self.query_key_declines = self.query_key_declines.saturating_add(1);
                 return;
             }
         }
-        self.exchanges.entry(key).or_default().record(query);
+        if !self.exchanges.entry(key).or_default().record(query) {
+            self.query_candidate_declines = self.query_candidate_declines.saturating_add(1);
+        }
     }
 }
 

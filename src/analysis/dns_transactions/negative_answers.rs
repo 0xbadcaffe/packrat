@@ -17,6 +17,7 @@ const _: () = assert!(
 #[derive(Debug, Default)]
 pub(super) struct NegativeAnswers {
     clients: HashMap<(DnsScope, String, String), NameWindow>,
+    capacity_declines: u64,
 }
 
 #[derive(Debug)]
@@ -58,7 +59,10 @@ impl NameSample {
 impl NegativeAnswers {
     pub(super) fn clear(&mut self) {
         self.clients.clear();
+        self.capacity_declines = 0;
     }
+
+    pub(super) fn capacity_declines(&self) -> u64 { self.capacity_declines }
 
     pub(super) fn observe(
         &mut self,
@@ -81,6 +85,7 @@ impl NegativeAnswers {
                 observed.interface != scope.interface || now - state.latest_time <= WINDOW_SECS
             });
             if self.clients.len() >= MAX_CLIENTS {
+                self.capacity_declines = self.capacity_declines.saturating_add(1);
                 return None;
             }
         }

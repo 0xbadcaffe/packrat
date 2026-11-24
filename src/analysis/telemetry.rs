@@ -35,6 +35,7 @@ pub struct TelemetrySnapshot {
     pub visible_packets: usize,
     pub flows: usize,
     pub flow_summary_evictions: u64,
+    pub dns_capacity: Option<super::dns_transactions::DnsCapacityStats>,
     pub hosts: usize,
     pub security_findings: usize,
     pub rule_hits: usize,
@@ -154,6 +155,18 @@ impl TelemetrySnapshot {
                 "# TYPE packrat_capture_queue_full_packets_total counter\npackrat_capture_queue_full_packets_total {packets}\n"
             ));
         }
+        if let Some(stats) = self.dns_capacity {
+            metrics.push_str("# HELP packrat_dns_capacity_declines_total DNS observations not retained at a tracker limit, not capture packet loss.\n");
+            metrics.push_str("# TYPE packrat_dns_capacity_declines_total counter\n");
+            for (table, count) in [
+                ("query_key", stats.query_key_declines),
+                ("query_candidate", stats.query_candidate_declines),
+                ("nxdomain_client", stats.nxdomain_client_declines),
+                ("external_resolver_pair", stats.external_resolver_pair_declines),
+            ] {
+                metrics.push_str(&format!("packrat_dns_capacity_declines_total{{table=\"{table}\"}} {count}\n"));
+            }
+        }
         for (name, value) in [
             ("capture_queue_depth", self.capture_queue.depth),
             ("capture_queue_capacity", self.capture_queue.capacity),
@@ -222,6 +235,7 @@ impl TelemetryHub {
                 "retained_summaries": snapshot.flows,
                 "summary_evictions": snapshot.flow_summary_evictions,
             })),
+            "dns_capacity": snapshot.dns_capacity.filter(|_| fresh),
             "capture_run_id": snapshot.capture_run_id.map(|id| format!("{id:016x}")),
             "capture_interface": snapshot.capture_interface.as_deref(),
             "capture_link_type": snapshot.capture_link_type,

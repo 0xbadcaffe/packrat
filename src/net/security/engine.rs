@@ -14,6 +14,10 @@ impl SecurityEngine {
         self.dns_transactions.exchanges_for_packet(packet)
     }
 
+    pub fn dns_capacity_stats(&self) -> crate::analysis::dns_transactions::DnsCapacityStats {
+        self.dns_transactions.capacity_stats()
+    }
+
     pub fn new() -> Self {
         Self {
             findings: DetectionBatch::default(),

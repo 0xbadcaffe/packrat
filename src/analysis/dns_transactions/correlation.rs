@@ -1,12 +1,32 @@
 use std::collections::VecDeque;
 
-use super::{PendingQuery, Question, RecentResponse, RESPONSE_TTL_SECS, TRANSACTION_TTL_SECS, append_evidence};
+use super::{DnsTransactionTracker, PendingQuery, Question, RecentResponse, RESPONSE_TTL_SECS, TRANSACTION_TTL_SECS, append_evidence};
 use crate::analysis::alert_center::MAX_ALERT_PACKET_REFS;
 
 const MAX_CANDIDATES: usize = 4;
 const MAX_QUERY_REPEATS: usize = 4;
 const MAX_TIMING_RETRIES: usize = 8;
 const MAX_PENDING_AGE_SECS: f64 = 2.0 * TRANSACTION_TTL_SECS;
+
+/// Observations declined at bounded DNS tables, not packets dropped from capture.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct DnsCapacityStats {
+    pub query_key_declines: u64,
+    pub query_candidate_declines: u64,
+    pub nxdomain_client_declines: u64,
+    pub external_resolver_pair_declines: u64,
+}
+
+impl DnsTransactionTracker {
+    pub fn capacity_stats(&self) -> DnsCapacityStats {
+        DnsCapacityStats {
+            query_key_declines: self.query_key_declines,
+            query_candidate_declines: self.query_candidate_declines,
+            nxdomain_client_declines: self.negative_answers.capacity_declines(),
+            external_resolver_pair_declines: self.external_resolvers.capacity_declines(),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub(super) struct ExchangeBucket {
@@ -130,7 +150,7 @@ pub(super) enum ReplyMatch {
 }
 
 impl ExchangeBucket {
-    pub(super) fn record(&mut self, query: PendingQuery) {
+    pub(super) fn record(&mut self, query: PendingQuery) -> bool {
         self.expire(query.timestamp);
         if let Some(entry) = self.entries.iter_mut().find(|entry| {
             entry.query.server == query.server && entry.query.question == query.question
@@ -141,7 +161,9 @@ impl ExchangeBucket {
         } else {
             // A discarded query may be the true match for a later partial match.
             self.saturated_at = Some(self.saturated_at.map_or(query.timestamp, |old| old.max(query.timestamp)));
+            return false;
         }
+        true
     }
 
     pub(super) fn expire(&mut self, now: f64) {

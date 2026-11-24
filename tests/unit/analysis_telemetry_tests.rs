@@ -60,6 +60,40 @@ fn flow_cache_evictions_are_separate_from_capture_loss_and_require_fresh_health(
 }
 
 #[test]
+fn dns_capacity_counters_are_separate_from_capture_loss_and_require_fresh_health() {
+    use crate::analysis::dns_transactions::DnsCapacityStats;
+
+    let hub = TelemetryHub::default();
+    let health = || serde_json::from_str::<serde_json::Value>(&hub.health()).unwrap();
+    assert!(health()["dns_capacity"].is_null());
+    assert!(!hub.snapshot().openmetrics().contains("packrat_dns_capacity_declines_total"));
+    hub.publish(TelemetrySnapshot {
+        dns_capacity: Some(DnsCapacityStats {
+            query_key_declines: 4, query_candidate_declines: 7,
+            nxdomain_client_declines: 0, external_resolver_pair_declines: 2,
+        }),
+        pcap_buffer_drops: Some(0),
+        ..Default::default()
+    });
+    assert_eq!(health()["dns_capacity"], serde_json::json!({
+        "query_key_declines":4, "query_candidate_declines":7,
+        "nxdomain_client_declines":0, "external_resolver_pair_declines":2,
+    }));
+    assert_eq!(health()["pcap_buffer_drops"], 0);
+    let metrics = hub.snapshot().openmetrics();
+    for line in [
+        "packrat_dns_capacity_declines_total{table=\"query_key\"} 4\n",
+        "packrat_dns_capacity_declines_total{table=\"query_candidate\"} 7\n",
+        "packrat_dns_capacity_declines_total{table=\"nxdomain_client\"} 0\n",
+        "packrat_dns_capacity_declines_total{table=\"external_resolver_pair\"} 2\n",
+    ] {
+        assert!(metrics.contains(line), "{line}");
+    }
+    hub.inner.write().unwrap().updated_at = Instant::now().checked_sub(Duration::from_secs(6));
+    assert!(health()["dns_capacity"].is_null());
+}
+
+#[test]
 fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     let hub = TelemetryHub::default();
     let health = || serde_json::from_str::<serde_json::Value>(&hub.health()).unwrap();
