@@ -147,6 +147,8 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
     dns_replay::write_fixture(&root.join("equivalent.pcapng"), Scenario::Equivalent);
     dns_replay::write_fixture(&root.join("answer.pcapng"), Scenario::ChangedAnswer);
     dns_replay::write_fixture(&root.join("wire.pcapng"), Scenario::ChangedWire);
+    dns_replay::write_fixture(&root.join("soa-equivalent.pcapng"), Scenario::EquivalentSoa);
+    dns_replay::write_fixture(&root.join("soa-changed.pcapng"), Scenario::ChangedSoa);
     let manifest = root.join("dns.json");
     let labels = json!({
         "version": 1, "strict": true,
@@ -161,14 +163,21 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
             {"name": "unsupported record changed", "capture": "wire.pcapng",
              "expect_snapshots": 1,
              "expect_counts": {"dns.changed_answers": 0, "dns.changed_wire_reply": 1},
-             "opening_frames": {"dns.changed_wire_reply": [4]}}
+             "opening_frames": {"dns.changed_wire_reply": [4]}},
+            {"name": "same SOA, different compression", "capture": "soa-equivalent.pcapng",
+             "expect_snapshots": 0,
+             "expect_counts": {"dns.changed_answers": 0, "dns.changed_wire_reply": 0}},
+            {"name": "SOA serial changed", "capture": "soa-changed.pcapng",
+             "expect_snapshots": 1,
+             "expect_counts": {"dns.changed_answers": 1, "dns.changed_wire_reply": 0},
+             "opening_frames": {"dns.changed_answers": [4]}}
         ]
     });
     std::fs::write(&manifest, labels.to_string()).unwrap();
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 3);
+    assert_eq!(report["passed"], 5);
     assert_eq!(report["cases"][0]["summary"]["alerts_opened"], 0);
     assert_eq!(report["cases"][1]["summary"]["packets"], 5);
     assert_eq!(report["cases"][1]["snapshot_check"], json!({"expected":1,"observed":1}));
@@ -176,7 +185,7 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
     let comparison = run_suite_with_baseline(&manifest, Some(env!("CARGO_BIN_EXE_packrat-analyze")));
     assert!(comparison.status.success(), "{}", String::from_utf8_lossy(&comparison.stdout));
     let report: Value = serde_json::from_slice(&comparison.stdout).unwrap();
-    assert_eq!(report["comparable"], 3);
+    assert_eq!(report["comparable"], 5);
     assert_eq!(report["cases"][1]["delta"], json!({
         "alerts_opened": 0, "alert_snapshots": 0, "unregistered_alerts": 0, "rule_openings": {},
         "missed_opening_frames": 0,
@@ -185,6 +194,7 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
     for (capture, rule, severity, confidence) in [
         ("answer.pcapng", "dns.changed_answers", "MEDIUM", "correlated"),
         ("wire.pcapng", "dns.changed_wire_reply", "LOW", "heuristic"),
+        ("soa-changed.pcapng", "dns.changed_answers", "MEDIUM", "correlated"),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
             .arg("--alerts-only").arg(root.join(capture)).output().unwrap();
@@ -195,7 +205,7 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         assert_eq!(alerts.len(), 1);
         let alert = &alerts[0]["alert"];
         assert_eq!(alert["provenance"]["rule_id"], rule);
-        assert_eq!(alert["provenance"]["revision"], 10);
+        assert_eq!(alert["provenance"]["revision"], 11);
         assert_eq!(alert["provenance"]["confidence"], confidence);
         assert_eq!(alert["severity"], severity);
         assert_eq!(alert["packet_refs"], json!([1, 2, 4]));

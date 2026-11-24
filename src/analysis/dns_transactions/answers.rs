@@ -42,6 +42,7 @@ fn answer_digest(message: &DnsMessage<'_>) -> Option<[u8; 32]> {
             1 if data.len() == 4 => data.to_vec(),   // A
             28 if data.len() == 16 => data.to_vec(), // AAAA
             2 | 5 | 12 | 39 => name_rdata(bytes, start, end, 0)?,
+            6 => soa_rdata(bytes, start, end)?,
             15 => name_rdata(bytes, start, end, 2)?, // MX
             33 => name_rdata(bytes, start, end, 6)?, // SRV
             16 if record_wire::txt_character_bytes(data).is_some() => data.to_vec(),
@@ -76,6 +77,23 @@ fn name_rdata(bytes: &[u8], start: usize, end: usize, prefix_len: usize) -> Opti
     }
     let mut result = bytes.get(start..name_start)?.to_vec();
     result.extend(name.as_bytes());
+    Some(result)
+}
+
+fn soa_rdata(bytes: &[u8], start: usize, end: usize) -> Option<Vec<u8>> {
+    let numeric_start = end.checked_sub(20)?;
+    let (primary, mailbox_start) = parse_name(bytes, start)?;
+    if mailbox_start >= numeric_start {
+        return None;
+    }
+    let (mailbox, consumed) = parse_name(bytes, mailbox_start)?;
+    if consumed != numeric_start {
+        return None;
+    }
+    let mut result = (primary.len() as u32).to_be_bytes().to_vec();
+    result.extend(primary.as_bytes());
+    result.extend(mailbox.as_bytes());
+    result.extend(bytes.get(numeric_start..end)?);
     Some(result)
 }
 

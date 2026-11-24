@@ -22,6 +22,8 @@ pub enum Scenario {
     Equivalent,
     ChangedAnswer,
     ChangedWire,
+    EquivalentSoa,
+    ChangedSoa,
 }
 
 #[test]
@@ -84,12 +86,13 @@ pub fn write_fixture(path: &Path, scenario: Scenario) {
 fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool) {
     let rr_type = match scenario {
         Scenario::ChangedWire => 65_280_u16,
+        Scenario::EquivalentSoa | Scenario::ChangedSoa => 6,
         _ => 1,
     };
     let mut capture = PcapNgWriter::create(path).unwrap();
     for frame in 1..=5 {
         let response = frame != 1;
-        let equivalent_variation = matches!(frame, 3 | 5) && rr_type == 1;
+        let equivalent_variation = matches!(frame, 3 | 5) && matches!(rr_type, 1 | 6);
         let mut dns = vec![
             0,
             49,
@@ -109,13 +112,22 @@ fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool)
         } else {
             b"\x04safe\x07example\0"
         });
-        dns.extend_from_slice(&[0, 1, 0, 1]);
+        let qtype = if rr_type == 6 { 6 } else { 1 };
+        dns.extend_from_slice(&[0, qtype, 0, 1]);
         if response {
-            let changed = frame >= 4 && !matches!(scenario, Scenario::Equivalent);
+            let changed = frame >= 4 && !matches!(scenario, Scenario::Equivalent | Scenario::EquivalentSoa);
             let value = if changed { 2 } else { 1 };
             let address = [192, 0, 2, value];
             let opaque = [value];
-            let rdata: &[u8] = if rr_type == 1 { &address } else { &opaque };
+            let soa;
+            let rdata: &[u8] = match rr_type {
+                1 => &address,
+                6 => {
+                    soa = soa_rdata(equivalent_variation, u32::from(value));
+                    &soa
+                }
+                _ => &opaque,
+            };
             dns.extend_from_slice(&[0xc0, 0x0c]);
             dns.extend_from_slice(&rr_type.to_be_bytes());
             dns.extend_from_slice(&[0, 1]);
@@ -135,6 +147,18 @@ fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool)
             .unwrap();
     }
     capture.flush().unwrap();
+}
+
+fn soa_rdata(uncompressed: bool, serial: u32) -> Vec<u8> {
+    let mut data = if uncompressed {
+        b"\x02NS\x04SAFE\x07EXAMPLE\0\x05ADMIN\x04SAFE\x07EXAMPLE\0".to_vec()
+    } else {
+        b"\x02ns\xc0\x0c\x05admin\xc0\x0c".to_vec()
+    };
+    for value in [serial, 3_600, 600, 86_400, 60] {
+        data.extend(value.to_be_bytes());
+    }
+    data
 }
 
 #[test]
