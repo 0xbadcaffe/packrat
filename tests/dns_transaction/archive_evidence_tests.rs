@@ -222,3 +222,55 @@ fn opted_in_nxdomain_burst_retains_cited_queries_and_replies_after_rollover() {
         }
     }
 }
+
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn high_entropy_dns_archive_preserves_only_opted_in_cited_query_frames(#[case] use_tcp: bool) {
+    let rule = "dns.high_entropy_query_burst";
+    let scratch = tempfile::tempdir().unwrap();
+    let query = |frame, index| {
+        let name = format!("abcdefghijklmnpqrstuvwxyz234567{index}.audit.test");
+        dns_packet(frame, false, "10.0.0.5", "10.0.0.53", index, &name).bytes
+    };
+    for selected in [false, true] {
+        let path = scratch.path().join(if selected { "selected" } else { "unselected" });
+        let rules = vec![if selected { rule } else { "dns.nxdomain_distinct_names" }.into()];
+        let mut app = start_app(&path, rules);
+        let mut frame = 1;
+        let mut sequence = 101;
+        let mut expected = Vec::new();
+        if use_tcp {
+            app.inject_packet(tcp(frame, 100, 0x02, false, &[], 0.5));
+            frame += 1;
+        }
+        for index in 0..8 {
+            if index == 7 {
+                frame = noise(&mut app, frame, 8.0);
+            }
+            let bytes = query(frame, index);
+            let time = 1.0 + f64::from(index) * 2.0;
+            if use_tcp {
+                let message = &bytes[42..];
+                let framed = [(message.len() as u16).to_be_bytes().as_slice(), message].concat();
+                for (part, bytes) in [&framed[..5], &framed[5..]].into_iter().enumerate() {
+                    app.inject_packet(tcp(frame, sequence, 0x18, false, bytes, time + part as f64));
+                    expected.push(frame);
+                    frame += 1;
+                    sequence += bytes.len() as u32;
+                }
+            } else {
+                app.inject_packet(parse_ethernet(&bytes, frame, time));
+                expected.push(frame);
+                frame += 1;
+            }
+            drain(&mut app);
+        }
+        let scope = finish_app(&mut app, rule, &expected);
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { expected.len() as u64 } else { 0 });
+        for frame in expected {
+            assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), selected);
+        }
+    }
+}

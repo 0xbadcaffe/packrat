@@ -122,7 +122,7 @@ impl DnsTunnelTracker {
 }
 
 impl SecurityEngine {
-    pub(super) fn check_dns_tunnel(&mut self, pkt: &Packet, tcp: &DnsTcpObservation) {
+    pub(super) fn check_dns_tunnel(&mut self, pkt: &Packet, tcp: &DnsTcpObservation, archive_rules: Option<&[String]>) {
         if pkt.dst_port != Some(53) || !pkt.timestamp.is_finite() || pkt.timestamp < 0.0
             || pkt.capture.as_ref().is_some_and(|capture| capture.link_type != 1)
         {
@@ -132,21 +132,35 @@ impl SecurityEngine {
             DnsTcpObservation::Anchored { destination: 53, records, .. } => {
                 for record in records {
                     if let Some(name) = dns_transactions::query_name_from_message(&record.bytes) {
-                        self.observe_encoded_dns_query(pkt, &name, "TCP", &record.frames);
+                        self.observe_encoded_dns_query(pkt, &name, "TCP", &record.frames, archive_rules);
                     }
                 }
             }
             DnsTcpObservation::Unanchored => {
                 if let Some(name) = dns_transactions::wire_query_name(pkt) {
-                    self.observe_encoded_dns_query(pkt, &name, "UDP", &[pkt.no]);
+                    self.observe_encoded_dns_query(pkt, &name, "UDP", &[pkt.no], archive_rules);
                 }
             }
             _ => {}
         }
     }
 
-    fn observe_encoded_dns_query(&mut self, pkt: &Packet, name: &str, transport: &'static str, frames: &[u64]) {
+    fn observe_encoded_dns_query(
+        &mut self, pkt: &Packet, name: &str, transport: &'static str, frames: &[u64],
+        archive_rules: Option<&[String]>,
+    ) {
         if let Some((suspect, finding)) = self.dns_tunnel.observe(pkt, name, transport, frames) {
+            if let Some(rules) = archive_rules
+                && crate::analysis::alert_provenance::rule_id_for("IDS", finding.alert.signature)
+                    .is_some_and(|id| rules.iter().any(|rule| rule == id))
+            {
+                let remaining = crate::analysis::alert_center::MAX_ALERT_PACKET_REFS
+                    .saturating_sub(self.findings.retained_evidence.len());
+                // Query completion was timed by the tracker; a cited TCP segment can arrive out of order.
+                self.findings.retained_evidence.extend(finding.related_packets.iter()
+                    .filter_map(|&frame| self.dns_packet_evidence.cited_packet(pkt, frame))
+                    .take(remaining).cloned());
+            }
             if self.dns_suspects.len() >= MAX_ENTRIES { self.dns_suspects.remove(0); }
             self.dns_suspects.push(suspect);
             self.push_ids_finding(finding);

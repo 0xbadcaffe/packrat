@@ -173,7 +173,7 @@ impl SecurityEngine {
         self.check_brute_force(pkt, http_auth);
         self.check_http(pkt);
         self.check_tls(pkt, tls);
-        self.check_dns_tunnel(pkt, &dns);
+        self.check_dns_tunnel(pkt, &dns, archive_rules);
     }
 
     pub fn inspect(&mut self, pkt: &Packet) -> DetectionBatch {
