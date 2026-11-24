@@ -173,6 +173,7 @@ impl App {
             theme_picker_cursor: 0,
             view_menu_open: false,
             view_menu_cursor: 0,
+            about_open: false,
             worklist: InvestigationTray::default(),
             investigation_view: InvestigationView::Summary,
             investigation_scroll: 0,

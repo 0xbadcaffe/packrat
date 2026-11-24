@@ -230,6 +230,7 @@ pub struct App {
     /// Workspace-local view drawer state.
     pub view_menu_open: bool,
     pub view_menu_cursor: usize,
+    pub about_open: bool,
     pub worklist: InvestigationTray,
     pub investigation_view: InvestigationView,
     pub investigation_scroll: usize,

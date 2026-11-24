@@ -19,6 +19,14 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
+    if app.about_open {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+            app.about_open = false;
+            app.view_menu_open = true;
+        }
+        return false;
+    }
+
     if app.view_menu_open {
         handle_view_menu(app, key);
         return false;

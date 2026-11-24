@@ -233,7 +233,7 @@ impl App {
     }
 
     pub fn view_menu_next(&mut self) {
-        let max = self.active_tab.workspace().views().len().saturating_sub(1);
+        let max = self.active_tab.workspace().views().len();
         self.view_menu_cursor = (self.view_menu_cursor + 1).min(max);
     }
 
@@ -242,13 +242,11 @@ impl App {
     }
 
     pub fn activate_view_menu_selection(&mut self) {
-        if let Some(view) = self
-            .active_tab
-            .workspace()
-            .views()
-            .get(self.view_menu_cursor)
-        {
+        let views = self.active_tab.workspace().views();
+        if let Some(view) = views.get(self.view_menu_cursor) {
             self.navigate_to(*view);
+        } else if self.view_menu_cursor == views.len() {
+            self.about_open = true;
         }
         self.view_menu_open = false;
     }

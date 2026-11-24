@@ -1,6 +1,7 @@
 #![cfg(feature = "terminal-ui")]
 
-use packrat_tui::{app::App, tabs::Tab, ui};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use packrat_tui::{app::App, event, tabs::{Tab, Workspace}, ui};
 use ratatui::{Terminal, backend::TestBackend};
 
 fn screen(app: &App, width: u16, height: u16) -> String {
@@ -32,9 +33,43 @@ fn view_drawer_keeps_selected_tool_visible_on_short_terminals() {
     app.active_tab = Tab::Investigate;
     app.open_view_menu();
     for _ in 0..20 { app.view_menu_next(); }
+    app.view_menu_prev();
     assert!(screen(&app, 80, 12).contains("Graph"));
     app.activate_view_menu_selection();
     assert_eq!(app.active_tab, Tab::OperatorGraph);
+}
+
+#[test]
+fn about_in_each_workspace_shows_the_build_version_and_preserves_the_view() {
+    let version = concat!("v", env!("CARGO_PKG_VERSION"));
+    let mut app = App::new_for_test();
+    let key = |app: &mut App, code| {
+        assert!(!event::handle(app, Event::Key(KeyEvent::new(code, KeyModifiers::NONE))));
+    };
+    for workspace in [Workspace::Traffic, Workspace::Inspect, Workspace::Case] {
+        app.select_workspace(workspace);
+        let original_tab = app.active_tab;
+        key(&mut app, KeyCode::Tab);
+        for _ in 0..workspace.views().len() {
+            key(&mut app, KeyCode::Down);
+        }
+        for (width, height) in [(28, 9), (40, 12), (80, 24)] {
+            let menu = screen(&app, width, height);
+            assert!(menu.contains("About") && menu.contains(version), "{menu}");
+        }
+        key(&mut app, KeyCode::Enter);
+        assert!(app.about_open && !app.view_menu_open);
+        assert_eq!(app.active_tab, original_tab);
+        for (width, height) in [(28, 9), (80, 24)] {
+            assert!(screen(&app, width, height).contains(&format!("Packrat {version}")));
+        }
+        key(&mut app, KeyCode::Esc);
+        assert!(!app.about_open && app.view_menu_open);
+        assert_eq!(app.view_menu_cursor, workspace.views().len());
+        key(&mut app, KeyCode::Esc);
+        assert!(!app.view_menu_open);
+        assert_eq!(app.active_tab, original_tab);
+    }
 }
 
 #[test]

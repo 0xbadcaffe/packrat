@@ -93,6 +93,10 @@ pub fn draw_view(f: &mut Frame, app: &App) {
         view_menu::draw(f, app);
     }
 
+    if app.about_open {
+        view_menu::draw_about(f);
+    }
+
     if app.alert_overlay_open {
         incident_overlay::draw(f, app);
     }
