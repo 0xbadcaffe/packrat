@@ -439,9 +439,13 @@ fn scan_finding<'a>(
     mut detail: String,
     probes: impl Iterator<Item = &'a ScanProbe>,
 ) -> IdsFinding {
+    use std::fmt::Write as _;
     let (mut syn_acks, mut resets, mut final_acks) = (0, 0, 0);
+    let (mut earliest, mut latest) = (pkt.timestamp, pkt.timestamp);
     let mut related_packets = Vec::new();
     for probe in probes {
+        earliest = earliest.min(probe.timestamp);
+        latest = latest.max(probe.timestamp);
         if probe.packet_no != pkt.no {
             related_packets.push(probe.packet_no);
         }
@@ -454,8 +458,8 @@ fn scan_finding<'a>(
             related_packets.extend(tcp.final_ack);
         }
     }
+    let _ = write!(detail, " over {:.3}s within a {SCAN_WINDOW_SECS:.0}s observation window", latest - earliest);
     if key.transport == "TCP" {
-        use std::fmt::Write as _;
         let _ = write!(detail, "; matched replies at alert time: SYN-ACK={syn_acks}, RST-ACK={resets}; matched final ACKs={final_acks}; missing ACKs do not prove failure; intent unverified");
     }
     IdsFinding {

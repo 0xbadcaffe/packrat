@@ -123,6 +123,23 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
         "expect_counts":{(horizontal):1,(vertical):0}, "opening_frames":{(horizontal):[17]},
         "opening_evidence":[{"rule_id":horizontal,"opening_frame":17,"frames":frames}],
     }));
+    let separate = "separate-bursts.pcapng";
+    let mut writer = PcapNgWriter::create(&root.join(separate)).unwrap();
+    for frame in 1..=24 {
+        let mut raw = super::support::tcp(frame, frame as u32, 0x02, &[], false).bytes;
+        raw[33] = 16 + frame as u8;
+        let seconds = frame as f64 / 4.0 + if frame > 12 { 26.0 } else { 0.0 };
+        writer.write_packet(&parse_ethernet(&raw, frame, seconds)).unwrap();
+    }
+    writer.flush().unwrap();
+    cases.push(json!({
+        "name":"fan-out bursts separated by an idle gap","capture":separate,"expect_snapshots":2,
+        "expect_counts":{(horizontal):2,(vertical):0},"opening_frames":{(horizontal):[12,24]},
+        "opening_evidence":[
+            {"rule_id":horizontal,"opening_frame":12,"frames":(1..=12).collect::<Vec<_>>()},
+            {"rule_id":horizontal,"opening_frame":24,"frames":(13..=24).collect::<Vec<_>>()}
+        ]
+    }));
     let manifest = root.join("scan-suite.json");
     std::fs::write(
         &manifest,
@@ -145,6 +162,7 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
     assert_eq!(records.iter().map(|record| record["opening"].as_bool()).collect::<Vec<_>>(),
                [Some(true), Some(false), Some(false)]);
     let alerts: Vec<_> = records.iter().map(|record| &record["alert"]).collect();
+    assert!(alerts[0]["detail"].as_str().unwrap().contains("over 0.160s within a 15s observation window"));
     assert_eq!(alerts[2]["provenance"]["revision"], 14);
     for field in ["id", "hit_count", "packet_no", "flow", "first_seen", "last_seen", "detail"] {
         assert_eq!(alerts[0][field], alerts[2][field], "{field}");

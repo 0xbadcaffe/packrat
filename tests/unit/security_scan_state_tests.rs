@@ -58,6 +58,7 @@ fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
     }
     let finding = engine.findings.ids.iter().find(|f| f.alert.signature == "Horizontal host scan").unwrap();
     assert_eq!(finding.alert.pkt_no, 24);
+    assert!(finding.alert.detail.contains("over 0.000s within a 15s observation window"));
     assert!(finding.alert.detail.contains("matched replies at alert time: SYN-ACK=1, RST-ACK=1"));
     assert!(finding.alert.detail.contains("matched final ACKs=1; missing ACKs do not prove failure"));
     assert_eq!(finding.related_packets, [2, 6, 14, 8, 9, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
