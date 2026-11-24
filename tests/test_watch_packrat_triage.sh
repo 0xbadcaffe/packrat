@@ -53,6 +53,7 @@ cmp -s "$state" "$scratch/output"
 bash "$watch" --check "$state" | jq -e '.status=="current" and .socket_context_status=="available" and .alert_save_failures==2
     and .alert_save_backlog_dropped==0 and .capture_queue_full_packets==8 and .alert_log_scan_complete==true
     and .alert_log_advanced_during_review==false
+    and .alert_counts=={status:"sampled",recent_sample_count:1,review_queue_sample_count:1,highest_observed_alert_id:9}
     and (.healthy_capture_seconds | type=="number" and .>=0) and .flow_cache=={retained_summaries:8192,summary_evictions:4}' >/dev/null
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
@@ -71,6 +72,22 @@ jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .max_age_seconds==62
     and .healthy_capture_since==.poll_started_at and .poll_started_at > 0 and .poll_started_at <= (.updated_at | fromdateiso8601)
     and (tostring | contains("private") | not)' "$state" >/dev/null
+count_state="$scratch/counts.json"
+live current 15 '[]' > "$scratch/counts-report.json"
+bash "$watch" --once "$count_state" -- cat "$scratch/counts-report.json" >/dev/null
+bash "$watch" --check "$count_state" | jq -e '
+    .alert_counts=={status:"complete",recent_sample_count:0,review_queue_sample_count:0,highest_observed_alert_id:0}' >/dev/null
+for patch in '.recent_alerts=[{alert_id:"private"}]' '.review_queue=[{alert_id:1},{alert_id:1}]' \
+    '.review_queue=[{alert_id:1}]' 'del(.highest_observed_alert_id)' '.duplicate_alert_ids=1'; do
+    jq "$patch" "$count_state" > "$scratch/bad-counts.json"
+    bash "$watch" --check "$scratch/bad-counts.json" | jq -e '
+        .status=="current" and .alert_counts=={status:"unverified"} and (tostring|contains("private")|not)' >/dev/null
+done
+for patch in '.highest_observed_alert_id=4' '.review_queue_truncated=true' 'del(.priority_sample_at_limit)'; do
+    jq "$patch" "$count_state" > "$scratch/partial-counts.json"
+    bash "$watch" --check "$scratch/partial-counts.json" | jq -e '
+        .alert_counts.status=="sampled" and .alert_counts.recent_sample_count==0' >/dev/null
+done
 failed_state="$scratch/failed.json"
 jq '.alert_save_backlog_dropped=1' "$state" >"$failed_state"
 check_status "$failed_state" triage_unhealthy 1
@@ -108,7 +125,8 @@ done
 live current 14 '[]' "$medium" | jq '.alert_log_integrity.stopped_at_limit=true | .has_more_alerts=true' >"$scratch/bounded-report.json"
 bash "$watch" --once "$scratch/bounded-state.json" -- cat "$scratch/bounded-report.json" >/dev/null
 bash "$watch" --check "$scratch/bounded-state.json" |
-    jq -e '.status=="current" and .alert_log_scan_complete==false and .alert_sample_gap==true' >/dev/null
+    jq -e '.status=="current" and .alert_log_scan_complete==false and .alert_sample_gap==true
+        and .alert_counts=={status:"sampled",recent_sample_count:1,review_queue_sample_count:0,highest_observed_alert_id:9}' >/dev/null
 advanced_state="$scratch/log-advanced.json"
 for advanced in true null false; do
     live current 15 '[]' | jq --argjson advanced "$advanced" '.alert_log_advanced_during_review=$advanced' >"$scratch/advanced-report.json"
@@ -116,6 +134,7 @@ for advanced in true null false; do
     bash "$watch" --check "$advanced_state" | jq -e --argjson advanced "$advanced" '
         .status=="current" and .alert_log_advanced_during_review==$advanced
         and .alert_log_scan_complete==(if $advanced==null then null else ($advanced|not) end)
+        and .alert_counts.status==(if $advanced==false then "complete" else "unverified" end)
         and .alert_sample_gap==false' >/dev/null
 done
 legacy='[{"alert_id":1,"severity":"WARN","archive_rule":true},{"alert_id":2,"severity":"CRIT"},{"alert_id":3,"severity":"INFO","archive_rule":true}]'
@@ -141,7 +160,8 @@ bash "$watch" --check "$failed_state" | jq -e '.status=="current" and .evidence_
 jq '.updated_at=(now - 120 | todateiso8601)' "$failed_state" >"$scratch/old-evidence-error.json"
 { bash "$watch" --check "$scratch/old-evidence-error.json" || [[ $? == 1 ]]; } |
     jq -e '.status=="snapshot_stale" and .evidence_check_failures==null and .socket_context_status==null
-        and .alert_save_failures==null and .alert_save_backlog_dropped==null and .alert_log_scan_complete==null' >/dev/null
+        and .alert_save_failures==null and .alert_save_backlog_dropped==null and .alert_log_scan_complete==null
+        and .alert_counts==null' >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$state" >"$scratch/stale.json"
 check_status "$scratch/stale.json" snapshot_stale 1
 jq '.updated_at=(now + 120 | todateiso8601)' "$state" >"$scratch/future.json"

@@ -38,6 +38,29 @@ snapshot_validation='
             and .alert_log_integrity.invalid_records == 0 and .alert_log_integrity.oversized_records == 0
             and (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null)
         then true else null end;
+    def alert_sample_ids($limit):
+        if type == "array" and length <= $limit
+            and all(.[]; type == "object" and (.alert_id | counter | . != null and . > 0))
+        then map(.alert_id) | if length == (unique | length) then . else null end
+        else null end;
+    def alert_counts:
+        (.recent_alerts | alert_sample_ids(50)) as $recent
+        | (.review_queue | alert_sample_ids(5)) as $queue
+        | (.highest_observed_alert_id | counter) as $highest
+        | if (.status | IN("current","degraded")) and valid_scope_and_log
+            and .alert_log_advanced_during_review == false
+            and .invalid_alert_rows == 0 and .duplicate_alert_ids == 0
+            and $recent != null and $queue != null and $highest != null
+            and ((($recent + $queue) | max // 0) <= $highest)
+          then {
+            status:(if log_scan_complete == true and .alert_sample_gap == false
+                    and .recent_alerts_at_limit == false and .has_older_alerts == false
+                    and .review_queue_truncated == false and .priority_sample_at_limit == false
+                    and ($recent | max // 0) == $highest and (($queue - $recent) | length) == 0
+                then "complete" else "sampled" end),
+            recent_sample_count:($recent | length),review_queue_sample_count:($queue | length),
+            highest_observed_alert_id:$highest}
+          else {status:"unverified"} end;
     def mark_backlog_loss:
         if ((.alert_save_backlog_dropped | counter) // 0) > 0 and (.status | IN("current","degraded"))
         then .status = "degraded"
@@ -50,6 +73,7 @@ usage() {
         '       watch-packrat-triage.sh --history STATE.json' \
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
+        'Check reports validated alert sample counts separately from capture health. A highest observed ID is not a total.' \
         'socket_context_status describes the optional snapshot store, not capture health or per-alert attribution.' \
         'healthy_capture_seconds restarts after a packet counter regression; packet_counter_gap marks the affected capture.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
@@ -158,6 +182,7 @@ check_snapshot() {
            alert_save_backlog_dropped:(if $age >= -5 and $age <= .max_age_seconds then .alert_save_backlog_dropped | counter else null end),
            capture_queue_full_packets:(if $age >= -5 and $age <= .max_age_seconds then .capture_queue_full_packets | counter else null end),
            alert_log_scan_complete:(if $age >= -5 and $age <= .max_age_seconds then log_scan_complete else null end),
+           alert_counts:(if $age >= -5 and $age <= .max_age_seconds and .packet_counter_regressed != true then alert_counts else null end),
            alert_log_advanced_during_review:(if $age >= -5 and $age <= .max_age_seconds
                then .alert_log_advanced_during_review | if type == "boolean" then . else null end else null end),
            invalid_alert_rows:(if $age >= -5 and $age <= .max_age_seconds
