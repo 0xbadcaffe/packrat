@@ -256,9 +256,8 @@ impl AnalysisCore {
         }
 
         // Critical alert actions in user rules share the same review workflow.
-        let rule_hits_before = self.rule_engine.hits.len();
-        self.rule_engine.evaluate(pkt);
-        for hit in &self.rule_engine.hits[rule_hits_before..] {
+        let mut critical_rule_hits = Vec::new();
+        self.rule_engine.evaluate_with_hits(pkt, |hit| {
             self.operator_graph.on_rule_hit(
                 &hit.rule_id,
                 &hit.rule_name,
@@ -267,7 +266,14 @@ impl AnalysisCore {
                 hit.ts,
             );
             let severity = match &hit.action {
-                RuleAction::Alert { severity, .. } => severity.to_string(),
+                RuleAction::Alert { severity, .. } => {
+                    if *severity == EvidenceSeverity::Critical {
+                        critical_rule_hits.push((
+                            hit.rule_id.clone(), hit.rule_name.clone(), hit.message.clone(), hit.auto_contain,
+                        ));
+                    }
+                    severity.to_string()
+                }
                 RuleAction::Tag { .. } => "INFO".to_string(),
                 RuleAction::Log { .. } => "LOW".to_string(),
             };
@@ -280,28 +286,7 @@ impl AnalysisCore {
                 &hit.message,
                 format!("{}:{}>{}", hit.rule_id, pkt.src, pkt.dst),
             );
-        }
-        let critical_rule_hits: Vec<(String, String, String, bool)> = self.rule_engine.hits
-            [rule_hits_before..]
-            .iter()
-            .filter(|hit| {
-                matches!(
-                    &hit.action,
-                    RuleAction::Alert {
-                        severity: EvidenceSeverity::Critical,
-                        ..
-                    }
-                )
-            })
-            .map(|hit| {
-                (
-                    hit.rule_id.clone(),
-                    hit.rule_name.clone(),
-                    hit.message.clone(),
-                    hit.auto_contain,
-                )
-            })
-            .collect();
+        });
 
         for (signature, detail) in critical_ids {
             let id = self.incidents.open_or_update_scoped(

@@ -3,6 +3,8 @@
 //! Rules are simple condition→action pairs. Conditions are boolean
 //! expressions over packet fields; actions are log/alert/tag.
 
+use std::collections::VecDeque;
+
 use crate::net::packet::Packet;
 use crate::model::evidence::Severity;
 
@@ -87,7 +89,8 @@ const MAX_HITS: usize = 1000;
 #[derive(Debug, Default)]
 pub struct RuleEngine {
     pub rules: Vec<Rule>,
-    pub hits:  Vec<RuleHit>,
+    pub hits:  VecDeque<RuleHit>,
+    evicted_hits: u64,
 }
 
 impl RuleEngine {
@@ -142,34 +145,45 @@ impl RuleEngine {
     }
 
     pub fn evaluate(&mut self, pkt: &Packet) {
+        self.evaluate_with_hits(pkt, |_| {});
+    }
+
+    pub(crate) fn evaluate_with_hits(&mut self, pkt: &Packet, mut on_hit: impl FnMut(&RuleHit)) {
         for rule in &mut self.rules {
             if !rule.enabled { continue; }
             if eval_cond(&rule.condition, pkt) {
-                rule.hits += 1;
-                if self.hits.len() < MAX_HITS {
-                    for action in &rule.actions {
-                        let message = match action {
-                            Action::Alert { message, .. } => message.clone(),
-                            Action::Tag   { tag }         => format!("tagged: {tag}"),
-                            Action::Log   { message }     => message.clone(),
-                        };
-                        self.hits.push(RuleHit {
-                            rule_id:   rule.id.clone(),
-                            rule_name: rule.name.clone(),
-                            pkt_no:    pkt.no,
-                            ts:        pkt.timestamp,
-                            action:    action.clone(),
-                            message,
-                            auto_contain: rule.auto_contain,
-                        });
+                rule.hits = rule.hits.saturating_add(1);
+                for action in &rule.actions {
+                    let message = match action {
+                        Action::Alert { message, .. } => message.clone(),
+                        Action::Tag   { tag }         => format!("tagged: {tag}"),
+                        Action::Log   { message }     => message.clone(),
+                    };
+                    let hit = RuleHit {
+                        rule_id:   rule.id.clone(),
+                        rule_name: rule.name.clone(),
+                        pkt_no:    pkt.no,
+                        ts:        pkt.timestamp,
+                        action:    action.clone(),
+                        message,
+                        auto_contain: rule.auto_contain,
+                    };
+                    on_hit(&hit);
+                    if self.hits.len() == MAX_HITS {
+                        self.hits.pop_front();
+                        self.evicted_hits = self.evicted_hits.saturating_add(1);
                     }
+                    self.hits.push_back(hit);
                 }
             }
         }
     }
 
+    pub fn evicted_hit_count(&self) -> u64 { self.evicted_hits }
+
     pub fn clear_hits(&mut self) {
         self.hits.clear();
+        self.evicted_hits = 0;
         for r in &mut self.rules { r.hits = 0; }
     }
 }

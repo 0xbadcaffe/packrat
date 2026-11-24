@@ -109,7 +109,7 @@ fn draw_hits_table(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(C_BORDER()))
         .title(Span::styled(
-            format!(" Rule Hits — {} ", hits.len()),
+            format!(" Rule Hits — {} recent  {} older evicted ", hits.len(), app.core.rule_engine.evicted_hit_count()),
             Style::default().fg(C_RED()).add_modifier(Modifier::BOLD),
         )))
     .style(Style::default().bg(C_BG()));
