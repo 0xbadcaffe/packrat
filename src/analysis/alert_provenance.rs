@@ -141,11 +141,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both advertisements with the authorized address assignments and endpoint neighbor tables; distinguish failover from spoofing.",
         ),
         (
-            "IDS", "STP topology change", "stp.topology_change_indication", 1, DirectObservation,
+            "IDS", "STP topology change", "stp.topology_change_indication", 2, DirectObservation,
             "Compare the BPDU with switch topology and maintenance logs; the indication does not prove a forwarding change.",
         ),
         (
-            "IDS", "LLDP chassis identity changed", "lldp.chassis_identity_change", 3, Correlated,
+            "IDS", "LLDP chassis identity changed", "lldp.chassis_identity_change", 4, Correlated,
             "Compare both advertisements with the switch-port inventory and maintenance records before attributing the change.",
         ),
         (

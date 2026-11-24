@@ -353,7 +353,7 @@ impl SecurityEngine {
             && let Some(mac) = ethernet_source_mac(raw)
                 .filter(|address| *address != [0; 6] && address[0] & 1 == 0)
         {
-            let scope = service_scope(pkt);
+            let scope = scan_scope(pkt);
             let source = format_mac(mac);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
@@ -370,7 +370,7 @@ impl SecurityEngine {
         let Some(advertisement) = lldp_advertisement(raw) else { return };
         let now = pkt.timestamp;
         if !now.is_finite() { return; }
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let key = LldpKey { scope, source: advertisement.source, destination: advertisement.destination,
             port: advertisement.port.to_vec() };
         let existing = self.lldp_chassis.get(&key);

@@ -182,6 +182,8 @@ fn control_plane_replay_attributes_only_supported_indications_to_their_frames() 
     let root = scratch.path();
     let ndp = "ipv6.ndp_invalid_hop_limit";
     let stp = "stp.topology_change_indication";
+    let mut provider_bpdu = configuration_bpdu(10, 1);
+    provider_bpdu[12..14].copy_from_slice(&0x88a8_u16.to_be_bytes());
     let cases = [
         (
             "normal-and-partial-ndp",
@@ -211,6 +213,7 @@ fn control_plane_replay_attributes_only_supported_indications_to_their_frames() 
             false,
             &[1, 2][..],
         ),
+        ("stp-change-on-two-tag-types", stp, vec![configuration_bpdu(10, 1), provider_bpdu], false, &[1, 2][..]),
     ];
     let mut labels = Vec::new();
     for (name, rule, wire_frames, partial, openings) in cases {
@@ -247,15 +250,17 @@ fn control_plane_replay_attributes_only_supported_indications_to_their_frames() 
             "expect_snapshots": openings.len(),
         });
         if !openings.is_empty() {
-            // The same Ethernet source is visible on both VLANs in these fixtures.
-            case["expect_counts"][crossing] = json!(1);
-            case["expect_snapshots"] = json!(openings.len() + 1);
-            case["opening_frames"] = json!({(rule):openings,(crossing):[2]});
+            case["opening_frames"] = json!({(rule):openings});
             let mut evidence = openings
                 .iter()
                 .map(|frame| json!({"rule_id":rule,"opening_frame":frame,"frames":[frame]}))
                 .collect::<Vec<_>>();
-            evidence.push(json!({"rule_id":crossing,"opening_frame":2,"frames":[1,2]}));
+            if name != "stp-change-on-two-tag-types" {
+                case["expect_counts"][crossing] = json!(1);
+                case["expect_snapshots"] = json!(openings.len() + 1);
+                case["opening_frames"][crossing] = json!([2]);
+                evidence.push(json!({"rule_id":crossing,"opening_frame":2,"frames":[1,2]}));
+            }
             case["opening_evidence"] = json!(evidence);
         }
         labels.push(case);
@@ -274,8 +279,8 @@ fn control_plane_replay_attributes_only_supported_indications_to_their_frames() 
         String::from_utf8_lossy(&output.stdout)
     );
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 4);
-    for (case, expected) in report["cases"].as_array().unwrap().iter().zip([1, 0, 1, 0]) {
+    assert_eq!(report["passed"], 5);
+    for (case, expected) in report["cases"].as_array().unwrap().iter().zip([1, 0, 1, 0, 0]) {
         assert_eq!(case["summary"]["truncated_frames"], expected);
     }
 }

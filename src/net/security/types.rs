@@ -343,7 +343,7 @@ pub(super) struct NdpObservation {
 
 #[derive(Hash, PartialEq, Eq)]
 pub(super) struct LldpKey {
-    pub(super) scope: ServiceScope,
+    pub(super) scope: ScanScope,
     pub(super) source: [u8; 6],
     pub(super) destination: [u8; 6],
     pub(super) port: Vec<u8>,

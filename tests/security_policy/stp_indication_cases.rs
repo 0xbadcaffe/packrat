@@ -1,6 +1,31 @@
 use packrat_tui::{engine::AnalysisCore, net::parser::parse_ethernet};
 
 #[test]
+fn stp_indications_keep_separate_review_state_for_different_tag_paths() {
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+
+    let make = |no, tpid: u16, tci: u16| {
+        let mut raw = vec![1, 0x80, 0xc2, 0, 0, 0, 2, 0, 0, 0, 0, 1];
+        raw.extend([tpid, tci, 7].into_iter().flat_map(u16::to_be_bytes));
+        raw.extend([0x42, 0x42, 3, 0, 0, 0, 0x80]);
+        parse_ethernet(&raw, no, no as f64)
+    };
+    let mut core = AnalysisCore::default();
+    core.analyze(&make(1, 0x8100, 20));
+    let first = &core.alert_center.items[0];
+    let (id, capture) = (first.id, first.capture_id.clone());
+    assert!(core.alert_center.set_disposition(id, capture.as_deref(), AlertDisposition::Benign));
+    core.analyze(&make(2, 0x88a8, 20));
+    core.analyze(&make(3, 0x8100, 0xb014));
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == "STP topology change").collect();
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0].packet_refs, [1, 3]);
+    assert_eq!(alerts[0].disposition, AlertDisposition::Benign);
+    assert_eq!(alerts[1].packet_refs, [2]);
+    assert_eq!(alerts[1].disposition, AlertDisposition::New);
+}
+
+#[test]
 fn stp_indications_validate_bpdu_format_and_do_not_count_acknowledgements() {
     const TITLE: &str = "STP topology change";
     let wire = |no, vlan: Option<u16>, bpdu: &[u8]| {
