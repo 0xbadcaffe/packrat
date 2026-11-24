@@ -444,7 +444,7 @@ read_health() {
         }'
 }
 
-previous= last_emit=0
+previous='' last_emit=0
 baseline=null
 pending_state=
 if [[ -n $state_file ]]; then
