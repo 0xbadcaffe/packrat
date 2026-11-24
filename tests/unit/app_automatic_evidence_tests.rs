@@ -334,6 +334,40 @@ fn selective_archive_retains_only_named_medium_rules_and_their_updates() {
 }
 
 #[test]
+fn selective_archive_prioritizes_critical_findings_at_its_frame_limit() {
+    use crate::storage::packet_archive::{ArchiveLimits, ArchiveWorker, PacketArchive};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("archive");
+    let limits = ArchiveLimits { max_frames: 2, reserve_free_bytes: 0, ..ArchiveLimits::default() };
+    let mut app = App::new_for_test();
+    app.set_packet_archive(ArchiveWorker::open_alert_evidence(&path, limits).unwrap()).unwrap();
+    let scope = app.capture_id.clone().unwrap();
+    let pins = {
+        let mut core = app.core.edit();
+        core.alert_center.record_correlated_with_evidence(
+            (3, &[2]), 3.0, "IDS", "HIGH", "High finding", "observation", "high",
+        );
+        core.alert_center.record_correlated_with_evidence(
+            (3, &[1]), 3.0, "IDS", "CRITICAL", "Critical finding", "observation", "critical",
+        );
+        core.alert_center.drain_pending_pins()
+    };
+    assert_eq!(pins, [1, 2]);
+    let analysis = PacketAnalysis { alert_pins: pins, ..Default::default() };
+    let context = app.analysis_context(&analysis).unwrap();
+    app.handle_packet_analysis(analysis, context, false, false, &[packet(1), packet(2), packet(3)]);
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+
+    let mut archive = PacketArchive::open_readonly(&path).unwrap();
+    assert_eq!(archive.count().unwrap(), 2);
+    for frame in [1, 3] {
+        assert!(archive.packet_for_capture(&scope, frame).unwrap().is_some());
+    }
+    assert!(archive.packet_for_capture(&scope, 2).unwrap().is_none());
+}
+
+#[test]
 fn watch_preserves_trigger_and_prior_evidence_without_stealing_selection() {
     let mut app = App::new_for_test();
     app.packets.push_back(packet(10));

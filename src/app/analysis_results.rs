@@ -50,14 +50,16 @@ impl App {
                 })
                 .map(|incident| incident.id)
                 .collect();
+            let mut alerts: Vec<_> = analysis.alert_pins.iter().filter_map(|id| {
+                core.alert_center.items.iter().find(|item| item.id == *id).cloned()
+            }).collect();
+            alerts.sort_by_key(|alert| std::cmp::Reverse(alert.priority));
             AnalysisContext {
                 auto_pin: core.alert_center.automation_mode != AutomationMode::Off,
                 endpoints: if incidents.is_empty() { Vec::new() } else { core.endpoint_evidence.clone() },
                 incidents,
                 independent,
-                alerts: analysis.alert_pins.iter().filter_map(|id| {
-                    core.alert_center.items.iter().find(|item| item.id == *id).cloned()
-                }).collect(),
+                alerts,
             }
         })
     }

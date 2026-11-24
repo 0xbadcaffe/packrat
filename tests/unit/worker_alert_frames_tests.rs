@@ -69,6 +69,49 @@ fn worker_handoff_still_bounds_combined_citations_from_multiple_alerts() {
 }
 
 #[test]
+fn worker_handoff_prefers_older_critical_evidence_to_newer_medium_frames() {
+    let mut core = AnalysisCore::default();
+    core.alert_center.archive_evidence_rules = Some(Vec::new());
+    for (references, severity, key) in [
+        (&[5, 6][..], "MEDIUM", "medium-first"),
+        (&[3, 4, 5][..], "CRITICAL", "critical"),
+        (&[7, 8][..], "MEDIUM", "medium-last"),
+    ] {
+        core.alert_center.record_correlated_with_evidence(
+            (9, references), 9.0, "TEST", severity, "Finding", "observation", key,
+        );
+    }
+    let size = MAX_BYTES / 4;
+    let analysis = PacketAnalysis {
+        alert_pins: vec![1, 2, 3],
+        retained_evidence: vec![packet(3, size), packet(4, size)],
+        ..Default::default()
+    };
+    let history = (5..=8).map(|frame| packet(frame, size)).collect();
+    let frames = alert_frames(&core, &analysis, &packet(9, size), &history);
+    assert_eq!(frames.iter().map(|p| p.no).collect::<Vec<_>>(), [3, 4, 5, 9]);
+}
+
+#[test]
+fn worker_handoff_reserves_a_cited_trigger_outside_the_reference_budget() {
+    let mut core = AnalysisCore::default();
+    core.alert_center.archive_evidence_rules = Some(Vec::new());
+    core.alert_center.record_correlated_with_evidence(
+        (641, &[]), 2.0, "TEST", "MEDIUM", "Current finding", "observation", "trigger",
+    );
+    for (index, range) in [1..=128, 129..=256, 257..=384, 385..=512, 513..=640].into_iter().enumerate() {
+        core.alert_center.record_correlated_with_evidence(
+            (640, &range.collect::<Vec<_>>()), 1.0, "TEST", "CRITICAL", "Finding", "observation", index.to_string(),
+        );
+    }
+    let analysis = PacketAnalysis { alert_pins: vec![1, 2, 3, 4, 5, 6], ..Default::default() };
+    let history = (1..=640).map(|frame| packet(frame, 14)).collect();
+    let frames = alert_frames(&core, &analysis, &packet(641, 14), &history);
+    assert_eq!(frames.len(), MAX_FRAMES);
+    assert_eq!(frames.last().unwrap().no, 641);
+}
+
+#[test]
 fn worker_handoff_orders_cached_evidence_and_history_under_one_budget() {
     let mut core = AnalysisCore::default();
     core.alert_center.archive_evidence_rules = Some(Vec::new());
