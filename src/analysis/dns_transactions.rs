@@ -405,6 +405,11 @@ pub(crate) fn wire_query_name(packet: &Packet) -> Option<String> {
     query_name_from_message(payload)
 }
 
+pub(crate) fn single_packet_query_name(packet: &Packet) -> Option<String> {
+    let (_, _, 53, payload) = dns_payload(packet)? else { return None; };
+    query_name_from_message(payload)
+}
+
 pub(crate) fn query_name_from_message(payload: &[u8]) -> Option<String> {
     let message = parse_message(payload)?;
     (!message.response && message.question.qclass == 1).then_some(message.question.name)

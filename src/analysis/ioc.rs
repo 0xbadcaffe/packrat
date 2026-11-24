@@ -3,7 +3,8 @@
 //! Maintains lists of known-bad IPs, domains, hashes, and URLs.
 //! Packets and flows are checked against these lists in real-time.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use crate::analysis::dns_transactions::single_packet_query_name;
 use crate::net::packet::Packet;
 
 // ─── IOC types ────────────────────────────────────────────────────────────────
@@ -54,7 +55,7 @@ const MAX_HITS: usize = 1000;
 #[derive(Debug, Default)]
 pub struct IocEngine {
     ips:     HashSet<String>,
-    domains: HashSet<String>,
+    domains: HashMap<String, usize>,
     hashes:  HashSet<String>,
     urls:    HashSet<String>,
     /// Full IOC records for reference
@@ -66,7 +67,12 @@ impl IocEngine {
     pub fn load_ioc(&mut self, ioc: Ioc) {
         match ioc.kind {
             IocKind::Ip     => { self.ips.insert(ioc.value.clone()); }
-            IocKind::Domain => { self.domains.insert(ioc.value.to_lowercase()); }
+            IocKind::Domain => {
+                let id = ioc.value.trim().to_ascii_lowercase();
+                let name = id.strip_suffix('.').unwrap_or(&id);
+                if !valid_indicator_name(name) { return; }
+                self.domains.entry(name.to_owned()).or_insert(self.iocs.len());
+            }
             IocKind::Hash   => { self.hashes.insert(ioc.value.to_lowercase()); }
             IocKind::Url    => { self.urls.insert(ioc.value.clone()); }
             IocKind::Email  => {}
@@ -107,22 +113,28 @@ impl IocEngine {
             self.record_hit(&pkt.dst, IocKind::Ip, "dst_ip", pkt.no, pkt.timestamp);
         }
 
-        // DNS query domain check
-        if pkt.protocol == "DNS" {
-            for word in pkt.info.split_whitespace() {
-                let w = word.to_lowercase();
-                if self.domains.contains(&w) {
-                    self.record_hit(word, IocKind::Domain, "dns_query", pkt.no, pkt.timestamp);
-                }
-                // Suffix match (e.g., IOC "evil.com" matches "sub.evil.com")
-                for dom in &self.domains {
-                    if w.ends_with(dom.as_str()) && w.len() > dom.len() {
-                        let d = dom.clone();
-                        self.record_hit(&d, IocKind::Domain, "dns_subdomain", pkt.no, pkt.timestamp);
-                        break;
-                    }
-                }
+        if !self.domains.is_empty() && self.hits.len() < MAX_HITS
+            && let Some(name) = single_packet_query_name(pkt)
+            && valid_indicator_name(&name)
+            && let Some((indicator, exact)) = self.domain_match(&name)
+        {
+            self.hits.push(IocHit {
+                ioc: self.iocs[indicator].clone(),
+                context: if exact { "dns_query" } else { "dns_subdomain" }.into(),
+                pkt_no: pkt.no,
+                ts: pkt.timestamp,
+            });
+        }
+    }
+
+    fn domain_match(&self, mut name: &str) -> Option<(usize, bool)> {
+        let mut exact = true;
+        loop {
+            if let Some(&index) = self.domains.get(name) {
+                return Some((index, exact));
             }
+            name = name.split_once('.')?.1;
+            exact = false;
         }
     }
 
@@ -213,4 +225,12 @@ impl IocEngine {
         self.iocs.clear();
         self.hits.clear();
     }
+}
+
+fn valid_indicator_name(name: &str) -> bool {
+    // Reject escaped wire labels so a literal dot cannot become a separator.
+    name.len() <= 253 && name.split('.').all(|label| {
+        !label.is_empty() && label.len() <= 63
+            && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    })
 }

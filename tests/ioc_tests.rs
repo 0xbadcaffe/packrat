@@ -31,6 +31,42 @@ fn make_ioc(kind: IocKind, value: &str) -> Ioc {
     }
 }
 
+fn dns_message(labels: &[&str], response: bool) -> Vec<u8> {
+    let mut message = vec![0; 12];
+    if response { message[2] = 0x80; }
+    message[5] = 1;
+    for label in labels {
+        message.push(label.len() as u8);
+        message.extend(label.as_bytes());
+    }
+    message.extend([0, 0, 1, 0, 1]);
+    message
+}
+
+fn dns_packet(no: u64, labels: &[&str], response: bool, tcp: bool) -> Packet {
+    let message = dns_message(labels, response);
+    let transport = if tcp { 20 } else { 8 };
+    let mut bytes = vec![0; 34 + transport];
+    bytes[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    bytes[14] = 0x45;
+    let payload_len = message.len() + usize::from(tcp) * 2;
+    bytes[16..18].copy_from_slice(&((20 + transport + payload_len) as u16).to_be_bytes());
+    bytes[22] = 64;
+    bytes[23] = if tcp { 6 } else { 17 };
+    bytes[26..34].copy_from_slice(&[192, 0, 2, 10, 192, 0, 2, 20]);
+    bytes[34..36].copy_from_slice(&40_000_u16.to_be_bytes());
+    bytes[36..38].copy_from_slice(&53_u16.to_be_bytes());
+    if tcp {
+        bytes[46] = 0x50;
+        bytes[47] = 0x18;
+        bytes.extend((message.len() as u16).to_be_bytes());
+    } else {
+        bytes[38..40].copy_from_slice(&((8 + payload_len) as u16).to_be_bytes());
+    }
+    bytes.extend(message);
+    packrat_tui::net::parser::parse_ethernet(&bytes, no, no as f64)
+}
+
 // ── Load IOC ──────────────────────────────────────────────────────────────────
 
 #[test]
@@ -81,11 +117,11 @@ fn check_packet_no_match() {
 }
 
 #[test]
-fn check_packet_domain_in_info() {
+fn check_packet_domain_matches_a_wire_question() {
     let mut engine = IocEngine::default();
     engine.load_ioc(make_ioc(IocKind::Domain, "evil-tunnel.com"));
-    let pkt = make_pkt(4, "192.168.1.50", "8.8.8.8", "DNS",
-                       "Query A xyz.evil-tunnel.com");
+    let mut pkt = dns_packet(4, &["xyz", "evil-tunnel", "com"], false, false);
+    pkt.info.clear();
     engine.check_packet(&pkt);
     let hits = &engine.hits;
     assert!(!hits.is_empty());
@@ -93,13 +129,51 @@ fn check_packet_domain_in_info() {
 }
 
 #[test]
-fn check_packet_domain_no_match() {
+fn check_packet_domain_no_match_without_a_supported_wire_question() {
     let mut engine = IocEngine::default();
     engine.load_ioc(make_ioc(IocKind::Domain, "evil-tunnel.com"));
-    let pkt = make_pkt(5, "192.168.1.50", "8.8.8.8", "DNS",
-                       "Query A google.com");
-    engine.check_packet(&pkt);
+    let mut lookalike = dns_packet(5, &["notevil-tunnel", "com"], false, false);
+    lookalike.info = "Query A notevil-tunnel.com".into();
+    let mut reply = dns_packet(6, &["evil-tunnel", "com"], true, false);
+    reply.info = "Response A evil-tunnel.com".into();
+    let mut truncated = dns_packet(7, &["evil-tunnel", "com"], false, false);
+    truncated.bytes.pop();
+    let forged = make_pkt(8, "192.0.2.10", "192.0.2.20", "DNS", "Query A evil-tunnel.com");
+    let embedded_dot = dns_packet(9, &["prefix.evil-tunnel", "com"], false, false);
+    for packet in [lookalike, reply, truncated, forged, embedded_dot] {
+        engine.check_packet(&packet);
+    }
     assert!(engine.hits.is_empty());
+}
+
+#[test]
+fn domain_matches_choose_the_most_specific_indicator_from_tcp_and_udp() {
+    let mut engine = IocEngine::default();
+    engine.load_ioc(make_ioc(IocKind::Domain, "example.test"));
+    engine.load_ioc(make_ioc(IocKind::Domain, "Child.Example.Test."));
+    engine.check_packet(&dns_packet(1, &["CHILD", "example", "test"], false, true));
+    engine.check_packet(&dns_packet(2, &["deep", "child", "example", "test"], false, false));
+    assert_eq!(engine.hits.len(), 2);
+    assert_eq!(engine.hits[0].context, "dns_query");
+    assert_eq!(engine.hits[1].context, "dns_subdomain");
+    assert!(engine.hits.iter().all(|hit| hit.ioc.value == "Child.Example.Test." && hit.ioc.source == "test"));
+}
+
+#[test]
+fn domain_indicator_alert_points_to_the_wire_question_frame() {
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    core.ioc_engine.load_ioc(make_ioc(IocKind::Domain, "indicator.test"));
+    let mut lookalike = dns_packet(1, &["notindicator", "test"], false, false);
+    lookalike.info = "Query A indicator.test".into();
+    core.analyze(&lookalike);
+    let mut matched = dns_packet(2, &["cdn", "indicator", "test"], false, false);
+    matched.info.clear();
+    core.analyze(&matched);
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|item| item.source == "IOC").collect();
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].title, "Domain match");
+    assert_eq!(alerts[0].packet_no, 2);
+    assert_eq!(alerts[0].packet_refs, [2]);
 }
 
 // ── Multiple IOCs ─────────────────────────────────────────────────────────────
