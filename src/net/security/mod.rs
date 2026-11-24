@@ -181,7 +181,7 @@ pub struct SecurityEngine {
     dns_tunnel: dns::DnsTunnelTracker,
     fragment_states: HashMap<(ServiceScope, FragmentKey), FragmentState>,
     ipv4_fragment_evidence: crate::net::recent_evidence::RecentEvidence<1024, 120>,
-    tcp_integrity: HashMap<(ServiceScope, TcpFlowKey), TcpIntegrityState>,
+    tcp_integrity: HashMap<(ScanScope, TcpFlowKey), TcpIntegrityState>,
     tcp_overlap_evidence: crate::net::recent_evidence::RecentEvidence<1024, 300>,
     scan_sources: HashMap<ScanSourceKey, SourceScanState>,
     scan_packet_evidence: crate::net::recent_evidence::RecentEvidence<2048, 30>,

@@ -1,4 +1,5 @@
 use super::*;
+use super::scans::scan_scope;
 
 pub(super) enum TcpPayloadObservation {
     UnknownOrNew,
@@ -182,7 +183,7 @@ impl SecurityEngine {
         if !segment.complete {
             return UnknownOrNew;
         }
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let key = (scope, segment.key.clone());
         self.tcp_integrity.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= TCP_STATE_TTL_SECS

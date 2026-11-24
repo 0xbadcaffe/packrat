@@ -5,6 +5,28 @@ use packrat_tui::net::{packet::Packet, parser::parse_ethernet};
 const TITLE: &str = "TCP payload after reset";
 
 #[test]
+fn tcp_integrity_does_not_compare_segments_on_different_ordered_tag_paths() {
+    let packet = |frame, flags, swap, payload: &[u8]| {
+        let mut raw = ipv4_tcp_packet(frame, 100, flags, payload).bytes;
+        let tags = if swap { [0x8100_u16, 20, 0x88a8, 20] } else { [0x88a8_u16, 20, 0x8100, 20] };
+        raw.splice(12..12, tags.into_iter().flat_map(u16::to_be_bytes));
+        parse_ethernet(&raw, frame, frame as f64)
+    };
+    for (flags, before, title) in [
+        (0x04, &b""[..], TITLE),
+        (0x18, &b"before"[..], "Conflicting TCP retransmission"),
+    ] {
+        let mut engine = SecurityEngine::default();
+        engine.update(&packet(1, flags, false, before));
+        let unrelated = engine.inspect(&packet(2, 0x18, true, b"after!"));
+        assert!(unrelated.ids.iter().all(|finding| finding.alert.signature != title));
+        let related = engine.inspect(&packet(3, 0x18, false, b"after!"));
+        let finding = related.ids.iter().find(|finding| finding.alert.signature == title).unwrap();
+        assert_eq!(finding.related_packets, [1]);
+    }
+}
+
+#[test]
 fn incomplete_tcp_capture_is_not_a_malformed_header() {
     const MALFORMED: &str = "Malformed TCP header";
     let mut snaplen = ipv4_tcp_packet(1, 100, 0x04, b"");
@@ -141,7 +163,7 @@ fn detects_tcp_payload_continuing_after_reset() {
     assert_eq!(alert.severity, "MEDIUM");
     let rule = alert.provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "tcp.payload_after_observed_reset");
-    assert_eq!(rule.revision, 9);
+    assert_eq!(rule.revision, 10);
     assert_eq!(rule.confidence.to_string(), "Heuristic");
     assert!(alert.detail.contains("payload seq 101 followed reset frame #2 (same direction, seq 100)"));
     assert!(alert.detail.contains("reset acceptance and on-wire ordering unverified"));
@@ -310,7 +332,7 @@ fn ipv6_tcp_integrity_links_reset_and_conflict_evidence() {
     assert!(resets.detail.contains("[2001:db8::1]:50000"));
     let conflict = core.alert_center.items.iter().find(|alert| alert.title == "Conflicting TCP retransmission").unwrap();
     assert_eq!(conflict.packet_refs, [1, 4]);
-    assert_eq!(conflict.provenance.as_ref().unwrap().revision, 5);
+    assert_eq!(conflict.provenance.as_ref().unwrap().revision, 6);
 }
 
 #[test]

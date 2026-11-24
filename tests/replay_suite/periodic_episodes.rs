@@ -28,7 +28,7 @@ fn periodic_replay_distinguishes_fresh_tcp_segments_from_partial_retransmissions
             case["opening_frames"] = json!({(rule):[7]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule, "opening_frame":7, "frames":[1, 2, 3, 4, 5, 6, 7],
-                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":15},
+                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":16},
             }]);
         }
         cases.push(case);
