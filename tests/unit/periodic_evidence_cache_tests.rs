@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn periodic_candidates_respect_frame_and_direction_byte_budgets() {
     let mut window = BeaconDirection::default();
-    window.samples.push(BeaconSample { timestamp: 1.0, size: 1400, packet_no: 1 });
+    window.samples.push(BeaconSample { timestamp: 1.0, size: 1400, payload_length: 1346, packet_no: 1 });
     for no in 1..=32 {
         let mut pkt = crate::net::parser::parse_ethernet(&[0; 14], no, no as f64);
         pkt.bytes.resize(1400, 0);

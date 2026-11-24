@@ -165,8 +165,9 @@ fn periodic_alert_reports_the_ranges_measured_from_its_evidence() {
     let result = engine.inspect(&periodic_datagram(8, 60.0, 120, 50000, false));
     let finding = result.ids.iter().find(|finding| finding.alert.signature == "Periodic fixed-size traffic").unwrap();
     assert_eq!(finding.related_packets, [1, 2, 3, 5, 6, 7]);
-    assert!(finding.alert.detail.contains("7 packets"));
+    assert!(finding.alert.detail.starts_with("7 UDP packets"));
     assert!(finding.alert.detail.contains("over 60.0s; gaps 9.0-11.0s (mean 10.0s), sizes 118-122 bytes"));
+    assert!(finding.alert.detail.contains("76-80 captured payload bytes per packet"));
     assert!(finding.alert.detail.contains("does not establish command-and-control"));
 }
 
@@ -239,7 +240,7 @@ fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
         }
         let alert = scoped.alert_center.items.iter().find(|item| is_periodic(item)).unwrap();
         assert_eq!(alert.packet_refs, [1, 3, 5, 7, 8, 9, 10]);
-        assert_eq!(alert.provenance.as_ref().unwrap().revision, 11);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 12);
     }
 }
 

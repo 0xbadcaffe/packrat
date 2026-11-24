@@ -18,6 +18,7 @@ pub(super) struct BehaviorFlowKey {
 pub(super) struct BeaconSample {
     pub(super) timestamp: f64,
     pub(super) size: u32,
+    pub(super) payload_length: u16,
     packet_no: u64,
 }
 
@@ -338,15 +339,14 @@ impl SecurityEngine {
             return;
         };
         let ports = (source_port, destination_port);
-        let transport = if crate::analysis::stream::tcp_data_port_pair(pkt) == Some(ports) {
-            "TCP"
-        } else if crate::analysis::dns_transactions::udp_payload(pkt)
-            .is_some_and(|(src, dst, _)| (src, dst) == ports)
-        {
-            "UDP"
+        let (transport, payload_length) = if let Some((_, length)) = crate::analysis::stream::tcp_data_ports_and_length(pkt).filter(|(pair, _)| *pair == ports) {
+            ("TCP", length)
+        } else if let Some((_, _, payload)) = crate::analysis::dns_transactions::udp_payload(pkt).filter(|(src, dst, _)| (*src, *dst) == ports) {
+            ("UDP", payload.len())
         } else {
             return;
         };
+        let Ok(payload_length) = u16::try_from(payload_length) else { return };
         let source = (pkt.src.as_str(), source_port);
         let destination = (pkt.dst.as_str(), destination_port);
         let (first, second, direction) = if source <= destination {
@@ -394,6 +394,7 @@ impl SecurityEngine {
         samples.push(BeaconSample {
             timestamp: pkt.timestamp,
             size,
+            payload_length,
             packet_no: pkt.no,
         });
         let window_match = if let Some(stats) = beacon_pattern(samples) {
@@ -428,9 +429,9 @@ impl SecurityEngine {
                 signature: "Periodic fixed-size traffic",
                 severity: Severity::Medium,
                 detail: format!(
-                    "{count} packets from [{}]:{source_port} to [{}]:{destination_port} over {:.1}s; gaps {:.1}-{:.1}s (mean {:.1}s), sizes {}-{} bytes. Timing alone does not establish command-and-control.",
+                    "{count} {transport} packets from [{}]:{source_port} to [{}]:{destination_port} over {:.1}s; gaps {:.1}-{:.1}s (mean {:.1}s), sizes {}-{} bytes on wire, {}-{} captured payload bytes per packet. Timing alone does not establish command-and-control.",
                     pkt.src, pkt.dst, stats.duration, stats.interval_min, stats.interval_max,
-                    stats.interval_mean, stats.size_min, stats.size_max,
+                    stats.interval_mean, stats.size_min, stats.size_max, stats.payload_min, stats.payload_max,
                 ),
             },
             related_packets,

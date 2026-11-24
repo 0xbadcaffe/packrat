@@ -155,6 +155,8 @@ pub(super) struct PeriodicTrafficEvidence {
     pub(super) interval_max: f64,
     pub(super) size_min: u32,
     pub(super) size_max: u32,
+    pub(super) payload_min: u16,
+    pub(super) payload_max: u16,
 }
 
 pub(super) fn beacon_pattern(samples: &[BeaconSample]) -> Option<PeriodicTrafficEvidence> {
@@ -183,9 +185,13 @@ pub(super) fn beacon_pattern(samples: &[BeaconSample]) -> Option<PeriodicTraffic
 
     let mut size_min = u32::MAX;
     let mut size_max = 0;
+    let mut payload_min = u16::MAX;
+    let mut payload_max = 0;
     let size_mean = samples.iter().map(|sample| {
         size_min = size_min.min(sample.size);
         size_max = size_max.max(sample.size);
+        payload_min = payload_min.min(sample.payload_length);
+        payload_max = payload_max.max(sample.payload_length);
         f64::from(sample.size)
     }).sum::<f64>() / samples.len() as f64;
     let size_variance = samples
@@ -199,7 +205,7 @@ pub(super) fn beacon_pattern(samples: &[BeaconSample]) -> Option<PeriodicTraffic
         1.0
     };
     (interval_cv <= 0.15 && size_cv <= 0.10).then_some(PeriodicTrafficEvidence {
-        duration, interval_mean, interval_min, interval_max, size_min, size_max,
+        duration, interval_mean, interval_min, interval_max, size_min, size_max, payload_min, payload_max,
     })
 }
 
