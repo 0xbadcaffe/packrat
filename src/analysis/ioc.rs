@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
+use std::{io::ErrorKind, path::Path};
 use crate::analysis::dns_transactions::single_packet_query_name;
 use crate::net::packet::Packet;
 
@@ -61,6 +62,7 @@ pub struct IocEngine {
     urls:    HashSet<String>,
     /// Full IOC records for reference
     iocs:    Vec<Ioc>,
+    file_ioc_count: usize,
     pub hits: VecDeque<IocHit>,
     evicted_hits: u64,
 }
@@ -166,39 +168,45 @@ impl IocEngine {
     /// Load IOC feeds from all `.csv`, `.txt`, `.ioc` files in `~/.config/packrat/ioc/`.
     /// Each file is expected to be in simple CSV format: `type,value[,description]`.
     /// Also supports plain-text single-column files where each line is an IP or domain.
-    pub fn load_from_dir(&mut self) -> Vec<String> {
+    pub fn load_from_dir(&mut self) -> Result<(), String> {
         let dir = dirs_next::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("packrat")
             .join("ioc");
+        self.reload_from_path(&dir)
+    }
 
-        let mut errors: Vec<String> = Vec::new();
-        if !dir.exists() { return errors; }
-
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(e) => { errors.push(format!("read dir: {e}")); return errors; }
+    fn reload_from_path(&mut self, dir: &Path) -> Result<(), String> {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound && self.file_ioc_count == 0 => return Ok(()),
+            Err(error) => return Err(format!("{}: {error}", dir.display())),
         };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let mut paths = entries.map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()
+            .map_err(|error| format!("{}: {error}", dir.display()))?;
+        paths.sort_unstable();
+        let mut next = Self::default();
+        for path in paths {
+            let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_ascii_lowercase();
             if !matches!(ext.as_str(), "csv" | "txt" | "ioc") { continue; }
-
-            let source = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
-
-            match std::fs::read_to_string(&path) {
-                Ok(text) => {
-                    if ext == "csv" {
-                        self.load_csv(&text, &source);
-                    } else {
-                        self.load_plain_text(&text, &source);
-                    }
-                }
-                Err(e) => errors.push(format!("{source}: {e}")),
+            let text = std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+            let source = path.file_name().and_then(|name| name.to_str()).unwrap_or("?");
+            if ext == "csv" {
+                next.load_csv(&text, source);
+            } else {
+                next.load_plain_text(&text, source);
             }
         }
-        errors
+        // File records occupy a prefix; public load methods append session records.
+        next.file_ioc_count = next.iocs.len();
+        for ioc in self.iocs[self.file_ioc_count..].iter().cloned() {
+            next.load_ioc(ioc);
+        }
+        next.hits = std::mem::take(&mut self.hits);
+        next.evicted_hits = self.evicted_hits;
+        *self = next;
+        Ok(())
     }
 
     fn load_plain_text(&mut self, text: &str, source: &str) {
@@ -231,6 +239,7 @@ impl IocEngine {
         self.hashes.clear();
         self.urls.clear();
         self.iocs.clear();
+        self.file_ioc_count = 0;
         self.clear_hits();
     }
 }

@@ -13,16 +13,9 @@ impl App {
     /// Load IOC feeds from ~/.config/packrat/ioc/ and show status.
     pub fn reload_ioc_feeds(&mut self) {
         self.update_core("IOC feeds reloaded", |core| {
-            let errors = core.ioc_engine.load_from_dir();
-            if errors.is_empty() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "IOC: {} loaded, {} error(s)",
-                    core.ioc_engine.ioc_count(),
-                    errors.len()
-                ))
-            }
+            core.ioc_engine.load_from_dir().map_err(|error| format!(
+                "IOC feeds unchanged ({} loaded): {error}", core.ioc_engine.ioc_count(),
+            ))
         });
     }
 
