@@ -6,6 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
 use crate::app::AppView as App;
+use crate::net::flow::{Flow, FlowKey};
 use crate::ui::theme::*;
 use crate::ui::helpers::fmt_bytes;
 
@@ -15,13 +16,13 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Min(0), Constraint::Length(2)])
         .split(area);
 
-    draw_flow_table(f, app, chunks[0]);
-    draw_hints(f, chunks[1]);
+    let sorted = app.core.flow_tracker.sorted_flows(&app.flows_sort);
+    draw_flow_table(f, app, &sorted, chunks[0]);
+    let selected = app.flows_selected.and_then(|index| sorted.get(index));
+    draw_hints(f, selected.map(|flow| &flow.key), chunks[1]);
 }
 
-fn draw_flow_table(f: &mut Frame, app: &App, area: Rect) {
-    let sorted = app.core.flow_tracker.sorted_flows(&app.flows_sort);
-
+fn draw_flow_table(f: &mut Frame, app: &App, sorted: &[&Flow], area: Rect) {
     let header = Row::new(vec![
         Cell::from("Proto").style(Style::default().fg(C_FG2())),
         Cell::from("Endpoint 1").style(Style::default().fg(C_FG2())),
@@ -135,7 +136,7 @@ fn draw_flow_table(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(table, area);
 }
 
-fn draw_hints(f: &mut Frame, area: Rect) {
+fn draw_hints(f: &mut Frame, selected: Option<&FlowKey>, area: Rect) {
     let hints = Line::from(vec![
         Span::styled("  b", Style::default().fg(C_CYAN())),
         Span::styled(":bytes  ", Style::default().fg(C_FG3())),
@@ -152,6 +153,19 @@ fn draw_hints(f: &mut Frame, area: Rect) {
         Span::styled("j/k", Style::default().fg(C_CYAN())),
         Span::styled(":navigate", Style::default().fg(C_FG3())),
     ]);
-    let p = Paragraph::new(hints).style(Style::default().bg(C_BG()));
+    let mut lines = vec![hints];
+    if let Some(key) = selected {
+        let tag = |tpid, vid| {
+            if tpid == 0 { format!("?:{vid}") } else { format!("{tpid:04x}:{vid}") }
+        };
+        let [first, second] = key.vlan_tag_types;
+        let scope = match (key.outer_vlan_id, key.vlan_id) {
+            (Some(outer), Some(inner)) => format!("VLAN {} / {}", tag(first, outer), tag(second, inner)),
+            (None, Some(vid)) => format!("VLAN {}", tag(first, vid)),
+            _ => "No VLAN ID recorded".into(),
+        };
+        lines.push(Line::styled(format!("  {scope}"), Style::default().fg(C_FG2())));
+    }
+    let p = Paragraph::new(lines).style(Style::default().bg(C_BG()));
     f.render_widget(p, area);
 }

@@ -5,8 +5,49 @@ mod packets;
 
 use packrat_tui::analysis::stream::StreamKey;
 use packrat_tui::app::{App, InvestigationItem};
-use packrat_tui::net::flow::FlowKey;
+use packrat_tui::net::{flow::FlowKey, packet::Packet, parser::parse_ethernet};
 use packrat_tui::tabs::Tab;
+
+fn tagged_tcp(no: u64, sequence: u32, tpid: u16, tci: u16, payload: &[u8]) -> Packet {
+    let ethernet = packets::tcp(no, sequence, 0x18, payload).bytes;
+    let mut raw = ethernet[..12].to_vec();
+    raw.extend(tpid.to_be_bytes());
+    raw.extend(tci.to_be_bytes());
+    raw.extend(&ethernet[12..]);
+    parse_ethernet(&raw, no, no as f64)
+}
+
+#[test]
+fn flow_review_keeps_wire_tag_paths_separate_without_splitting_priority_changes() {
+    let mut app = App::new_for_test();
+    let customer = tagged_tcp(1, 100, 0x8100, 20, b"customer");
+    let provider = tagged_tcp(2, 100, 0x88a8, 20, b"other");
+    let priority_change = tagged_tcp(3, 108, 0x8100, 0xb014, b" data");
+    assert_eq!(customer.vlan_id, Some(20));
+    assert_eq!(provider.vlan_id, customer.vlan_id);
+    assert_ne!(FlowKey::from_packet(&customer), FlowKey::from_packet(&provider));
+    assert_eq!(FlowKey::from_packet(&customer), FlowKey::from_packet(&priority_change));
+    let stream_id = StreamKey::from_packet(&customer).unwrap().id();
+    for packet in [customer, provider, priority_change] {
+        app.inject_packet(packet);
+    }
+    assert_eq!(app.core.read().unwrap().flow_tracker.len(), 2);
+    app.active_tab = Tab::Flows;
+    app.flows_selected = Some(0);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    for (index, expected) in ["VLAN 8100:20", "VLAN 88a8:20"].into_iter().enumerate() {
+        app.flows_selected = Some(index);
+        terminal.draw(|frame| packrat_tui::ui::draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!((0..24).map(|y| (0..100).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .any(|line| line.contains(expected)), "missing {expected}");
+    }
+    app.flows_selected = Some(0);
+    assert!(app.pin_current_context());
+    let stream = app.active_investigation_stream().unwrap();
+    assert_eq!(stream.key.id(), stream_id);
+    assert_eq!(stream.client_data, b"customer data");
+}
 
 #[test]
 fn flow_follow_uses_ordered_deduplicated_stream_bytes() {

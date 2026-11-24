@@ -46,9 +46,10 @@ pub struct FlowKey {
     pub ep1:     (String, u16),
     pub ep2:     (String, u16),
     pub proto:   String,
-    /// VLAN scope: flows on different VLANs are distinct even if IP+port match.
+    /// VLAN scope: distinct IDs and wire tag types split otherwise identical flows.
     pub vlan_id: Option<u16>,
     pub outer_vlan_id: Option<u16>,
+    pub vlan_tag_types: [u16; 2],
     pub interface: Option<String>,
     pub interface_id: u32,
     pub section_id: u32,
@@ -62,6 +63,7 @@ impl FlowKey {
         Self {
             ep1, ep2, proto: pkt.protocol.clone(), vlan_id: pkt.vlan_id,
             outer_vlan_id: pkt.outer_vlan_id,
+            vlan_tag_types: crate::net::parser::ethernet_vlan_tag_types(&pkt.bytes),
             interface: pkt.capture.as_ref().and_then(|capture| capture.interface_name.clone()),
             interface_id: pkt.capture.as_ref().map_or(0, |capture| capture.interface_id),
             section_id: pkt.capture.as_ref().map_or(0, |capture| capture.section_id),
