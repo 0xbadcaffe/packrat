@@ -1,5 +1,5 @@
 use packrat_tui::analysis::stream::{StreamAssembler, StreamKey, tcp_payload_offset};
-use packrat_tui::net::packet::Packet;
+use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, Packet, TimestampResolution};
 
 fn tcp_packet(no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet {
     let mut bytes = vec![0_u8; 14 + 20 + 20];
@@ -151,4 +151,67 @@ fn non_finite_timestamps_do_not_crash_stream_sorting_or_eviction() {
     }
     assert_eq!(assembler.len(), 500);
     assert_eq!(assembler.all().len(), 500);
+}
+
+fn on_clock(mut packet: Packet, port: u16, seconds: u64, interface_id: u32) -> Packet {
+    packet.src_port = Some(port);
+    packet.bytes[34..36].copy_from_slice(&port.to_be_bytes());
+    packet.timestamp = seconds as f64;
+    let length = packet.bytes.len() as u32;
+    packet.capture = Some(CaptureMetadata {
+        timestamp: Some(CaptureTimestamp {
+            ticks: seconds, resolution: TimestampResolution::Decimal(0), offset_seconds: 0,
+        }),
+        captured_length: length,
+        wire_length: length,
+        link_type: 1,
+        section_id: 0,
+        interface_id,
+        interface_name: None,
+        comments: Vec::new(),
+    });
+    packet
+}
+
+#[test]
+fn stream_eviction_preserves_recent_reassembly_on_an_independent_clock() {
+    let mut assembler = StreamAssembler::default();
+    let oldest = on_clock(tcp_packet(1, 100, 0x02, b""), 30_000, 400, 1);
+    let oldest_id = StreamKey::from_packet(&oldest).unwrap().id();
+    assembler.ingest(&oldest);
+    for i in 1..499_u16 {
+        assembler.ingest(&on_clock(tcp_packet(u64::from(i) + 1, 100, 0x02, b""),
+            30_000 + i, 400, 1));
+    }
+    let start = on_clock(tcp_packet(500, 100, 0x02, b""), 40_000, 10, 0);
+    let recent_id = StreamKey::from_packet(&start).unwrap().id();
+    assembler.ingest(&start);
+    assembler.ingest(&on_clock(tcp_packet(501, 101, 0x18, b"hello"), 40_000, 11, 0));
+    assembler.ingest(&on_clock(tcp_packet(502, 100, 0x02, b""), 50_000, 400, 1));
+    assert_eq!(assembler.evicted_streams(), 1);
+    assert!(assembler.get(&oldest_id).is_none());
+
+    assembler.ingest(&on_clock(tcp_packet(503, 106, 0x18, b" world"), 40_000, 12, 0));
+    let stream = assembler.get(&recent_id).unwrap();
+    assert_eq!(stream.client_data, b"hello world");
+    assert_eq!(stream.packet_numbers(true, 0, 11), [501, 503]);
+    assert_eq!(assembler.evicted_streams(), 1);
+}
+
+#[test]
+fn late_stream_packet_refreshes_eviction_order_without_rewriting_event_time() {
+    let mut assembler = StreamAssembler::default();
+    let original = on_clock(tcp_packet(1, 100, 0x02, b""), 40_000, 20, 0);
+    let original_id = StreamKey::from_packet(&original).unwrap().id();
+    assembler.ingest(&original);
+    for i in 1..500_u16 {
+        assembler.ingest(&on_clock(tcp_packet(u64::from(i) + 1, 100, 0x02, b""),
+            30_000 + i, 30, 0));
+    }
+    assembler.ingest(&on_clock(tcp_packet(501, 101, 0x18, b"data"), 40_000, 19, 0));
+    assembler.ingest(&on_clock(tcp_packet(502, 100, 0x02, b""), 50_000, 30, 0));
+    let stream = assembler.get(&original_id).expect("recent observation should have kept the stream");
+    assert_eq!(stream.client_data, b"data");
+    assert_eq!(stream.last_seen, 20.0);
+    assert_eq!(assembler.len(), 500);
 }

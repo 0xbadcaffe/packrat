@@ -28,12 +28,12 @@ impl StreamAssembler {
         let tcp_header = raw.get(view.header..view.payload)?;
         let id = key.id();
 
-        // Evict oldest stream if at cap
+        // Retention follows observation order; capture clocks may be independent.
         if !self.streams.contains_key(&id) && self.streams.len() >= MAX_STREAMS {
             if let Some(oldest_id) = self
                 .streams
                 .iter()
-                .min_by(|a, b| a.1.last_seen.total_cmp(&b.1.last_seen))
+                .max_by_key(|(key, stream)| (self.revision.wrapping_sub(stream.revision), *key))
                 .map(|(k, _)| k.clone())
             {
                 self.streams.remove(&oldest_id);
