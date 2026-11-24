@@ -29,6 +29,7 @@ pub struct AlertJsonlWriter {
     path: PathBuf,
     session_id: String,
     latest_snapshots: BTreeMap<SnapshotKey, SavedSnapshot>,
+    discarded_through_alert_id: u64,
     new_session: bool,
     needs_separator: bool,
     writer: File,
@@ -127,13 +128,16 @@ fn encode_alert_record(session_id: &str, alert: &AlertItem, first_saved_unix_ms:
 
 fn remember(
     snapshots: &mut BTreeMap<SnapshotKey, SavedSnapshot>,
+    discarded_through_alert_id: &mut u64,
     key: SnapshotKey,
     snapshot: SavedSnapshot,
 ) {
     snapshots.insert(key, snapshot);
-    if snapshots.len() > MAX_SAVED_ALERTS {
+    if snapshots.len() > MAX_SAVED_ALERTS
+        && let Some(((id, _), _)) = snapshots.pop_first()
+    {
         // The live alert queue evicts the oldest IDs first.
-        snapshots.pop_first();
+        *discarded_through_alert_id = (*discarded_through_alert_id).max(id);
     }
 }
 
@@ -188,6 +192,7 @@ impl AlertJsonlWriter {
 
         let mut file = open_alert_file(&path)?;
         let mut latest_snapshots = BTreeMap::new();
+        let mut discarded_through_alert_id = 0;
         let new_session = matches!(session, LogSession::Fresh);
         if !new_session {
             let mut reader = BufReader::new(&mut file);
@@ -202,7 +207,7 @@ impl AlertJsonlWriter {
                     && let Ok(encoded) = encode_alert_record(session_id, &record.alert, record.first_saved_unix_ms)
                 {
                     // Normalize parsed records rather than hashing their on-disk whitespace or key order.
-                    remember(&mut latest_snapshots, snapshot_key(&record.alert), SavedSnapshot {
+                    remember(&mut latest_snapshots, &mut discarded_through_alert_id, snapshot_key(&record.alert), SavedSnapshot {
                         digest: Sha256::digest(encoded).into(), first_saved_unix_ms: record.first_saved_unix_ms,
                     });
                 }
@@ -213,6 +218,7 @@ impl AlertJsonlWriter {
             path,
             session_id: session_id.to_owned(),
             latest_snapshots,
+            discarded_through_alert_id,
             new_session,
             needs_separator,
             writer: file,
@@ -252,7 +258,10 @@ impl AlertJsonlWriter {
             let key = snapshot_key(alert);
             let saved = self.latest_snapshots.get(&key);
             let first_saved_unix_ms = saved.map_or_else(
-                || if self.new_session { unix_now_ms() } else { None },
+                || {
+                    // A miss below the eviction bound can be an update, not a first save.
+                    if self.new_session && alert.id > self.discarded_through_alert_id { unix_now_ms() } else { None }
+                },
                 |snapshot| snapshot.first_saved_unix_ms,
             );
             let mut record = encode_alert_record(&self.session_id, alert, first_saved_unix_ms)?;
@@ -279,7 +288,7 @@ impl AlertJsonlWriter {
                 return Err(format!("Write alert JSONL record: {error}"));
             }
             self.needs_separator = false;
-            remember(&mut self.latest_snapshots, key, SavedSnapshot { digest, first_saved_unix_ms });
+            remember(&mut self.latest_snapshots, &mut self.discarded_through_alert_id, key, SavedSnapshot { digest, first_saved_unix_ms });
         }
         Ok(())
     }

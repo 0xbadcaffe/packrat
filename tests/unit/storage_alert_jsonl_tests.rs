@@ -288,6 +288,40 @@ fn saved_snapshot_index_stays_bounded_when_reopening_long_logs() {
 }
 
 #[test]
+fn fresh_writer_does_not_invent_a_first_save_after_evicting_an_alert() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("alerts.jsonl");
+    let mut writer = AlertJsonlWriter::open_session(path.clone(), "session-a", LogSession::Fresh).unwrap();
+    let mut original = alert(1, 1);
+    let mut retained = alert(1, 2);
+    retained.id = 2;
+    writer.append_alerts(&[original.clone(), retained.clone()]).unwrap();
+    let initial = read_log(&path);
+    let first = initial[0].first_saved_unix_ms.unwrap();
+    let retained_first = initial[1].first_saved_unix_ms.unwrap();
+
+    let later: Vec<_> = (3..=MAX_SAVED_ALERTS as u64 + 1).map(|id| {
+        let mut item = alert(1, id);
+        item.id = id;
+        item
+    }).collect();
+    writer.append_alerts(&later).unwrap();
+    assert!(!writer.latest_snapshots.contains_key(&(1, None)));
+    original.first_reviewed_unix_ms = Some(first + 2500);
+    retained.first_reviewed_unix_ms = Some(retained_first + 2500);
+    let mut new = alert(1, MAX_SAVED_ALERTS as u64 + 2);
+    new.id = MAX_SAVED_ALERTS as u64 + 2;
+    writer.append_alerts(&[original, retained, new]).unwrap();
+    let records = read_log(&path);
+    let tail = &records[records.len() - 3..];
+    assert_eq!(tail[0].alert.id, 1);
+    assert_eq!(tail[0].first_saved_unix_ms, None);
+    assert_eq!(tail[1].first_saved_unix_ms, Some(retained_first));
+    assert!(tail[2].first_saved_unix_ms.is_some());
+    assert_eq!(writer.latest_snapshots.len(), MAX_SAVED_ALERTS);
+}
+
+#[test]
 fn reopening_after_a_torn_line_does_not_lose_the_next_snapshot() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("alerts.jsonl");
