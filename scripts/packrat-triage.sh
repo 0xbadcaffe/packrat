@@ -79,7 +79,7 @@ if [[ -n $target_alert && -n $evidence_id && $target_alert != "$evidence_id" ]];
     printf '%s\n' 'The evidence alert ID must match the requested saved alert.' >&2
     exit 2
 fi
-socket_status=not_configured archive_rules='[]'
+socket_status=not_configured archive_rules='[]' log_advanced=null
 if [[ -n $socket_file ]]; then
     if [[ $socket_file != /* || $socket_file == */ || $socket_file == *[[:cntrl:]]* ]]; then
         printf '%s\n' 'PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE requires an absolute file path.' >&2
@@ -131,7 +131,8 @@ unresolved_jq='def unresolved: .disposition == "New" or .disposition == "Reviewi
 report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
         --argjson query_limit "$query_limit" --argjson rules "$archive_rules" \
-        --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" --arg selection "$evidence_selection" "$unresolved_jq"'
+        --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" --arg selection "$evidence_selection" \
+        --argjson advanced "$log_advanced" "$unresolved_jq"'
         def live_archive:
             if $status != "current" and $status != "degraded" then "unknown"
             elif .health.archive_enabled == false then "disabled"
@@ -183,11 +184,12 @@ report() {
              review_queue_truncated:(if $review == null then null else ($review | length) > 5 end),
              review_queue:(if $review == null then null else $review[:5] end),
              evidence_selection:$selection, evidence_status:$evidence[0], evidence_checks:$evidence,
-             alert_log_integrity:.[3], socket_context_status:$socket}
+             alert_log_integrity:.[3], alert_log_advanced_during_review:$advanced, socket_context_status:$socket}
     '
 }
 report_saved_index() {
-    jq -c --arg rule "$review_rule" --arg session "$session" --arg capture "$capture" --argjson limit "$query_limit" --argjson previous "${#previous_logs[@]}" --argjson offset "$review_offset" "$unresolved_jq"'
+    jq -c --arg rule "$review_rule" --arg session "$session" --arg capture "$capture" --argjson limit "$query_limit" \
+        --argjson previous "${#previous_logs[@]}" --argjson offset "$review_offset" --argjson advanced "$log_advanced" "$unresolved_jq"'
         def valid_session: .session_id | type == "string" and test("\\A[A-Za-z0-9_-]{1,128}\\z");
         def scoped: valid_session and (.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"));
         def seen: numbers | select(isfinite and . > 0);
@@ -211,7 +213,8 @@ report_saved_index() {
                        legacy_rule_hint:(.legacy_rule_hint | strings | select(test("\\A[a-z0-9_.-]{1,128}\\z"))) // null,
                        evidence_frame_count:(.evidence_frame_count | numbers | select(. >= 0 and . <= 131 and floor == .)) // null,
                        next_evidence_step:(if .evidence_frame_count == 0 then "corroborate_with_host_or_service_logs" else "locate_original_capture_or_host_logs" end)})),
-            sample_scan_complete:($integrity.invalid_records == 0 and $integrity.oversized_records == 0
+            alert_log_advanced_during_review:$advanced,
+            sample_scan_complete:($advanced == false and $integrity.invalid_records == 0 and $integrity.oversized_records == 0
                 and $integrity.stopped_at_limit == false and $integrity.stopped_at_scan_budget != true),
             review_rule:(if $rule == "" then null else $rule end), review_offset:$offset, review_eligible_in_sample:($review | length),
             review_shortlist_truncated:($review | length > $offset + 5),
@@ -482,6 +485,8 @@ if ! latest_stamps=$(previous_log_stamps) || [[ $latest_stamps != "$previous_sta
     exit 1
 fi
 [[ $mode != live ]] || verify_watch_identity "$latest_identity" || exit 1
+log_advanced=false
+if (( latest_size > log_size )); then log_advanced=true; fi
 if [[ $mode == list_saved ]]; then
     index=$(report_saved_index)
     printf '%s\n' "$index"

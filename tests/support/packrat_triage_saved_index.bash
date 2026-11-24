@@ -13,7 +13,8 @@ jq -e '.record_type == "saved_capture_index" and .status == "saved"
         session_id:"1700000000-432",alert_id:1,severity:"HIGH",disposition:"New",last_seen:20,
         legacy_rule_hint:"dns.competing_responders",evidence_frame_count:1,next_evidence_step:"locate_original_capture_or_host_logs"}]
     and .alert_sample_limit == 512 and .alert_log_integrity.stopped_at_limit == false
-    and .sample_scan_complete and .review_eligible_in_sample == 3 and .review_offset == 0 and .next_review_offset == null
+    and .sample_scan_complete and .alert_log_advanced_during_review==false
+    and .review_eligible_in_sample == 3 and .review_offset == 0 and .next_review_offset == null
     and (.captures | map(.session_id)) == ["1700000000-123","1700000000-432"]
     and (.captures | map(.sampled_alerts)) == [1,3]
     and (.captures | map(.sampled_high_or_critical)) == [1,3]
@@ -26,6 +27,9 @@ jq -e '.record_type == "saved_capture_index" and .status == "saved"
         [["1700000000-123",1,"CRITICAL"],["1700000000-432",3,"CRITICAL"],["1700000000-432",1,"HIGH"]]
     and .captures[1].first_seen == 10 and .captures[1].last_seen == 22
     and (tostring | contains("not in index") | not)' <<< "$result" >/dev/null
+PACKRAT_TEST_LOG_RACE=append list_saved "$PACKRAT_TEST_LOG" |
+    jq -e '.status=="saved" and .sampled_alerts==6 and .alert_log_advanced_during_review==true
+        and .sample_scan_complete==false' >/dev/null
 result=$(PACKRAT_TEST_INDEX_EXTRA='[{"alert_id":4,"capture_id":null,"evidence_frame_count":0,"severity":"CRITICAL"}]' list_saved "$PACKRAT_TEST_LOG")
 jq -e '.unscoped_review_queue[0] | .evidence_frame_count==0
     and .next_evidence_step=="corroborate_with_host_or_service_logs"' <<< "$result" >/dev/null

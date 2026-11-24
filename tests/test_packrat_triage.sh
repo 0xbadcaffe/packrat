@@ -424,7 +424,9 @@ status=0
 PACKRAT_TRIAGE_READ_TIMEOUT=0 bash "$triage" "$health" "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
 [[ $status == 2 ]]
 result=$(PACKRAT_TEST_LOG_RACE=append bash "$triage" "$health" "$PACKRAT_TEST_LOG")
-jq -e '.status == "current" and .alerts[0].alert_id == 42' <<< "$result" >/dev/null
+jq -e '.status == "current" and .alerts[0].alert_id == 42 and .alert_log_advanced_during_review==true' <<< "$result" >/dev/null
+bash "$triage" "$health" "$PACKRAT_TEST_LOG" |
+    jq -e '.status=="current" and .alert_log_advanced_during_review==false' >/dev/null
 [[ -s $PACKRAT_TEST_LOG ]]
 PACKRAT_TEST_LOG_RACE=truncate check_failure 1 alert_log_changed
 PACKRAT_TEST_LOG_RACE=rotate check_failure 1 alert_log_changed

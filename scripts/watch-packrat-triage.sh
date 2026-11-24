@@ -32,8 +32,9 @@ snapshot_validation='
         or .stopped_at_scan_budget == true;
     def log_scan_complete:
         if log_scan_interrupted then false
+        elif .alert_log_advanced_during_review == true then false
         elif .alert_log_integrity.stopped_at_limit == true then false
-        elif .alert_log_integrity.stopped_at_limit == false
+        elif .alert_log_advanced_during_review == false and .alert_log_integrity.stopped_at_limit == false
             and .alert_log_integrity.invalid_records == 0 and .alert_log_integrity.oversized_records == 0
             and (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null)
         then true else null end;
@@ -157,6 +158,8 @@ check_snapshot() {
            alert_save_backlog_dropped:(if $age >= -5 and $age <= .max_age_seconds then .alert_save_backlog_dropped | counter else null end),
            capture_queue_full_packets:(if $age >= -5 and $age <= .max_age_seconds then .capture_queue_full_packets | counter else null end),
            alert_log_scan_complete:(if $age >= -5 and $age <= .max_age_seconds then log_scan_complete else null end),
+           alert_log_advanced_during_review:(if $age >= -5 and $age <= .max_age_seconds
+               then .alert_log_advanced_during_review | if type == "boolean" then . else null end else null end),
            invalid_alert_rows:(if $age >= -5 and $age <= .max_age_seconds
                then .invalid_alert_rows | sample_count else null end),
            duplicate_alert_ids:(if $age >= -5 and $age <= .max_age_seconds
@@ -334,6 +337,7 @@ sanitize() {
                 stopped_at_limit:(.stopped_at_limit | flag),
                 stopped_at_scan_budget:(.stopped_at_scan_budget | flag)
             } else null end),
+            alert_log_advanced_during_review:(.alert_log_advanced_during_review | flag),
             open_priority_alerts:(.open_priority_alerts_in_sample | counter),
             open_archive_rule_alerts:(.open_archive_rule_alerts_in_sample | counter),
             review_queue_truncated:(.review_queue_truncated | flag),
