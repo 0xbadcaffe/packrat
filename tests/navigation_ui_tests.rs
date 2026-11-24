@@ -49,13 +49,13 @@ fn about_in_each_workspace_shows_the_build_version_and_preserves_the_view() {
     for workspace in [Workspace::Traffic, Workspace::Inspect, Workspace::Case] {
         app.select_workspace(workspace);
         let original_tab = app.active_tab;
-        key(&mut app, KeyCode::Tab);
-        for _ in 0..workspace.views().len() {
-            key(&mut app, KeyCode::Down);
-        }
+        key(&mut app, if workspace == Workspace::Traffic { KeyCode::Tab } else { KeyCode::F(2) });
+        assert!(screen(&app, 28, 9).contains("End: About"));
+        key(&mut app, KeyCode::End);
+        assert_eq!(app.view_menu_cursor, workspace.views().len());
         for (width, height) in [(28, 9), (40, 12), (80, 24)] {
             let menu = screen(&app, width, height);
-            assert!(menu.contains("About") && menu.contains(version), "{menu}");
+            assert!(menu.contains(&format!("> About {version}")), "{menu}");
         }
         key(&mut app, KeyCode::Enter);
         assert!(app.about_open && !app.view_menu_open);

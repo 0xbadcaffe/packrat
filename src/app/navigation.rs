@@ -241,6 +241,10 @@ impl App {
         self.view_menu_cursor = self.view_menu_cursor.saturating_sub(1);
     }
 
+    pub fn view_menu_select_about(&mut self) {
+        self.view_menu_cursor = self.active_tab.workspace().views().len();
+    }
+
     pub fn activate_view_menu_selection(&mut self) {
         let views = self.active_tab.workspace().views();
         if let Some(view) = views.get(self.view_menu_cursor) {

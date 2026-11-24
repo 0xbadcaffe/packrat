@@ -60,7 +60,8 @@ pub fn draw(f: &mut Frame, app: &App) {
             .title(Span::styled(
                 format!(" {} Views  [j/k] choose  [Enter] open  [Esc] close ", workspace.label()),
                 Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD),
-            )),
+            ))
+            .title_bottom(" End: About "),
     );
     f.render_widget(list, popup);
 }
