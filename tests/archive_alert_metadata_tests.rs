@@ -70,7 +70,7 @@ fn archive_links_syn_acks_only_to_preceding_reverse_syn_sequences_on_the_same_pa
         {"syn_ack_frame":12,"prior_syn_candidates":1,"latest_candidate_syn_frame":10,
          "later_ack_candidates":0,"earliest_candidate_ack_frame":null}
     ]));
-    assert!(report["limitation"].as_str().unwrap().contains("not endpoint acceptance"));
+    assert!(report["limitation"].as_str().unwrap().contains("do not establish endpoint acceptance"));
     let outbound = report["directional_flows"].as_array().unwrap().iter().find(|flow| flow["source"] == "10.0.0.1:40000" && flow["vlan_id"] == 10 && flow["interface_id"] == 3).unwrap();
     assert_eq!(outbound["cited_declared_payload_bytes"], 6);
     assert_eq!(outbound["cited_captured_payload_bytes"], 6);

@@ -60,6 +60,19 @@ struct TransportHeader {
     tcp_sequence_pair: Option<(u32, u32)>,
 }
 
+#[derive(Clone, Copy)]
+struct SynSegment {
+    frame: u64,
+    sequence: u32,
+    payload_len: u32,
+}
+
+impl SynSegment {
+    fn acknowledges_syn(self, acknowledgment: u32) -> bool {
+        acknowledgment.wrapping_sub(self.sequence.wrapping_add(1)) <= self.payload_len
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 struct FlowKey {
     section_id: u32,
@@ -91,9 +104,9 @@ struct FlowCounts {
     first_seen: Option<f64>,
     last_seen: Option<f64>,
     #[serde(skip)]
-    initial_syns: Vec<(u64, u32)>,
+    initial_syns: Vec<SynSegment>,
     #[serde(skip)]
-    syn_acks: Vec<(u64, u32, u32)>,
+    syn_acks: Vec<(SynSegment, u32)>,
     #[serde(skip)]
     acks: Vec<(u64, u32, u32)>,
     #[serde(skip)]
@@ -218,7 +231,7 @@ pub fn alert_flow_summary(
         directional_flows: Vec::new(),
         tcp_syn_ack_matches: Vec::new(),
         unassigned_frames: Vec::new(),
-        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP sequence matches identify candidate handshake frames, not endpoint acceptance or a specific retransmission. Earlier SYN candidates do not cross a cited reset or a different initial SYN in the same direction. Later ACK candidates do not cross a cited reset or another SYN. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
+        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP handshake candidates account for declared SYN payload, but sequence matches do not establish endpoint acceptance or a specific retransmission. Earlier SYN candidates do not cross a cited reset or a different initial SYN in the same direction. Later ACK candidates do not cross a cited reset or another SYN. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
     for frame in metadata.frames {
@@ -267,9 +280,12 @@ pub fn alert_flow_summary(
         counts.cited_declared_payload_bytes += header.declared_payload_length;
         counts.cited_captured_payload_bytes += header.captured_payload_length;
         if let (Some(flags), Some((sequence, acknowledgment))) = (header.tcp_flags, header.tcp_sequence_pair) {
+            let syn = u32::try_from(header.declared_payload_length).ok().map(|payload_len| {
+                SynSegment { frame: frame.frame_number, sequence, payload_len }
+            });
             match flags & 0x17 {
-                0x02 => counts.initial_syns.push((frame.frame_number, sequence)),
-                0x12 => counts.syn_acks.push((frame.frame_number, sequence, acknowledgment)),
+                0x02 => counts.initial_syns.extend(syn),
+                0x12 => counts.syn_acks.extend(syn.map(|segment| (segment, acknowledgment))),
                 0x10 => counts.acks.push((frame.frame_number, sequence, acknowledgment)),
                 _ => {}
             }
@@ -302,18 +318,24 @@ fn syn_ack_matches(flows: &BTreeMap<FlowKey, FlowCounts>) -> Vec<SynAckMatch> {
             continue;
         }
         let Some(request) = flows.get(&key.reversed()) else { continue; };
-        for &(syn_ack_frame, server_sequence, acknowledgment) in &response.syn_acks {
-            let sequence = acknowledgment.wrapping_sub(1);
-            let boundary = request.resets.iter().chain(&response.resets).copied()
-                .chain(request.initial_syns.iter().filter_map(|&(frame, prior)| (prior != sequence).then_some(frame)))
+        for &(server, acknowledgment) in &response.syn_acks {
+            let syn_ack_frame = server.frame;
+            let reset = request.resets.iter().chain(&response.resets).copied()
                 .filter(|&frame| frame < syn_ack_frame)
                 .max().unwrap_or(0);
+            let Some(latest_syn) = request.initial_syns.iter().rev()
+                .find(|syn| reset < syn.frame && syn.frame < syn_ack_frame)
+            else { continue };
+            let boundary = request.initial_syns.iter().rev()
+                .find(|syn| reset < syn.frame && syn.frame < latest_syn.frame && syn.sequence != latest_syn.sequence)
+                .map_or(reset, |syn| syn.frame);
             let (prior_syn_candidates, latest_candidate_syn_frame) = request.initial_syns.iter()
-                .filter(|&&(frame, prior)| boundary < frame && frame < syn_ack_frame && prior == sequence)
-                .fold((0, 0_u64), |(count, latest), &(frame, _)| (count + 1, latest.max(frame)));
+                .filter(|syn| boundary < syn.frame && syn.frame < syn_ack_frame
+                    && syn.sequence == latest_syn.sequence && syn.acknowledges_syn(acknowledgment))
+                .fold((0, 0_u64), |(count, latest), syn| (count + 1, latest.max(syn.frame)));
             if prior_syn_candidates > 0 {
                 let (later_ack_candidates, earliest_candidate_ack_frame) = later_ack_candidates(
-                    request, response, latest_candidate_syn_frame, syn_ack_frame, acknowledgment, server_sequence,
+                    request, response, latest_syn.frame, acknowledgment, server,
                 );
                 matches.push(SynAckMatch {
                     syn_ack_frame, prior_syn_candidates, latest_candidate_syn_frame,
@@ -327,19 +349,18 @@ fn syn_ack_matches(flows: &BTreeMap<FlowKey, FlowCounts>) -> Vec<SynAckMatch> {
 }
 
 fn later_ack_candidates(
-    request: &FlowCounts, response: &FlowCounts, syn_frame: u64, syn_ack_frame: u64,
-    expected_seq: u32, server_sequence: u32,
+    request: &FlowCounts, response: &FlowCounts, syn_frame: u64, expected_seq: u32, server: SynSegment,
 ) -> (usize, Option<u64>) {
     let boundary = request.resets.iter().chain(&response.resets).copied()
-        .chain(request.initial_syns.iter().chain(&response.initial_syns).map(|&(frame, _)| frame))
+        .chain(request.initial_syns.iter().chain(&response.initial_syns).map(|syn| syn.frame))
         .filter(|&frame| frame > syn_frame)
         .min();
-    if boundary.is_some_and(|frame| frame < syn_ack_frame) {
+    if boundary.is_some_and(|frame| frame < server.frame) {
         return (0, None);
     }
     let candidates = request.acks.iter().filter(|&&(frame, seq, ack)| {
-        frame > syn_ack_frame && boundary.is_none_or(|end| frame < end)
-            && seq == expected_seq && ack == server_sequence.wrapping_add(1)
+        frame > server.frame && boundary.is_none_or(|end| frame < end)
+            && seq == expected_seq && server.acknowledges_syn(ack)
     });
     candidates.fold((0, None), |(count, first), &(frame, _, _)| {
         (count + 1, Some(first.map_or(frame, |earliest: u64| earliest.min(frame))))
