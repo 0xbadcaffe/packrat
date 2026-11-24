@@ -113,12 +113,22 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     let mut archive = PacketArchive::open(&archive_path).unwrap();
     let mut non_ip_frame = [0; 60];
     non_ip_frame[12..14].copy_from_slice(&[0x88, 0xb5]);
+    let timed_query = |frame| {
+        use packrat_tui::net::packet::{CaptureTimestamp, TimestampResolution};
+        let mut packet = dns_frame(frame, 42, b"PrivateName", false, 10, 1);
+        packet.capture.as_mut().unwrap().timestamp = Some(CaptureTimestamp {
+            ticks: frame,
+            resolution: TimestampResolution::Decimal(9),
+            offset_seconds: 1_800_000_000,
+        });
+        packet
+    };
     archive
         .append_scoped(
             SCOPE,
             &[
-                dns_frame(1, 42, b"PrivateName", false, 10, 1),
-                dns_frame(2, 42, b"PrivateName", false, 10, 1),
+                timed_query(1),
+                timed_query(2),
                 dns_frame(3, 42, b"PrivateName", true, 10, 1),
                 captured_frame(4, &non_ip_frame),
             ],
@@ -164,6 +174,8 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
                "retained_flow_frames":3,"retained_frames_without_flow":1,
                "trigger_frame_status":"complete","trigger_transport_header_observed":false,
                "trigger_tuple_status":"not_recorded",
+               "timing_status":"reported","cited_timing":{"timestamped_frames":2,"missing_timestamp_frames":1,
+                    "forward_gaps":1,"tied_timestamps":0,"backwards_timestamps":0,"directions_with_forward_gaps":1},
                "udp_dns_replies_with_query_candidates":1,"udp_dns_ambiguous_replies":1})
     );
 }

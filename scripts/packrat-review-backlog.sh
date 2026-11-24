@@ -8,6 +8,7 @@ usage() {
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
         'With --flow-context, report cited transport-header coverage and candidate TCP and UDP DNS links without disclosing endpoints.' \
+        'Timing counts describe adjacent cited frames, not full-flow cadence.' \
         'Reader rule revisions are compared with saved revisions without reclassifying findings.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
@@ -78,6 +79,30 @@ check_flow_context() {
         def frame: type == "number" and . >= 1 and . <= 9007199254740991 and floor == .;
         def count: type == "number" and . >= 0 and . <= $selected.evidence_frame_count and floor == .;
         def frames: type == "array" and length <= $selected.evidence_frame_count;
+        def valid_timing:
+            .evidence_frames as $frames
+            | .cited_timing | type == "object"
+              and all([.timestamped_frames,.missing_timestamp_frames,.forward_gaps,.tied_timestamps,.backwards_timestamps][]; count)
+              and .timestamped_frames + .missing_timestamp_frames == $frames
+              and .forward_gaps + .tied_timestamps + .backwards_timestamps <= ([0, .timestamped_frames - 1] | max);
+        def timing_context:
+            .directional_flows
+            | if length == 0 then {timing_status:"no_flow_headers"}
+              elif all(.[]; has("cited_timing") | not) then {timing_status:"not_reported"}
+              elif all(.[]; valid_timing) then
+                {timing_status:"reported",cited_timing:(
+                    reduce .[].cited_timing as $flow (
+                        {timestamped_frames:0,missing_timestamp_frames:0,forward_gaps:0,
+                         tied_timestamps:0,backwards_timestamps:0,directions_with_forward_gaps:0};
+                        .timestamped_frames += $flow.timestamped_frames
+                        | .missing_timestamp_frames += $flow.missing_timestamp_frames
+                        | .forward_gaps += $flow.forward_gaps
+                        | .tied_timestamps += $flow.tied_timestamps
+                        | .backwards_timestamps += $flow.backwards_timestamps
+                        | .directions_with_forward_gaps += (if $flow.forward_gaps > 0 then 1 else 0 end)
+                    )
+                )}
+              else {timing_status:"invalid"} end;
         def valid_trigger:
             (.trigger_tuple_status | IN("not_recorded","trigger_header_unavailable","matches_wire","differs_from_wire"))
             and (.trigger_frame | . == null or
@@ -114,7 +139,8 @@ check_flow_context() {
                 directional_flows:(.directional_flows|length),tcp_syn_ack_matches:(.tcp_syn_ack_matches|length),
                 udp_dns_replies:(.udp_dns_reply_candidates|length),
                 udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),
-                udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}}
+                udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}
+                + timing_context}
           end
     ' <<< "$raw"
 }

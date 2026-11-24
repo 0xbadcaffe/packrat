@@ -94,7 +94,9 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
      truncated_frames:0,length_unknown_frames:0,
      retained_frames_without_flow:0,trigger_tuple_status:"matches_wire",
      trigger_frame:{frame_number:4,status:"complete",transport_header_observed:true},
-     directional_flows:[{evidence_frames:2,endpoint:"private endpoint"}],
+     directional_flows:[{evidence_frames:2,endpoint:"private endpoint",cited_timing:{
+        timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,tied_timestamps:0,
+        backwards_timestamps:0,min_forward_gap_secs:2.75,private_debug:"private time"}}],
      tcp_syn_ack_matches:[{syn_ack_frame:2,sequence:123}],
      udp_dns_reply_candidates:[{reply_frame:4,query_candidate_frames:[3],name:"private name"}]}
     | if $mode == "digest" then .evidence_frame_set_sha256=("1"*64)
@@ -104,6 +106,9 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "frame_count" then .retained_frames_without_flow=1
       elif $mode == "trigger_status" then .trigger_frame.transport_header_observed=false
       elif $mode == "trigger_private" then .trigger_frame.status="private payload"
+      elif $mode == "legacy_timing" then del(.directional_flows[0].cited_timing)
+      elif $mode == "invalid_timing" then .directional_flows[0].cited_timing.backwards_timestamps=1
+      elif $mode == "malformed_timing" then .directional_flows[0].cited_timing="private time"
       elif $mode == "no_flow" then
           .directional_flows=[] | .tcp_syn_ack_matches=[] | .udp_dns_reply_candidates=[]
           | .retained_frames_without_flow=2 | .trigger_tuple_status="trigger_header_unavailable"
@@ -140,6 +145,8 @@ run_review --flow-context | jq -e '
     and .findings[0].flow_context == {directional_flows:1,tcp_syn_ack_matches:1,udp_dns_replies:1,
         retained_flow_frames:2,retained_frames_without_flow:0,
         trigger_frame_status:"complete",trigger_transport_header_observed:true,trigger_tuple_status:"matches_wire",
+        timing_status:"reported",cited_timing:{timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,
+            tied_timestamps:0,backwards_timestamps:0,directions_with_forward_gaps:1},
         udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0}
     and (tostring | contains("private") | not)' >/dev/null
 [[ $(cat "$dir/flow-checks") == 1 ]]
@@ -147,7 +154,15 @@ FLOW_MODE=no_flow run_review --flow-context | jq -e '
     .findings[0] | .packet_evidence_status=="complete" and .flow_context_status=="checked"
     and .flow_context.retained_flow_frames==0 and .flow_context.retained_frames_without_flow==2
     and .flow_context.trigger_tuple_status=="trigger_header_unavailable"
-    and .flow_context.trigger_transport_header_observed==false' >/dev/null
+    and .flow_context.trigger_transport_header_observed==false
+    and .flow_context.timing_status=="no_flow_headers" and (.flow_context|has("cited_timing")|not)' >/dev/null
+for mode in legacy_timing invalid_timing malformed_timing; do
+    wanted=invalid
+    if [[ $mode == legacy_timing ]]; then wanted=not_reported; fi
+    FLOW_MODE=$mode run_review --flow-context | jq -e --arg wanted "$wanted" '
+        .findings[0] | .flow_context_status=="checked" and .flow_context.timing_status==$wanted
+        and (.flow_context|has("cited_timing")|not) and (tostring|contains("private")|not)' >/dev/null
+done
 for mode in digest availability scope malformed frame_count trigger_status trigger_private old_reader; do
     wanted=check_failed
     if [[ $mode == digest || $mode == availability ]]; then wanted=changed_during_review; fi
