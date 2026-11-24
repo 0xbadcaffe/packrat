@@ -10,6 +10,7 @@ usage() {
         'With --flow-context, report cited transport-header coverage, initial SYN fan-out, and candidate TCP and UDP DNS links without disclosing endpoints.' \
         'Timing counts describe adjacent cited frames, not full-flow cadence.' \
         'UDP DNS timing counts distinguish capture-clock, legacy, unavailable, and unreported reply times.' \
+        'Review latency covers the saved-alert sample, not the current shortlist or rule filter.' \
         'Reader rule revisions are compared with saved revisions without reclassifying findings.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
@@ -202,6 +203,22 @@ raw=$(triage_with_budget "$budget" --list-saved "${index_args[@]}" "$@") || rc=$
 if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --argjson offset "$offset" \
     --arg session "$session_scope" --arg capture "$capture_scope" '
     def count: type == "number" and . >= 0 and . <= 512 and floor == .;
+    def milliseconds: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+    def sample_latency($sample):
+        objects | . as $raw
+        | {sampled_alerts,measured_alerts,unmeasured_alerts,min_ms,median_ms,max_ms}
+        | select(.sampled_alerts == $sample and (.measured_alerts | count) and (.unmeasured_alerts | count)
+              and .measured_alerts + .unmeasured_alerts == $sample
+              and (if .measured_alerts == 0 then all([.min_ms,.median_ms,.max_ms][]; . == null)
+                   else all([.min_ms,.median_ms,.max_ms][]; milliseconds)
+                        and .min_ms <= .median_ms and .median_ms <= .max_ms
+                        and (.measured_alerts > 1 or .min_ms == .max_ms) end))
+        | .unmeasured_alerts as $unmeasured
+        | if $raw.unmeasured_reasons == null then .
+          else . + ($raw.unmeasured_reasons | objects
+            | {missing_capture_scope,missing_first_save,missing_first_review,review_before_save}
+            | select(all(.[]; count) and ([.[]] | add) == $unmeasured)
+            | {unmeasured_reasons:.}) end;
     def frame_count: count and . <= 131;
     def valid_reference:
         type == "object" and (.session_id | strings | test("\\A[A-Za-z0-9_-]{1,128}\\z"))
@@ -237,7 +254,9 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --a
         and .review_shortlist_truncated == ($eligible > $offset + 5)
         and .next_review_offset == (if $eligible > $offset + 5 then $offset + 5 else null end)
         and (.unscoped_review_queue | type == "array" and length <= 5 and all(.[]; unscoped_reference)))
+    | .sampled_alerts as $sample
     | {index_status:.status,sampled_alerts,sampled_unscoped_open_high_or_critical,sample_scan_complete,
+       sample_review_latency:((.review_latency | sample_latency($sample)) // null),
        review_scope,review_rule,review_offset,review_eligible_in_sample,review_shortlist_truncated,next_review_offset,
        unscoped_review_queue:(.unscoped_review_queue | map({session_id,alert_id,severity,disposition,last_seen,
              legacy_rule_hint,evidence_frame_count,

@@ -211,11 +211,12 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     alert.capture_id = Some(SCOPE.into());
     alert.packet_refs = (1..=7).collect();
     fs::write(&active, "").unwrap();
+    alert.first_reviewed_unix_ms = Some(1250);
     fs::write(
         &previous,
         format!(
             "{}\n",
-            json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert})
+            json!({"schema_version":1,"record_type":"alert","session_id":"session-a","first_saved_unix_ms":1000,"alert":alert})
         ),
     )
     .unwrap();
@@ -270,6 +271,10 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     assert!(!text.to_ascii_lowercase().contains("private"));
     assert!(!text.contains("192.0.2."));
     let report: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["sample_review_latency"], json!({
+        "sampled_alerts":1,"measured_alerts":1,"unmeasured_alerts":0,"min_ms":250,"median_ms":250,"max_ms":250,
+        "unmeasured_reasons":{"missing_capture_scope":0,"missing_first_save":0,"missing_first_review":0,"review_before_save":0}
+    }));
     let findings = report["findings"].as_array().unwrap();
     assert_eq!(findings.len(), 1);
     let finding = &findings[0];

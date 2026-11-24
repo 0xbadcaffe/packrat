@@ -44,7 +44,17 @@ if [[ $1 == --list-saved ]]; then
          next_review_offset:(if $eligible > $offset + 5 then $offset + 5 else null end),
          review_shortlist:[range($offset + 1;[($eligible + 1),($offset + (if $mode == "extra" then 7 else 6 end))] | min)
            | $base + {session_id:$session,capture_id:$capture,alert_id:.}]}
-         | if $selected_capture == "" then . else .sampled_unscoped_open_high_or_critical = 0 | .unscoped_review_queue = [] end'
+         | if $selected_capture == "" then . else .sampled_unscoped_open_high_or_critical = 0 | .unscoped_review_queue = [] end
+         | if ($mode | startswith("latency_")) then
+            .review_latency={sampled_alerts:12,measured_alerts:3,unmeasured_alerts:9,min_ms:0,median_ms:100,max_ms:200,
+                unmeasured_reasons:{missing_capture_scope:1,missing_first_save:2,missing_first_review:6,review_before_save:0},
+                detail:"private time"}
+            | if $mode == "latency_bad_counts" then .review_latency.sampled_alerts=3
+              elif $mode == "latency_bad_order" then .review_latency.median_ms=201
+              elif $mode == "latency_bad_reasons" then .review_latency.unmeasured_reasons.missing_first_review=5
+              elif $mode == "latency_legacy" then del(.review_latency.unmeasured_reasons)
+              else . end
+           else . end'
     exit
 fi
 [[ $1 == --saved-alert && $2 == "$session" && $3 == "$capture" &&
@@ -149,6 +159,7 @@ run_review() {
 }
 run_review | jq -e '
     .record_type == "saved_alert_evidence_review" and .index_status == "saved"
+    and .sample_review_latency == null
     and .sampled_unscoped_open_high_or_critical == 3 and .review_shortlist_truncated and .sample_scan_complete
     and .review_offset == 0 and .next_review_offset == 5 and .review_eligible_in_sample == 7
     and .unscoped_review_queue == [{
@@ -222,6 +233,14 @@ done
 TEST_MODE=no_refs run_review | jq -e '.unscoped_review_queue[0] |
     .evidence_frame_count==0 and .packet_evidence_status=="no_references"
     and .next_evidence_step=="corroborate_with_host_or_service_logs"' >/dev/null
+FLOW_MODE=normal TEST_MODE=latency_valid run_review | jq -e '
+    .sample_review_latency=={sampled_alerts:12,measured_alerts:3,unmeasured_alerts:9,min_ms:0,median_ms:100,max_ms:200,
+        unmeasured_reasons:{missing_capture_scope:1,missing_first_save:2,missing_first_review:6,review_before_save:0}}' >/dev/null
+TEST_MODE=latency_legacy run_review | jq -e '
+    .sample_review_latency.measured_alerts==3 and (.sample_review_latency | has("unmeasured_reasons") | not)' >/dev/null
+for mode in latency_bad_counts latency_bad_order latency_bad_reasons; do
+    TEST_MODE=$mode run_review | jq -e '.sample_review_latency==null and (.findings | length)==5' >/dev/null
+done
 if TEST_MODE=bad_refs run_review >/dev/null 2>&1; then exit 1; fi
 touch -- "$dir/socket context.jsonl"
 TEST_MODE=socket run_review --socket-context "$dir/socket context.jsonl" | jq -e '
