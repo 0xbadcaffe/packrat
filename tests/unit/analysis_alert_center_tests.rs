@@ -353,6 +353,29 @@ fn restored_alerts_continue_with_unique_ids_and_deduplication() {
 }
 
 #[test]
+fn alert_index_does_not_merge_fields_that_contain_identity_delimiters() {
+    let mut center = AlertCenter::default();
+    assert!(center.record_correlated(1, 1.0, "RULE", "HIGH", "probe\0one", "first", "two"));
+    assert!(center.record_correlated(2, 2.0, "RULE", "HIGH", "probe", "second", "one\0two"));
+
+    let mut restored = AlertCenter::default();
+    restored.restore(center.items.clone(), AutomationMode::Off);
+    assert!(!restored.record_correlated(3, 3.0, "RULE", "HIGH", "probe", "repeat", "one\0two"));
+    assert_eq!(restored.items[0].packet_refs, [1]);
+    assert_eq!(restored.items[1].packet_refs, [2, 3]);
+}
+
+#[test]
+fn unscoped_alert_index_is_distinct_from_an_explicit_empty_capture_id() {
+    let mut center = AlertCenter::default();
+    assert!(center.record(1, "RULE", "HIGH", "Probe", "first"));
+    center.capture_id = Some(String::new());
+    assert!(center.record(2, "RULE", "HIGH", "Probe", "second"));
+    assert_eq!(center.items[0].capture_id, None);
+    assert_eq!(center.items[1].capture_id.as_deref(), Some(""));
+}
+
+#[test]
 fn evicted_alert_can_recur_without_growing_the_fingerprint_index() {
     let mut center = AlertCenter::default();
     for index in 0..=MAX_ALERTS {

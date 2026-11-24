@@ -190,9 +190,17 @@ pub struct AlertCenter {
     pub(crate) capture_id: Option<String>,
     pub(crate) archive_evidence_rules: Option<Vec<String>>,
     next_id: u64,
-    fingerprints: HashSet<String>,
+    fingerprints: HashSet<AlertFingerprint>,
     pending_pins: Vec<u64>,
     pending_exports: Vec<AlertItem>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct AlertFingerprint {
+    capture_id: Option<String>,
+    source: String,
+    title: String,
+    correlation_key: String,
 }
 
 impl Default for AlertCenter {
@@ -315,8 +323,12 @@ impl AlertCenter {
         let title = title.into();
         let detail = if source == "CREDENTIAL" { CREDENTIAL_ALERT_DETAIL.into() } else { detail.into() };
         let correlation_key = correlation_key.into();
-        let capture_id = self.capture_id.as_deref().unwrap_or_default();
-        let fingerprint = format!("{capture_id}\0{source}\0{title}\0{correlation_key}");
+        let fingerprint = AlertFingerprint {
+            capture_id: self.capture_id.clone(),
+            source: source.clone(),
+            title: title.clone(),
+            correlation_key: correlation_key.clone(),
+        };
         if !self.fingerprints.insert(fingerprint) {
             let selected = self.filtered_selection_anchor();
             if let Some(item) = self.items.iter_mut().find(|item| {
@@ -440,14 +452,13 @@ fn retain_packet_refs(alert: &mut AlertItem, packet_no: u64, related_packets: &[
     changed | retain_packet_ref(alert, packet_no)
 }
 
-fn fingerprint_for(item: &AlertItem) -> String {
-    format!(
-        "{}\0{}\0{}\0{}",
-        item.capture_id.as_deref().unwrap_or_default(),
-        item.source,
-        item.title,
-        item.correlation_key
-    )
+fn fingerprint_for(item: &AlertItem) -> AlertFingerprint {
+    AlertFingerprint {
+        capture_id: item.capture_id.clone(),
+        source: item.source.clone(),
+        title: item.title.clone(),
+        correlation_key: item.correlation_key.clone(),
+    }
 }
 
 fn priority_for(severity: &str) -> u8 {
