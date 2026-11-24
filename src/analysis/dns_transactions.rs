@@ -68,6 +68,7 @@ struct DnsScope {
     interface: Option<(u32, u32)>,
     outer_vlan: Option<u16>,
     inner_vlan: Option<u16>,
+    vlan_tag_types: [u16; 2],
     transport: DnsTransport,
 }
 
@@ -79,6 +80,7 @@ impl DnsScope {
             }),
             outer_vlan: packet.outer_vlan_id,
             inner_vlan: packet.vlan_id,
+            vlan_tag_types: crate::net::parser::ethernet_vlan_tag_types(&packet.bytes),
             transport,
         }
     }

@@ -73,7 +73,7 @@ fn nxdomain_replay_separates_rearmed_bursts_from_sustained_activity() {
             case["opening_frames"] = json!({(rule):expected});
             case["opening_evidence"] = json!(expected.iter().map(|&frame| json!({
                 "rule_id":rule, "opening_frame":frame, "frames":(frame - 39..=frame).collect::<Vec<_>>(),
-                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":4},
+                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":5},
             })).collect::<Vec<_>>());
         }
         cases.push(case);
@@ -86,10 +86,35 @@ fn nxdomain_replay_separates_rearmed_bursts_from_sustained_activity() {
 }
 
 pub fn write_fixture(path: &Path, scenario: Scenario) {
-    write_answer_sequence(path, scenario, false);
+    write_answer_sequence(path, scenario, false, None);
 }
 
-fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool) {
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn dns_answer_change_replay_does_not_borrow_queries_across_vlan_tag_paths() {
+    use serde_json::json;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    write_answer_sequence(&root.join("same-path.pcapng"), Scenario::ChangedAnswer, false, Some(false));
+    write_answer_sequence(&root.join("other-path.pcapng"), Scenario::ChangedAnswer, false, Some(true));
+    let manifest = root.join("dns-tag-paths.json");
+    let labels = json!({"version":1,"strict":true,"cases":[
+        {"name":"answer changed on the query path","capture":"same-path.pcapng","expect_snapshots":1,
+         "expect_counts":{"dns.changed_answers":1,"dns.unmatched_response":0},
+         "opening_frames":{"dns.changed_answers":[4]},
+         "opening_evidence":[{"rule_id":"dns.changed_answers","opening_frame":4,"frames":[1,2,4]}]},
+        {"name":"different answer on a separate tag path","capture":"other-path.pcapng","expect_snapshots":1,
+         "expect_counts":{"dns.changed_answers":0,"dns.unmatched_response":1},
+         "opening_frames":{"dns.unmatched_response":[4]},
+         "opening_evidence":[{"rule_id":"dns.unmatched_response","opening_frame":4,"frames":[4]}]}
+    ]});
+    std::fs::write(&manifest, labels.to_string()).unwrap();
+    let output = super::run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+}
+
+fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool, tagged_paths: Option<bool>) {
     let rr_type = match scenario {
         Scenario::ChangedWire => 65_280_u16,
         Scenario::EquivalentSoa | Scenario::ChangedSoa => 6,
@@ -97,7 +122,7 @@ fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool)
         _ => 1,
     };
     let mut capture = PcapNgWriter::create(path).unwrap();
-    for frame in 1..=5 {
+    for frame in 1..=if tagged_paths.is_some() { 4 } else { 5 } {
         let response = frame != 1;
         let equivalent_variation = matches!(frame, 3 | 5) && matches!(rr_type, 1 | 6 | 65);
         let mut dns = vec![
@@ -156,9 +181,13 @@ fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool)
             capture.write_packet(&udp_frame(frame, &dns, true, 54, 40_000)).unwrap();
         }
         let capture_frame = frame + u64::from(early_alternate && response);
-        capture
-            .write_packet(&udp_frame(capture_frame, &dns, response, 53, 40_000))
-            .unwrap();
+        let mut packet = udp_frame(capture_frame, &dns, response, 53, 40_000);
+        if let Some(split) = tagged_paths {
+            let tpid = if split && frame == 4 { 0x88a8_u16 } else { 0x8100_u16 };
+            let tci = if frame % 2 == 0 { 0xb014_u16 } else { 20_u16 };
+            packet.bytes.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+        }
+        capture.write_packet(&packet).unwrap();
     }
     capture.flush().unwrap();
 }
@@ -200,8 +229,8 @@ fn early_alternate_resolver_does_not_mask_later_answer_changes() {
 
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();
-    write_answer_sequence(&root.join("unchanged.pcapng"), Scenario::Equivalent, true);
-    write_answer_sequence(&root.join("changed.pcapng"), Scenario::ChangedAnswer, true);
+    write_answer_sequence(&root.join("unchanged.pcapng"), Scenario::Equivalent, true, None);
+    write_answer_sequence(&root.join("changed.pcapng"), Scenario::ChangedAnswer, true, None);
     let unexpected = "dns.unexpected_responder";
     let competing = "dns.competing_responders";
     let changed = "dns.changed_answers";
@@ -214,7 +243,7 @@ fn early_alternate_resolver_does_not_mask_later_answer_changes() {
             "opening_evidence": [
                 {"rule_id": unexpected, "opening_frame": 2, "frames": [1, 2]},
                 {"rule_id": competing, "opening_frame": 3, "frames": [1, 2, 3],
-                 "classification":{"severity":"CRITICAL","confidence":"correlated","revision":7}}
+                 "classification":{"severity":"CRITICAL","confidence":"correlated","revision":8}}
             ]
         });
         if has_change {

@@ -281,31 +281,31 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the retained SYN and SYN-ACK pairs; confirm completed sessions and expected management activity.",
         ),
         (
-            "IDS", "Conflicting DNS responses", "dns.competing_responders", 7, Correlated,
+            "IDS", "Conflicting DNS responses", "dns.competing_responders", 8, Correlated,
             "Compare the query and both replies; verify which resolvers were authorized.",
         ),
         (
-            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 13, Correlated,
+            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 14, Correlated,
             "Compare answer records and response codes; check expected resolver behavior.",
         ),
         (
-            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 13, Heuristic,
+            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 14, Heuristic,
             "Decode both replies before concluding that their answers differ.",
         ),
         (
-            "IDS", "DNS transaction question mismatch", "dns.question_mismatch", 7, Correlated,
+            "IDS", "DNS transaction question mismatch", "dns.question_mismatch", 8, Correlated,
             "Compare the question name, type, and class in the query and reply.",
         ),
         (
-            "IDS", "Unexpected DNS responder", "dns.unexpected_responder", 5, Correlated,
+            "IDS", "Unexpected DNS responder", "dns.unexpected_responder", 6, Correlated,
             "Check the configured resolver and whether a forwarding or failover path was expected.",
         ),
         (
-            "IDS", "DNS reply without observed query", "dns.unmatched_response", 5, Heuristic,
+            "IDS", "DNS reply without observed query", "dns.unmatched_response", 6, Heuristic,
             "Check capture start, packet drops, query-direction visibility, and the DNS correlation window.",
         ),
         (
-            "IDS", "DNS reply correlation ambiguous", "dns.ambiguous_reply", 2, Heuristic,
+            "IDS", "DNS reply correlation ambiguous", "dns.ambiguous_reply", 3, Heuristic,
             "Compare concurrent DNS queries on the same client port and transaction ID before assigning the reply.",
         ),
         (
@@ -313,15 +313,15 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the captured DNS opcode and question count. Check resolver logs for a format error; this does not establish compromise.",
         ),
         (
-            "IDS", "DNS NXDOMAIN burst", "dns.nxdomain_distinct_names", 4, Correlated,
+            "IDS", "DNS NXDOMAIN burst", "dns.nxdomain_distinct_names", 5, Correlated,
             "Review the queried names and client process; search suffixes and misconfiguration can also cause bursts.",
         ),
         (
-            "IDS", "Oversized DNS TXT traffic", "dns.large_txt_answer", 2, Correlated,
+            "IDS", "Oversized DNS TXT traffic", "dns.large_txt_answer", 3, Correlated,
             "Check the queried name and record contents; verification records and mail policy can produce large TXT replies.",
         ),
         (
-            "IDS", "Direct external DNS resolver use", "dns.external_resolver_exchange", 2, Correlated,
+            "IDS", "Direct external DNS resolver use", "dns.external_resolver_exchange", 3, Correlated,
             "Check the configured resolver policy, including approved public resolvers, VPNs and lab address ranges.",
         ),
         (
