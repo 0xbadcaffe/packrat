@@ -20,6 +20,7 @@ fn metrics_do_not_report_unknown_loss_as_zero() {
         capture_truncated_frames: Some(2),
         capture_queue_full_packets: Some(17),
         alert_saving: true,
+        alert_save_failures: 2,
         archive_enabled: true,
         archive_paused: true,
         ..Default::default()
@@ -29,6 +30,7 @@ fn metrics_do_not_report_unknown_loss_as_zero() {
     assert!(known.contains("packrat_capture_truncated_frames_total 2"));
     assert!(known.contains("packrat_capture_queue_full_packets_total 17"));
     assert!(known.contains("packrat_alert_saving 1"));
+    assert!(known.contains("packrat_alert_save_failures_total 2"));
     assert!(known.contains("packrat_archive_paused 1"));
 }
 
@@ -84,6 +86,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
         capture_truncated_frames: Some(2),
         capture_queue_full_packets: Some(17),
         alert_save_failed: true,
+        alert_save_failures: 1,
         archive_enabled: true,
         archive_paused: true,
         archive_alert_evidence_only: true,
@@ -108,6 +111,7 @@ fn health_distinguishes_liveness_from_fresh_capture_and_persistence_status() {
     assert_eq!(health()["capture_queue_full_packets"], 17);
     assert_eq!(health()["alert_saving"], false);
     assert_eq!(health()["alert_save_failed"], true);
+    assert_eq!(health()["alert_save_failures"], 1);
     assert_eq!(health()["archive_paused"], true);
     assert_eq!(health()["archive_pause_reason"], "disk_reserve");
     assert_eq!(health()["archive_usage"]["frames"], 9);

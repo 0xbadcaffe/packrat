@@ -32,7 +32,7 @@ impl App {
                     None
                 }
                 Err(error) => {
-                    core.alert_save_error = Some(error.clone());
+                    core.record_alert_save_failure(error.clone());
                     Some(error)
                 }
             }

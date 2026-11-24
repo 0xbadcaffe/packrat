@@ -68,6 +68,7 @@ pub struct AnalysisCore {
     pub alert_center: AlertCenter,
     pub(crate) alert_jsonl_writer: Option<std::sync::Arc<std::sync::Mutex<crate::storage::alert_jsonl::AlertJsonlWriter>>>,
     pub(crate) alert_save_error: Option<String>,
+    pub(crate) alert_save_failures: u64,
     pub credentials: Vec<CredentialHit>,
     pub hosts: HostInventory,
     pub streams: StreamAssembler,
@@ -97,6 +98,7 @@ impl Default for AnalysisCore {
             alert_center: AlertCenter::default(),
             alert_jsonl_writer: None,
             alert_save_error: None,
+            alert_save_failures: 0,
             credentials: Vec::new(),
             hosts: HostInventory::default(),
             streams: StreamAssembler::default(),
@@ -126,6 +128,11 @@ impl std::fmt::Debug for AnalysisCore {
 }
 
 impl AnalysisCore {
+    pub(crate) fn record_alert_save_failure(&mut self, error: String) {
+        self.alert_save_error = Some(error);
+        self.alert_save_failures = self.alert_save_failures.saturating_add(1);
+    }
+
     pub fn analyze(&mut self, packet: &Packet) -> PacketAnalysis {
         self.analyze_with_history(packet, std::iter::empty())
     }

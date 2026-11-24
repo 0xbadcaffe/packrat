@@ -80,7 +80,7 @@ impl App {
                     core.alert_jsonl_writer = Some(std::sync::Arc::new(std::sync::Mutex::new(writer)));
                     core.alert_save_error = None;
                 }
-                Err(error) => core.alert_save_error = Some(error),
+                Err(error) => core.record_alert_save_failure(error),
             }
         });
     }

@@ -174,7 +174,7 @@ pub(super) fn run(
             if let Err(error) = result {
                 let mut core = shared.0.lock().map_err(|_| "Analysis state poisoned")?;
                 if core.alert_jsonl_writer.as_ref().is_some_and(|active| Arc::ptr_eq(active, &writer)) {
-                    core.alert_save_error = Some(error);
+                    core.record_alert_save_failure(error);
                     core.alert_jsonl_writer = None;
                 }
             }

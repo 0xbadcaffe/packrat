@@ -63,6 +63,7 @@ fn oversized_descriptions_do_not_block_subsequent_alerts() {
     let core = worker.finish(|_| ()).unwrap();
     assert!(core.alert_jsonl_writer.is_some());
     assert!(core.alert_save_error.is_none());
+    assert_eq!(core.alert_save_failures, 0);
     assert_eq!(core.alert_center.items[0].detail.len(), 750_000);
     let records: Vec<serde_json::Value> = std::fs::read_to_string(path).unwrap()
         .lines().map(|row| serde_json::from_str(row).unwrap()).collect();
@@ -89,6 +90,7 @@ fn a_failed_append_disables_saving_without_losing_the_in_memory_alert() {
     let core = worker.finish(|_| ()).unwrap();
     assert!(core.alert_jsonl_writer.is_none());
     assert!(core.alert_save_error.is_some());
+    assert_eq!(core.alert_save_failures, 1);
     assert_eq!(core.alert_center.items.len(), 1);
     assert_eq!(std::fs::metadata(path).unwrap().len(), 0);
 }
