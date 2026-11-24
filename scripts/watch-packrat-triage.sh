@@ -26,6 +26,17 @@ snapshot_validation='
         (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null);
     def valid_current:
         .status != "current" or (valid_scope_and_log and .issues == []);
+    def log_scan_interrupted:
+        .alert_log_integrity |
+        ((.invalid_records | counter) // 0) > 0 or ((.oversized_records | counter) // 0) > 0
+        or .stopped_at_scan_budget == true;
+    def log_scan_complete:
+        if log_scan_interrupted then false
+        elif .alert_log_integrity.stopped_at_limit == true then false
+        elif .alert_log_integrity.stopped_at_limit == false
+            and .alert_log_integrity.invalid_records == 0 and .alert_log_integrity.oversized_records == 0
+            and (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null)
+        then true else null end;
     def mark_backlog_loss:
         if ((.alert_save_backlog_dropped | counter) // 0) > 0 and (.status | IN("current","degraded"))
         then .status = "degraded"
@@ -145,6 +156,7 @@ check_snapshot() {
            alert_save_failures:(if $age >= -5 and $age <= .max_age_seconds then .alert_save_failures | counter else null end),
            alert_save_backlog_dropped:(if $age >= -5 and $age <= .max_age_seconds then .alert_save_backlog_dropped | counter else null end),
            capture_queue_full_packets:(if $age >= -5 and $age <= .max_age_seconds then .capture_queue_full_packets | counter else null end),
+           alert_log_scan_complete:(if $age >= -5 and $age <= .max_age_seconds then log_scan_complete else null end),
            invalid_alert_rows:(if $age >= -5 and $age <= .max_age_seconds
                then .invalid_alert_rows | sample_count else null end),
            duplicate_alert_ids:(if $age >= -5 and $age <= .max_age_seconds
@@ -459,7 +471,7 @@ while :; do
             | alert_ids as $ids | ($ids[-1] // 0) as $seen
             | ([$prior.highest_observed_alert_id, ($prior | alert_ids | last)] | max // 0) as $high
             | (.recent_alerts_at_limit == true or .has_older_alerts == true) as $truncated
-            | ((.invalid_alert_rows // 0) > 0 or (.duplicate_alert_ids // 0) > 0) as $invalid_sample
+            | ((.invalid_alert_rows // 0) > 0 or (.duplicate_alert_ids // 0) > 0 or log_scan_interrupted) as $invalid_sample
             | [$ids[] | select(. > $high)] as $new_ids
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
                 poll_started_at:$started,

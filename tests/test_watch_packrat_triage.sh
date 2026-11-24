@@ -51,7 +51,7 @@ live current 12 "$queue" "$medium" | jq '.socket_context_status="available" | .h
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
 bash "$watch" --check "$state" | jq -e '.status=="current" and .socket_context_status=="available" and .alert_save_failures==2
-    and .alert_save_backlog_dropped==0 and .capture_queue_full_packets==8
+    and .alert_save_backlog_dropped==0 and .capture_queue_full_packets==8 and .alert_log_scan_complete==true
     and (.healthy_capture_seconds | type=="number" and .>=0) and .flow_cache=={retained_summaries:8192,summary_evictions:4}' >/dev/null
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
@@ -88,6 +88,26 @@ jq -se 'map(.status)==["current","degraded","current","degraded"]
     and map(.issues)==[[],["capture_queue_packets_dropped"],[],["capture_queue_counter_regressed"]]
     and .[1].healthy_capture_since==null and .[2].healthy_capture_since==.[2].poll_started_at
     and .[2].capture_queue_full_packets==10' "$scratch/queue-results.jsonl" >/dev/null
+for interruption in '.alert_log_integrity.stopped_at_scan_budget=true' '.alert_log_integrity.invalid_records=1' \
+    '.alert_log_integrity.oversized_records=1'; do
+    gap_state="$scratch/log-gap.json"
+    live degraded 12 '[]' | jq "$interruption" >"$scratch/log-gap-report.json"
+    bash "$watch" --once "$gap_state" -- cat "$scratch/log-gap-report.json" >/dev/null
+    { bash "$watch" --check "$gap_state" || [[ $? == 1 ]]; } |
+        jq -e '.status=="triage_unhealthy" and .alert_log_scan_complete==false and .alert_sample_gap==true' >/dev/null
+    live current 13 '[]' >"$scratch/log-gap-report.json"
+    bash "$watch" --once "$gap_state" -- cat "$scratch/log-gap-report.json" >/dev/null
+    bash "$watch" --check "$gap_state" |
+        jq -e '.status=="current" and .alert_log_scan_complete==true and .alert_sample_gap==true' >/dev/null
+    live current 1 '[]' | jq '.health.capture_id="b"' >"$scratch/log-gap-report.json"
+    bash "$watch" --once "$gap_state" -- cat "$scratch/log-gap-report.json" >/dev/null
+    bash "$watch" --check "$gap_state" |
+        jq -e '.status=="current" and .alert_log_scan_complete==true and .alert_sample_gap==false' >/dev/null
+done
+live current 14 '[]' "$medium" | jq '.alert_log_integrity.stopped_at_limit=true | .has_more_alerts=true' >"$scratch/bounded-report.json"
+bash "$watch" --once "$scratch/bounded-state.json" -- cat "$scratch/bounded-report.json" >/dev/null
+bash "$watch" --check "$scratch/bounded-state.json" |
+    jq -e '.status=="current" and .alert_log_scan_complete==false and .alert_sample_gap==true' >/dev/null
 for marker in unavailable not_recorded not_checked not_configured 'private malformed value'; do
     jq --arg marker "$marker" '.socket_context_status=$marker' "$report" >"$scratch/socket-report.json"
     bash "$watch" --once "$failed_state" -- cat "$scratch/socket-report.json" >/dev/null
@@ -106,7 +126,7 @@ bash "$watch" --check "$failed_state" | jq -e '.status=="current" and .evidence_
 jq '.updated_at=(now - 120 | todateiso8601)' "$failed_state" >"$scratch/old-evidence-error.json"
 { bash "$watch" --check "$scratch/old-evidence-error.json" || [[ $? == 1 ]]; } |
     jq -e '.status=="snapshot_stale" and .evidence_check_failures==null and .socket_context_status==null
-        and .alert_save_failures==null and .alert_save_backlog_dropped==null' >/dev/null
+        and .alert_save_failures==null and .alert_save_backlog_dropped==null and .alert_log_scan_complete==null' >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$state" >"$scratch/stale.json"
 check_status "$scratch/stale.json" snapshot_stale 1
 jq '.updated_at=(now + 120 | todateiso8601)' "$state" >"$scratch/future.json"
