@@ -149,17 +149,25 @@ impl AlertFlow {
             if let Some((source, destination)) = crate::analysis::stream::tcp_port_pair(pkt) {
                 (AlertTransport::Tcp, source, destination)
             } else {
-                let (source, destination, _) = crate::analysis::dns_transactions::udp_payload(pkt)?;
+                let (source, destination) = crate::analysis::dns_transactions::udp_port_pair(pkt)?;
                 (AlertTransport::Udp, source, destination)
             };
+        // The general decoder can leave a snaplen-short IP packet undecoded.
+        // The transport readers above still require complete headers and valid capture lengths.
+        let undecoded_truncation = pkt.capture.as_ref().is_some_and(|capture| capture.truncated())
+            && pkt.protocol == "RAW" && pkt.src_port.is_none() && pkt.dst_port.is_none()
+            && pkt.src == "?.?.?.?" && pkt.dst == "?.?.?.?";
         if source_port == 0 || destination_port == 0
-            || pkt.src_port != Some(source_port) || pkt.dst_port != Some(destination_port)
+            || (!undecoded_truncation
+                && (pkt.src_port != Some(source_port) || pkt.dst_port != Some(destination_port)))
         {
             return None;
         }
         let (offset, ether_type) = ethernet_network_header(&pkt.bytes)?;
         let (source, destination) = ip_header_endpoints(&pkt.bytes, offset, ether_type)?;
-        if pkt.src.parse::<std::net::IpAddr>().ok()? != source || pkt.dst.parse::<std::net::IpAddr>().ok()? != destination {
+        if !undecoded_truncation
+            && (pkt.src.parse::<std::net::IpAddr>().ok()? != source || pkt.dst.parse::<std::net::IpAddr>().ok()? != destination)
+        {
             return None;
         }
         Some(Self {

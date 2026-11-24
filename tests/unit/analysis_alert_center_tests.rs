@@ -25,6 +25,16 @@ fn saved_tcp_tuple_requires_recorded_ipv4_addresses_and_ports_to_agree_with_wire
         change(&mut packet);
         assert!(AlertFlow::from_packet(&packet).is_none());
     }
+
+    frame[16..18].copy_from_slice(&50_u16.to_be_bytes());
+    let truncated = crate::net::parser::parse_captured(&frame, 2, crate::net::packet::CaptureMetadata {
+        timestamp: None, captured_length: 54, wire_length: 64, link_type: 1,
+        section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+    }).unwrap();
+    assert_eq!(AlertFlow::from_packet(&truncated), Some(flow));
+    let mut conflicting = truncated;
+    conflicting.src = "203.0.113.1".into();
+    assert!(AlertFlow::from_packet(&conflicting).is_none());
 }
 
 #[test]
@@ -49,6 +59,39 @@ fn saved_udp_tuple_compares_ipv6_addresses_without_requiring_the_same_spelling()
     assert_eq!(flow.destination.ip(), std::net::IpAddr::V6(destination));
     packet.dst = "2001:db8::3".into();
     assert!(AlertFlow::from_packet(&packet).is_none());
+}
+
+#[test]
+fn saved_udp_tuple_uses_complete_header_without_requiring_captured_payload() {
+    use crate::net::{packet::CaptureMetadata, parser::parse_captured};
+
+    let mut frame = [0u8; 42];
+    frame[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    frame[14] = 0x45;
+    frame[16..18].copy_from_slice(&48_u16.to_be_bytes());
+    frame[23] = 17;
+    frame[26..30].copy_from_slice(&[192, 0, 2, 1]);
+    frame[30..34].copy_from_slice(&[198, 51, 100, 2]);
+    frame[34..36].copy_from_slice(&40_000_u16.to_be_bytes());
+    frame[36..38].copy_from_slice(&53_u16.to_be_bytes());
+    frame[38..40].copy_from_slice(&28_u16.to_be_bytes());
+    let capture = CaptureMetadata {
+        timestamp: None, captured_length: 42, wire_length: 62, link_type: 1,
+        section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+    };
+    let packet = parse_captured(&frame, 1, capture.clone()).unwrap();
+    assert!(crate::analysis::dns_transactions::udp_payload(&packet).is_none());
+    let flow = AlertFlow::from_packet(&packet).unwrap();
+    assert_eq!(flow.transport, AlertTransport::Udp);
+    assert_eq!(flow.source, "192.0.2.1:40000".parse().unwrap());
+    assert_eq!(flow.destination, "198.51.100.2:53".parse().unwrap());
+
+    let unknown_length = crate::net::parser::parse_ethernet(&frame, 1, 0.0);
+    assert!(AlertFlow::from_packet(&unknown_length).is_none());
+    let short_wire = parse_captured(&frame, 1, CaptureMetadata { wire_length: 61, ..capture.clone() }).unwrap();
+    assert!(AlertFlow::from_packet(&short_wire).is_none());
+    let partial_header = parse_captured(&frame[..41], 1, CaptureMetadata { captured_length: 41, ..capture }).unwrap();
+    assert!(AlertFlow::from_packet(&partial_header).is_none());
 }
 
 #[test]
