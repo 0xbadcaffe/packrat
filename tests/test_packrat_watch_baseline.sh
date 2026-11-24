@@ -11,7 +11,7 @@ jq -nc '{
     build:{record_type:"verified_capture_build",interface:"wlan1",sha256:("a"*64),
            scope:{capture_id:"a",session_id:"one"},capture_run_id:"run-a",
            packets:2500,observed_at:"2026-11-23T11:02:00Z"},
-    coverage:{record_type:"capture_coverage_report",status:"sampled",coverage_policy:"continuous_journal_v3",
+    coverage:{record_type:"capture_coverage_report",status:"sampled",coverage_policy:"continuous_journal_v4",
               scope:{capture_id:"a",session_id:"one"},
               first_record_at:"2026-11-23T11:00:00Z",last_record_at:"2026-11-23T11:01:00Z",
               scoped_records:2,healthy_intervals:1,excluded_intervals:0,healthy_seconds:60,
@@ -68,9 +68,9 @@ jq 'del(.coverage.coverage_policy)' "$before" > "$fixture"
 bash "$tool" "$fixture" "$after" | jq -e '
     .status == "coverage_policy_unverified" and .before.coverage_policy == null
     and .observed_rate_delta_per_10000_packets == null' >/dev/null
-jq '.coverage.coverage_policy = "continuous_journal_v2"' "$before" > "$fixture"
+jq '.coverage.coverage_policy = "continuous_journal_v3"' "$before" > "$fixture"
 bash "$tool" "$fixture" "$after" | jq -e '
-    .status == "coverage_policy_unverified" and .before.coverage_policy == "continuous_journal_v2"
+    .status == "coverage_policy_unverified" and .before.coverage_policy == "continuous_journal_v3"
     and .before.openings_per_10000_packets == null and .observed_rate_delta_per_10000_packets == null' >/dev/null
 jq '.coverage.alert_comparable_intervals = 0 | .coverage.alert_comparable_packets = 0
     | .coverage.observed_openings = null' "$after" > "$fixture"
@@ -150,7 +150,7 @@ jq '.packets += 15 | .observed_at = "2026-11-23T11:02:01Z"' "$tmp/build-before" 
 jq -nc '
     {record_type:"capture_triage_watch",status:"current",capture_id:"a",session_id:"one",
      updated_at:"2026-11-23T11:00:00Z",buffer_drops:0,packets:100,capture_queue_full_packets:0,truncated_frames:0,
-     packet_counter_gap:false,healthy_capture_since:1,alert_sample_gap:false,link_decodable:true,alert_saving:true,
+     packet_counter_gap:false,healthy_capture_since:1,alert_sample_gap:false,link_decodable:true,alert_saving:true,alert_save_failures:0,
      alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_scan_budget:null},
      highest_observed_alert_id:0,checkpoint:true,journal_writer:"one",journal_sequence:1} as $initial
     | $initial, ($initial | .updated_at = "2026-11-23T11:01:00Z" | .packets = 2100
@@ -163,7 +163,7 @@ record() {
 record "$tmp/recorded"
 [[ $(stat -c %a -- "$tmp/recorded") == 600 ]]
 jq -e '.build.packets == 2515 and .coverage.observed_openings == 1
-    and .coverage.coverage_policy == "continuous_journal_v3"
+    and .coverage.coverage_policy == "continuous_journal_v4"
     and .coverage.alert_comparable_packets == 2000 and .coverage.alert_comparable_seconds == 60' "$tmp/recorded" >/dev/null
 bash "$tool" "$before" "$tmp/recorded" | jq -e '.status == "same_capture"' >/dev/null
 
