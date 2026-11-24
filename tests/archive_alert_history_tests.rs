@@ -214,6 +214,7 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     assert_eq!(report[0]["evidence_frame_count"], 2);
     assert_eq!(report[0]["hit_count"], 2);
     assert_eq!(report[0]["rule_id"], "scan.horizontal");
+    assert_eq!(report[0]["reader_rule_revision"], report[0]["revision"]);
     assert_eq!(report[0]["review_limitations"], json!([]));
     assert!(report[0].get("packet_refs").is_none());
     assert!(report[0].get("bytes").is_none());
@@ -333,10 +334,40 @@ fn legacy_history_marks_unverified_scope_without_inheriting_modern_rule_provenan
     let report: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report[0]["severity"], "CRITICAL");
     assert_eq!(report[0]["rule_id"], Value::Null);
+    assert!(report[0].get("reader_rule_revision").is_none());
     assert_eq!(report[0]["verify"], Value::Null);
     assert_eq!(report[0]["review_limitations"], json!([
         "capture_scope_not_recorded", "rule_provenance_not_recorded", "no_packet_references"
     ]));
+}
+
+#[test]
+fn history_compares_revisions_without_reclassifying_saved_alerts() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("alerts.jsonl");
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "HIGH", "High-entropy outbound transfer", "historical finding");
+    let mut alert = center.items[0].clone();
+    alert.capture_id = Some("capture-a".into());
+    let provenance = alert.provenance.as_mut().unwrap();
+    let reader = provenance.revision;
+    provenance.revision -= 1;
+    let mut unknown = alert.clone();
+    unknown.id += 1;
+    unknown.provenance.as_mut().unwrap().rule_id = "custom.other".into();
+    let rows = [alert, unknown].map(|alert| json!({"schema_version":1,"record_type":"alert","session_id":"lab","alert":alert}).to_string());
+    std::fs::write(&log, rows.join("\n") + "\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive")).arg("--alerts").arg(log).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let rows: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let old = rows.iter().find(|row| row["alert_id"] == 1).unwrap();
+    assert_eq!(old["severity"], "HIGH");
+    assert_eq!(old["revision"], reader - 1);
+    assert_eq!(old["reader_rule_revision"], reader);
+    assert_eq!(old["review_limitations"], json!(["rule_revision_differs_from_reader"]));
+    let custom = rows.iter().find(|row| row["alert_id"] == 2).unwrap();
+    assert!(custom.get("reader_rule_revision").is_none());
+    assert_eq!(custom["review_limitations"], json!([]));
 }
 
 #[test]

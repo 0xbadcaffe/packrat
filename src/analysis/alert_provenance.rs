@@ -364,5 +364,9 @@ pub(super) fn lookup(source: &str, title: &str) -> Option<AlertProvenance> {
 }
 
 pub fn is_registered_rule_id(id: &str) -> bool {
-    RULES.iter().any(|&(_, _, rule_id, ..)| rule_id == id)
+    registered_rule_revision(id).is_some()
+}
+
+pub(crate) fn registered_rule_revision(id: &str) -> Option<u16> {
+    RULES.iter().find_map(|&(_, _, rule_id, revision, ..)| (rule_id == id).then_some(revision))
 }

@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::{collections::HashSet, fs::{File, OpenOptions}, io::{Read, Seek, SeekFrom}, ops::RangeInclusive, path::{Path, PathBuf}};
 
 use crate::analysis::alert_center::{AlertDisposition, AlertFlow, CREDENTIAL_ALERT_DETAIL, MAX_ALERT_PACKET_REFS};
-use crate::analysis::alert_provenance::{EvidenceConfidence, rule_id_for};
+use crate::analysis::alert_provenance::{EvidenceConfidence, registered_rule_revision, rule_id_for};
 use super::alert_jsonl::{ExistingAlertRecord, MAX_ALERT_LINE};
 use super::alert_evidence::evidence_frame_set_sha256;
 use super::packet_archive::valid_capture_id;
@@ -76,6 +76,8 @@ pub struct AlertHistoryEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub legacy_rule_hint: Option<&'static str>,
     pub revision: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reader_rule_revision: Option<u16>,
     pub confidence: Option<EvidenceConfidence>,
     pub verify: Option<String>,
     pub review_limitations: Vec<&'static str>,
@@ -217,12 +219,18 @@ fn filtered_alerts_report(
         let evidence_frame_count = evidence_frames.len();
         let credential = alert.source == "CREDENTIAL";
         let provenance = alert.provenance.as_ref().filter(|_| !credential);
+        let reader_rule_revision = provenance.and_then(|rule| registered_rule_revision(&rule.rule_id));
         let mut review_limitations = Vec::new();
         if alert.capture_id.is_none() {
             review_limitations.push("capture_scope_not_recorded");
         }
         if alert.provenance.is_none() {
             review_limitations.push("rule_provenance_not_recorded");
+        }
+        if let (Some(recorded), Some(reader)) = (provenance, reader_rule_revision)
+            && recorded.revision != reader
+        {
+            review_limitations.push("rule_revision_differs_from_reader");
         }
         if credential {
             review_limitations.push("credential_metadata_redacted");
@@ -259,6 +267,7 @@ fn filtered_alerts_report(
             rule_id: provenance.map(|rule| limited(&rule.rule_id, 128)),
             legacy_rule_hint,
             revision: provenance.map(|rule| rule.revision),
+            reader_rule_revision,
             confidence: provenance.map(|rule| rule.confidence),
             verify: provenance.map(|rule| limited(&rule.verification_hint, 240)),
             review_limitations,
