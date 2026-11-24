@@ -84,6 +84,49 @@ fn tcp_header_evidence_uses_declared_lengths_after_complete_ip_headers() {
 }
 
 #[test]
+fn malformed_tcp_findings_do_not_share_review_state_across_paths_ports_or_reasons() {
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+    use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
+
+    let make = |no, vlan, interface_id, port: u16, offset| {
+        let mut raw = ipv4_tcp_packet(no, 100, 0x18, &[]).bytes;
+        raw[36..38].copy_from_slice(&port.to_be_bytes());
+        raw[46] = offset;
+        raw.splice(12..12, [0x81, 0, 0, vlan]);
+        let mut packet = parse_ethernet(&raw, no, no as f64);
+        packet.capture = Some(CaptureMetadata {
+            timestamp: Some(CaptureTimestamp { ticks: no, resolution: TimestampResolution::Decimal(0), offset_seconds: 0 }),
+            captured_length: raw.len() as u32, wire_length: raw.len() as u32,
+            link_type: 1, section_id: 0, interface_id, interface_name: None, comments: Vec::new(),
+        });
+        packet
+    };
+    let mut core = AnalysisCore::default();
+    core.analyze(&make(1, 10, 0, 443, 0x40));
+    let first = core.alert_center.items.iter().find(|alert| alert.title == "Malformed TCP header").unwrap();
+    let id = first.id;
+    assert!(core.alert_center.set_disposition(id, None, AlertDisposition::Benign));
+    for packet in [
+        make(2, 10, 0, 443, 0x40), make(3, 20, 0, 443, 0x40),
+        make(4, 10, 1, 443, 0x40), make(5, 10, 0, 445, 0x40),
+        make(6, 10, 0, 443, 0x60),
+    ] {
+        core.analyze(&packet);
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == "Malformed TCP header").collect();
+    assert_eq!(alerts.len(), 5);
+    assert_eq!(alerts[0].hit_count, 2);
+    assert_eq!(alerts[0].packet_refs, [1, 2]);
+    assert_eq!(alerts[0].disposition, AlertDisposition::Benign);
+    for (alert, frame) in alerts[1..].iter().zip(3..=6) {
+        assert_eq!(alert.packet_refs, [frame]);
+        assert_eq!(alert.disposition, AlertDisposition::New);
+    }
+    assert!(alerts[3].detail.contains("10.0.0.5:445"));
+    assert!(alerts[4].detail.contains("exceeds the IP transport length"));
+}
+
+#[test]
 fn detects_tcp_payload_continuing_after_reset() {
     let mut core = AnalysisCore::default();
     core.analyze(&ipv4_tcp_packet(1, 90, 0x18, b"previous"));

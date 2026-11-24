@@ -49,7 +49,7 @@ fn tcp_header_replay_distinguishes_proven_invalid_offsets_from_truncation() {
             case["opening_frames"] = json!({(rule):[1]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule,"opening_frame":1,"frames":[1],
-                "classification":{"severity":"HIGH","confidence":"direct_observation","revision":3},
+                "classification":{"severity":"HIGH","confidence":"direct_observation","revision":4},
             }]);
         }
         cases.push(case);

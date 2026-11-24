@@ -133,7 +133,12 @@ pub(super) struct TcpSegment<'a> {
 }
 
 pub(super) enum TcpFrame<'a> {
-    Malformed(&'static str),
+    Malformed {
+        reason: &'static str,
+        source: IpAddr,
+        destination: IpAddr,
+        ports: Option<(u16, u16)>,
+    },
     Segment(TcpSegment<'a>),
 }
 

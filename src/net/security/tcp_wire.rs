@@ -6,16 +6,22 @@ pub(super) fn parse_tcp_transport(
     source: IpAddr,
     destination: IpAddr,
 ) -> Option<TcpFrame<'_>> {
-    if declared_len < 20 {
-        return Some(TcpFrame::Malformed("IP payload is shorter than a minimum TCP header"));
-    }
     let captured = &transport[..transport.len().min(declared_len)];
+    let malformed = |reason| Some(TcpFrame::Malformed {
+        reason,
+        source,
+        destination,
+        ports: captured.first_chunk::<4>().map(|bytes| (u16_be_at(bytes, 0), u16_be_at(bytes, 2))),
+    });
+    if declared_len < 20 {
+        return malformed("IP payload is shorter than a minimum TCP header");
+    }
     let header_len = usize::from(captured.get(12)? >> 4) * 4;
     if header_len < 20 {
-        return Some(TcpFrame::Malformed("TCP data offset is smaller than 20 bytes"));
+        return malformed("TCP data offset is smaller than 20 bytes");
     }
     if header_len > declared_len {
-        return Some(TcpFrame::Malformed("TCP data offset exceeds the IP transport length"));
+        return malformed("TCP data offset exceeds the IP transport length");
     }
     if captured.len() < 20 {
         return None;

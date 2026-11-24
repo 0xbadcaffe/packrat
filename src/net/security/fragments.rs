@@ -144,12 +144,19 @@ impl SecurityEngine {
         }
         let segment = match parse_ipv4_tcp_frame(&pkt.bytes).or_else(|| parse_ipv6_tcp_frame(&pkt.bytes)) {
             Some(TcpFrame::Segment(segment)) => segment,
-            Some(TcpFrame::Malformed(reason)) => {
-                self.push_ids(IdsAlert {
-                    pkt_no: pkt.no,
-                    signature: "Malformed TCP header",
-                    severity: Severity::High,
-                    detail: format!("{reason} from {} to {}", pkt.src, pkt.dst),
+            Some(TcpFrame::Malformed { reason, source, destination, ports }) => {
+                let endpoints = ports.map_or_else(|| format!("{source} to {destination}"), |(src, dst)| {
+                    format!("{} to {}", SocketAddr::new(source, src), SocketAddr::new(destination, dst))
+                });
+                self.push_ids_finding(IdsFinding {
+                    alert: IdsAlert {
+                        pkt_no: pkt.no,
+                        signature: "Malformed TCP header",
+                        severity: Severity::High,
+                        detail: format!("{reason} from {endpoints}"),
+                    },
+                    related_packets: Vec::new(),
+                    correlation_key: Some(format!("{:?}:{endpoints}:{reason}", service_scope(pkt))),
                 });
                 return UnknownOrNew;
             }
