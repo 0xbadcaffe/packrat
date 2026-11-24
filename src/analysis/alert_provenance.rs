@@ -173,7 +173,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the marking with the port's QoS trust policy and switch counters before inferring priority misuse.",
         ),
         (
-            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 13, Heuristic,
+            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 14, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
         (

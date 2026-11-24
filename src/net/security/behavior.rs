@@ -336,13 +336,17 @@ impl SecurityEngine {
     }
 
     fn check_periodic_traffic(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
-        let (Some(source_port), Some(destination_port)) = (pkt.src_port, pkt.dst_port) else {
+        let (Some(source_port @ 1..), Some(destination_port @ 1..)) = (pkt.src_port, pkt.dst_port) else {
             return;
         };
         let ports = (source_port, destination_port);
-        let (transport, payload_length) = if let Some((_, length)) = crate::analysis::stream::tcp_data_ports_and_length(pkt).filter(|(pair, _)| *pair == ports) {
-            ("TCP", length)
-        } else if let Some((_, _, payload)) = crate::analysis::dns_transactions::udp_payload(pkt).filter(|(src, dst, _)| (*src, *dst) == ports) {
+        let (transport, payload_length) = if let Some((_, payload)) =
+            crate::analysis::stream::tcp_payload_with_ack(pkt, ports).filter(|(_, payload)| !payload.is_empty())
+        {
+            ("TCP", payload.len())
+        } else if let Some((_, _, payload)) = crate::analysis::dns_transactions::udp_payload(pkt)
+            .filter(|(src, dst, payload)| (*src, *dst) == ports && !payload.is_empty())
+        {
             ("UDP", payload.len())
         } else {
             return;

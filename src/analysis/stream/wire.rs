@@ -51,13 +51,9 @@ pub(crate) fn tcp_port_pair(packet: &Packet) -> Option<(u16, u16)> {
 }
 
 pub(crate) fn tcp_data_port_pair(packet: &Packet) -> Option<(u16, u16)> {
-    tcp_data_ports_and_length(packet).map(|(ports, _)| ports)
-}
-
-pub(crate) fn tcp_data_ports_and_length(packet: &Packet) -> Option<((u16, u16), usize)> {
     let view = tcp_view(packet)?;
     if view.payload == view.end { return None; }
-    Some((ports_for_view(packet, view)?, view.end - view.payload))
+    ports_for_view(packet, view)
 }
 
 fn ports_for_view(packet: &Packet, view: TcpView) -> Option<(u16, u16)> {

@@ -2,6 +2,25 @@ use packrat_tui::{analysis::alert_center::AlertDisposition, engine::AnalysisCore
 
 use super::periodic_datagram;
 
+#[rstest::rstest]
+#[case(42, 50000)]
+#[case(120, 0)]
+fn periodic_udp_requires_payload_and_nonzero_ports(#[case] size: usize, #[case] port: u16) {
+    let mut core = AnalysisCore::default();
+    for frame in 1..=7 {
+        core.analyze(&periodic_datagram(frame, frame as f64 * 10.0, size, port, false));
+    }
+    assert!(!core.alert_center.items.iter().any(|alert| alert.title == "Periodic fixed-size traffic"));
+
+    for frame in 8..=14 {
+        core.analyze(&periodic_datagram(frame, frame as f64 * 10.0, 120, 50000, false));
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter()
+        .filter(|alert| alert.title == "Periodic fixed-size traffic").collect();
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].packet_refs, (8..=14).collect::<Vec<_>>());
+}
+
 #[test]
 fn reverse_traffic_does_not_hide_a_new_periodic_episode() {
     let mut core = AnalysisCore::default();
