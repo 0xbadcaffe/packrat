@@ -13,6 +13,7 @@ analyzer_candidate="$scratch/candidate"
 fail_replace=false
 fail_destination=''
 fail_cleanup=false
+fail_receipt=false
 sudo() {
     [[ $1 == -n ]] || return 1
     shift
@@ -26,6 +27,7 @@ sudo() {
             ;;
         mv) if "$fail_replace" || [[ ${*: -1} == "$fail_destination" ]]; then return 1; fi; command "$@" ;;
         rm) if "$fail_cleanup" && [[ ${*: -1} == */packrat-analyze.next ]]; then return 1; fi; command "$@" ;;
+        tee) if "$fail_receipt"; then return 1; fi; command "$@" ;;
         mktemp|cmp|sha256sum|test|env|find|stat) command "$@" ;;
         *) return 1 ;;
     esac
@@ -110,6 +112,21 @@ fail_replace=false
 printf '%s\n' '#!/usr/bin/env bash' 'echo independent-update' >"$installed_analyzer"
 if promote_companions; then exit 1; fi
 [[ $("$installed_analyzer") == independent-update ]]
+capture_stamp='{"pid":"42","capture_run_id":"run-a","capture_id":"capture-a","alert_session_id":"session-a"}'
+primary_capture_stamp() { printf '%s\n' "$capture_stamp"; }
+interface=wlan1
+(
+    verify_archive_promotion() { capture_stamp=$(jq -c '.capture_id="other"' <<< "$capture_stamp"); }
+    if update_companions_only 2>"$scratch/capture-changed"; then exit 1; fi
+    grep -Fq 'Capture continuity or companion receipt could not be verified' "$scratch/capture-changed"
+    cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
+    [[ ! -e $backup_dir/verified-companions.json ]]
+)
+fail_receipt=true
+if update_companions_only 2>"$scratch/receipt-failed"; then exit 1; fi
+cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
+[[ ! -e $backup_dir/verified-companions.json ]]
+fail_receipt=false
 update_companions_only >"$scratch/result"
 grep -Fq 'Companions updated; capture unchanged' "$scratch/result"
 cmp -s -- "$analyzer_candidate" "$installed_analyzer"
@@ -117,6 +134,14 @@ cmp -s -- "$installed" "$backup_dir/packrat"
 cmp -s -- "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl"
 [[ $("$backup_dir/packrat-analyze") == independent-update ]]
 [[ ! -e $backup_dir/packrat-analyze.next ]]
+new_hash=$(sha256sum -- "$installed_analyzer")
+old_hash=$(sha256sum -- "$backup_dir/packrat-analyze")
+jq -e --arg new "${new_hash%% *}" --arg old "${old_hash%% *}" '
+    .record_type=="verified_companion_rollout" and .capture_pid=="42" and .capture_run_id=="run-a"
+    and .interface=="wlan1" and .scope=={capture_id:"capture-a",session_id:"session-a"}
+    and .companions==[{tool:"packrat-analyze",previous_sha256:$old,sha256:$new}]
+' "$backup_dir/verified-companions.json" >/dev/null
+[[ $(stat -c %a -- "$backup_dir/verified-companions.json") == 600 ]]
 update_companions_only >"$scratch/result"
 grep -Fq 'Candidate is already installed; capture unchanged' "$scratch/result"
 

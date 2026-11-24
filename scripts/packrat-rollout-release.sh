@@ -42,15 +42,20 @@ identify_capture_build() {
          interface:$interface,scope:{capture_id,session_id:.alert_session_id},capture_run_id,packets:$packets,sha256:$sha256}' <<< "$before"
 }
 
-write_capture_receipt() {
-    local proof staged receipt="$backup_dir/verified-capture.json"
-    proof=$(identify_capture_build) || return 1
-    staged=$(sudo -n mktemp "$backup_dir/.verified-capture.XXXXXXXX") || return 1
+publish_rollout_receipt() {
+    local receipt=$1 proof=$2 staged
+    staged=$(sudo -n mktemp "$backup_dir/.receipt.XXXXXXXX") || return 1
     if ! printf '%s\n' "$proof" | sudo -n tee "$staged" >/dev/null ||
        ! sudo -n mv -fT -- "$staged" "$receipt"; then
         sudo -n rm -f -- "$staged"
         return 1
     fi
+}
+
+write_capture_receipt() {
+    local proof receipt="$backup_dir/verified-capture.json"
+    proof=$(identify_capture_build) || return 1
+    publish_rollout_receipt "$receipt" "$proof" || return 1
     printf 'Verified capture receipt: %s\n' "$receipt"
 }
 
@@ -268,9 +273,41 @@ verify_archive_promotion() {
     triage_after=$(date -u +%s) && await_primary_watcher "${1:-0}" "${2:-0}"
 }
 
+write_companion_receipt() {
+    local capture=$1 current tool backup before after proof timestamp receipt="$backup_dir/verified-companions.json"
+    local hashes='[]'
+    shift
+    for tool in "$@"; do
+        backup="$backup_dir/${tool##*/}"
+        sudo -n cmp -s -- "$backup.next" "$tool" || return 1
+        before=$(sudo -n sha256sum -- "$backup") || return 1
+        after=$(sha256sum -- "$tool") || return 1
+        before=${before%% *} after=${after%% *}
+        [[ $before =~ ^[0-9a-f]{64}$ && $after =~ ^[0-9a-f]{64}$ ]] || return 1
+        hashes=$(jq -c --arg tool "${tool##*/}" --arg before "$before" --arg after "$after" '
+            . + [{tool:$tool,previous_sha256:$before,sha256:$after}]
+        ' <<< "$hashes") || return 1
+    done
+    current=$(primary_capture_stamp) || return 1
+    [[ $current == "$capture" ]] || return 1
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ) || return 1
+    proof=$(jq -ce --arg interface "$interface" --arg observed "$timestamp" --argjson companions "$hashes" '
+        select((.capture_run_id | strings | length > 0) and (.capture_id | strings | length > 0)
+            and (.alert_session_id | strings | length > 0) and ($companions | length > 0))
+        | {record_type:"verified_companion_rollout",observed_at:$observed,interface:$interface,
+           capture_pid:.pid,capture_run_id,scope:{capture_id,session_id:.alert_session_id},companions:$companions}
+    ' <<< "$capture") || return 1
+    publish_rollout_receipt "$receipt" "$proof" || return 1
+    printf 'Verified companions receipt: %s\n' "$receipt"
+}
+
 promote_companions() {
-    local tool proposed destination previous
+    local tool proposed destination previous current original_capture=${3-}
     local -a selected=() promoted=()
+    if [[ -n $original_capture ]]; then
+        current=$(primary_capture_stamp) || return 1
+        [[ $current == "$original_capture" ]] || { error "Capture changed before companion promotion"; return 1; }
+    fi
     # Check all installed companions before changing any of them.
     for tool in "${companion_tools[@]}"; do
         proposed="${tool}_candidate" destination="installed_$tool"
@@ -292,6 +329,11 @@ promote_companions() {
         restore_companions "${promoted[@]}"
         return 1
     fi
+    if [[ -n $original_capture ]] && ! write_companion_receipt "$original_capture" "${promoted[@]}"; then
+        error "Capture continuity or companion receipt could not be verified; restoring companion binaries"
+        restore_companions "${promoted[@]}"
+        return 1
+    fi
     for destination in "${promoted[@]}"; do
         previous="$backup_dir/${destination##*/}"
         sudo -n rm -f -- "$previous.next" || error "Staged companion cleanup failed; inspect $previous.next"
@@ -300,11 +342,13 @@ promote_companions() {
 }
 
 update_companions_only() {
-    local tool proposed destination
+    local tool proposed destination capture
     for tool in "${companion_tools[@]}"; do
         proposed="${tool}_candidate" destination="installed_$tool"
         if [[ -n ${!proposed} ]] && ! cmp -s -- "${!proposed}" "${!destination}"; then
-            create_rollout_backup && stage_companion_updates && promote_companions "$allow_historical_drops" || return 1
+            capture=$(primary_capture_stamp) || return 1
+            create_rollout_backup && stage_companion_updates &&
+                promote_companions "$allow_historical_drops" 0 "$capture" || return 1
             printf '%s\n' 'Companions updated; capture unchanged'
             return 0
         fi
