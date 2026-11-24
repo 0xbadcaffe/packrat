@@ -14,6 +14,7 @@ fail_replace=false
 fail_destination=''
 fail_cleanup=false
 fail_receipt=false
+append_alert_on_copy=false
 sudo() {
     [[ $1 == -n ]] || return 1
     shift
@@ -22,7 +23,10 @@ sudo() {
             if [[ $2 == -d ]]; then
                 command install -d -m 0700 -- "${*: -1}"
             else
-                command install -m "$7" -- "${@: -2}"
+                command install -m "$7" -- "${@: -2}" || return 1
+                if "$append_alert_on_copy" && [[ ${*: -2:1} == "$data_dir/alerts.jsonl" ]]; then
+                    printf '%s\n' 'new alert' >> "$data_dir/alerts.jsonl"
+                fi
             fi
             ;;
         mv) if "$fail_replace" || [[ ${*: -1} == "$fail_destination" ]]; then return 1; fi; command "$@" ;;
@@ -80,6 +84,25 @@ cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
     if data_dir="$linked_data" backup_inventory; then exit 1; fi
 )
 (
+    large_data="$scratch/large-log"
+    mkdir -- "$large_data"
+    truncate -s 2097152 -- "$large_data/alerts.jsonl"
+    backup_limit_mib=1
+    backup_reserve_mib=1
+    data_dir="$large_data" backup_space_ready --companions-only
+    if data_dir="$large_data" backup_space_ready 2>"$scratch/full-backup-budget"; then exit 1; fi
+    grep -Fq 'Rollout backup budget would be exceeded' "$scratch/full-backup-budget"
+)
+(
+    companion_candidates_ready() { :; }
+    preflight() { :; }
+    backup_space_ready() { [[ $1 == --companions-only ]]; }
+    main --check "$installed" wlan1
+    main --check "$installed" wlan1 --companions-only
+    if main --check "$analyzer_candidate" wlan1 2>"$scratch/full-budget-route"; then exit 1; fi
+    grep -Fq 'Insufficient or unverified free space' "$scratch/full-budget-route"
+)
+(
     baseline_recorder="$scratch/recorder"
     triage_state="$scratch/triage.json"
     interface=wlan1
@@ -127,11 +150,13 @@ if update_companions_only 2>"$scratch/receipt-failed"; then exit 1; fi
 cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
 [[ ! -e $backup_dir/verified-companions.json ]]
 fail_receipt=false
+append_alert_on_copy=true
 update_companions_only >"$scratch/result"
+append_alert_on_copy=false
 grep -Fq 'Companions updated; capture unchanged' "$scratch/result"
 cmp -s -- "$analyzer_candidate" "$installed_analyzer"
-cmp -s -- "$installed" "$backup_dir/packrat"
-cmp -s -- "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl"
+[[ ! -e $backup_dir/packrat && ! -e $backup_dir/alerts.jsonl ]]
+[[ $(<"$data_dir/alerts.jsonl") == 'alert evidence' ]]
 [[ $("$backup_dir/packrat-analyze") == independent-update ]]
 [[ ! -e $backup_dir/packrat-analyze.next ]]
 new_hash=$(sha256sum -- "$installed_analyzer")

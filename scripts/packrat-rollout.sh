@@ -479,20 +479,21 @@ main() {
     fi
     companion_candidates_ready || { error "Companion candidate or installed rollback binary is not usable"; return 1; }
     preflight || return 1
-    if ! backup_space_ready "${4-}"; then
-        error "Insufficient or unverified free space for rollout backups and staging; current capture not stopped"
-        return 1
-    fi
     if [[ ${4-} == --companions-only ]] && { [[ -n $retain_rule || -n $remove_rule ]] || ! cmp -s -- "$candidate" "$installed"; }; then
         error "Companion-only rollout requires the installed capture binary and no rule changes; capture unchanged"; return 1
     fi
+    local backup_mode=${4-}
+    if ! archive_policy_changes && cmp -s -- "$candidate" "$installed"; then backup_mode=--companions-only; fi
+    if ! backup_space_ready "$backup_mode"; then
+        error "Insufficient or unverified free space for rollout backups and staging; current capture not stopped"
+        return 1
+    fi
     if [[ $mode == --check ]]; then
         printf 'Preflight passed for %s; no changes made\n' "$interface"
-    elif [[ ${4-} == --companions-only ]] || { ! archive_policy_changes && cmp -s "$candidate" "$installed"; }; then
+    elif [[ $backup_mode == --companions-only ]]; then
         update_companions_only
     else
         rollout
     fi
 }
-
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

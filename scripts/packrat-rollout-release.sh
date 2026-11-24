@@ -157,16 +157,18 @@ backup_inventory() {
 backup_space_ready() {
     local destination="$data_dir/backups" free_kib sizes reserve=$backup_reserve_mib tool proposed current
     local staging_mib=256 backup_staging_mib=0 used=0 i
-    local -a files=("$installed" "$data_dir/alerts.jsonl")
+    local -a files=()
+    if [[ ${1-} != --companions-only ]]; then files=("$installed" "$data_dir/alerts.jsonl"); fi
     for tool in "${companion_tools[@]}"; do
         proposed="${tool}_candidate" current="installed_$tool"
         if [[ -n ${!proposed} ]]; then files+=("${!current}" "${!proposed}"); fi
     done
+    [[ $backup_reserve_mib =~ ^[1-9][0-9]{0,5}$ && $backup_limit_mib =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 1
+    if (( ${#files[@]} == 0 )); then return 0; fi
     sudo -n test -d "$destination" || destination=$data_dir
     free_kib=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 { print $4 }') || return 1
     sizes=$(sudo -n stat --format='%s' -- "${files[@]}") || return 1
-    [[ $free_kib =~ ^[0-9]{1,15}$ && $backup_reserve_mib =~ ^[1-9][0-9]{0,5}$ &&
-        $backup_limit_mib =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 1
+    [[ $free_kib =~ ^[0-9]{1,15}$ ]] || return 1
     if "$enable_alert_evidence"; then
         reserve=$((reserve + 2 * evidence_max_mib))
         backup_staging_mib=$evidence_max_mib
@@ -199,9 +201,13 @@ backup_space_ready() {
     ' <<< "$sizes"
 }
 
-create_rollout_backup() {
+create_backup_directory() {
     sudo -n install -d -o root -g root -m 0700 "$data_dir/backups" || return 1
-    backup_dir=$(sudo -n mktemp -d "$data_dir/backups/rollout.XXXXXXXX") || return 1
+    backup_dir=$(sudo -n mktemp -d "$data_dir/backups/rollout.XXXXXXXX")
+}
+
+create_rollout_backup() {
+    create_backup_directory || return 1
     sudo -n install -o root -g root -m 0700 "$installed" "$backup_dir/packrat" || return 1
     sudo -n install -o root -g root -m 0600 "$data_dir/alerts.jsonl" "$backup_dir/alerts.jsonl" || return 1
     if ! sudo -n cmp -s -- "$installed" "$backup_dir/packrat" ||
@@ -347,7 +353,7 @@ update_companions_only() {
         proposed="${tool}_candidate" destination="installed_$tool"
         if [[ -n ${!proposed} ]] && ! cmp -s -- "${!proposed}" "${!destination}"; then
             capture=$(primary_capture_stamp) || return 1
-            create_rollout_backup && stage_companion_updates &&
+            create_backup_directory && stage_companion_updates &&
                 promote_companions "$allow_historical_drops" 0 "$capture" || return 1
             printf '%s\n' 'Companions updated; capture unchanged'
             return 0
