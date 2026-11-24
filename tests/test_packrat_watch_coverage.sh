@@ -63,6 +63,31 @@ jq -sc 'to_entries[] | .key as $index | .value | .dns_capacity |=
     (map_values(0) | .query_key_declines=(if $index % 2 == 0 then 0 else 9007199254740991 end))' <<< "$dns_sample" |
     bash "$coverage" | jq -e '.dns_capacity_coverage.decline_intervals==2
         and .dns_capacity_coverage.unverified_intervals==1 and .dns_capacity_coverage.observed_declines==null' >/dev/null
+bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
+    .tcp_stream_cache_coverage == {no_eviction_intervals:0,eviction_intervals:0,unverified_intervals:3,
+        no_eviction_packets:0,no_eviction_seconds:0,observed_evictions:null}' >/dev/null
+tcp_sample=$(jq -sc '
+    .[:4] | to_entries[] | .key as $i | .value
+    | .tcp_stream_cache={retained_streams:$i,evicted_streams:([4,4,7,6][$i])}
+    | .tcp_stream_eviction_delta=99' <<< "$sample")
+bash "$coverage" <<< "$tcp_sample" | jq -e '
+    .tcp_stream_cache_coverage == {no_eviction_intervals:1,eviction_intervals:1,unverified_intervals:1,
+        no_eviction_packets:25,no_eviction_seconds:60,observed_evictions:3}
+    and .alert_comparable_packets==60 and .observed_openings==2' >/dev/null
+for patch in 'del(.tcp_stream_cache)' '.tcp_stream_cache=[]' '.tcp_stream_cache.evicted_streams=-1' \
+    '.tcp_stream_cache.evicted_streams=0.5' '.tcp_stream_cache.evicted_streams=9007199254740992'; do
+    jq -sc ".[0],(.[1]|$patch),.[2]" <<< "$tcp_sample" | bash "$coverage" | jq -e '
+        .tcp_stream_cache_coverage.unverified_intervals==2
+        and .tcp_stream_cache_coverage.observed_evictions==null' >/dev/null
+done
+jq -sc '.[0], .[2]' <<< "$tcp_sample" | bash "$coverage" | jq -e '
+    .journal_discontinuities==1 and .tcp_stream_cache_coverage.eviction_intervals==0
+    and .tcp_stream_cache_coverage.observed_evictions==null' >/dev/null
+jq -sc 'to_entries[] | .key as $i | .value
+    | .tcp_stream_cache.evicted_streams=(if $i % 2 == 0 then 0 else 9007199254740991 end)' <<< "$tcp_sample" |
+    bash "$coverage" | jq -e '.tcp_stream_cache_coverage.eviction_intervals==2
+        and .tcp_stream_cache_coverage.unverified_intervals==1
+        and .tcp_stream_cache_coverage.observed_evictions==null' >/dev/null
 jq -sc '.[0:3] | to_entries[] | .value + {journal_unconfirmed_events:(if .key==0 then 0 else 2 end)}' <<< "$sample" |
     bash "$coverage" | jq -e '.journal_tail_unconfirmed_events==2 and .journal_discontinuities==1
         and .excluded_intervals==1 and .healthy_intervals==1 and .alert_comparable_packets==35' >/dev/null

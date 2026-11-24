@@ -40,6 +40,18 @@ for patch in '.no_decline_packets=1' '.unverified_intervals=1' '.observed_declin
     PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$before" "$fixture" | jq -e '
         .status=="separate_capture_windows" and .after.dns_capacity_coverage==null' >/dev/null
 done
+tcp_coverage='{"no_eviction_intervals":1,"eviction_intervals":0,"unverified_intervals":0,"no_eviction_packets":2000,"no_eviction_seconds":60,"observed_evictions":0}'
+jq --argjson tcp "$tcp_coverage" '.coverage.tcp_stream_cache_coverage=($tcp + {note:"private"})' \
+    "$after" > "$tmp/tcp-after.json"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$before" "$tmp/tcp-after.json" | jq -e --argjson tcp "$tcp_coverage" '
+    .status=="separate_capture_windows" and .before.tcp_stream_cache_coverage==null
+    and .after.tcp_stream_cache_coverage==$tcp and .observed_rate_delta_per_10000_packets==-5' >/dev/null
+for patch in '.no_eviction_packets=2001' '.no_eviction_seconds=59' '.unverified_intervals=1' \
+    '.observed_evictions=null' '.observed_evictions=1' '.observed_evictions=-1'; do
+    jq ".coverage.tcp_stream_cache_coverage |= ($patch)" "$tmp/tcp-after.json" > "$fixture"
+    PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$before" "$fixture" | jq -e '
+        .status=="separate_capture_windows" and .after.tcp_stream_cache_coverage==null' >/dev/null
+done
 bash "$tool" "$before" "$after" | jq -e '
     .status == "thin_alert_coverage" and .observed_rate_delta_per_10000_packets == null
     and .before.openings_per_10000_packets == 5 and .after.openings_per_10000_packets == 0

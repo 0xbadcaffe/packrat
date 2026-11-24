@@ -34,6 +34,23 @@ read_baseline() {
                 and (if .observed_declines == null then .no_decline_intervals == 0 or .decline_intervals > 0
                      else .no_decline_intervals + .decline_intervals > 0
                         and any(.observed_declines[]; . > 0) == (.decline_intervals > 0) end));
+        def tcp_stream_cache_summary:
+            . as $coverage | .tcp_stream_cache_coverage | objects
+            | {no_eviction_intervals,eviction_intervals,unverified_intervals,
+               no_eviction_packets,no_eviction_seconds,observed_evictions}
+            | select(all([.no_eviction_intervals,.eviction_intervals,.unverified_intervals,
+                          .no_eviction_packets,.no_eviction_seconds][]; count)
+                and .no_eviction_intervals + .eviction_intervals + .unverified_intervals == $coverage.healthy_intervals
+                and .no_eviction_packets <= $coverage.healthy_packets and .no_eviction_seconds <= $coverage.healthy_seconds
+                and .no_eviction_seconds >= .no_eviction_intervals
+                and (if .no_eviction_intervals == 0 then .no_eviction_packets == 0 and .no_eviction_seconds == 0
+                     elif .no_eviction_intervals == $coverage.healthy_intervals then
+                        .no_eviction_packets == $coverage.healthy_packets and .no_eviction_seconds == $coverage.healthy_seconds
+                     else true end)
+                and (if .eviction_intervals > 0 then .observed_evictions == null
+                        or ((.observed_evictions | count) and .observed_evictions >= .eviction_intervals)
+                     elif .no_eviction_intervals > 0 then .observed_evictions == 0
+                     else .observed_evictions == null end));
         def verified_rate_policy: IN("continuous_journal_v7","continuous_journal_v8");
         def rule_summary:
             (.rule_id | type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z"))
@@ -111,6 +128,7 @@ read_baseline() {
                    first_record_at:$c.first_record_at,last_record_at:$c.last_record_at,
                    healthy_seconds:$c.healthy_seconds,excluded_intervals:$c.excluded_intervals,
                    dns_capacity_coverage:($c | dns_capacity_summary // null),
+                   tcp_stream_cache_coverage:($c | tcp_stream_cache_summary // null),
                    comparable_seconds:(if $c | has("alert_comparable_seconds") then $c.alert_comparable_seconds
                        elif $c.alert_comparable_intervals == $c.healthy_intervals then $c.healthy_seconds else null end),
                    comparable_packets:$c.alert_comparable_packets,openings:$c.observed_openings,

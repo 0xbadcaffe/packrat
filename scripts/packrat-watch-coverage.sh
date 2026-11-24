@@ -68,6 +68,19 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
                 else reduce $known[] as $delta (($known[0] | map_values(0));
                     with_entries(.value += $delta[.key]))
                 | if all(.[]; counter) then . else null end end)};
+    def tcp_eviction_delta($earlier; $later):
+        (($earlier.tcp_stream_cache | objects | .evicted_streams) // null) as $before
+        | (($later.tcp_stream_cache | objects | .evicted_streams) // null) as $after
+        | if counter_status($before; $after) == "unverified" then null else $after - $before end;
+    def tcp_stream_cache_summary($healthy):
+        [$healthy[].tcp_evictions | numbers] as $known
+        | [$healthy[] | select(.tcp_evictions == 0)] as $no_evictions
+        | {no_eviction_intervals:($no_evictions | length),
+           eviction_intervals:(($known | length) - ($no_evictions | length)),
+           unverified_intervals:(($healthy | length) - ($known | length)),
+           no_eviction_packets:([$no_evictions[].packets] | add // 0),
+           no_eviction_seconds:([$no_evictions[].seconds] | add // 0),
+           observed_evictions:($known | add | if counter then . else null end)};
     def opening_delta($earlier; $later):
         $earlier.highest_observed_alert_id as $low | $later.highest_observed_alert_id as $high
         | (if $later.checkpoint == true and $later.alert_changes == null
@@ -174,6 +187,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
              then verified_opening_ids($earlier; $later) else null end) as $ids
           | {seconds:($later.tick - $earlier.tick), packets:($later.packets - $earlier.packets),
              dns_declines:dns_delta($earlier; $later),
+             tcp_evictions:tcp_eviction_delta($earlier; $later),
              save_counter_status:$saving,
              backlog_counter_status:$backlog,
              journal_counter_status:$journal, stable_alert_log:$stable_log, historical_alert_gap:($later.alert_sample_gap == true),
@@ -207,6 +221,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        journal_discontinuities:([$pairs[] | select(. == "journal_discontinuity")] | length),
        healthy_seconds:([$healthy[].seconds] | add // 0), healthy_packets:([$healthy[].packets] | add // 0),
        dns_capacity_coverage:dns_capacity_summary($healthy),
+       tcp_stream_cache_coverage:tcp_stream_cache_summary($healthy),
        alert_comparable_intervals:($comparable | length), alert_comparable_packets:$measured_packets,
        alert_comparable_seconds:([$comparable[].seconds] | add // 0),
        alert_reverified_intervals:([$comparable[] | select(.historical_alert_gap)] | length),
