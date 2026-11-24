@@ -42,6 +42,21 @@ fn vlan_stack_prefix(raw: &[u8]) -> Option<([(u16, u16); 2], bool)> {
     Some(([(outer, field(14)? & 0x0fff), (inner, field(18)? & 0x0fff)], deeper))
 }
 
+fn captured_vlan_tags(pkt: &Packet) -> Option<&[u8]> {
+    use crate::net::parser::{ethernet_network_header, supports_capture_link_type};
+    if !matches!(pkt.bytes.get(12..14), Some([0x81, 0] | [0x88, 0xa8]))
+        || pkt.capture.as_ref().is_some_and(|meta| !supports_capture_link_type(meta.link_type))
+    {
+        return None;
+    }
+    let (network_offset, _) = ethernet_network_header(&pkt.bytes)?;
+    pkt.bytes.get(12..network_offset - 2)
+}
+
+fn capture_interface(pkt: &Packet) -> Option<(u32, u32)> {
+    pkt.capture.as_ref().map(|meta| (meta.section_id, meta.interface_id))
+}
+
 pub(super) const VLAN_ID_ONE: &str = "VLAN ID 1 observed";
 pub(super) const VLAN_PCP_SEVEN: &str = "VLAN PCP 7 observed";
 
@@ -97,7 +112,12 @@ pub struct VlanAlert {
 
 const MAC_VLAN_WINDOW_SECS: f64 = 300.0;
 const MAX_TRACKED_MACS: usize = 4096;
-type VlanCaptureScope = (Option<(u32, u32)>, Option<u16>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct MacVlanScope {
+    interface: Option<(u32, u32)>,
+    outer: Option<(u16, u16)>,
+    tpid: u16,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct MacVlanSighting {
@@ -109,22 +129,24 @@ struct MacVlanSighting {
 
 #[derive(Debug, Default)]
 struct MacVlanMap {
-    inner: HashMap<(VlanCaptureScope, [u8; 6]), MacVlanSighting>,
+    inner: HashMap<(MacVlanScope, [u8; 6]), MacVlanSighting>,
     last_prune: Option<f64>,
 }
 
 impl MacVlanMap {
-    fn record(&mut self, scope: VlanCaptureScope, mac: [u8; 6], mut incoming: MacVlanSighting) -> Option<MacVlanSighting> {
+    fn record(&mut self, scope: MacVlanScope, mac: [u8; 6], mut incoming: MacVlanSighting) -> Option<MacVlanSighting> {
         if !incoming.timestamp.is_finite() || mac == [0; 6] || mac[0] & 1 != 0 {
             return None;
         }
         let key = (scope, mac);
         if let Some(previous) = self.inner.get_mut(&key) {
-            if incoming.timestamp < previous.timestamp {
+            if incoming.frame == previous.frame
+                || (incoming.timestamp, incoming.frame) <= (previous.timestamp, previous.frame)
+            {
                 return None;
             }
             let recent = incoming.timestamp - previous.timestamp <= MAC_VLAN_WINDOW_SECS;
-            let changed = incoming.vlan != previous.vlan && incoming.frame != previous.frame;
+            let changed = incoming.vlan != previous.vlan;
             let result = (recent && changed && !previous.reported).then_some(*previous);
             incoming.reported = recent && (previous.reported || changed);
             *previous = incoming;
@@ -162,6 +184,7 @@ pub struct VlanIntel {
 impl VlanIntel {
     pub fn ingest(&mut self, pkt: &Packet) -> usize {
         let before = self.alerts.len();
+        let wire_tags = captured_vlan_tags(pkt);
         // ── Extract Ethernet src MAC from raw bytes ──────────────────────────
         let mac_dst = if pkt.bytes.len() >= 6 {
             [pkt.bytes[0], pkt.bytes[1], pkt.bytes[2],
@@ -169,7 +192,7 @@ impl VlanIntel {
         } else {
             [0u8; 6]
         };
-        let needs_source_mac = mac_dst == DTP_DST_MAC || pkt.vlan_id.is_some();
+        let needs_source_mac = mac_dst == DTP_DST_MAC || pkt.vlan_id.is_some() || wire_tags.is_some();
         let mac_src = if needs_source_mac && pkt.bytes.len() >= 12 {
             format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
                 pkt.bytes[6], pkt.bytes[7], pkt.bytes[8],
@@ -189,7 +212,10 @@ impl VlanIntel {
             );
         }
 
-        self.observe_tag_markings(pkt);
+        if let Some(tags) = wire_tags {
+            self.observe_tag_markings(pkt, tags);
+            self.observe_mac_vlan(pkt, tags, &mac_src);
+        }
 
         let policy_interface = pkt.capture.as_ref().and_then(|meta| meta.interface_name.as_deref())
             .filter(|name| self.policy.expects_single_tag(name));
@@ -238,25 +264,6 @@ impl VlanIntel {
                 }
             }
 
-            // MAC-on-multiple-VLANs
-            let scope = (pkt.capture.as_ref().map(|meta| (meta.section_id, meta.interface_id)), pkt.outer_vlan_id);
-            if let Some(mac) = pkt.bytes.get(6..12).and_then(|bytes| <[u8; 6]>::try_from(bytes).ok())
-                && let Some(previous) = self.mac_vlans.record(scope, mac, MacVlanSighting {
-                    vlan: vid, frame: pkt.no, timestamp: ts, reported: false,
-                })
-            {
-                let location = scope.0.map_or_else(|| "unknown capture interface".to_owned(),
-                    |(section, interface)| format!("capture section {section}, interface {interface}"));
-                let outer = scope.1.map_or_else(String::new, |tag| format!(" under outer VLAN {tag}"));
-                self.alerts.push_back(VlanAlert {
-                    severity: AlertSeverity::Warning,
-                    category: "MAC-VLAN-Cross".into(),
-                    detail: format!("MAC {mac_src} was seen on VLANs {} and {vid} at {location}{outer}; port policy and forwarding are unverified", previous.vlan),
-                    pkt_no: pkt.no, timestamp: ts, related_packet: Some(previous.frame),
-                    correlation_key: Some(format!("{scope:?}:{mac_src}")),
-                });
-            }
-
         }
         let added = self.alerts.len() - before;
         if self.alerts.len() > MAX_RECENT_VLAN_ALERTS {
@@ -265,17 +272,34 @@ impl VlanIntel {
         added
     }
 
-    fn observe_tag_markings(&mut self, pkt: &Packet) {
-        use crate::net::parser::{ethernet_network_header, supports_capture_link_type};
-        let raw = &pkt.bytes;
-        if !matches!(raw.get(12..14), Some([0x81, 0] | [0x88, 0xa8]))
-            || pkt.capture.as_ref().is_some_and(|meta| !supports_capture_link_type(meta.link_type))
-        {
+    fn observe_mac_vlan(&mut self, pkt: &Packet, tags: &[u8], mac_src: &str) {
+        let decode = |&[a, b, c, d]: &[u8; 4]| (u16::from_be_bytes([a, b]), u16::from_be_bytes([c, d]) & 0x0fff);
+        let Some((preceding, inner)) = tags.split_last_chunk::<4>() else { return };
+        let (tpid, vid) = decode(inner);
+        let outer = preceding.first_chunk::<4>().map(decode);
+        let assigned_vid = |vid| (1..=4094).contains(&vid);
+        if !assigned_vid(vid) || outer.is_some_and(|(_, outer_vid)| !assigned_vid(outer_vid)) {
             return;
         }
-        let Some((network_offset, _)) = ethernet_network_header(raw) else { return };
-        let tags = &raw[12..network_offset - 2];
-        let scope = pkt.capture.as_ref().map(|meta| (meta.section_id, meta.interface_id));
+        let scope = MacVlanScope { interface: capture_interface(pkt), outer, tpid };
+        let Some(mac) = pkt.bytes.get(6..12).and_then(|bytes| <[u8; 6]>::try_from(bytes).ok()) else { return };
+        let Some(previous) = self.mac_vlans.record(scope, mac, MacVlanSighting {
+            vlan: vid, frame: pkt.no, timestamp: pkt.timestamp, reported: false,
+        }) else { return };
+        let location = scope.interface.map_or_else(|| "unknown capture interface".to_owned(),
+            |(section, interface)| format!("capture section {section}, interface {interface}"));
+        let outer = outer.map_or_else(String::new, |(tag, vid)| format!(" under outer VLAN {vid} (0x{tag:04x})"));
+        self.alerts.push_back(VlanAlert {
+            severity: AlertSeverity::Warning,
+            category: "MAC-VLAN-Cross".into(),
+            detail: format!("MAC {mac_src} was seen with VLAN IDs {} and {vid} (0x{tpid:04x}) at {location}{outer}; port policy and forwarding are unverified", previous.vlan),
+            pkt_no: pkt.no, timestamp: pkt.timestamp, related_packet: Some(previous.frame),
+            correlation_key: Some(format!("{scope:?}:{mac_src}")),
+        });
+    }
+
+    fn observe_tag_markings(&mut self, pkt: &Packet, tags: &[u8]) {
+        let scope = capture_interface(pkt);
         let outer = (tags.len() == 8).then(|| u16::from_be_bytes([tags[2], tags[3]]) & 0x0fff);
         for (index, tag) in tags.chunks_exact(4).enumerate() {
             let tpid = u16::from_be_bytes([tag[0], tag[1]]);

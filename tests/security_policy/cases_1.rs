@@ -114,8 +114,11 @@ fn vlan_replay_detects_double_tag_native_pcp_and_dtp() {
 fn vlan_replay_detects_mac_crossing_vlans() {
     let mut intel = VlanIntel::default();
     let mac = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x05];
-    intel.ingest(&ethernet_packet(1, mac, [0, 1, 2, 3, 4, 5], Some(10)));
-    intel.ingest(&ethernet_packet(2, mac, [0, 1, 2, 3, 4, 5], Some(20)));
+    for (no, vid) in [(1, 10), (2, 20)] {
+        let mut packet = ethernet_packet(no, mac, [0, 1, 2, 3, 4, 5], Some(u16::from(vid)));
+        packet.bytes.splice(12..12, [0x81, 0, 0, vid]);
+        intel.ingest(&packet);
+    }
 
     assert!(
         intel

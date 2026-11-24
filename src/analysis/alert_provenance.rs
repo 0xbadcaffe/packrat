@@ -149,7 +149,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both advertisements with the switch-port inventory and maintenance records before attributing the change.",
         ),
         (
-            "VLAN", "MAC-VLAN-Cross", "vlan.mac_crossing", 1, Correlated,
+            "VLAN", "MAC-VLAN-Cross", "vlan.mac_crossing", 2, Correlated,
             "Compare the two frames with trunk, VLAN and switch-port policy. A shared MAC alone does not establish forwarding between VLANs.",
         ),
         (

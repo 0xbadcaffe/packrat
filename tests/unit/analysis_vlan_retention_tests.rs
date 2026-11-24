@@ -1,4 +1,18 @@
 use super::*;
+use crate::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
+
+fn capture(packet: &Packet, interface_id: u32, link_type: u32) -> CaptureMetadata {
+    CaptureMetadata {
+        timestamp: Some(CaptureTimestamp {
+            ticks: packet.timestamp as u64,
+            resolution: TimestampResolution::Decimal(0),
+            offset_seconds: 0,
+        }),
+        captured_length: packet.bytes.len() as u32,
+        wire_length: packet.bytes.len() as u32,
+        link_type, interface_id, section_id: 0, interface_name: None, comments: Vec::new(),
+    }
+}
 
 fn frame(no: u64, inner: u16, outer: Option<u16>) -> Packet {
     let mut raw = vec![0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 7];
@@ -37,18 +51,6 @@ fn new_vlan_findings_reach_alert_center_when_display_history_rolls_over() {
 #[test]
 fn vlan_markings_use_scoped_wire_evidence_without_inferring_port_policy() {
     use crate::analysis::alert_provenance::EvidenceConfidence;
-    use crate::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
-
-    let capture = |packet: &Packet, interface_id, link_type| CaptureMetadata {
-        timestamp: Some(CaptureTimestamp {
-            ticks: packet.no,
-            resolution: TimestampResolution::Decimal(0),
-            offset_seconds: 0,
-        }),
-        captured_length: packet.bytes.len() as u32,
-        wire_length: packet.bytes.len() as u32,
-        link_type, interface_id, section_id: 0, interface_name: None, comments: Vec::new(),
-    };
     let mut core = crate::engine::AnalysisCore::default();
     let mut stale = frame(1, 20, None);
     stale.vlan_id = Some(1);
@@ -90,6 +92,51 @@ fn vlan_markings_use_scoped_wire_evidence_without_inferring_port_policy() {
         }
     }
     assert!(core.incidents.incidents.is_empty());
+}
+
+#[test]
+fn mac_crossings_require_two_ordered_assigned_vids_in_the_same_wire_scope() {
+    let mut core = crate::engine::AnalysisCore::default();
+    let mut observe = |mut packet: Packet, interface| {
+        packet.capture = Some(capture(&packet, interface, 1));
+        core.analyze(&packet);
+    };
+    observe(frame(10, 10, Some(100)), 2);
+    let mut reordered = frame(9, 20, Some(100));
+    reordered.timestamp = 10.0;
+    observe(reordered, 2);
+    let mut duplicate = frame(10, 20, Some(100));
+    duplicate.timestamp = 11.0;
+    observe(duplicate, 2);
+    let mut untagged = frame(11, 20, Some(100));
+    untagged.bytes.drain(12..20);
+    observe(untagged, 2);
+    observe(frame(12, 0, Some(100)), 2);
+    observe(frame(13, 4095, Some(100)), 2);
+    let mut short = frame(14, 20, Some(100));
+    short.bytes.truncate(20);
+    observe(short, 2);
+    let mut different_outer_type = frame(15, 20, Some(100));
+    different_outer_type.bytes[12..14].copy_from_slice(&0x8100_u16.to_be_bytes());
+    observe(different_outer_type, 2);
+    let mut different_inner_type = frame(16, 20, Some(100));
+    different_inner_type.bytes[16..18].copy_from_slice(&0x88a8_u16.to_be_bytes());
+    observe(different_inner_type, 2);
+    observe(frame(17, 20, Some(100)), 3);
+    observe(frame(18, 20, Some(200)), 2);
+    let mut trigger = frame(19, 20, Some(100));
+    trigger.vlan_id = None;
+    trigger.outer_vlan_id = None;
+    observe(trigger, 2);
+    observe(frame(20, 30, Some(100)), 2);
+
+    let crossings: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == "MAC-VLAN-Cross").collect();
+    assert_eq!(crossings.len(), 1);
+    let alert = crossings[0];
+    assert_eq!(alert.packet_refs, [10, 19]);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 2);
+    assert!(alert.detail.contains("VLAN IDs 10 and 20 (0x8100)"));
+    assert!(alert.detail.contains("interface 2 under outer VLAN 100 (0x88a8)"));
 }
 
 #[test]
