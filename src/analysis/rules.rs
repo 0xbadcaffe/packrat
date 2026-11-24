@@ -201,11 +201,12 @@ fn get_field_str<'a>(field: &str, pkt: &'a Packet) -> &'a str {
 fn get_field_num(field: &str, pkt: &Packet) -> Option<u64> {
     match field {
         "len" | "frame.len"  => Some(pkt.length as u64),
-        "tcp.srcport"        => pkt.src_port.map(|p| p as u64),
-        "tcp.dstport" | "port" => pkt.dst_port.map(|p| p as u64),
-        "ip.ttl"             => {
-            if pkt.bytes.len() > 22 { Some(pkt.bytes[22] as u64) } else { None }
-        }
+        "tcp.srcport" => crate::analysis::stream::tcp_port_pair(pkt).map(|(src, _)| u64::from(src)),
+        "tcp.dstport" => crate::analysis::stream::tcp_port_pair(pkt).map(|(_, dst)| u64::from(dst)),
+        "udp.srcport" => crate::analysis::dns_transactions::udp_port_pair(pkt).map(|(src, _)| u64::from(src)),
+        "udp.dstport" => crate::analysis::dns_transactions::udp_port_pair(pkt).map(|(_, dst)| u64::from(dst)),
+        "port" => pkt.dst_port.map(u64::from),
+        "ip.ttl" => crate::net::parser::ipv4_ttl(pkt).map(u64::from),
         _ => None,
     }
 }

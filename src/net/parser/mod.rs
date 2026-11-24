@@ -9,6 +9,27 @@ pub(crate) fn is_vlan_ether_type(ether_type: u16) -> bool {
     matches!(ether_type, 0x8100 | 0x88a8)
 }
 
+pub(crate) fn ipv4_ttl(packet: &Packet) -> Option<u8> {
+    let raw = packet.bytes.as_slice();
+    let wire_end = match packet.capture.as_ref() {
+        Some(capture) if capture.link_type == 1
+            && capture.captured_length as usize == raw.len()
+            && capture.wire_length >= capture.captured_length => capture.wire_length as usize,
+        Some(_) => return None,
+        None => raw.len(),
+    };
+    let (offset, 0x0800) = ethernet_network_header(raw)? else { return None; };
+    let header = raw.get(offset..)?.first_chunk::<20>()?;
+    let header_len = usize::from(header[0] & 0x0f) * 4;
+    let total_len = usize::from(u16::from_be_bytes([header[2], header[3]]));
+    if header[0] >> 4 != 4 || header_len < 20 || header_len > total_len
+        || offset + header_len > raw.len() || offset + total_len > wire_end
+    {
+        return None;
+    }
+    Some(header[8])
+}
+
 pub(crate) fn ethernet_vlan_tag_types(raw: &[u8]) -> [u16; MAX_PARSED_VLAN_TAGS as usize] {
     let mut types = [0; MAX_PARSED_VLAN_TAGS as usize];
     for (slot, tag) in types.iter_mut().zip(raw.get(12..).unwrap_or_default().chunks_exact(4)) {

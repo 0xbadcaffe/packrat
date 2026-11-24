@@ -109,7 +109,7 @@ pub(super) fn get_field_num(pkt: &Packet, field: &str) -> Option<f64> {
         "frame.len" | "frame.length" => Some(pkt.length as f64),
         "tcp.srcport" | "udp.srcport" => pkt.src_port.map(|p| p as f64),
         "tcp.dstport" | "udp.dstport" | "tcp.port" | "udp.port" => pkt.dst_port.map(|p| p as f64),
-        "ip.ttl" => Some(pkt.bytes.get(22).copied().unwrap_or(0) as f64),
+        "ip.ttl" => crate::net::parser::ipv4_ttl(pkt).map(f64::from),
         "vlan.id" => pkt.vlan_id.map(|v| v as f64),
         "vlan.pcp" => pkt.vlan_pcp.map(|v| v as f64),
         "vlan.dei" => pkt.vlan_dei.map(|v| v as f64),
