@@ -82,6 +82,26 @@ cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
     mkdir -- "$linked_data"
     ln -s -- "$backup_dir" "$linked_data/backups"
     if data_dir="$linked_data" backup_inventory; then exit 1; fi
+    truncate -s 0 "$linked_data/alerts.jsonl"
+    backup_limit_mib=0
+    backup_reserve_mib=1
+    if data_dir="$linked_data" backup_space_ready; then
+        printf '%s\n' 'Preflight accepted a symlink with the default backup budget.' >&2
+        exit 1
+    fi
+    if data_dir="$linked_data" backup_space_ready --companions-only; then exit 1; fi
+    if data_dir="$linked_data" create_backup_directory; then exit 1; fi
+    rm -- "$linked_data/backups"
+    ln -s -- "$linked_data/missing" "$linked_data/backups"
+    if data_dir="$linked_data" backup_space_ready; then exit 1; fi
+    if data_dir="$linked_data" create_backup_directory; then exit 1; fi
+    rm -- "$linked_data/backups"
+    touch -- "$linked_data/backups"
+    if data_dir="$linked_data" backup_space_ready; then exit 1; fi
+    if data_dir="$linked_data" create_backup_directory; then exit 1; fi
+    rm -- "$linked_data/backups"
+    data_dir="$linked_data" backup_space_ready
+    [[ ! -e $linked_data/backups ]]
 )
 (
     large_data="$scratch/large-log"

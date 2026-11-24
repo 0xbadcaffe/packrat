@@ -303,7 +303,7 @@ test_staging_archive_budget() {
     test_mount=$data_dir
     sudo() {
         case $* in
-            "-n test -d $data_dir/backups") [[ -d $data_dir/backups ]] ;;
+            "-n test "*) command "${@:2}" ;;
             "-n env LC_ALL=C df -Pk -- $test_mount")
                 printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
                 printf '/dev/test 99999 10 %s 1%% /\n' "$free"
@@ -347,7 +347,7 @@ test_backup_copies() {
                     fi
                 fi
                 ;;
-            mktemp|cmp) command "$@" ;;
+            mktemp|cmp|test) command "$@" ;;
             *) return 1 ;;
         esac
     }

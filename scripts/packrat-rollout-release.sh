@@ -124,29 +124,37 @@ companion_candidates_ready() {
     done
 }
 
-backup_usage_kib() {
+backup_storage_path() {
     local destination="$data_dir/backups"
     sudo -n test -d "$data_dir" || return 1
     if sudo -n test -L "$destination"; then
         return 1
     fi
     if sudo -n test -d "$destination"; then
-        sudo -n env LC_ALL=C du -skx -- "$destination" | awk 'NR == 1 && $1 ~ /^[0-9]+$/ && length($1) <= 15 { value = $1 }
-            END { if (NR != 1 || value == "") exit 1; print value }'
+        printf '%s\n' "$destination"
     elif sudo -n test -e "$destination"; then
         return 1
+    else
+        printf '%s\n' "$data_dir"
+    fi
+}
+
+backup_usage_kib() {
+    local destination=$1
+    if [[ $destination != "$data_dir" ]]; then
+        sudo -n env LC_ALL=C du -skx -- "$destination" | awk 'NR == 1 && $1 ~ /^[0-9]+$/ && length($1) <= 15 { value = $1 }
+            END { if (NR != 1 || value == "") exit 1; print value }'
     else
         printf '0\n'
     fi
 }
 
 backup_inventory() {
-    local destination="$data_dir/backups" used free count=0
-    used=$(backup_usage_kib) || return 1
-    if sudo -n test -d "$destination"; then
+    local destination used free count=0
+    destination=$(backup_storage_path) || return 1
+    used=$(backup_usage_kib "$destination") || return 1
+    if [[ $destination != "$data_dir" ]]; then
         count=$(sudo -n find "$destination" -mindepth 1 -maxdepth 1 -type d -name 'rollout.????????' -printf . | wc -c) || return 1
-    else
-        destination=$data_dir
     fi
     free=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 {print $4}') || return 1
     [[ $free =~ ^[0-9]{1,15}$ && $count =~ ^[0-9]{1,15}$ && $backup_limit_mib =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 1
@@ -156,7 +164,7 @@ backup_inventory() {
 }
 
 backup_space_ready() {
-    local destination="$data_dir/backups" free_kib sizes reserve=$backup_reserve_mib tool proposed current
+    local destination free_kib sizes reserve=$backup_reserve_mib tool proposed current
     local staging_mib=256 backup_staging_mib=0 used=0 i
     local -a files=()
     if [[ ${1-} != --companions-only ]]; then files=("$installed" "$data_dir/alerts.jsonl"); fi
@@ -166,7 +174,7 @@ backup_space_ready() {
     done
     [[ $backup_reserve_mib =~ ^[1-9][0-9]{0,5}$ && $backup_limit_mib =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 1
     if (( ${#files[@]} == 0 )); then return 0; fi
-    sudo -n test -d "$destination" || destination=$data_dir
+    destination=$(backup_storage_path) || return 1
     free_kib=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 { print $4 }') || return 1
     sizes=$(sudo -n stat --format='%s' -- "${files[@]}") || return 1
     [[ $free_kib =~ ^[0-9]{1,15}$ ]] || return 1
@@ -187,7 +195,7 @@ backup_space_ready() {
         backup_staging_mib=$staging_mib
     fi
     if (( backup_limit_mib > 0 )); then
-        used=$(backup_usage_kib) || return 1
+        used=$(backup_usage_kib "$destination") || return 1
     fi
     awk -v free="$free_kib" -v reserve="$reserve" -v expected="${#files[@]}" \
         -v used="$used" -v limit="$backup_limit_mib" -v staging="$backup_staging_mib" '
@@ -203,6 +211,7 @@ backup_space_ready() {
 }
 
 create_backup_directory() {
+    backup_storage_path >/dev/null || return 1
     sudo -n install -d -o root -g root -m 0700 "$data_dir/backups" || return 1
     backup_dir=$(sudo -n mktemp -d "$data_dir/backups/rollout.XXXXXXXX")
 }
