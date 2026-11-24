@@ -79,6 +79,14 @@ check_flow_context() {
         def frame: type == "number" and . >= 1 and . <= 9007199254740991 and floor == .;
         def count: type == "number" and . >= 0 and . <= $selected.evidence_frame_count and floor == .;
         def frames: type == "array" and length <= $selected.evidence_frame_count;
+        def valid_syn_ack_match:
+            .syn_ack_frame as $response
+            | ($response | frame) and (.latest_candidate_syn_frame | frame and . < $response)
+              and (.prior_syn_candidates | count and . > 0)
+              and (.later_ack_candidates | count)
+              and .prior_syn_candidates + .later_ack_candidates < $selected.evidence_frame_count
+              and (if .later_ack_candidates == 0 then .earliest_candidate_ack_frame == null
+                   else (.earliest_candidate_ack_frame | frame and . > $response) end);
         def valid_timing:
             .evidence_frames as $frames
             | .cited_timing | type == "object"
@@ -126,7 +134,8 @@ check_flow_context() {
           then {flow_context_status:"changed_during_review"}
           else select((.directional_flows | frames and all(.[]; .evidence_frames | count and . > 0))
                 and (.retained_frames_without_flow | count) and valid_trigger
-                and (.tcp_syn_ack_matches | frames and all(.[]; .syn_ack_frame | frame))
+                and (.tcp_syn_ack_matches | frames and all(.[]; valid_syn_ack_match)
+                     and length == (unique_by(.syn_ack_frame)|length))
                 and (.udp_dns_reply_candidates | frames and all(.[]; .reply_frame as $reply
                   | ($reply | frame) and (.query_candidate_frames | frames and all(.[]; frame and . < $reply) and . == unique))))
             | ([.directional_flows[].evidence_frames] | add // 0) as $flow_frames
@@ -137,6 +146,10 @@ check_flow_context() {
                 trigger_transport_header_observed:.trigger_frame.transport_header_observed,
                 trigger_tuple_status,
                 directional_flows:(.directional_flows|length),tcp_syn_ack_matches:(.tcp_syn_ack_matches|length),
+                tcp_syn_ack_with_later_ack_candidates:([.tcp_syn_ack_matches[] | select(.later_ack_candidates > 0)]|length),
+                tcp_syn_ack_without_later_ack_candidates:([.tcp_syn_ack_matches[] | select(.later_ack_candidates == 0)]|length),
+                tcp_syn_ack_ambiguous_candidates:([.tcp_syn_ack_matches[]
+                    | select(.prior_syn_candidates > 1 or .later_ack_candidates > 1)]|length),
                 udp_dns_replies:(.udp_dns_reply_candidates|length),
                 udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),
                 udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}

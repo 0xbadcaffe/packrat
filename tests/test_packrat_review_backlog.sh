@@ -97,7 +97,7 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
      directional_flows:[{evidence_frames:2,endpoint:"private endpoint",cited_timing:{
         timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,tied_timestamps:0,
         backwards_timestamps:0,min_forward_gap_secs:2.75,private_debug:"private time"}}],
-     tcp_syn_ack_matches:[{syn_ack_frame:2,sequence:123}],
+     tcp_syn_ack_matches:[],
      udp_dns_reply_candidates:[{reply_frame:4,query_candidate_frames:[3],name:"private name"}]}
     | if $mode == "digest" then .evidence_frame_set_sha256=("1"*64)
       elif $mode == "availability" then .missing_frames=1
@@ -109,6 +109,14 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "legacy_timing" then del(.directional_flows[0].cited_timing)
       elif $mode == "invalid_timing" then .directional_flows[0].cited_timing.backwards_timestamps=1
       elif $mode == "malformed_timing" then .directional_flows[0].cited_timing="private time"
+      elif ($mode | startswith("tcp_")) then
+          .udp_dns_reply_candidates=[]
+          | .tcp_syn_ack_matches=[{syn_ack_frame:2,latest_candidate_syn_frame:1,
+              prior_syn_candidates:1,later_ack_candidates:0,earliest_candidate_ack_frame:null}]
+          | if $mode == "tcp_impossible_ack" then .tcp_syn_ack_matches[0].earliest_candidate_ack_frame=3
+            elif $mode == "tcp_duplicate" then .tcp_syn_ack_matches += .tcp_syn_ack_matches
+            elif $mode == "tcp_wrong_order" then .tcp_syn_ack_matches[0].latest_candidate_syn_frame=4
+            else . end
       elif $mode == "no_flow" then
           .directional_flows=[] | .tcp_syn_ack_matches=[] | .udp_dns_reply_candidates=[]
           | .retained_frames_without_flow=2 | .trigger_tuple_status="trigger_header_unavailable"
@@ -142,7 +150,8 @@ run_review | jq -e '
 [[ ! -e $dir/flow-checks ]]
 run_review --flow-context | jq -e '
     [.findings[].flow_context_status] == ["checked","not_checked","not_checked","not_checked","not_checked"]
-    and .findings[0].flow_context == {directional_flows:1,tcp_syn_ack_matches:1,udp_dns_replies:1,
+    and .findings[0].flow_context == {directional_flows:1,tcp_syn_ack_matches:0,udp_dns_replies:1,
+        tcp_syn_ack_with_later_ack_candidates:0,tcp_syn_ack_without_later_ack_candidates:0,tcp_syn_ack_ambiguous_candidates:0,
         retained_flow_frames:2,retained_frames_without_flow:0,
         trigger_frame_status:"complete",trigger_transport_header_observed:true,trigger_tuple_status:"matches_wire",
         timing_status:"reported",cited_timing:{timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,
@@ -150,6 +159,10 @@ run_review --flow-context | jq -e '
         udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0}
     and (tostring | contains("private") | not)' >/dev/null
 [[ $(cat "$dir/flow-checks") == 1 ]]
+FLOW_MODE=tcp_pair run_review --flow-context | jq -e '
+    .findings[0].flow_context | .tcp_syn_ack_matches==1
+    and .tcp_syn_ack_without_later_ack_candidates==1 and .tcp_syn_ack_with_later_ack_candidates==0
+    and .tcp_syn_ack_ambiguous_candidates==0' >/dev/null
 FLOW_MODE=no_flow run_review --flow-context | jq -e '
     .findings[0] | .packet_evidence_status=="complete" and .flow_context_status=="checked"
     and .flow_context.retained_flow_frames==0 and .flow_context.retained_frames_without_flow==2
@@ -163,7 +176,8 @@ for mode in legacy_timing invalid_timing malformed_timing; do
         .findings[0] | .flow_context_status=="checked" and .flow_context.timing_status==$wanted
         and (.flow_context|has("cited_timing")|not) and (tostring|contains("private")|not)' >/dev/null
 done
-for mode in digest availability scope malformed frame_count trigger_status trigger_private old_reader; do
+for mode in digest availability scope malformed frame_count trigger_status trigger_private old_reader \
+    tcp_impossible_ack tcp_duplicate tcp_wrong_order; do
     wanted=check_failed
     if [[ $mode == digest || $mode == availability ]]; then wanted=changed_during_review; fi
     FLOW_MODE=$mode run_review --flow-context | jq -e --arg wanted "$wanted" '
