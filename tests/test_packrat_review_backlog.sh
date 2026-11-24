@@ -58,6 +58,11 @@ case $4 in
     6|7) status=partial step=inspect_retained_and_recover_missing_frames counts='{"truncated":1,"missing":1}' ;;
 esac
 if [[ ${TEST_MODE:-normal} == invalid_counts && $4 == 1 ]]; then counts='{"complete":1}'; fi
+case $4 in
+    1|3) base=$(jq -c '.reader_rule_revision=8' <<< "$base") ;;
+    2) base=$(jq -c '.reader_rule_revision=7' <<< "$base") ;;
+    5) base=$(jq -c '.reader_rule_revision="private revision"' <<< "$base") ;;
+esac
 if [[ ${TEST_MODE:-normal} == socket ]]; then
     [[ $PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE == "$TEST_DIR/socket context.jsonl" ]]
     marker=latest
@@ -88,6 +93,8 @@ run_review | jq -e '
         ["complete","unavailable","changed_during_review","changed_during_review","check_failed"]
     and .findings[0].evidence_availability == {complete:2}
     and .findings[1].evidence_availability == {missing:1,unreadable:1}
+    and [.findings[] | [.revision,.reader_rule_revision,.rule_revision_differs_from_reader,.severity]] ==
+        [[7,8,true,"HIGH"],[7,7,false,"HIGH"],[7,null,null,"HIGH"],[7,null,null,"HIGH"],[7,null,null,"HIGH"]]
     and .findings[1].next_evidence_step == "check_archive_integrity"
     and .findings[2].next_evidence_step == "refresh_saved_index"
     and (tostring | contains("private") | not) and all(.findings[]; has("evidence_frame_set_sha256") | not)' >/dev/null

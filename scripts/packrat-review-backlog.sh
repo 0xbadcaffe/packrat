@@ -7,6 +7,7 @@ usage() {
     printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--socket-context FILE] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
+        'Reader rule revisions are compared with saved revisions without reclassifying findings.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
 
@@ -120,6 +121,11 @@ while IFS= read -r candidate; do
         if (( rc == 124 || rc == 137 )); then status=check_timed_out; fi
         if (( rc <= 2 && ${#raw} <= 1048576 )); then
             verdict=$(jq -ces --argjson selected "$candidate" '
+                def reader_revision:
+                    if .rule_id != null and .revision != null and
+                        (.reader_rule_revision | type == "number" and . >= 1 and . <= 65535 and floor == .)
+                    then {reader_rule_revision, rule_revision_differs_from_reader:(.reader_rule_revision != .revision)}
+                    else {} end;
                 def valid_counts:
                     if .packet_evidence_status | IN("complete","partial","unavailable") then
                         (.evidence_availability | type == "object" and length > 0
@@ -136,7 +142,7 @@ while IFS= read -r candidate; do
                         {packet_evidence_status:"changed_during_review",next_evidence_step:"refresh_saved_index"}
                       elif valid_counts and (.packet_evidence_status | strings | test("\\A[a-z_]{1,48}\\z")) and
                            (.next_evidence_step | strings | test("\\A[a-z_]{1,64}\\z")) then
-                        {packet_evidence_status,next_evidence_step,evidence_availability}
+                        {packet_evidence_status,next_evidence_step,evidence_availability} + reader_revision
                         + (if .socket_evidence | IN("latest","earlier","latest_and_earlier") then {socket_evidence} else {} end)
                       else null end
                   else null end' <<< "$raw") || verdict='null'
