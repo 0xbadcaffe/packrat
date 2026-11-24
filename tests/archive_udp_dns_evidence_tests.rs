@@ -256,21 +256,24 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     )
     .unwrap();
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/packrat-review-backlog.sh");
-    let output = Command::new("bash")
-        .arg(script)
-        .args(["--review-scope", "session-a", SCOPE, "--flow-context"])
-        .arg(&archive_path)
-        .arg(&active)
-        .arg(&previous)
-        .env("PATH", path)
-        .env("PACKRAT_BACKLOG_TIMEOUT", "30")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let text = String::from_utf8(output.stdout).unwrap();
-    assert!(!text.to_ascii_lowercase().contains("private"));
-    assert!(!text.contains("192.0.2."));
-    let report: Value = serde_json::from_str(&text).unwrap();
+    let run = || {
+        let output = Command::new("bash")
+            .arg(&script)
+            .args(["--review-scope", "session-a", SCOPE, "--flow-context"])
+            .arg(&archive_path)
+            .arg(&active)
+            .arg(&previous)
+            .env("PATH", &path)
+            .env("PACKRAT_BACKLOG_TIMEOUT", "30")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(!text.to_ascii_lowercase().contains("private"));
+        assert!(!text.contains("192.0.2."));
+        serde_json::from_str::<Value>(&text).unwrap()
+    };
+    let report = run();
     assert_eq!(report["sample_review_latency"], json!({
         "sampled_alerts":1,"measured_alerts":1,"unmeasured_alerts":0,"min_ms":250,"median_ms":250,"max_ms":250,
         "unmeasured_reasons":{"missing_capture_scope":0,"missing_first_save":0,"missing_first_review":0,"review_before_save":0}
@@ -293,10 +296,20 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
                "retained_flow_frames":5,"retained_frames_without_flow":1,
                "trigger_frame_status":"complete","trigger_transport_header_observed":false,
                "trigger_tuple_status":"not_recorded",
+               "trigger_connection_status":"no_trigger_header",
                "timing_status":"reported","cited_timing":{"timestamped_frames":3,"missing_timestamp_frames":2,
                     "forward_gaps":1,"tied_timestamps":0,"backwards_timestamps":0,"directions_with_forward_gaps":1},
                "udp_dns_replies_with_query_candidates":1,"udp_dns_ambiguous_replies":1,
                "udp_dns_timing_status":"reported",
                "udp_dns_reply_timestamps":{"capture_clock":1,"legacy_packet_time":0,"unavailable":1,"not_reported":0}})
     );
+
+    alert.packet_no = 3;
+    fs::write(&active, json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string()).unwrap();
+    let refreshed = run();
+    let context = &refreshed["findings"][0]["flow_context"];
+    assert_eq!(context["trigger_connection_status"], "reported");
+    assert_eq!(context["cited_trigger_connection"], json!({
+        "same_direction_frames":1,"reverse_direction_frames":2,"other_flow_frames":2
+    }));
 }

@@ -8,6 +8,7 @@ usage() {
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
         'With --flow-context, report cited transport-header coverage, initial SYN fan-out, and candidate TCP and UDP DNS links without disclosing endpoints.' \
+        'Trigger connection counts use the observed wire tuple and capture path, and cover cited frames only.' \
         'Timing counts describe adjacent cited frames, not full-flow cadence.' \
         'UDP DNS timing counts distinguish capture-clock, legacy, unavailable, and unreported reply times.' \
         'Review latency covers the saved-alert sample, not the current shortlist or rule filter.' \
@@ -162,6 +163,23 @@ check_flow_context() {
                  elif .trigger_tuple_status == "trigger_header_unavailable" then
                     .trigger_frame.transport_header_observed != true
                  else true end);
+        def trigger_connection($assigned):
+            .directional_flows as $rows
+            | [$rows[] | select(.contains_trigger_frame == true)] as $triggers
+            | if .trigger_frame.transport_header_observed != true then
+                {trigger_connection_status:(if $triggers == [] then "no_trigger_header" else "invalid" end)}
+              elif all($rows[]; (has("contains_trigger_frame") or has("reverse_evidence_frames")) | not) then
+                {trigger_connection_status:"not_reported"}
+              elif ($triggers | length) != 1 or any($rows[];
+                   (.contains_trigger_frame | type) != "boolean" or (.reverse_evidence_frames | count | not)) then
+                {trigger_connection_status:"invalid"}
+              else $triggers[0] as $trigger
+                | ($trigger.evidence_frames + $trigger.reverse_evidence_frames) as $linked
+                | if $linked > $assigned then {trigger_connection_status:"invalid"}
+                  else {trigger_connection_status:"reported",cited_trigger_connection:{
+                    same_direction_frames:$trigger.evidence_frames,reverse_direction_frames:$trigger.reverse_evidence_frames,
+                    other_flow_frames:($assigned - $linked)}} end
+              end;
         select(length == 1) | .[0] | objects
         | select(.record_type == "alert_flow_summary" and
             {session_id,capture_id,alert_id} == ($selected | {session_id,capture_id,alert_id}))
@@ -193,7 +211,7 @@ check_flow_context() {
                 udp_dns_replies:(.udp_dns_reply_candidates|length),
                 udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),
                 udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}
-                + timing_context + tcp_flag_context + syn_fanout + dns_timing_context}
+                + timing_context + tcp_flag_context + syn_fanout + dns_timing_context + trigger_connection($flow_frames)}
           end
     ' <<< "$raw"
 }

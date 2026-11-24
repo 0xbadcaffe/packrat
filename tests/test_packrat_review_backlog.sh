@@ -128,6 +128,15 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "legacy_timing" then del(.directional_flows[0].cited_timing)
       elif $mode == "invalid_timing" then .directional_flows[0].cited_timing.backwards_timestamps=1
       elif $mode == "malformed_timing" then .directional_flows[0].cited_timing="private time"
+      elif ($mode | startswith("connection_")) then
+          .directional_flows=[
+              {evidence_frames:1,contains_trigger_frame:true,reverse_evidence_frames:1,source:"private client"},
+              {evidence_frames:1,contains_trigger_frame:false,reverse_evidence_frames:1,source:"private server"}]
+          | if $mode == "connection_other" then .directional_flows[0].reverse_evidence_frames=0
+            elif $mode == "connection_duplicate" then .directional_flows[1].contains_trigger_frame=true
+            elif $mode == "connection_bad_count" then .directional_flows[0].reverse_evidence_frames=2
+            elif $mode == "connection_mismatch" then .trigger_tuple_status="differs_from_wire"
+            else . end
       elif ($mode | startswith("tcp_")) then
           .udp_dns_reply_candidates=[]
           | .directional_flows=[
@@ -183,6 +192,7 @@ run_review --flow-context | jq -e '
         tcp_syn_ack_with_later_ack_candidates:0,tcp_syn_ack_without_later_ack_candidates:0,tcp_syn_ack_ambiguous_candidates:0,
         retained_flow_frames:2,retained_frames_without_flow:0,
         trigger_frame_status:"complete",trigger_transport_header_observed:true,trigger_tuple_status:"matches_wire",
+        trigger_connection_status:"not_reported",
         timing_status:"reported",cited_timing:{timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,
             tied_timestamps:0,backwards_timestamps:0,directions_with_forward_gaps:1},
         udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0,tcp_flag_status:"not_reported",
@@ -190,6 +200,20 @@ run_review --flow-context | jq -e '
         udp_dns_reply_timestamps:{capture_clock:0,legacy_packet_time:0,unavailable:0,not_reported:1}}
     and (tostring | contains("private") | not)' >/dev/null
 [[ $(cat "$dir/flow-checks") == 1 ]]
+for mode in connection_pair connection_other connection_mismatch; do
+    FLOW_MODE=$mode run_review --flow-context | jq -e --arg mode "$mode" '
+        .findings[0].flow_context | .trigger_connection_status=="reported"
+        and .cited_trigger_connection=={same_direction_frames:1,
+            reverse_direction_frames:(if $mode=="connection_other" then 0 else 1 end),
+            other_flow_frames:(if $mode=="connection_other" then 1 else 0 end)}
+        and (.trigger_tuple_status=="differs_from_wire") == ($mode=="connection_mismatch")
+        and (tostring | contains("private") | not)' >/dev/null
+done
+for mode in connection_duplicate connection_bad_count; do
+    FLOW_MODE=$mode run_review --flow-context | jq -e '
+        .findings[0].flow_context | .trigger_connection_status=="invalid"
+        and (has("cited_trigger_connection") | not)' >/dev/null
+done
 FLOW_MODE=dns_unavailable run_review --flow-context | jq -e '
     .findings[0].flow_context | .udp_dns_replies_with_query_candidates==0
     and .udp_dns_timing_status=="reported" and .udp_dns_reply_timestamps.unavailable==1' >/dev/null
@@ -213,6 +237,7 @@ FLOW_MODE=no_flow run_review --flow-context | jq -e '
     and .flow_context.retained_flow_frames==0 and .flow_context.retained_frames_without_flow==2
     and .flow_context.trigger_tuple_status=="trigger_header_unavailable"
     and .flow_context.trigger_transport_header_observed==false
+    and .flow_context.trigger_connection_status=="no_trigger_header"
     and .flow_context.timing_status=="no_flow_headers" and .flow_context.tcp_flag_status=="no_flow_headers"
     and .flow_context.udp_dns_timing_status=="no_dns_replies"
     and (.flow_context|has("cited_timing")|not)' >/dev/null
