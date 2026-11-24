@@ -128,11 +128,19 @@ load_state() {
     '
 }
 unresolved_jq='def unresolved: .disposition == "New" or .disposition == "Reviewing" or .disposition == "Confirmed";'
+selective_archive_jq='
+    def valid_rule_id: type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z");
+    def selective_rules:
+        .health | if .archive_enabled == true and (.archive_paused | type == "boolean")
+            and .archive_alert_evidence_only == true
+            and (.archive_evidence_rules | type == "array" and length <= 16 and all(.[]; valid_rule_id))
+        then .archive_evidence_rules else null end;
+'
 report() {
     printf '%s\n%s\n%s\n%s\n' "$state" "${2-null}" "${3-null}" "${4-null}" | jq -cs --arg status "$1" --argjson limit "$alert_limit" \
         --argjson query_limit "$query_limit" --argjson rules "$archive_rules" \
         --argjson previous "${#previous_logs[@]}" --arg socket "$socket_status" --arg selection "$evidence_selection" \
-        --argjson advanced "$log_advanced" "$unresolved_jq"'
+        --argjson advanced "$log_advanced" "$unresolved_jq$selective_archive_jq"'
         def live_archive:
             if $status != "current" and $status != "degraded" then "unknown"
             elif .health.archive_enabled == false then "disabled"
@@ -143,16 +151,21 @@ report() {
             if . == "complete" then "inspect_retained_frames"
             elif . == "partial" then "inspect_retained_and_recover_missing_frames"
             elif . == "unavailable" then "locate_original_capture"
+            elif . == "not_selected_by_current_policy" then "locate_original_capture_or_corroborate_with_host_logs"
             elif . == "no_references" then "corroborate_with_host_or_service_logs"
             elif . == "check_failed" or . == "changed_during_review" or . == "check_timed_out" or . == "check_deferred" then "retry_evidence_check"
             else "verify_frame_availability" end;
-        def with_evidence($checks):
+        def with_evidence($checks; $policy):
             .alert_id as $id | (first($checks[] | select(.alert_id == $id)) // null) as $evidence
             | (if $evidence.status == "checked" then $evidence.frames | group_by(.status)
                | map({key:.[0].status,value:length}) | from_entries else null end) as $counts
             | (if $counts.complete == ($evidence.frames | length) and $counts != null then "complete"
                elif $counts.complete or $counts.truncated or $counts.length_unknown then "partial"
                elif $counts != null then "unavailable" elif .evidence_frame_count == 0 then "no_references"
+               elif $evidence == null and $policy != null and (.rule_id | valid_rule_id)
+                   and (.evidence_frame_count | type == "number" and . > 0 and . <= 131 and floor == .)
+                   and (.rule_id as $rule | $policy | index($rule) == null)
+               then "not_selected_by_current_policy"
                else (($evidence.status // "") | {alert_evidence_changed:"changed_during_review",unavailable:"check_failed",
                      timed_out:"check_timed_out",deferred:"check_deferred"}[.] // "not_checked") end) as $availability
             | . + {packet_evidence_status:$availability,evidence_availability:$counts,
@@ -162,15 +175,16 @@ report() {
               elif .earlier_socket_context != null then .socket_evidence = "earlier" else . end;
         .[1] as $alerts
         | (.[2] // []) as $evidence
+        | (if $status == "current" or $status == "degraded" then .[0] | selective_rules else null end) as $policy
         | (if $alerts == null then null else $alerts[:$limit] |
-            map(with_evidence($evidence)) end) as $sample
+            map(with_evidence($evidence; $policy)) end) as $sample
         | (if $alerts == null then null else [
             ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO") as $severity | $alerts | to_entries[]
             | (.key < $limit) as $recent | .value
             | select(.severity == $severity and unresolved)
             | ($severity | IN("MEDIUM","LOW","INFO")) as $opt_in
             | select(($opt_in | not) or (.rule_id as $rule | any($rules[]; . == $rule)))
-            | with_evidence($evidence)
+            | with_evidence($evidence; $policy)
             | {alert_id,title,rule_id,revision,severity,disposition,hit_count,confidence,verify,packet_evidence_status,evidence_frame_count,evidence_frame_set_sha256,
                archive_rule:$opt_in,in_recent_alerts:$recent,evidence_availability,next_evidence_step}
               + (if has("socket_evidence") then {socket_evidence} else {} end)
@@ -431,10 +445,7 @@ fi
 evidence='[]' evidence_failed=false evidence_ids=()
 if [[ -n $evidence_id ]]; then evidence_ids+=("$evidence_id"); fi
 if jq -e '.health | .archive_enabled == true and (.archive_paused | type == "boolean")' <<< "$state" >/dev/null; then
-    archive_rules=$(jq -c '.health | if .archive_alert_evidence_only == true and
-        (.archive_evidence_rules | type == "array" and length <= 16 and all(.[];
-            type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z")))
-        then .archive_evidence_rules else [] end' <<< "$state")
+    archive_rules=$(jq -c "$selective_archive_jq"'selective_rules // []' <<< "$state")
     if [[ $auto_evidence == 1 ]]; then
         candidates=$(jq -r --argjson rules "$archive_rules" "$unresolved_jq"'
         limit(5; ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO") as $severity | .[]

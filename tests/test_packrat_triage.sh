@@ -291,7 +291,10 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
         and .open_priority_alerts_in_sample==1 and .open_archive_rule_alerts_in_sample==2
         and [.review_queue[]|[.alert_id,.severity,.archive_rule]]==[[41,"CRITICAL",false],[42,"MEDIUM",true],[43,"INFO",true]]
         and [.evidence_checks[]|[.alert_id,.status]]==[[41,"checked"],[42,"checked"],[43,"checked"]]
-        and .alerts[0].packet_evidence_status=="not_checked"
+        and .alerts[0].packet_evidence_status=="not_selected_by_current_policy"
+        and .alerts[0].next_evidence_step=="locate_original_capture_or_corroborate_with_host_logs"
+        and .alerts[0].evidence_availability==null
+        and .alerts[1].packet_evidence_status=="partial"
     ' >/dev/null
     result=$(PACKRAT_TEST_AUTO_QUEUE=backlog run_auto)
     jq -e '.has_more_alerts and .priority_sample_limit == 512 and .priority_sample_at_limit == false
