@@ -19,6 +19,10 @@ use crate::analysis::{
     packet_fields::captured_transport_header,
 };
 
+#[path = "related_cited_flows.rs"]
+mod cited_flows;
+use cited_flows::{CitedFlowSearch, CitedFrameMatch};
+
 const WINDOW_SECONDS: u64 = 300;
 const SCAN_BYTES: NonZeroU64 = NonZeroU64::new(8 * 1024 * 1024).unwrap();
 const MAX_MATCHES: usize = 32;
@@ -37,6 +41,8 @@ pub struct RelatedAlertReport {
     anchor_frame: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     anchor_trigger_evidence: Option<TriggerEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cited_flow_evidence: Option<CitedFlowSearch>,
     trigger_window_seconds: u64,
     sampled_alerts: usize,
     scan_complete: bool,
@@ -50,7 +56,10 @@ pub struct RelatedAlertReport {
 struct RelatedAlert {
     #[serde(flatten)]
     snapshot: TriggerSnapshot,
-    seconds_from_anchor_trigger: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seconds_from_anchor_trigger: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matched_cited_frame: Option<CitedFrameMatch>,
     direction: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     trigger_evidence: Option<TriggerEvidence>,
@@ -112,10 +121,18 @@ fn classify(snapshot: TriggerSnapshot, anchor: AlertFlow, trigger: f64) -> Optio
     };
     Some(RelatedAlert {
         snapshot,
-        seconds_from_anchor_trigger: delta,
+        seconds_from_anchor_trigger: Some(delta),
+        matched_cited_frame: None,
         direction,
         trigger_evidence: None,
     })
+}
+
+impl RelatedAlert {
+    fn distance(&self) -> f64 {
+        self.matched_cited_frame.as_ref().map(|frame| frame.seconds_from_frame)
+            .or(self.seconds_from_anchor_trigger).unwrap_or_default().abs()
+    }
 }
 
 fn snapshot(alert: &AlertItem, flow: AlertFlow, time: f64) -> TriggerSnapshot {
@@ -172,13 +189,31 @@ pub fn related_alerts_report(
     previous: &[PathBuf], active: &Path, session: &str, capture: &str, anchor_id: u64,
     evidence_archive: Option<&Path>, verify_triggers: bool,
 ) -> Result<RelatedAlertReport> {
+    related_alerts_query(previous, active, session, capture, anchor_id, RelatedEvidenceOptions {
+        archive: evidence_archive, verify_triggers, match_cited_flows: false,
+    })
+}
+
+#[derive(Default)]
+pub struct RelatedEvidenceOptions<'a> {
+    pub archive: Option<&'a Path>,
+    pub verify_triggers: bool,
+    pub match_cited_flows: bool,
+}
+
+pub fn related_alerts_query(
+    previous: &[PathBuf], active: &Path, session: &str, capture: &str, anchor_id: u64,
+    options: RelatedEvidenceOptions<'_>,
+) -> Result<RelatedAlertReport> {
     ensure!(
         anchor_id > 0 && valid_capture_id(session) && valid_capture_id(capture),
         "Expected a positive ID and explicit session and capture IDs"
     );
-    ensure!(!verify_triggers || evidence_archive.is_some(), "Trigger verification requires an evidence archive");
+    ensure!(!(options.verify_triggers || options.match_cited_flows) || options.archive.is_some(),
+        "Trigger verification and cited-flow matching require an evidence archive");
     let mut seen = HashSet::new();
     let mut anchor = None;
+    let mut cited_frames = Vec::new();
     let mut candidates = Vec::new();
     let integrity = scan_alert_records(previous, active, Some(SCAN_BYTES), |entry| {
         let alert = entry.alert;
@@ -194,6 +229,7 @@ pub fn related_alerts_report(
         let time = trigger_time(&alert);
         if alert.id == anchor_id {
             anchor = Some((flow, time, alert.packet_no));
+            if options.match_cited_flows { cited_frames = alert.evidence_frame_numbers(); }
         } else if let Some((flow, time)) = flow.zip(time) {
             candidates.push(snapshot(&alert, flow, time));
         }
@@ -206,14 +242,14 @@ pub fn related_alerts_report(
     let mut anchor_source = anchor_flow.zip(trigger).map(|_| "recorded_alert");
     let mut anchor_frame = None;
     let needs_fallback = anchor_source.is_none() && packet_no > 0;
-    let mut archive = evidence_archive.filter(|_| needs_fallback || (verify_triggers && anchor.is_some()))
+    let mut archive = options.archive.filter(|_| needs_fallback || ((options.verify_triggers || options.match_cited_flows) && anchor.is_some()))
         .map(PacketArchive::open_readonly).transpose().map_err(anyhow::Error::msg)?;
     let mut anchor_header = if needs_fallback {
         archive.as_mut().map(|reader| read_trigger(reader, capture, packet_no))
     } else {
         None
     };
-    if !verify_triggers && anchor_header.as_ref().is_some_and(Result::is_err) {
+    if !options.verify_triggers && !options.match_cited_flows && anchor_header.as_ref().is_some_and(Result::is_err) {
         anchor_header.take().unwrap()?;
     }
     if let Some(Ok(TriggerFrame::Transport { flow, time: Some(time) })) = anchor_header.as_ref() {
@@ -222,32 +258,32 @@ pub fn related_alerts_report(
         anchor_source = Some("retained_trigger_frame");
         anchor_frame = Some(packet_no);
     }
+    let cited = if options.match_cited_flows {
+        archive.as_mut().map(|reader| CitedFlowSearch::read(reader, capture, &cited_frames))
+    } else { None };
     let status = if anchor.is_none() {
         "anchor_not_in_sample"
+    } else if let Some(search) = &cited {
+        if search.has_flows() { "sampled" } else { "cited_flow_evidence_unavailable" }
     } else if anchor_flow.is_none() || trigger.is_none() {
         "anchor_tuple_or_time_unavailable"
     } else {
         "sampled"
     };
     let sampled_alerts = seen.len();
-    let mut matches = anchor_flow
-        .zip(trigger)
-        .map_or_else(Vec::new, |(flow, trigger)| {
-            candidates
-                .into_iter()
-                .filter_map(|alert| classify(alert, flow, trigger))
-                .collect()
-        });
+    let mut matches: Vec<_> = if let Some(search) = &cited {
+        candidates.into_iter().filter_map(|alert| search.classify(alert)).collect()
+    } else if let Some((flow, trigger)) = anchor_flow.zip(trigger) {
+        candidates.into_iter().filter_map(|alert| classify(alert, flow, trigger)).collect()
+    } else { Vec::new() };
     matches.sort_unstable_by(|left, right| {
-        left.seconds_from_anchor_trigger
-            .abs()
-            .total_cmp(&right.seconds_from_anchor_trigger.abs())
+        left.distance().total_cmp(&right.distance())
             .then(left.snapshot.alert_id.cmp(&right.snapshot.alert_id))
     });
     let matching_alerts_in_sample = matches.len();
     matches.truncate(MAX_MATCHES);
     let mut anchor_trigger_evidence = None;
-    if verify_triggers && let Some(archive) = &mut archive {
+    if options.verify_triggers && let Some(archive) = &mut archive {
         let expected = anchor_flow.zip(trigger);
         anchor_trigger_evidence = Some(check_trigger(archive, capture, packet_no, expected,
             anchor_header.take(), anchor_source == Some("retained_trigger_frame")));
@@ -268,6 +304,7 @@ pub fn related_alerts_report(
         anchor_source,
         anchor_frame,
         anchor_trigger_evidence,
+        cited_flow_evidence: cited,
         trigger_window_seconds: WINDOW_SECONDS,
         sampled_alerts,
         scan_complete,

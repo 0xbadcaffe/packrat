@@ -125,7 +125,7 @@ pub struct AlertItem {
     pub flow: Option<AlertFlow>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum AlertTransport {
     #[serde(rename = "tcp")]
     Tcp,
@@ -133,7 +133,7 @@ pub enum AlertTransport {
     Udp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct AlertFlow {
     pub transport: AlertTransport,
     pub source: std::net::SocketAddr,

@@ -259,6 +259,68 @@ fn related_search_distinguishes_log_only_matches_from_checked_trigger_headers() 
 }
 
 #[test]
+fn cited_flow_search_pivots_beyond_the_trigger_and_reports_incomplete_evidence() {
+    use packrat_tui::{net::packet::CaptureMetadata, storage::packet_archive::PacketArchive};
+    let mut log = tempfile::NamedTempFile::new().unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("archive");
+    let mut archive = PacketArchive::open(&path).unwrap();
+    let packet = |frame, time, port: u16| {
+        let mut packet = packets::tcp(frame, 100, 0x02, b"Private payload");
+        let size = packet.bytes.len() as u32;
+        packet.bytes[36..38].copy_from_slice(&port.to_be_bytes());
+        packet.timestamp = time;
+        packet.capture = Some(CaptureMetadata {
+            timestamp: None, captured_length: size, wire_length: size, link_type: 1,
+            section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+        });
+        packet
+    };
+    let mut unreadable = packet(4, 1130., 81);
+    unreadable.capture.as_mut().unwrap().captured_length = 1;
+    archive.append_scoped("capture-a", &[
+        packet(1, 1000., 80), packet(2, 1100., 81), packet(3, 1120., 81), unreadable,
+    ]).unwrap();
+    archive.append_scoped("capture-b", &[packet(5, 1140., 81)]).unwrap();
+    drop(archive);
+    let first = AlertFlow { source: "10.0.0.1:40000".parse().unwrap(),
+        destination: "10.0.0.2:80".parse().unwrap(), ..flow() };
+    let second = AlertFlow { destination: "10.0.0.2:81".parse().unwrap(), ..first };
+    let reverse = AlertFlow { source: second.destination, destination: second.source, ..second };
+    let mut anchor = record(1, 1000., Some(first), "session-a", "capture-a");
+    anchor["alert"]["packet_refs"] = json!([1, 2, 3, 4, 5]);
+    writeln!(log, "{anchor}").unwrap();
+    for (id, time, tuple, scope) in [(2, 1119., reverse, "capture-a"), (3, 1110., second, "capture-a"),
+        (4, 1500., second, "capture-a"), (5, 1004., first, "capture-a"), (6, 1120., second, "capture-b")] {
+        writeln!(log, "{}", record(id, time, Some(tuple), "session-a", scope)).unwrap();
+    }
+    let mut no_frames = record(7, 1000., Some(first), "session-a", "capture-a");
+    for key in ["packet_no", "first_packet", "last_packet"] { no_frames["alert"][key] = json!(10); }
+    no_frames["alert"]["packet_refs"] = json!([10]);
+    writeln!(log, "{no_frames}").unwrap();
+
+    let report = run(log.path(), "1", &[]);
+    assert_eq!(report["matches"][0]["alert_id"], 7);
+    assert_eq!(report["matching_alerts_in_sample"], 2);
+    let args = ["--evidence-archive", path.to_str().unwrap(), "--match-cited-flows"];
+    let report = run(log.path(), "1", &args);
+    assert_eq!(report["cited_flow_evidence"], json!({
+        "frames_examined":5,"usable_frames":3,"missing_frames":1,"header_unavailable_frames":1,
+        "timestamp_unavailable_frames":0,"read_failed_frames":0,"omitted_frames":0,"directional_flows":2,
+    }));
+    let matches = report["matches"].as_array().unwrap();
+    assert_eq!(matches.iter().map(|entry| entry["alert_id"].as_u64().unwrap()).collect::<Vec<_>>(), [7, 2, 5, 3]);
+    assert_eq!(matches[1]["direction"], "reverse");
+    assert_eq!(matches[1]["matched_cited_frame"], json!({"frame_number":3,"seconds_from_frame":-1.0}));
+    assert_eq!(matches[3]["matched_cited_frame"], json!({"frame_number":2,"seconds_from_frame":10.0}));
+    assert!(matches[1].get("seconds_from_anchor_trigger").is_none());
+    let unavailable = run(log.path(), "7", &args);
+    assert_eq!(unavailable["status"], "cited_flow_evidence_unavailable");
+    assert_eq!(unavailable["matching_alerts_in_sample"], 0);
+    assert!(!command(log.path(), "1").args(SCOPE).arg("--match-cited-flows").output().unwrap().status.success());
+}
+
+#[test]
 fn caps_returned_matches_without_hiding_the_sample_count() {
     let mut log = tempfile::NamedTempFile::new().unwrap();
     for id in 1..=35 {
