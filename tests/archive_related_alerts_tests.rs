@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 
 #[path = "support/packets.rs"]
 mod packets;
+#[path = "support/archive_related_path_cases.rs"]
+mod path_cases;
 
 const SCOPE: &[&str] = &["--session", "session-a", "--capture-id", "capture-a"];
 

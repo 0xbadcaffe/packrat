@@ -29,6 +29,7 @@ use candidate_triggers::CandidateTriggerRecovery;
 const WINDOW_SECONDS: u64 = 300;
 const SCAN_BYTES: NonZeroU64 = NonZeroU64::new(8 * 1024 * 1024).unwrap();
 const MAX_MATCHES: usize = 32;
+const MAX_PATH_CHECKS: usize = 128;
 const TRIGGER_TIMESTAMP_TOLERANCE_SECONDS: f64 = 0.001;
 
 #[derive(Serialize)]
@@ -48,6 +49,8 @@ pub struct RelatedAlertReport {
     cited_flow_evidence: Option<CitedFlowSearch>,
     #[serde(skip_serializing_if = "Option::is_none")]
     candidate_trigger_recovery: Option<CandidateTriggerRecovery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verified_path_filter: Option<VerifiedPathFilter>,
     trigger_window_seconds: u64,
     sampled_alerts: usize,
     scan_complete: bool,
@@ -93,6 +96,15 @@ enum CapturedPathComparison {
     SameObservedPath,
     DifferentObservedPath,
     Unavailable,
+}
+
+#[derive(Default, Serialize)]
+struct VerifiedPathFilter {
+    examined_candidates: usize,
+    same_observed_path: usize,
+    different_observed_path: usize,
+    path_unavailable: usize,
+    unchecked_candidates: usize,
 }
 
 enum TriggerFrame {
@@ -228,6 +240,7 @@ pub struct RelatedEvidenceOptions<'a> {
     pub verify_triggers: bool,
     pub match_cited_flows: bool,
     pub recover_candidate_triggers: bool,
+    pub require_verified_path: bool,
 }
 
 pub fn related_alerts_query(
@@ -238,9 +251,9 @@ pub fn related_alerts_query(
         anchor_id > 0 && valid_capture_id(session) && valid_capture_id(capture),
         "Expected a positive ID and explicit session and capture IDs"
     );
-    let verify_triggers = options.verify_triggers || options.recover_candidate_triggers;
+    let verify_triggers = options.verify_triggers || options.recover_candidate_triggers || options.require_verified_path;
     ensure!(!(verify_triggers || options.match_cited_flows) || options.archive.is_some(),
-        "Trigger verification, candidate recovery, and cited-flow matching require an evidence archive");
+        "Trigger verification, candidate recovery, verified paths, and cited-flow matching require an evidence archive");
     let mut seen = HashSet::new();
     let mut anchor = None;
     let mut cited_frames = Vec::new();
@@ -294,7 +307,7 @@ pub fn related_alerts_query(
     let cited = if options.match_cited_flows {
         archive.as_mut().map(|reader| CitedFlowSearch::read(reader, capture, &cited_frames))
     } else { None };
-    let status = if anchor.is_none() {
+    let mut status = if anchor.is_none() {
         "anchor_not_in_sample"
     } else if let Some(search) = &cited {
         if search.has_flows() { "sampled" } else { "cited_flow_evidence_unavailable" }
@@ -317,13 +330,20 @@ pub fn related_alerts_query(
             .then(left.snapshot.alert_id.cmp(&right.snapshot.alert_id))
     });
     let matching_alerts_in_sample = matches.len();
-    matches.truncate(MAX_MATCHES);
+    let mut path_filter = options.require_verified_path.then(|| VerifiedPathFilter {
+        unchecked_candidates: matches.len().saturating_sub(MAX_PATH_CHECKS),
+        ..VerifiedPathFilter::default()
+    });
+    matches.truncate(if path_filter.is_some() { MAX_PATH_CHECKS } else { MAX_MATCHES });
     let mut anchor_trigger_evidence = None;
     if verify_triggers && let Some(archive) = &mut archive {
         let expected = anchor_flow.zip(trigger);
         anchor_trigger_evidence = Some(check_trigger(archive, capture, packet_no, expected,
             anchor_header.take(), anchor_source == Some("retained_trigger_frame")));
         let anchor_path = anchor_trigger_evidence.as_ref().and_then(|evidence| evidence.path.as_ref());
+        if path_filter.is_some() && status == "sampled" && cited.is_none() && anchor_path.is_none() {
+            status = "reference_path_unverified";
+        }
         for alert in &mut matches {
             let snapshot = &alert.snapshot;
             let trigger_evidence = check_trigger(archive, capture, snapshot.frame,
@@ -339,6 +359,15 @@ pub fn related_alerts_query(
             alert.trigger_evidence = Some(trigger_evidence);
         }
     }
+    if let Some(filter) = &mut path_filter {
+        filter.examined_candidates = matches.len();
+        matches.retain(|candidate| match candidate.captured_path_comparison {
+            Some(CapturedPathComparison::SameObservedPath) => { filter.same_observed_path += 1; true }
+            Some(CapturedPathComparison::DifferentObservedPath) => { filter.different_observed_path += 1; false }
+            _ => { filter.path_unavailable += 1; false }
+        });
+        matches.truncate(MAX_MATCHES);
+    }
     Ok(RelatedAlertReport {
         record_type: "related_alerts",
         status,
@@ -352,6 +381,7 @@ pub fn related_alerts_query(
         anchor_trigger_evidence,
         cited_flow_evidence: cited,
         candidate_trigger_recovery: recovery,
+        verified_path_filter: path_filter,
         trigger_window_seconds: WINDOW_SECONDS,
         sampled_alerts,
         scan_complete,

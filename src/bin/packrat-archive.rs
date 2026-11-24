@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
         println!("Project alert status distinguishes current pins from matching recorded export outcomes and sources; it does not independently verify source provenance.");
         println!("       packrat-archive DIRECTORY --alert-flow-summary ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nGroups cited frames by TCP/UDP direction and reports capture-time gaps and unassigned references without exporting packet bytes. Gaps between cited frames do not establish full-flow cadence.");
-        println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]... [--evidence-archive DIRECTORY [--verify-trigger-frames] [--match-cited-flows] [--recover-candidate-triggers]]\nSearches up to 8 MiB and returns up to 32 nearby tuple matches. The archive can supply the exact retained trigger when the log lacks a usable tuple or time. With --match-cited-flows, search against retained cited headers and their individual timestamps. --recover-candidate-triggers checks up to 64 incomplete candidate records and implies trigger verification.");
+        println!("       packrat-archive --alerts ALERT_LOG --related-to ALERT_ID --session SESSION_ID --capture-id CAPTURE_ID [--previous-log PATH]... [--evidence-archive DIRECTORY [--verify-trigger-frames] [--match-cited-flows] [--recover-candidate-triggers] [--require-verified-path]]\nSearches up to 8 MiB and returns up to 32 nearby tuple matches. The archive can supply the exact retained trigger when the log lacks a usable tuple or time. With --match-cited-flows, search against retained cited headers and their individual timestamps. --recover-candidate-triggers checks up to 64 incomplete candidate records and implies trigger verification. --require-verified-path checks up to 128 tuple candidates and returns only matches whose headers verify on the same observed capture path.");
         println!("       packrat-archive --alerts ALERT_LOG --alert-range FIRST..LAST --session SESSION_ID --capture-id CAPTURE_ID --report-integrity [--scan-bytes BYTES] [--limit N] [--previous-log PATH]...\nSelects matching IDs before applying the result limit. Repeat --alert-range up to 64 times; the default scan budget is 8 MiB.");
         return Ok(());
     };
@@ -222,6 +222,7 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
     let mut verify_triggers = false;
     let mut match_cited_flows = false;
     let mut recover_candidate_triggers = false;
+    let mut require_verified_path = false;
     let mut scan_bytes = None;
     let mut previous = Vec::new();
     let mut report_integrity = false;
@@ -240,6 +241,10 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
         }
         if flag == "--recover-candidate-triggers" && !recover_candidate_triggers {
             recover_candidate_triggers = true;
+            continue;
+        }
+        if flag == "--require-verified-path" && !require_verified_path {
+            require_verified_path = true;
             continue;
         }
         let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
@@ -270,12 +275,13 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
         let report = related_alerts_query(
             &previous, std::path::Path::new(&log), session.as_deref().ok_or("--related-to requires --session")?,
             capture.as_deref().ok_or("--related-to requires --capture-id")?, anchor,
-            RelatedEvidenceOptions { archive: evidence_archive.as_deref(), verify_triggers, match_cited_flows, recover_candidate_triggers },
+            RelatedEvidenceOptions { archive: evidence_archive.as_deref(), verify_triggers, match_cited_flows,
+                recover_candidate_triggers, require_verified_path },
         )?;
         println!("{}", serde_json::to_string(&report)?);
         return Ok(());
     }
-    if evidence_archive.is_some() || verify_triggers || match_cited_flows || recover_candidate_triggers {
+    if evidence_archive.is_some() || verify_triggers || match_cited_flows || recover_candidate_triggers || require_verified_path {
         return Err("Related-alert evidence options require --related-to".into());
     }
     if scan_bytes.is_some() && (!report_integrity || alert_id.is_some()) {
