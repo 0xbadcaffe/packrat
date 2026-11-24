@@ -29,6 +29,17 @@ jq '.build.scope = {capture_id:"b",session_id:"two"} | .coverage.scope = .build.
     | .coverage.observed_openings = 0' "$before" > "$after"
 
 unset PACKRAT_BASELINE_MIN_SECONDS PACKRAT_BASELINE_MIN_PACKETS
+dns_coverage='{"no_decline_intervals":0,"decline_intervals":1,"unverified_intervals":0,"no_decline_packets":0,"no_decline_seconds":0,"observed_declines":{"query_key_declines":2,"query_candidate_declines":1,"nxdomain_client_declines":0,"external_resolver_pair_declines":0}}'
+jq --argjson dns "$dns_coverage" '.coverage.dns_capacity_coverage=$dns | .coverage.dns_capacity_coverage.note="private"' \
+    "$after" > "$tmp/dns-after.json"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$before" "$tmp/dns-after.json" | jq -e --argjson dns "$dns_coverage" '
+    .status=="separate_capture_windows" and .before.dns_capacity_coverage==null
+    and .after.dns_capacity_coverage==$dns and .observed_rate_delta_per_10000_packets==-5' >/dev/null
+for patch in '.no_decline_packets=1' '.unverified_intervals=1' '.observed_declines.query_key_declines=-1'; do
+    jq ".coverage.dns_capacity_coverage |= ($patch)" "$tmp/dns-after.json" > "$fixture"
+    PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$before" "$fixture" | jq -e '
+        .status=="separate_capture_windows" and .after.dns_capacity_coverage==null' >/dev/null
+done
 bash "$tool" "$before" "$after" | jq -e '
     .status == "thin_alert_coverage" and .observed_rate_delta_per_10000_packets == null
     and .before.openings_per_10000_packets == 5 and .after.openings_per_10000_packets == 0

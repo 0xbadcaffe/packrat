@@ -7,6 +7,7 @@ usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh --history STATE.json | packrat-watch-coverage.sh [--capture-id ID --session ID]' \
         'Reads retained journal records from stdin; defaults to the last observed capture scope.' \
         'Rates describe retained intervals with known coverage, not all traffic or all alerts.' \
+        'DNS capacity compares cumulative counters at eligible interval endpoints; missing or regressed counters are unverified.' \
         'Alert rates require decodable capture and a valid saved-alert log at both endpoints.' \
         'Alert rates exclude intervals whose endpoint alert log grew during the review or was not checked for growth.' \
         'Alert rates require known, unchanged save-failure and retry-buffer drop counters.' \
@@ -47,6 +48,26 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
           elif $after < $before then "unverified"
           elif $after > $before then "increased"
           else "unchanged" end;
+    def dns_counters: objects |
+        {query_key_declines,query_candidate_declines,nxdomain_client_declines,external_resolver_pair_declines}
+        | select(all(.[]; counter));
+    def dns_delta($earlier; $later):
+        ($earlier.dns_capacity | dns_counters // null) as $before
+        | ($later.dns_capacity | dns_counters // null) as $after
+        | if $before == null or $after == null or any($after | keys[]; $after[.] < $before[.])
+          then null else $after | with_entries(.value -= $before[.key]) end;
+    def dns_capacity_summary($healthy):
+        [$healthy[].dns_declines | objects] as $known
+        | [$healthy[] | select(.dns_declines != null and all(.dns_declines[]; . == 0))] as $no_declines
+        | {no_decline_intervals:($no_declines | length),
+           decline_intervals:(($known | length) - ($no_declines | length)),
+           unverified_intervals:(($healthy | length) - ($known | length)),
+           no_decline_packets:([$no_declines[].packets] | add // 0),
+           no_decline_seconds:([$no_declines[].seconds] | add // 0),
+           observed_declines:(if $known == [] then null
+                else reduce $known[] as $delta (($known[0] | map_values(0));
+                    with_entries(.value += $delta[.key]))
+                | if all(.[]; counter) then . else null end end)};
     def opening_delta($earlier; $later):
         $earlier.highest_observed_alert_id as $low | $later.highest_observed_alert_id as $high
         | (if $later.checkpoint == true and $later.alert_changes == null
@@ -152,6 +173,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
           | (if $saving == "unchanged" and $backlog == "unchanged" and $journal == "unchanged" and $stable_log
              then verified_opening_ids($earlier; $later) else null end) as $ids
           | {seconds:($later.tick - $earlier.tick), packets:($later.packets - $earlier.packets),
+             dns_declines:dns_delta($earlier; $later),
              save_counter_status:$saving,
              backlog_counter_status:$backlog,
              journal_counter_status:$journal, stable_alert_log:$stable_log, historical_alert_gap:($later.alert_sample_gap == true),
@@ -184,6 +206,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        healthy_intervals:($healthy | length), excluded_intervals:([($sample | length) - 1,0] | max) - ($healthy | length),
        journal_discontinuities:([$pairs[] | select(. == "journal_discontinuity")] | length),
        healthy_seconds:([$healthy[].seconds] | add // 0), healthy_packets:([$healthy[].packets] | add // 0),
+       dns_capacity_coverage:dns_capacity_summary($healthy),
        alert_comparable_intervals:($comparable | length), alert_comparable_packets:$measured_packets,
        alert_comparable_seconds:([$comparable[].seconds] | add // 0),
        alert_reverified_intervals:([$comparable[] | select(.historical_alert_gap)] | length),

@@ -35,6 +35,34 @@ bash "$coverage" <<< "$sample" | jq -e '.status=="insufficient_coverage" and .sc
 bash "$coverage" </dev/null | jq -e '.status=="no_capture_records" and .scope==null' >/dev/null
 bash "$coverage" --capture-id missing --session a-1 <<< "$sample" |
     jq -e '.status=="no_capture_records" and .scope.capture_id=="missing"' >/dev/null
+bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
+    .dns_capacity_coverage == {no_decline_intervals:0,decline_intervals:0,unverified_intervals:3,
+        no_decline_packets:0,no_decline_seconds:0,observed_declines:null}
+    and .observed_openings==2' >/dev/null
+dns_sample=$(jq -sc '
+    def stats($key; $candidate): {query_key_declines:$key,query_candidate_declines:$candidate,
+        nxdomain_client_declines:0,external_resolver_pair_declines:0};
+    ((.[0],.[1]) | .dns_capacity=stats(3;5)),
+    (.[2] | .dns_capacity=(stats(5;5) | .nxdomain_client_declines=1)
+         | .dns_capacity_delta={query_key_declines:0,nxdomain_client_declines:99}),
+    (.[3] | .dns_capacity=(stats(8;4) | .nxdomain_client_declines=1))
+' <<< "$sample")
+bash "$coverage" <<< "$dns_sample" | jq -e '
+    .dns_capacity_coverage == {no_decline_intervals:1,decline_intervals:1,unverified_intervals:1,
+        no_decline_packets:25,no_decline_seconds:60,
+        observed_declines:{query_key_declines:2,query_candidate_declines:0,nxdomain_client_declines:1,external_resolver_pair_declines:0}}
+    and .alert_comparable_packets==60 and .observed_openings==2' >/dev/null
+for patch in 'del(.dns_capacity)' '.dns_capacity.query_key_declines=0.5' \
+    '.dns_capacity.query_candidate_declines=9007199254740992' '.dns_capacity.nxdomain_client_declines=-1'; do
+    jq -sc ".[0],(.[1]|$patch),.[2]" <<< "$dns_sample" | bash "$coverage" | jq -e '
+        .dns_capacity_coverage.unverified_intervals==2 and .dns_capacity_coverage.observed_declines==null' >/dev/null
+done
+jq -sc '.[0], (.[2] | .journal_sequence=3)' <<< "$dns_sample" | bash "$coverage" | jq -e '
+    .journal_discontinuities==1 and .dns_capacity_coverage.observed_declines==null' >/dev/null
+jq -sc 'to_entries[] | .key as $index | .value | .dns_capacity |=
+    (map_values(0) | .query_key_declines=(if $index % 2 == 0 then 0 else 9007199254740991 end))' <<< "$dns_sample" |
+    bash "$coverage" | jq -e '.dns_capacity_coverage.decline_intervals==2
+        and .dns_capacity_coverage.unverified_intervals==1 and .dns_capacity_coverage.observed_declines==null' >/dev/null
 jq -sc '.[0:3] | to_entries[] | .value + {journal_unconfirmed_events:(if .key==0 then 0 else 2 end)}' <<< "$sample" |
     bash "$coverage" | jq -e '.journal_tail_unconfirmed_events==2 and .journal_discontinuities==1
         and .excluded_intervals==1 and .healthy_intervals==1 and .alert_comparable_packets==35' >/dev/null

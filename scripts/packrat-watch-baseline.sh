@@ -19,6 +19,21 @@ read_baseline() {
         def token: type == "string" and test("\\A[A-Za-z0-9_.:-]{1,128}\\z");
         def scope: type == "object" and (.capture_id | token) and (.session_id | token);
         def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+        def dns_capacity_summary:
+            . as $coverage | .dns_capacity_coverage | objects
+            | {no_decline_intervals,decline_intervals,unverified_intervals,no_decline_packets,no_decline_seconds,
+               observed_declines:(.observed_declines | if . == null then null else objects |
+                   {query_key_declines,query_candidate_declines,nxdomain_client_declines,external_resolver_pair_declines}
+                   | select(all(.[]; count)) end)}
+            | select(all([.no_decline_intervals,.decline_intervals,.unverified_intervals,.no_decline_packets,.no_decline_seconds][];
+                         count)
+                and .no_decline_intervals + .decline_intervals + .unverified_intervals == $coverage.healthy_intervals
+                and .no_decline_packets <= $coverage.healthy_packets and .no_decline_seconds <= $coverage.healthy_seconds
+                and .no_decline_seconds >= .no_decline_intervals
+                and (if .no_decline_intervals == 0 then .no_decline_packets == 0 and .no_decline_seconds == 0 else true end)
+                and (if .observed_declines == null then .no_decline_intervals == 0 or .decline_intervals > 0
+                     else .no_decline_intervals + .decline_intervals > 0
+                        and any(.observed_declines[]; . > 0) == (.decline_intervals > 0) end));
         def verified_rate_policy: IN("continuous_journal_v7","continuous_journal_v8");
         def rule_summary:
             (.rule_id | type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z"))
@@ -95,6 +110,7 @@ read_baseline() {
                    alert_reverified_intervals:(if $c.coverage_policy == "continuous_journal_v8" then $c.alert_reverified_intervals else null end),
                    first_record_at:$c.first_record_at,last_record_at:$c.last_record_at,
                    healthy_seconds:$c.healthy_seconds,excluded_intervals:$c.excluded_intervals,
+                   dns_capacity_coverage:($c | dns_capacity_summary // null),
                    comparable_seconds:(if $c | has("alert_comparable_seconds") then $c.alert_comparable_seconds
                        elif $c.alert_comparable_intervals == $c.healthy_intervals then $c.healthy_seconds else null end),
                    comparable_packets:$c.alert_comparable_packets,openings:$c.observed_openings,
