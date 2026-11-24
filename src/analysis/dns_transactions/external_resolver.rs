@@ -43,7 +43,9 @@ impl ExternalResolvers {
             return None;
         }
         if self.pairs.len() >= MAX_PAIRS {
-            self.pairs.retain(|_, seen| timestamp - *seen <= TTL_SECS);
+            self.pairs.retain(|(observed, _, _), seen| {
+                observed.interface != scope.interface || timestamp - *seen <= TTL_SECS
+            });
             if self.pairs.len() >= MAX_PAIRS {
                 return None;
             }

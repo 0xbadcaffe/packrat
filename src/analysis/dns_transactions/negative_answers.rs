@@ -77,8 +77,9 @@ impl NegativeAnswers {
         let now = pkt.timestamp;
         let key = (scope, pkt.dst.clone(), pkt.src.clone());
         if self.clients.len() >= MAX_CLIENTS && !self.clients.contains_key(&key) {
-            self.clients
-                .retain(|_, state| now - state.latest_time <= WINDOW_SECS);
+            self.clients.retain(|(observed, _, _), state| {
+                observed.interface != scope.interface || now - state.latest_time <= WINDOW_SECS
+            });
             if self.clients.len() >= MAX_CLIENTS {
                 return None;
             }

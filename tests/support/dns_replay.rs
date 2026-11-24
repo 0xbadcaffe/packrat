@@ -43,8 +43,8 @@ fn dns_reply_replay_correlates_delayed_responses_within_the_reply_window() {
     let mut cases = Vec::new();
     for (file, delayed_at, rcode, expected) in [
         ("repeated.pcapng", 8.0, 0, None),
-        ("changed.pcapng", 8.0, 3, Some((changed, "MEDIUM", "correlated", 15, vec![1, 2, 3]))),
-        ("outside-window.pcapng", 5.0, 3, Some((unmatched, "LOW", "heuristic", 7, vec![3]))),
+        ("changed.pcapng", 8.0, 3, Some((changed, "MEDIUM", "correlated", 16, vec![1, 2, 3]))),
+        ("outside-window.pcapng", 5.0, 3, Some((unmatched, "LOW", "heuristic", 8, vec![3]))),
     ] {
         let mut capture = PcapNgWriter::create(&scratch.path().join(file)).unwrap();
         for (frame, timestamp, response, code) in [(1, 1.0, false, 0), (2, 11.0, true, 0), (3, delayed_at, true, rcode)] {
@@ -112,7 +112,7 @@ fn nxdomain_replay_separates_rearmed_bursts_from_sustained_activity() {
             case["opening_frames"] = json!({(rule):expected});
             case["opening_evidence"] = json!(expected.iter().map(|&frame| json!({
                 "rule_id":rule, "opening_frame":frame, "frames":(frame - 39..=frame).collect::<Vec<_>>(),
-                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":6},
+                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":7},
             })).collect::<Vec<_>>());
         }
         cases.push(case);
@@ -282,7 +282,7 @@ fn early_alternate_resolver_does_not_mask_later_answer_changes() {
             "opening_evidence": [
                 {"rule_id": unexpected, "opening_frame": 2, "frames": [1, 2]},
                 {"rule_id": competing, "opening_frame": 3, "frames": [1, 2, 3],
-                 "classification":{"severity":"CRITICAL","confidence":"correlated","revision":9}}
+                 "classification":{"severity":"CRITICAL","confidence":"correlated","revision":10}}
             ]
         });
         if has_change {

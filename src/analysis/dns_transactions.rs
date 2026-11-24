@@ -350,8 +350,10 @@ impl DnsTransactionTracker {
 
     fn insert_query(&mut self, key: TransactionKey, query: PendingQuery) {
         if self.exchanges.len() >= MAX_TRANSACTIONS && !self.exchanges.contains_key(&key) {
-            self.exchanges.retain(|_, bucket| {
-                bucket.expire(query.timestamp);
+            self.exchanges.retain(|observed, bucket| {
+                if observed.scope.interface == key.scope.interface {
+                    bucket.expire(query.timestamp);
+                }
                 !bucket.is_empty()
             });
             if self.exchanges.len() >= MAX_TRANSACTIONS {

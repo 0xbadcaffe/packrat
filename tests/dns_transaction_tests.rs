@@ -10,6 +10,8 @@ mod txt_reply_tests;
 mod tag_path_tests;
 #[path = "dns_transaction/external_resolver_tests.rs"]
 mod external_resolver_tests;
+#[path = "dns_transaction/capture_clock_tests.rs"]
+mod capture_clock_tests;
 #[path = "dns_transaction/investigation_tests.rs"]
 mod investigation_tests;
 #[path = "dns_transaction/jndi_label_tests.rs"]
@@ -164,7 +166,7 @@ fn reply_without_observed_query_is_a_visibility_alert_not_an_incident() {
     assert!(alert.detail.contains("no matching query retained"));
     let rule = alert.provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "dns.unmatched_response");
-    assert_eq!(rule.revision, 7);
+    assert_eq!(rule.revision, 8);
     assert_eq!(rule.confidence.to_string(), "Heuristic");
     assert!(core.incidents.incidents.is_empty());
 
@@ -248,7 +250,7 @@ fn dns_integrity_keeps_transactions_and_alert_evidence_within_capture_scope() {
             let alert = alerts.iter().find(|a| a.last_packet == last_packet).unwrap();
             let rule = alert.provenance.as_ref().unwrap();
             assert_eq!(rule.rule_id, "dns.competing_responders");
-            assert_eq!(rule.revision, 9);
+            assert_eq!(rule.revision, 10);
             assert_eq!(alert.hit_count, 1);
             assert_eq!(alert.packet_refs, expected, "{other:?}");
         }
