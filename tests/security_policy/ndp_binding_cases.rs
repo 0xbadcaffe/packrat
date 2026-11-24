@@ -15,6 +15,55 @@ fn router_link_packet(no: u64, time: f64, vlan: u16, host: u8, lifetime: u16) ->
     packet
 }
 
+fn tagged(packet: Packet, provider: bool) -> Packet {
+    let mut raw = packet.bytes;
+    let tpid = if provider { 0x88a8_u16 } else { 0x8100_u16 };
+    let tci = if packet.no % 2 == 0 { 0xb00a_u16 } else { 10_u16 };
+    raw.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+    packrat_tui::net::parser::parse_ethernet(&raw, packet.no, packet.timestamp)
+}
+
+#[rstest]
+#[case(false, ROUTER_LINK_TITLE)]
+#[case(true, "IPv6 neighbor binding changed")]
+fn ipv6_identity_changes_require_a_prior_claim_on_the_same_tag_path(#[case] neighbor: bool, #[case] title: &str) {
+    let target = "2001:db8::5".parse::<Ipv6Addr>().unwrap().octets();
+    let make = |frame, host, provider| {
+        let packet = if neighbor {
+            let mac = [2, 1, 2, 3, 4, host];
+            checksummed_ipv6_control_packet(frame, mac, target, 255, &neighbor_advertisement(target, mac))
+        } else {
+            router_link_packet(frame, frame as f64, 10, host, 90)
+        };
+        tagged(packet, provider)
+    };
+    let mut core = AnalysisCore::default();
+    core.analyze(&make(1, 1, false));
+    core.analyze(&make(2, 2, true));
+    assert!(core.alert_center.items.iter().all(|alert| alert.title != title));
+    core.analyze(&make(3, 3, false));
+    core.analyze(&make(4, 4, true));
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == title).collect();
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0].packet_refs, [1, 3]);
+    assert_eq!(alerts[1].packet_refs, [2, 4]);
+}
+
+#[test]
+fn router_advertisements_cannot_reach_the_rate_threshold_across_tag_paths() {
+    const TITLE: &str = "IPv6 router advertisement flood";
+    let mut core = AnalysisCore::default();
+    for frame in 1..=30 {
+        let provider = frame <= 20 && frame % 2 == 0;
+        core.analyze(&tagged(router_link_packet(frame, frame as f64 / 1000.0, 10, 1, 60), provider));
+        if frame < 30 {
+            assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
+        }
+    }
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(alert.packet_refs, (1..=19).step_by(2).chain(21..=30).collect::<Vec<_>>());
+}
+
 #[test]
 fn default_router_link_change_requires_scoped_active_advertisements() {
     let mut core = AnalysisCore::default();

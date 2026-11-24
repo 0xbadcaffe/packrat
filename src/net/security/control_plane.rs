@@ -1,11 +1,12 @@
 use super::*;
+use super::scans::scan_scope;
 use std::net::Ipv6Addr;
 
 const NDP_BINDING_WINDOW_SECS: f64 = 300.0;
 const MAX_CONTROL_PLANE_EVIDENCE_BYTES: usize = 2_048;
 const MAX_ROUTER_RATE_EVIDENCE: usize = 256;
 
-pub(super) type RouterSource = (ServiceScope, [u8; 6]);
+pub(super) type RouterSource = (ScanScope, [u8; 6]);
 
 #[derive(Default)]
 pub(super) struct RouterRateEvidence(std::collections::VecDeque<(RouterSource, Packet)>);
@@ -166,7 +167,7 @@ impl SecurityEngine {
         }
         let Some(mac) = ethernet_source_mac(&pkt.bytes)
             .filter(|address| *address != [0; 6] && address[0] & 1 == 0) else { return };
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let link_local = is_ipv6_link_local(&inspection.source);
         if link_local {
             if !icmpv6_checksum_valid(inspection) { return; }
@@ -236,7 +237,7 @@ impl SecurityEngine {
     }
 
     fn track_default_router_link(&mut self, pkt: &Packet, source: [u8; 16], mac: [u8; 6], lifetime: u16, retain: bool) {
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let key = (scope, source);
         let order = (pkt.timestamp, pkt.no);
         if let Some(prior) = self.default_router_links.get(&key)
@@ -302,7 +303,7 @@ impl SecurityEngine {
         }
         let Some(mac) = ndp_target_link_layer_address(&data[24..]) else { return };
         if !icmpv6_checksum_valid(inspection) { return; }
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let key = (scope, target);
         let previous = self.ndp_bindings.get(&key);
         if previous.is_some_and(|entry| {

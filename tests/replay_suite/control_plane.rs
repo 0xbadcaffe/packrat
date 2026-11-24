@@ -76,13 +76,17 @@ fn default_router_link_replay_keeps_both_frames_on_one_vlan() {
     for (name, observations, openings, snapshots) in [
         ("same-vlan", &[(10, 1), (10, 2)][..], vec![2], 1),
         ("other-vlan", &[(10, 1), (20, 2)][..], vec![], 0),
+        ("other-tag-type-same-vlan", &[(10, 1), (10, 2)][..], vec![], 0),
         ("same-pair", &[(10, 1), (10, 2), (10, 1), (10, 2)][..], vec![2], 3),
     ] {
         let capture = format!("{name}.pcapng");
         let mut writer = PcapNgWriter::create(&root.join(&capture)).unwrap();
         for (index, &(vlan, host)) in observations.iter().enumerate() {
             let no = index as u64 + 1;
-            let frame = router_advertisement(vlan, host);
+            let mut frame = router_advertisement(vlan, host);
+            if name == "other-tag-type-same-vlan" && index == 1 {
+                frame[12..14].copy_from_slice(&0x88a8_u16.to_be_bytes());
+            }
             writer.write_packet(&parse_ethernet(&frame, no, no as f64)).unwrap();
         }
         writer.flush().unwrap();
@@ -100,7 +104,7 @@ fn default_router_link_replay_keeps_both_frames_on_one_vlan() {
     assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 3);
+    assert_eq!(report["passed"], 4);
 }
 
 #[test]
@@ -126,7 +130,7 @@ fn router_advertisement_burst_replay_excludes_bad_checksums_from_evidence() {
                 let frames: Vec<_> = (1..=19).chain([21]).collect();
                 case["opening_frames"] = json!({(rule):[21]});
                 case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":21,"frames":frames,
-                    "classification":{"severity":"MEDIUM","confidence":"correlated","revision":2}}]);
+                    "classification":{"severity":"MEDIUM","confidence":"correlated","revision":3}}]);
             }
             case
         })
@@ -159,7 +163,7 @@ fn neighbor_binding_replay_excludes_bad_checksum_claims_without_replacing_the_ba
             if count != 0 {
                 case["opening_frames"] = json!({(rule):[3]});
                 case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":3,"frames":[1,3],
-                    "classification":{"severity":"MEDIUM","confidence":"correlated","revision":3}}]);
+                    "classification":{"severity":"MEDIUM","confidence":"correlated","revision":4}}]);
             }
             case
         })

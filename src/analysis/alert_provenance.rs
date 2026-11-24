@@ -121,15 +121,15 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the IPv6 hop limit at the original link and check router configuration and endpoint logs; the observed packet does not prove a neighbor cache or route changed.",
         ),
         (
-            "IDS", "Invalid IPv6 router advertisement source", "ipv6.ra_source_not_link_local", 1, DirectObservation,
+            "IDS", "Invalid IPv6 router advertisement source", "ipv6.ra_source_not_link_local", 2, DirectObservation,
             "Verify router interface configuration and check whether endpoints ignored the advertisement.",
         ),
         (
-            "IDS", "IPv6 router advertisement flood", "ipv6.ra_rate_burst", 2, Correlated,
+            "IDS", "IPv6 router advertisement flood", "ipv6.ra_rate_burst", 3, Correlated,
             "Compare the retained advertisements with the approved router inventory and verify endpoint router selection.",
         ),
         (
-            "IDS", "IPv6 default router Ethernet source changed", "ipv6.ra_router_link_change", 2, Correlated,
+            "IDS", "IPv6 default router Ethernet source changed", "ipv6.ra_router_link_change", 3, Correlated,
             "Compare both advertisements with the switch-port inventory and planned router failover. Check endpoint default routes before attributing impact.",
         ),
         (
@@ -137,7 +137,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the retained queries with expected DNS clients and resolver logs; investigate the originating process before concluding that data was transferred.",
         ),
         (
-            "IDS", "IPv6 neighbor binding changed", "ipv6.ndp_binding_change", 3, Correlated,
+            "IDS", "IPv6 neighbor binding changed", "ipv6.ndp_binding_change", 4, Correlated,
             "Compare both advertisements with the authorized address assignments and endpoint neighbor tables; distinguish failover from spoofing.",
         ),
         (
