@@ -135,18 +135,26 @@ pub(super) fn evict_oldest_beacon(states: &mut HashMap<BehaviorFlowKey, BeaconSt
     }
 }
 
-pub(super) fn evict_oldest_exfil(states: &mut HashMap<ExfilKey, ExfilState>) {
+pub(super) fn admit_exfil_history(states: &mut HashMap<ExfilKey, ExfilState>, timestamp: f64) -> bool {
     if states.len() < MAX_SCAN_STATES {
-        return;
+        return true;
     }
-    if let Some(oldest) = states
+    let Some((oldest, state)) = states
         .iter()
-        .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
-        .map(|(key, _)| key.clone())
-    {
-        states.remove(&oldest);
+        .min_by(|left, right| {
+            left.1.last_seen.total_cmp(&right.1.last_seen).then(left.0.cmp(right.0))
+        }) else { return false; };
+    if timestamp < state.last_seen {
+        return false;
     }
+    let oldest = oldest.clone();
+    states.remove(&oldest);
+    true
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/transfer_cache_tests.rs"]
+mod transfer_cache_tests;
 
 pub(super) struct PeriodicTrafficEvidence {
     pub(super) duration: f64,

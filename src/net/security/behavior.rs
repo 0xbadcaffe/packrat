@@ -276,8 +276,8 @@ impl SecurityEngine {
                 transport: transport.clone(),
                 scope,
             };
-            if !self.exfil_flows.contains_key(&key) {
-                evict_oldest_exfil(&mut self.exfil_flows);
+            if !self.exfil_flows.contains_key(&key) && !admit_exfil_history(&mut self.exfil_flows, pkt.timestamp) {
+                return;
             }
             let state = self.exfil_flows.entry(key).or_default();
             let selected = |id| archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == id));

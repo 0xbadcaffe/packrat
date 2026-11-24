@@ -223,14 +223,14 @@ pub(super) struct TcpSignal {
     pub(super) complete: bool,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum TransferTransport {
     Tcp,
     Udp,
     Other(String),
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct ExfilKey {
     pub(super) internal: String,
     pub(super) external: String,
