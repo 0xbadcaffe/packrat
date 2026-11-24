@@ -40,3 +40,27 @@ jq -e '.highest_observed_alert_id==200 and .alert_sample_gap==false' "$state" >/
 live current 105 '[]' "$(alert_rows 300 302)" | jq '.health.capture_id="scope-3"' >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 jq -e '.highest_observed_alert_id==302 and .alert_sample_gap and (.has_older_alerts | not)' "$state" >/dev/null
+
+for retained_id in 41 42; do
+    state="$scratch/alert-sample-regression-$retained_id.json"
+    live current 101 '[]' "$(alert_rows 41 42)" >"$report"
+    bash "$watch" --once "$state" -- cat "$report" >/dev/null
+    if [[ $retained_id == 42 ]]; then
+        live current 102 '[]' "$(alert_rows 42)" | jq '.has_more_alerts=true' >"$report"
+        bash "$watch" --once "$state" -- cat "$report" >/dev/null
+        jq -e '.highest_observed_alert_id==42 and .alert_sample_gap==false' "$state" >/dev/null
+        live current 103 '[]' "$(alert_rows 41 42)" >"$report"
+        bash "$watch" --once "$state" -- cat "$report" >/dev/null
+    fi
+    live current 104 '[]' "$(alert_rows "$retained_id")" >"$report"
+    bash "$watch" --once "$state" -- cat "$report" >/dev/null
+    bash "$watch" --check "$state" | jq -e '
+        .status=="current" and .alert_counts.highest_observed_alert_id==42 and .alert_sample_gap
+        and .alert_counts.status=="sampled"' >/dev/null
+    live current 105 '[]' "$(alert_rows 41 42 43)" >"$report"
+    bash "$watch" --once "$state" -- cat "$report" >/dev/null
+    jq -e '.highest_observed_alert_id==43 and .alert_sample_gap' "$state" >/dev/null
+    live current 1 '[]' '[]' | jq '.health.capture_id="new-capture"' >"$report"
+    bash "$watch" --once "$state" -- cat "$report" >/dev/null
+    jq -e '.highest_observed_alert_id==0 and .alert_sample_gap==false' "$state" >/dev/null
+done

@@ -516,6 +516,8 @@ while :; do
             | alert_ids as $ids | ($ids[-1] // 0) as $seen
             | ([$prior.highest_observed_alert_id, ($prior | alert_ids | last)] | max // 0) as $high
             | (.recent_alerts_at_limit == true or .has_older_alerts == true) as $truncated
+            | (log_scan_complete == true and .recent_alerts_at_limit == false and .has_older_alerts == false
+                and ((($prior | alert_ids) - $ids) | length > 0)) as $lost_from_complete_sample
             | ((.invalid_alert_rows // 0) > 0 or (.duplicate_alert_ids // 0) > 0 or log_scan_interrupted) as $invalid_sample
             | [$ids[] | select(. > $high)] as $new_ids
             | . + {record_type:"capture_triage_watch", updated_at:(now | todateiso8601), max_age_seconds:$max_age,
@@ -530,7 +532,7 @@ while :; do
                     and .buffer_drops >= $prior.buffer_drops then .buffer_drops - $prior.buffer_drops else null end),
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
                 alert_sample_gap: if observed | not then null elif $invalid_sample then true elif $comparable and $high > 0 then
-                    $prior.alert_sample_gap == true or ($seen - $high > ($new_ids | length))
+                    $prior.alert_sample_gap == true or $seen < $high or $lost_from_complete_sample or ($seen - $high > ($new_ids | length))
                 else ($comparable and $prior.alert_sample_gap == true) or $truncated
                     or ($seen - ($ids[0] // 1) + 1 > ($ids | length)) end,
                 alert_changes: if $comparable then
