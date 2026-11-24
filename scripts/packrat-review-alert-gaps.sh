@@ -6,6 +6,7 @@ export LC_ALL=C
 usage() {
     printf '%s\n' 'Usage: packrat-review-alert-gaps.sh COVERAGE.json ALERT_LOG [PREVIOUS_LOG ...]' \
         'Reads up to 8 MiB and returns up to 512 saved alerts matching the requested ID ranges. Supply previous logs oldest first.' \
+        'Includes IDs that were seen in an earlier watcher sample but missing in a later one.' \
         'Absence refers only to the supplied logs, never to uncaptured or unpersisted traffic.'
 }
 
@@ -19,19 +20,28 @@ requested=$(head -c 65537 -- "$1" | jq -Rces '
         and (.scope.session_id | type == "string" and test("\\A[A-Za-z0-9_-]{1,128}\\z"))
         and (.unobserved_alert_id_ranges_truncated | type == "boolean")
         and (.alert_sample_gap_reported | type == "boolean")
+        and ((has("missing_previously_observed_alert_ids_truncated") | not)
+             or (.missing_previously_observed_alert_ids_truncated | type == "boolean"))
+        and ((has("missing_previously_observed_alert_ids") | not)
+             or (.missing_previously_observed_alert_ids | type == "array" and length <= 64 and all(.[]; id)))
         and (.unobserved_alert_id_ranges | type == "array" and length <= 64
              and all(.[]; type == "object" and (.first_id | id) and (.last_id | id) and .first_id <= .last_id)))
+    | ((.missing_previously_observed_alert_ids // []) | unique) as $missing
     | {scope:(.scope | {capture_id,session_id}),alert_sample_gap_reported,unobserved_alert_id_ranges_truncated,
-       ranges:(.unobserved_alert_id_ranges | map({first_id,last_id}) | sort_by([.first_id,.last_id])
+       missing_previously_observed_alert_ids:$missing,
+       missing_previously_observed_alert_ids_truncated:(.missing_previously_observed_alert_ids_truncated // false),
+       ranges:((.unobserved_alert_id_ranges | map({first_id,last_id})) + ($missing | map({first_id:.,last_id:.})) | sort_by([.first_id,.last_id])
            | reduce .[] as $range ([];
                if length > 0 and .[-1].last_id + 1 >= $range.first_id then
                    .[-1].last_id = ([.[-1].last_id,$range.last_id] | max)
                else . + [$range] end))}
+    | .request_ranges_truncated = (.unobserved_alert_id_ranges_truncated or .missing_previously_observed_alert_ids_truncated
+        or (.ranges | length > 64)) | .ranges = .ranges[:64]
 ') || { printf '%s\n' 'Invalid or unsupported coverage report.' >&2; exit 2; }
 shift
 if jq -e '.ranges == []' <<< "$requested" >/dev/null; then
     jq -c '. + {record_type:"alert_gap_reconciliation",
-        status:(if .alert_sample_gap_reported then "unlocated_gap" else "no_reported_ranges" end),
+        status:(if .alert_sample_gap_reported or .request_ranges_truncated then "unlocated_gap" else "no_reported_ranges" end),
         saved_log_scan_complete:null,recovered_alerts:[]}' <<< "$requested"
     exit
 fi

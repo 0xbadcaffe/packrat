@@ -129,6 +129,30 @@ jq -c 'del(.journal_writer,.journal_sequence)' <<< "$sample" | bash "$coverage" 
 
 # Initial offsets are unknown. Only report holes bounded by observed IDs.
 jq -sc '
+    .[0] as $first | .[1] as $second
+    | ($first | .recent_alerts=[{alert_id:3},{alert_id:4}] | .review_queue=[]),
+      ($second | .recent_alerts=[{alert_id:4}] | .review_queue=[] | .alert_sample_gap=true
+        | .recent_alerts_at_limit=false | .has_older_alerts=false | .alert_log_integrity.stopped_at_limit=false)
+' <<< "$sample" | bash "$coverage" | jq -e '
+    .missing_previously_observed_alert_ids == [3] and (.missing_previously_observed_alert_ids_truncated | not)
+    and .unobserved_alert_id_ranges == [] and .observed_openings == null' >/dev/null
+jq -sc '
+    .[0] as $first | .[1] as $second
+    | ($first | .recent_alerts=[{alert_id:3},{alert_id:4}] | .review_queue=[]),
+      ($second | .recent_alerts=[{alert_id:3}] | .review_queue=[] | .alert_sample_gap=true
+        | .recent_alerts_at_limit=true | .has_older_alerts=true)
+' <<< "$sample" | bash "$coverage" | jq -e '
+    .missing_previously_observed_alert_ids == [4] and .unobserved_alert_id_ranges == []' >/dev/null
+for patch in '.has_older_alerts=true' '.alert_log_advanced_during_review=true' \
+    '.recent_alerts=["invalid"]' '.review_queue=[{alert_id:4},{alert_id:4}]' '.capture_id="other"' '.status="triage_unavailable"'; do
+    jq -sc ".[0] as \$first | .[1] as \$second
+        | (\$first | .recent_alerts=[{alert_id:3},{alert_id:4}] | .review_queue=[]),
+          (\$second | .recent_alerts=[{alert_id:4}] | .review_queue=[] | .alert_sample_gap=true
+           | .recent_alerts_at_limit=false | .has_older_alerts=false | .alert_log_integrity.stopped_at_limit=false | $patch)" \
+        <<< "$sample" | bash "$coverage" --capture-id a --session a-1 | jq -e '
+            .missing_previously_observed_alert_ids == []' >/dev/null
+done
+jq -sc '
     (.[0] | .recent_alerts = [{alert_id:2},{alert_id:4}]),
     (.[1] | del(.checkpoint) | .alert_sample_gap = true | .highest_observed_alert_id = 9
           | .alert_changes.newly_observed = [6,9] | .review_queue = [{alert_id:7}])

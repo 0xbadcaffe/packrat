@@ -12,7 +12,13 @@ cat > "$scratch/packrat-archive" <<'STUB'
 set -euo pipefail
 [[ ${*:1:11} == "--alerts $TEST_DIR/current.jsonl --session session-a --capture-id 00000000000000000000000000000001 --limit 512 --scan-bytes 8388608 --report-integrity" ]]
 shift 11
+if [[ ${TEST_MODE:-} == range-cap ]]; then
+    [[ $# == 130 && $2 == 2..2 && ${128} == 128..128 && ${129} == --previous-log && ${130} == "$TEST_DIR/old.jsonl" ]]
+    printf '%s\n' '{"alerts":[],"integrity":{"invalid_records":0,"oversized_records":0,"stopped_at_limit":false}}'
+    exit
+fi
 [[ $* == "--alert-range 5..8 --alert-range 20..20 --previous-log $TEST_DIR/old.jsonl" ||
+   $* == "--alert-range 5..9 --alert-range 20..20 --previous-log $TEST_DIR/old.jsonl" ||
    $* == "--alert-range 1..9007199254740991 --previous-log $TEST_DIR/old.jsonl" ]]
 touch -- "$TEST_DIR/called"
 case ${TEST_MODE:-normal} in
@@ -54,6 +60,16 @@ run_gap | jq -e '
 TEST_MODE=bounded run_gap | jq -e '
     (.saved_log_scan_complete | not) and [.recovered_alerts[].alert_id] == [6,8]
     and all(.ranges[]; .remaining_status == "unverified")' >/dev/null
+jq '.missing_previously_observed_alert_ids = [8,9] | .missing_previously_observed_alert_ids_truncated = false' \
+    "$scratch/report" > "$scratch/with-disappeared"
+run_gap "$scratch/with-disappeared" | jq -e '
+    .missing_previously_observed_alert_ids == [8,9] and .request_ranges_truncated == false
+    and [.ranges[] | [.first_id,.last_id,.found]] == [[5,9,2],[20,20,0]]' >/dev/null
+jq '.unobserved_alert_id_ranges = [range(1;65)*4 | {first_id:.,last_id:.}]
+    | .missing_previously_observed_alert_ids = [range(1;65)*4 - 2]' "$scratch/report" >"$scratch/combined-cap"
+TEST_MODE=range-cap run_gap "$scratch/combined-cap" | jq -e '
+    .request_ranges_truncated and (.ranges | length) == 64
+    and .ranges[0].first_id == 2 and .ranges[-1].last_id == 128' >/dev/null
 TEST_MODE=unknown-evidence run_gap | jq -e '
     .recovered_alerts[1] | .confidence==null and .evidence_frame_count==null
         and .evidence_frame_set_sha256==null and .next_evidence_step=="inspect_saved_alert"' >/dev/null
@@ -71,6 +87,9 @@ jq '.alert_sample_gap_reported = false' "$scratch/unlocated" > "$scratch/quiet"
 run_gap "$scratch/quiet" | jq -e '.status == "no_reported_ranges" and .saved_log_scan_complete == null' >/dev/null
 [[ ! -e $scratch/called ]]
 jq '.scope.capture_id = "invalid"' "$scratch/report" > "$scratch/invalid"
+if run_gap "$scratch/invalid" >"$scratch/result" 2>/dev/null; then exit 1; fi
+[[ ! -s $scratch/result && ! -e $scratch/called ]]
+jq '.missing_previously_observed_alert_ids = [0]' "$scratch/report" > "$scratch/invalid"
 if run_gap "$scratch/invalid" >"$scratch/result" 2>/dev/null; then exit 1; fi
 [[ ! -s $scratch/result && ! -e $scratch/called ]]
 printf '%s\n' 'alert gap reconciliation tests passed'

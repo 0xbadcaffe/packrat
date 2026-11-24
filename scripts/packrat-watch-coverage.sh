@@ -13,7 +13,7 @@ usage() {
         'Alert rates also require a known, unchanged unconfirmed journal event count.' \
         'Intervals spanning watcher restarts, missing journal records, or older unsequenced records are excluded.' \
         'The tail unconfirmed count is watcher-wide, not attributed to the selected capture.' \
-        'Alert-ID gaps identify records not observed in the retained sample, not proven missing from the saved log.'
+        'Alert-ID gaps and IDs that disappeared between samples are not proof of deletion from the saved log.'
 }
 
 capture='' session=''
@@ -69,6 +69,26 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
               then {rule_id,revision} else null end] | unique | if length == 1 then .[0] else null end];
     def sampled_ids:
         [alert_samples | .alert_id | select(counter and . > 0)] | unique;
+    def valid_sample_rows($max):
+        if type == "array" and length <= $max then
+            all(.[]; if type == "object" then (.alert_id | counter and . > 0) else false end)
+            and (map(.alert_id) | length == (unique | length))
+        else false end;
+    def comparable_alert_sample:
+        (.status | IN("current","degraded")) and alert_log_usable and .alert_log_advanced_during_review == false
+        and (.recent_alerts | valid_sample_rows(50)) and (.review_queue | valid_sample_rows(5));
+    def missing_observed_ids($samples):
+        [range(1; $samples | length) as $i
+        | $samples[$i - 1] as $before | $samples[$i] as $after
+        | select($after.alert_sample_gap == true and $after.tick >= $before.tick
+            and ($before | comparable_alert_sample) and ($after | comparable_alert_sample))
+        | ($before | sampled_ids) as $prior | ($after | sampled_ids) as $current
+        | if $after.recent_alerts_at_limit == false and $after.has_older_alerts == false
+             and $after.alert_log_integrity.stopped_at_limit == false then
+              ($prior - $current)[]
+          elif $before.highest_observed_alert_id == $prior[-1] and $prior[-1] > ($current[-1] // 0) then
+              $prior[-1]
+          else empty end] | unique;
     def unobserved_ranges($low; $known; $at):
         # Walk the observed IDs, not every integer in a potentially wide range.
         reduce $known[] as $id ({cursor:$low,ranges:[]};
@@ -142,6 +162,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
     | ($openings | map(objects) | group_by([.rule_id,.revision])
         | map(.[0] + {openings:length}) | sort_by([-.openings,.rule_id,.revision])) as $by_rule
     | [limit(65; alert_gaps($sample))] as $alert_gaps
+    | missing_observed_ids($sample) as $missing_ids
     | {record_type:"capture_coverage_report",coverage_policy:"continuous_journal_v7",
        status:(if ($sample | length) == 0 then "no_capture_records"
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
@@ -161,6 +182,8 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        alert_journal_counter_unverified_intervals:([$healthy[] | select(.journal_counter_status == "unverified")] | length),
        alert_log_snapshot_unverified_intervals:([$healthy[] | select(.stable_alert_log | not)] | length),
        alert_sample_gap_reported:any($sample[]; .alert_sample_gap == true),
+       missing_previously_observed_alert_ids:$missing_ids[:64],
+       missing_previously_observed_alert_ids_truncated:($missing_ids | length > 64),
        unobserved_alert_id_ranges:$alert_gaps[:64], unobserved_alert_id_ranges_truncated:($alert_gaps | length > 64),
        observed_openings:(if ($comparable | length) > 0 then ($openings | length) else null end),
        opening_rule_breakdown:(if ($comparable | length) > 0 then {rules:$by_rule[:64],
