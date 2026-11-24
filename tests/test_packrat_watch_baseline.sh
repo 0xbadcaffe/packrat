@@ -11,7 +11,7 @@ jq -nc '{
     build:{record_type:"verified_capture_build",interface:"wlan1",sha256:("a"*64),
            scope:{capture_id:"a",session_id:"one"},capture_run_id:"run-a",
            packets:2500,observed_at:"2026-11-23T11:02:00Z"},
-    coverage:{record_type:"capture_coverage_report",status:"sampled",coverage_policy:"continuous_journal_v6",
+    coverage:{record_type:"capture_coverage_report",status:"sampled",coverage_policy:"continuous_journal_v7",
               scope:{capture_id:"a",session_id:"one"},
               first_record_at:"2026-11-23T11:00:00Z",last_record_at:"2026-11-23T11:01:00Z",
               scoped_records:2,healthy_intervals:1,excluded_intervals:0,healthy_seconds:60,
@@ -19,6 +19,7 @@ jq -nc '{
               alert_save_failure_intervals:0,alert_save_counter_unverified_intervals:0,
               alert_save_backlog_drop_intervals:0,alert_save_backlog_unverified_intervals:0,
               alert_journal_counter_unverified_intervals:0,journal_tail_unconfirmed_events:0,
+              alert_log_snapshot_unverified_intervals:0,
               observed_openings:1,observed_openings_per_10000_packets:999}
 }' > "$before"
 jq '.build.scope = {capture_id:"b",session_id:"two"} | .coverage.scope = .build.scope
@@ -80,6 +81,13 @@ jq '.coverage.coverage_policy = "continuous_journal_v5"
 bash "$tool" "$fixture" "$after" | jq -e '
     .status == "coverage_policy_unverified" and .before.coverage_policy == "continuous_journal_v5"
     and .before.journal_tail_unconfirmed_events == null and .observed_rate_delta_per_10000_packets == null' >/dev/null
+jq '.coverage.coverage_policy = "continuous_journal_v6"
+    | del(.coverage.alert_log_snapshot_unverified_intervals)' "$before" > "$fixture"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$fixture" "$after" | jq -e '
+    .status == "coverage_policy_unverified" and .before.coverage_policy == "continuous_journal_v6"
+    and .before.alert_log_snapshot_unverified_intervals == null
+    and .after.alert_log_snapshot_unverified_intervals == 0
+    and .observed_rate_delta_per_10000_packets == null' >/dev/null
 jq '.coverage.alert_comparable_intervals = 0 | .coverage.alert_comparable_packets = 0
     | .coverage.observed_openings = null' "$after" > "$fixture"
 bash "$tool" "$before" "$fixture" | jq -e '
@@ -115,6 +123,10 @@ reject
 jq '.coverage.alert_save_backlog_drop_intervals = 1' "$after" > "$fixture"
 reject
 jq '.coverage.alert_journal_counter_unverified_intervals = 1' "$after" > "$fixture"
+reject
+jq '.coverage.alert_log_snapshot_unverified_intervals = 1' "$after" > "$fixture"
+reject
+jq 'del(.coverage.alert_log_snapshot_unverified_intervals)' "$after" > "$fixture"
 reject
 jq '.coverage.alert_comparable_seconds = 30' "$after" > "$fixture"
 reject
@@ -164,6 +176,7 @@ jq -nc '
      updated_at:"2026-11-23T11:00:00Z",buffer_drops:0,packets:100,capture_queue_full_packets:0,truncated_frames:0,
      packet_counter_gap:false,healthy_capture_since:1,alert_sample_gap:false,link_decodable:true,alert_saving:true,alert_save_failures:0,alert_save_backlog_dropped:0,
      alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_scan_budget:null},
+     alert_log_advanced_during_review:false,
      highest_observed_alert_id:0,checkpoint:true,journal_writer:"one",journal_sequence:1,journal_unconfirmed_events:0} as $initial
     | $initial, ($initial | .updated_at = "2026-11-23T11:01:00Z" | .packets = 2100
       | .journal_sequence = 2 | .highest_observed_alert_id = 1 | .alert_changes.newly_observed = [1])
@@ -175,7 +188,7 @@ record() {
 record "$tmp/recorded"
 [[ $(stat -c %a -- "$tmp/recorded") == 600 ]]
 jq -e '.build.packets == 2515 and .coverage.observed_openings == 1
-    and .coverage.coverage_policy == "continuous_journal_v6"
+    and .coverage.coverage_policy == "continuous_journal_v7"
     and .coverage.alert_comparable_packets == 2000 and .coverage.alert_comparable_seconds == 60' "$tmp/recorded" >/dev/null
 bash "$tool" "$before" "$tmp/recorded" | jq -e '.status == "same_capture"' >/dev/null
 
