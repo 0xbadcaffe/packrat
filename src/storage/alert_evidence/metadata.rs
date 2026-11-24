@@ -150,11 +150,39 @@ struct SynAckMatch {
 struct DnsReplyCandidates {
     reply_frame: u64,
     query_candidate_frames: Vec<u64>,
+    timestamp_basis: &'static str,
+}
+
+#[derive(Clone, Copy)]
+enum DnsClock {
+    Capture(i128),
+    Legacy(f64),
+    Unavailable,
+}
+
+impl DnsClock {
+    fn basis(self) -> &'static str {
+        match self {
+            Self::Capture(_) => "capture_clock",
+            Self::Legacy(_) => "legacy_packet_time",
+            Self::Unavailable => "unavailable",
+        }
+    }
+
+    fn follows_within_window(self, query: Self) -> bool {
+        match (self, query) {
+            (Self::Capture(reply), Self::Capture(query)) =>
+                (0..=(TRANSACTION_TTL_SECS * 1e9) as i128).contains(&(reply - query)),
+            (Self::Legacy(reply), Self::Legacy(query)) =>
+                (0.0..=TRANSACTION_TTL_SECS).contains(&(reply - query)),
+            _ => false,
+        }
+    }
 }
 
 struct DnsObservation {
     frame: u64,
-    timestamp: f64,
+    clock: DnsClock,
     flow: FlowKey,
     id: u16,
     reply: bool,
@@ -272,7 +300,7 @@ pub fn alert_flow_summary(
         udp_dns_reply_candidates: Vec::new(),
         unassigned_frames: Vec::new(),
         timing_limitation: "Gaps use capture-clock timestamps of adjacent cited frames in the same direction, in frame order. Frames missing capture time break the chain. Uncited or unassigned frames may intervene; these gaps do not establish full-flow cadence.",
-        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP handshake candidates account for declared SYN payload, but sequence matches do not establish endpoint acceptance or a specific retransmission. Earlier SYN candidates do not cross a cited reset or a different initial SYN in the same direction. Later ACK candidates do not cross a cited reset or another SYN. UDP DNS candidates match complete cited datagrams with one question, the reverse tuple and path, and a 30-second window. These are candidate links, not proof of acceptance. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
+        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP handshake candidates account for declared SYN payload, but sequence matches do not establish endpoint acceptance or a specific retransmission. Earlier SYN candidates do not cross a cited reset or a different initial SYN in the same direction. Later ACK candidates do not cross a cited reset or another SYN. UDP DNS candidates match complete cited datagrams with one question, the reverse tuple and path, and a 30-second window on a shared timestamp basis. Capture-clock timestamps are preferred; mixed capture-clock and legacy packet times are not compared. These are candidate links, not proof of acceptance. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
     let mut dns = Vec::new();
@@ -315,8 +343,10 @@ pub fn alert_flow_summary(
                 TriggerTupleStatus::DiffersFromWire
             };
         }
-        if let (Some((id, reply, question)), Some(timestamp)) = (packet.dns, packet.timestamp) {
-            dns.push(DnsObservation { frame: frame.frame_number, timestamp, flow: flow.clone(), id, reply, question });
+        if let Some((id, reply, question)) = packet.dns {
+            let clock = packet.capture_time_ns.map(DnsClock::Capture)
+                .or_else(|| packet.timestamp.map(DnsClock::Legacy)).unwrap_or(DnsClock::Unavailable);
+            dns.push(DnsObservation { frame: frame.frame_number, clock, flow: flow.clone(), id, reply, question });
         }
         let counts = flows.entry(flow).or_default();
         counts.frames.push(reference);
@@ -363,10 +393,10 @@ fn dns_reply_candidates(observations: &[DnsObservation]) -> Vec<DnsReplyCandidat
         let request_flow = reply.flow.reversed();
         let query_candidate_frames = observations.iter()
             .filter(|query| !query.reply && query.frame < reply.frame
-                && (0.0..=TRANSACTION_TTL_SECS).contains(&(reply.timestamp - query.timestamp))
+                && reply.clock.follows_within_window(query.clock)
                 && query.flow == request_flow && query.id == reply.id && query.question == reply.question)
             .map(|query| query.frame).collect();
-        DnsReplyCandidates { reply_frame: reply.frame, query_candidate_frames }
+        DnsReplyCandidates { reply_frame: reply.frame, query_candidate_frames, timestamp_basis: reply.clock.basis() }
     }).collect()
 }
 

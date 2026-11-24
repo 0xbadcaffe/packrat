@@ -1,5 +1,5 @@
 use packrat_tui::analysis::alert_center::AlertCenter;
-use packrat_tui::net::{packet::{CaptureMetadata, Packet}, parser::parse_ethernet};
+use packrat_tui::net::{packet::{CaptureMetadata, CaptureTimestamp, Packet, TimestampResolution}, parser::parse_ethernet};
 use packrat_tui::storage::packet_archive::PacketArchive;
 use serde_json::{Value, json};
 use std::process::Command;
@@ -78,9 +78,63 @@ fn dns_reply_candidates_match_only_prior_questions_on_the_reverse_wire_path() {
     let report: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(report["truncated_frames"], 1);
     assert_eq!(report["udp_dns_reply_candidates"], json!([
-        {"reply_frame":7,"query_candidate_frames":[1,2]},
-        {"reply_frame":8,"query_candidate_frames":[]},
-        {"reply_frame":10,"query_candidate_frames":[]}
+        {"reply_frame":7,"query_candidate_frames":[1,2],"timestamp_basis":"legacy_packet_time"},
+        {"reply_frame":8,"query_candidate_frames":[],"timestamp_basis":"legacy_packet_time"},
+        {"reply_frame":10,"query_candidate_frames":[],"timestamp_basis":"legacy_packet_time"}
+    ]));
+}
+
+fn attach_capture_time(packet: &mut Packet, ticks: u64) {
+    packet.capture.as_mut().unwrap().timestamp = Some(CaptureTimestamp {
+        ticks,
+        resolution: TimestampResolution::Decimal(9),
+        offset_seconds: 1_800_000_000,
+    });
+}
+
+#[test]
+fn dns_candidates_use_capture_time_at_the_window_boundary_without_mixing_clocks() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive");
+    let log = root.path().join("alerts.jsonl");
+    let mut alerts = AlertCenter::default();
+    alerts.record(7, "IDS", "MEDIUM", "Saved finding", "fixture");
+    let mut alert = alerts.items.remove(0);
+    alert.capture_id = Some("scope-a".into());
+    alert.packet_refs = (1..=7).collect();
+    std::fs::write(&log,
+        json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
+    ).unwrap();
+
+    let frames: Vec<_> = [
+        (1, false, Some(100)),
+        (2, false, None),
+        (3, true, Some(30_000_000_099)),
+        (4, true, Some(30_000_000_100)),
+        (5, true, Some(30_000_000_101)),
+        (6, true, Some(99)),
+        (7, true, None),
+    ].into_iter().map(|(frame, reply, capture_ticks)| {
+        let mut packet = dns_frame(frame, 17, b"PrivateName", reply, 10, 1);
+        if let Some(ticks) = capture_ticks { attach_capture_time(&mut packet, ticks); }
+        packet
+    }).collect();
+    let mut archive = PacketArchive::open(&path).unwrap();
+    archive.append_scoped("scope-a", &frames).unwrap();
+    drop(archive);
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&path).arg("--alert-flow-summary").arg(&log)
+        .args(["session-a", "1", "--capture-id", "scope-a"]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(!text.to_ascii_lowercase().contains("privatename"));
+    let report: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["udp_dns_reply_candidates"], json!([
+        {"reply_frame":3,"query_candidate_frames":[1],"timestamp_basis":"capture_clock"},
+        {"reply_frame":4,"query_candidate_frames":[1],"timestamp_basis":"capture_clock"},
+        {"reply_frame":5,"query_candidate_frames":[],"timestamp_basis":"capture_clock"},
+        {"reply_frame":6,"query_candidate_frames":[],"timestamp_basis":"capture_clock"},
+        {"reply_frame":7,"query_candidate_frames":[2],"timestamp_basis":"legacy_packet_time"}
     ]));
 }
 
@@ -113,23 +167,18 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     let mut archive = PacketArchive::open(&archive_path).unwrap();
     let mut non_ip_frame = [0; 60];
     non_ip_frame[12..14].copy_from_slice(&[0x88, 0xb5]);
-    let timed_query = |frame| {
-        use packrat_tui::net::packet::{CaptureTimestamp, TimestampResolution};
-        let mut packet = dns_frame(frame, 42, b"PrivateName", false, 10, 1);
-        packet.capture.as_mut().unwrap().timestamp = Some(CaptureTimestamp {
-            ticks: frame,
-            resolution: TimestampResolution::Decimal(9),
-            offset_seconds: 1_800_000_000,
-        });
+    let timed_dns = |frame, reply| {
+        let mut packet = dns_frame(frame, 42, b"PrivateName", reply, 10, 1);
+        attach_capture_time(&mut packet, frame);
         packet
     };
     archive
         .append_scoped(
             SCOPE,
             &[
-                timed_query(1),
-                timed_query(2),
-                dns_frame(3, 42, b"PrivateName", true, 10, 1),
+                timed_dns(1, false),
+                timed_dns(2, false),
+                timed_dns(3, true),
                 captured_frame(4, &non_ip_frame),
             ],
         )
@@ -176,7 +225,7 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
                "retained_flow_frames":3,"retained_frames_without_flow":1,
                "trigger_frame_status":"complete","trigger_transport_header_observed":false,
                "trigger_tuple_status":"not_recorded",
-               "timing_status":"reported","cited_timing":{"timestamped_frames":2,"missing_timestamp_frames":1,
+               "timing_status":"reported","cited_timing":{"timestamped_frames":3,"missing_timestamp_frames":0,
                     "forward_gaps":1,"tied_timestamps":0,"backwards_timestamps":0,"directions_with_forward_gaps":1},
                "udp_dns_replies_with_query_candidates":1,"udp_dns_ambiguous_replies":1})
     );
