@@ -289,11 +289,13 @@ verify_watch_identity() {
         return 1
     }
 }
+log_stamp() {
+    [[ -f $1 ]] && stat -L --format='%d:%i %s %y %z' -- "$1"
+}
 previous_log_stamps() {
     local path stamp
     for path in "${previous_logs[@]}"; do
-        [[ -f $path ]] || return 1
-        stamp=$(stat -L --format='%d:%i:%s:%y:%z' -- "$path") || return 1
+        stamp=$(log_stamp "$path") || return 1
         printf '%s\n' "$stamp"
     done
 }
@@ -367,8 +369,8 @@ else
     state='{"mode":"list_saved","health":null}'
 fi
 if [[ -n $capture ]]; then scope_args=(--session "$session" --capture-id "$capture"); fi
-if [[ ! -f $alert_log ]] ||
-   ! read -r log_identity log_size <<< "$(stat -L --format='%d:%i %s' -- "$alert_log")" ||
+if ! initial_stamp=$(log_stamp "$alert_log") ||
+   ! read -r log_identity log_size _ <<< "$initial_stamp" ||
    [[ ! $log_identity =~ ^[0-9]{1,20}:[0-9]{1,20}$ || ! $log_size =~ ^[0-9]+$ ]]; then
     report alert_log_unavailable
     exit 2
@@ -473,10 +475,11 @@ if [[ $mode == live ]]; then
     fi
     match_log "$alert_log" || exit 1
 fi
-if [[ ! -f $alert_log ]] ||
-   ! read -r latest_identity latest_size <<< "$(stat -L --format='%d:%i %s' -- "$alert_log")" ||
+if ! latest_stamp=$(log_stamp "$alert_log") ||
+   ! read -r latest_identity latest_size _ <<< "$latest_stamp" ||
    [[ $latest_identity != "$log_identity" || ! $latest_size =~ ^[0-9]+$ ]] ||
-   (( latest_size < log_size )); then
+   (( latest_size < log_size )) ||
+   { (( latest_size == log_size )) && [[ $latest_stamp != "$initial_stamp" ]]; }; then
     report alert_log_changed
     exit 1
 fi

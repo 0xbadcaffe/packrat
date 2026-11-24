@@ -30,6 +30,10 @@ jq -e '.record_type == "saved_capture_index" and .status == "saved"
 PACKRAT_TEST_LOG_RACE=append list_saved "$PACKRAT_TEST_LOG" |
     jq -e '.status=="saved" and .sampled_alerts==6 and .alert_log_advanced_during_review==true
         and .sample_scan_complete==false' >/dev/null
+status=0
+result=$(PACKRAT_TEST_LOG_RACE=rewrite list_saved "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 ]]
+jq -e '.status=="alert_log_changed" and .alerts==null and .alert_log_advanced_during_review==null' <<<"$result" >/dev/null
 result=$(PACKRAT_TEST_INDEX_EXTRA='[{"alert_id":4,"capture_id":null,"evidence_frame_count":0,"severity":"CRITICAL"}]' list_saved "$PACKRAT_TEST_LOG")
 jq -e '.unscoped_review_queue[0] | .evidence_frame_count==0
     and .next_evidence_step=="corroborate_with_host_or_service_logs"' <<< "$result" >/dev/null

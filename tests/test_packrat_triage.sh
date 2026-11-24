@@ -62,6 +62,11 @@ mock_archive() {
     fi
     case ${PACKRAT_TEST_LOG_RACE:-} in
         append) printf '%s\n' snapshot >>"$PACKRAT_TEST_LOG" ;;
+        rewrite)
+            [[ -s $PACKRAT_TEST_LOG ]]
+            printf X | dd of="$PACKRAT_TEST_LOG" bs=1 count=1 conv=notrunc status=none
+            touch -m -d '2000-01-01 UTC' -- "$PACKRAT_TEST_LOG"
+            ;;
         truncate) : >"$PACKRAT_TEST_LOG" ;;
         rotate) mv -- "$PACKRAT_TEST_LOG" "$PACKRAT_TEST_LOG.rotated"; touch -- "$PACKRAT_TEST_LOG" ;;
     esac
@@ -428,6 +433,10 @@ jq -e '.status == "current" and .alerts[0].alert_id == 42 and .alert_log_advance
 bash "$triage" "$health" "$PACKRAT_TEST_LOG" |
     jq -e '.status=="current" and .alert_log_advanced_during_review==false' >/dev/null
 [[ -s $PACKRAT_TEST_LOG ]]
+before_rewrite=$(stat -Lc '%d:%i %s' -- "$PACKRAT_TEST_LOG")
+PACKRAT_TEST_LOG_RACE=rewrite check_failure 1 alert_log_changed
+[[ $(stat -Lc '%d:%i %s' -- "$PACKRAT_TEST_LOG") == "$before_rewrite" ]]
+[[ $(head -c1 -- "$PACKRAT_TEST_LOG") == X ]]
 PACKRAT_TEST_LOG_RACE=truncate check_failure 1 alert_log_changed
 PACKRAT_TEST_LOG_RACE=rotate check_failure 1 alert_log_changed
 [[ -f $PACKRAT_TEST_LOG.rotated && -f $PACKRAT_TEST_LOG ]]
