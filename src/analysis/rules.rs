@@ -3,7 +3,7 @@
 //! Rules are simple condition→action pairs. Conditions are boolean
 //! expressions over packet fields; actions are log/alert/tag.
 
-use std::collections::VecDeque;
+use std::{collections::{HashSet, VecDeque}, io::ErrorKind, path::Path};
 
 use crate::net::packet::Packet;
 use crate::model::evidence::Severity;
@@ -93,6 +93,17 @@ pub struct RuleEngine {
     evicted_hits: u64,
 }
 
+#[cfg(test)]
+#[path = "../../tests/unit/rule_reload_tests.rs"]
+mod reload_tests;
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum RuleFile {
+    One(Rule),
+    Many(Vec<Rule>),
+}
+
 impl RuleEngine {
     pub fn add_rule(&mut self, rule: Rule) { self.rules.push(rule); }
 
@@ -100,42 +111,46 @@ impl RuleEngine {
 
     /// Load rules from JSON files in `~/.config/packrat/rules/`.
     /// Each file may contain a single Rule object or an array of Rule objects.
-    pub fn load_from_dir(&mut self) -> Vec<String> {
+    pub fn load_from_dir(&mut self) -> Result<(), String> {
         let dir = dirs_next::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("packrat")
             .join("rules");
+        self.reload_from_path(&dir)
+    }
 
-        let mut errors: Vec<String> = Vec::new();
-        if !dir.exists() { return errors; }
-
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(e) => { errors.push(format!("read dir: {e}")); return errors; }
+    fn reload_from_path(&mut self, dir: &Path) -> Result<(), String> {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound && self.rules.is_empty() => return Ok(()),
+            Err(error) => return Err(format!("{}: {error}", dir.display())),
         };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if ext != "json" { continue; }
-
-            let source = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
-
-            match std::fs::read_to_string(&path) {
-                Ok(text) => {
-                    // Try array first, then single rule
-                    if let Ok(rules) = serde_json::from_str::<Vec<Rule>>(&text) {
-                        for r in rules { self.rules.push(r); }
-                    } else if let Ok(rule) = serde_json::from_str::<Rule>(&text) {
-                        self.rules.push(rule);
-                    } else {
-                        errors.push(format!("{source}: invalid JSON rule format"));
-                    }
+        let mut paths = entries.map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()
+            .map_err(|error| format!("{}: {error}", dir.display()))?;
+        paths.sort_unstable();
+        let mut next = Vec::new();
+        let mut ids = HashSet::new();
+        for path in paths.into_iter().filter(|path| path.extension().is_some_and(|ext| ext == "json")) {
+            let text = std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+            let file = serde_json::from_str::<RuleFile>(&text)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            let rules = match file {
+                RuleFile::One(rule) => vec![rule],
+                RuleFile::Many(rules) => rules,
+            };
+            for rule in rules {
+                if rule.id.trim().is_empty() {
+                    return Err(format!("{}: blank rule ID", path.display()));
                 }
-                Err(e) => errors.push(format!("{source}: {e}")),
+                if !ids.insert(rule.id.clone()) {
+                    return Err(format!("{}: duplicate rule ID {:?}", path.display(), rule.id));
+                }
+                next.push(rule);
             }
         }
-        errors
+        self.rules = next;
+        Ok(())
     }
 
     pub fn toggle(&mut self, id: &str) {

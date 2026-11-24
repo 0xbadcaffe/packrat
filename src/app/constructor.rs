@@ -16,7 +16,7 @@ impl App {
         let selected_iface = iface_list.first().cloned().unwrap_or_default();
         let mut core = AnalysisCore::default();
         core.ioc_engine.load_from_dir();
-        core.rule_engine.load_from_dir();
+        let rule_load_error = core.rule_engine.load_from_dir().err();
         core.yara_engine = crate::analysis::yara::YaraEngine::new();
         core.alert_center.automation_mode = match preferences.alert_automation {
             1 => AutomationMode::Watch,
@@ -42,7 +42,8 @@ impl App {
         let alert_save_error_reported = alert_save_error.clone();
         let status_msg = alert_save_error
             .as_ref()
-            .map(|error| format!("Alert saving unavailable; will retry: {error}"));
+            .map(|error| format!("Alert saving unavailable; will retry: {error}"))
+            .or_else(|| rule_load_error.map(|error| format!("Local rules not loaded: {error}")));
         let status_msg_ticks = if status_msg.is_some() { 100 } else { 0 };
         let mut app = Self {
             core: ReadCore::new(core),

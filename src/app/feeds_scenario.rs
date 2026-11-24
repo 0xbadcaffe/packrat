@@ -4,17 +4,9 @@ impl App {
     /// Reload JSON rules from ~/.config/packrat/rules/ and show status.
     pub fn reload_rules(&mut self) {
         self.update_core("Rules reloaded", |core| {
-            core.rule_engine.rules.clear();
-            let errors = core.rule_engine.load_from_dir();
-            if errors.is_empty() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "Rules: {} loaded, {} error(s)",
-                    core.rule_engine.rules.len(),
-                    errors.len()
-                ))
-            }
+            core.rule_engine.load_from_dir().map_err(|error| format!(
+                "Rules unchanged ({} loaded): {error}", core.rule_engine.rules.len(),
+            ))
         });
     }
 
