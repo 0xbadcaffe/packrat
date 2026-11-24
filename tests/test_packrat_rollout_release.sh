@@ -54,6 +54,38 @@ stage_companion_updates
 cmp -s -- "$installed_analyzer" "$backup_dir/packrat-analyze"
 cmp -s -- "$analyzer_candidate" "$backup_dir/packrat-analyze.next"
 (
+    filesystem_fixture=btrfs
+    extent_fixture=valid
+    # shellcheck disable=SC2329  # Called by the sourced release helper.
+    sudo() {
+        case $* in
+            "-n stat -f -c %T -- $data_dir/backups") printf '%s\n' "$filesystem_fixture" ;;
+            "-n env LC_ALL=C btrfs filesystem du -s --raw -- $data_dir/backups")
+                case $extent_fixture in
+                    valid) printf '%s\n' 'Total Exclusive Set shared Filename' "1000 600 200 $data_dir/backups" ;;
+                    malformed) printf '%s\n' 'Total Exclusive Set shared Filename' "1000 1001 200 $data_dir/backups" ;;
+                    *) return 124 ;;
+                esac
+                ;;
+            "-n "*) command "${@:2}" ;;
+            *) return 1 ;;
+        esac
+    }
+    # shellcheck disable=SC2329  # Called by the sourced release helper.
+    timeout() {
+        [[ $1 == --kill-after=1s && $2 == 8s ]] || return 1
+        "${@:3}"
+    }
+    backup_inventory | jq -e '.filesystem_type == "btrfs"
+        and .btrfs_extent_usage == {total_bytes:1000,exclusive_bytes:600,set_shared_bytes:200}' >/dev/null
+    for extent_fixture in malformed timeout; do
+        backup_inventory | jq -e '.filesystem_type == "btrfs" and .btrfs_extent_usage == null and .allocated_kib > 0' >/dev/null
+    done
+    filesystem_fixture=ext2/ext3
+    extent_fixture=valid
+    backup_inventory | jq -e '.filesystem_type == "ext2/ext3" and .btrfs_extent_usage == null' >/dev/null
+)
+(
     export LC_ALL=C
     backup_inventory | jq -e '.allocated_kib > 0 and .rollout_directories == 1' >/dev/null
     backup_reserve_mib=1

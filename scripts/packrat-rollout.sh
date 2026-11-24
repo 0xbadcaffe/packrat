@@ -457,7 +457,7 @@ main() {
         error 'PACKRAT_ROLLOUT_ALLOW_HISTORICAL_DROPS=1 allows replacing a capture with verified past drops only.'
         error 'The health watcher must run with PACKRAT_ALERT_VERIFY_OPEN=1 and verify the current alert log.'
         error 'PACKRAT_ROLLOUT_BACKUP_RESERVE_MIB sets free space to leave after backing up (default: 512).'
-        error 'Use --backup-inventory to inspect disk usage; PACKRAT_ROLLOUT_BACKUP_LIMIT_MIB sets an optional backup budget (default: disabled).'
+        error 'Use --backup-inventory to inspect allocation (not a reclaim estimate); PACKRAT_ROLLOUT_BACKUP_LIMIT_MIB sets an optional budget.'
         return 2
     fi
     mode=$1 candidate=$2 interface=$3

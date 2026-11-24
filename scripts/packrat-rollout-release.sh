@@ -149,8 +149,24 @@ backup_usage_kib() {
     fi
 }
 
+backup_btrfs_extents() {
+    local sizes total exclusive shared
+    sizes=$(timeout --kill-after=1s 8s sudo -n env LC_ALL=C btrfs filesystem du -s --raw -- "$1" 2>/dev/null |
+        awk '
+            function count(value) { return value ~ /^(0|[1-9][0-9]*)$/ && length(value) <= 15 }
+            NR == 1 { header = ($1 == "Total" && $2 == "Exclusive" && $3 == "Set" && $4 == "shared") }
+            NR == 2 && NF >= 4 && count($1) && count($2) && count($3) && $2 + 0 <= $1 + 0 && $3 + 0 <= $1 + 0 {
+                row = $1 " " $2 " " $3
+            }
+            END { if (!(header && NR == 2 && row != "")) exit 1; print row }
+        ') || return 1
+    read -r total exclusive shared <<< "$sizes"
+    jq -nc --argjson total "$total" --argjson exclusive "$exclusive" --argjson shared "$shared" \
+        '{total_bytes:$total, exclusive_bytes:$exclusive, set_shared_bytes:$shared}'
+}
+
 backup_inventory() {
-    local destination used free count=0
+    local destination used free count=0 filesystem extents=null
     destination=$(backup_storage_path) || return 1
     used=$(backup_usage_kib "$destination") || return 1
     if [[ $destination != "$data_dir" ]]; then
@@ -158,9 +174,16 @@ backup_inventory() {
     fi
     free=$(sudo -n env LC_ALL=C df -Pk -- "$destination" | awk 'NR == 2 {print $4}') || return 1
     [[ $free =~ ^[0-9]{1,15}$ && $count =~ ^[0-9]{1,15}$ && $backup_limit_mib =~ ^(0|[1-9][0-9]{0,8})$ ]] || return 1
+    filesystem=$(sudo -n stat -f -c '%T' -- "$destination" 2>/dev/null) || filesystem=''
+    [[ $filesystem =~ ^[A-Za-z0-9_./-]{1,64}$ ]] || filesystem=''
+    if [[ $filesystem == btrfs && $destination != "$data_dir" ]]; then
+        extents=$(backup_btrfs_extents "$destination") || extents=null
+    fi
     jq -nc --argjson used "$used" --argjson free "$free" --argjson count "$count" --argjson limit "$backup_limit_mib" \
+        --arg filesystem "$filesystem" --argjson extents "$extents" \
         '{record_type:"rollout_backup_inventory", allocated_kib:$used, available_kib:$free,
-          rollout_directories:$count, budget_mib:(if $limit == 0 then null else $limit end)}'
+          rollout_directories:$count, budget_mib:(if $limit == 0 then null else $limit end),
+          filesystem_type:(if $filesystem == "" then null else $filesystem end), btrfs_extent_usage:$extents}'
 }
 
 backup_space_ready() {
