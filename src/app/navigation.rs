@@ -121,15 +121,15 @@ impl App {
             return;
         };
         let sorted = core.flow_tracker.sorted_flows(&self.flows_sort);
-        if let Some(sel) = self.flows_selected {
-            if let Some(flow) = sorted.get(sel) {
-                let ip = flow.key.ep1.0.clone();
-                self.filter.input = ip;
-                self.filter.active = false;
-                self.rebuild_filtered();
-                self.active_tab = crate::tabs::Tab::Packets;
-            }
-        }
+        let Some(key) = self.flows_selected.and_then(|index| sorted.get(index)).map(|flow| flow.key.clone()) else {
+            return;
+        };
+        drop(core);
+        self.filter.flow = Some(key);
+        self.filter.active = false;
+        self.rebuild_filtered();
+        self.selected = self.filtered.len().checked_sub(1);
+        self.navigate_to(Tab::Packets);
     }
 
     pub fn move_top(&mut self) {

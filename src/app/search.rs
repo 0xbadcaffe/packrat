@@ -256,6 +256,7 @@ impl App {
                 let absolute = self.packet_index_base.saturating_add(index);
                 if !self.filtered.contains(&absolute) {
                     self.filter.input.clear();
+                    self.filter.flow = None;
                     self.rebuild_filtered();
                 }
                 self.selected = self.filtered.iter().position(|entry| *entry == absolute);

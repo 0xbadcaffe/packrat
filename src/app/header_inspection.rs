@@ -67,6 +67,7 @@ impl App {
             return;
         };
         self.filter.input = expr.clone();
+        self.filter.flow = None;
         self.filter.active = false;
         self.rebuild_filtered();
         self.active_tab = Tab::Packets;

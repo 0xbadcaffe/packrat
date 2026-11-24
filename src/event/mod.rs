@@ -139,7 +139,9 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
-    if !in_text_mode && key.code == KeyCode::Esc && app.return_to_workspace_home() {
+    if !in_text_mode && key.code == KeyCode::Esc
+        && ((app.active_tab == Tab::Packets && app.clear_flow_packet_filter()) || app.return_to_workspace_home())
+    {
         return false;
     }
 

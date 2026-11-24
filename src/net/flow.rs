@@ -69,6 +69,22 @@ impl FlowKey {
             section_id: pkt.capture.as_ref().map_or(0, |capture| capture.section_id),
         }
     }
+
+    pub(crate) fn matches_packet(&self, pkt: &Packet) -> bool {
+        let source = (pkt.src.as_str(), pkt.src_port.unwrap_or(0));
+        let destination = (pkt.dst.as_str(), pkt.dst_port.unwrap_or(0));
+        let (first, second) = if source <= destination { (source, destination) } else { (destination, source) };
+        let capture = pkt.capture.as_ref();
+        first == (self.ep1.0.as_str(), self.ep1.1)
+            && second == (self.ep2.0.as_str(), self.ep2.1)
+            && self.proto == pkt.protocol
+            && self.vlan_id == pkt.vlan_id
+            && self.outer_vlan_id == pkt.outer_vlan_id
+            && self.interface.as_deref() == capture.and_then(|metadata| metadata.interface_name.as_deref())
+            && self.interface_id == capture.map_or(0, |metadata| metadata.interface_id)
+            && self.section_id == capture.map_or(0, |metadata| metadata.section_id)
+            && self.vlan_tag_types == crate::net::parser::ethernet_vlan_tag_types(&pkt.bytes)
+    }
 }
 
 #[derive(Default, Clone)]
@@ -109,7 +125,7 @@ pub struct Flow {
 
 impl Flow {
     pub fn covers_packet(&self, packet: &Packet) -> bool {
-        self.frame_range.contains(&packet.no) && self.key == FlowKey::from_packet(packet)
+        self.frame_range.contains(&packet.no) && self.key.matches_packet(packet)
     }
 }
 

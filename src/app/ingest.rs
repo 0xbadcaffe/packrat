@@ -183,7 +183,7 @@ impl App {
             self.display_filter.set(self.filter.input.clone());
         }
 
-        if Self::packet_matches_filter(&self.display_filter, &self.filter.input, &pkt) {
+        if self.packet_matches_filter(&pkt) {
             self.filtered
                 .push_back(self.packet_index_base.saturating_add(self.packets.len()));
             if self.auto_scroll {

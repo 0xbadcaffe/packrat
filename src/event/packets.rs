@@ -188,6 +188,7 @@ pub(super) fn handle_main(app: &mut App, key: KeyEvent) {
             if matches!(app.active_tab, Tab::Strings) {
                 app.strings_search_active = true;
             } else {
+                app.clear_flow_packet_filter();
                 app.filter.active = true;
             }
         }

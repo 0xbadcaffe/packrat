@@ -149,7 +149,7 @@ fn draw_hints(f: &mut Frame, selected: Option<&FlowKey>, area: Rect) {
         Span::styled("f", Style::default().fg(C_CYAN())),
         Span::styled(":follow stream  ", Style::default().fg(C_FG3())),
         Span::styled("Enter", Style::default().fg(C_CYAN())),
-        Span::styled(":filter by IP  ", Style::default().fg(C_FG3())),
+        Span::styled(":flow packets  ", Style::default().fg(C_FG3())),
         Span::styled("j/k", Style::default().fg(C_CYAN())),
         Span::styled(":navigate", Style::default().fg(C_FG3())),
     ]);

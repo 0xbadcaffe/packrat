@@ -41,6 +41,7 @@ impl App {
         self.capturing = false;
         self.packets.clear();
         self.packet_index_base = 0;
+        self.filter.flow = None;
         self.filtered.clear();
         self.selected = None;
         self.worklist = InvestigationTray::default();
@@ -113,9 +114,7 @@ impl App {
             .packets
             .iter()
             .enumerate()
-            .filter(|(_, p)| {
-                Self::packet_matches_filter(&self.display_filter, &self.filter.input, p)
-            })
+            .filter(|(_, p)| self.packet_matches_filter(p))
             .map(|(i, _)| self.packet_index_base.saturating_add(i))
             .collect();
         if let Some(sel) = self.selected {
@@ -129,17 +128,24 @@ impl App {
         }
     }
 
-    pub(super) fn packet_matches_filter(
-        display_filter: &DisplayFilter,
-        input: &str,
-        p: &Packet,
-    ) -> bool {
-        if display_filter.is_active() {
+    pub(crate) fn clear_flow_packet_filter(&mut self) -> bool {
+        if self.filter.flow.take().is_none() {
+            return false;
+        }
+        self.rebuild_filtered();
+        true
+    }
+
+    pub(super) fn packet_matches_filter(&self, p: &Packet) -> bool {
+        if let Some(flow) = &self.filter.flow {
+            return flow.matches_packet(p);
+        }
+        if self.display_filter.is_active() {
             // Use the advanced packet inspection AST evaluator.
-            display_filter.matches(p, false, &[])
-        } else if display_filter.has_error() {
+            self.display_filter.matches(p, false, &[])
+        } else if self.display_filter.has_error() {
             // Parse error: fall back to simple text match.
-            crate::analysis::display_filter::DisplayFilter::matches_simple(input, p)
+            DisplayFilter::matches_simple(&self.filter.input, p)
         } else {
             true
         }

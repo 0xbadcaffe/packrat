@@ -5,6 +5,7 @@ use crate::net::packet::Packet;
 pub struct PacketFilter {
     pub input: String,
     pub active: bool, // editing mode
+    pub(crate) flow: Option<crate::net::flow::FlowKey>,
 }
 
 impl PacketFilter {

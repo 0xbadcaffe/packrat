@@ -18,6 +18,61 @@ fn tagged_tcp(no: u64, sequence: u32, tpid: u16, tci: u16, payload: &[u8]) -> Pa
 }
 
 #[test]
+fn packet_pivot_filters_the_selected_bidirectional_flow_and_restores_display_filter() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use packrat_tui::{event, net::flow::FlowSort};
+
+    let selected = tagged_tcp(1, 100, 0x8100, 20, b"customer data");
+    let other_path = tagged_tcp(2, 100, 0x88a8, 20, b"other");
+    let mut other_port = selected.bytes.clone();
+    other_port[38..40].copy_from_slice(&40001_u16.to_be_bytes());
+    let other_port = parse_ethernet(&other_port, 3, 3.0);
+    let mut reverse = selected.bytes.clone();
+    for index in 0..4 { reverse.swap(30 + index, 34 + index); }
+    for index in 0..2 { reverse.swap(38 + index, 40 + index); }
+    let reverse = parse_ethernet(&reverse, 4, 4.0);
+
+    let mut app = App::new_for_test();
+    app.filter.input = "ip.src==10.0.0.1".into();
+    app.rebuild_filtered();
+    app.inject_packet(selected);
+    app.inject_packet(other_path);
+    app.inject_packet(other_port);
+    app.active_tab = Tab::Flows;
+    app.flows_sort = FlowSort::Time;
+    app.flows_selected = Some(2);
+    let press = |app: &mut App, key| {
+        assert!(!event::handle(app, Event::Key(KeyEvent::new(key, KeyModifiers::NONE))));
+    };
+    let visible = |app: &App| {
+        app.filtered.iter().map(|&index| app.retained_packet_at(index).unwrap().no).collect::<Vec<_>>()
+    };
+
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.active_tab, Tab::Packets);
+    assert_eq!(visible(&app), [1]);
+    assert_eq!(app.selected_packet().unwrap().no, 1);
+
+    app.inject_packet(reverse);
+    app.inject_packet(tagged_tcp(5, 100, 0x88a8, 20, b"later"));
+    let mut other_interface = tagged_tcp(6, 100, 0x8100, 20, b"another interface");
+    other_interface.capture = Some(packrat_tui::net::packet::CaptureMetadata {
+        timestamp: None,
+        wire_length: other_interface.bytes.len() as u32,
+        captured_length: other_interface.bytes.len() as u32,
+        link_type: 1, interface_id: 1, section_id: 0, interface_name: None, comments: Vec::new(),
+    });
+    app.inject_packet(other_interface);
+    assert_eq!(visible(&app), [1, 4]);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.active_tab, Tab::Packets);
+    assert_eq!(app.filter.input, "ip.src==10.0.0.1");
+    assert_eq!(visible(&app), [1, 2, 3, 5, 6]);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.active_tab, Tab::Flows);
+}
+
+#[test]
 fn flow_review_keeps_wire_tag_paths_separate_without_splitting_priority_changes() {
     let mut app = App::new_for_test();
     let customer = tagged_tcp(1, 100, 0x8100, 20, b"customer");
