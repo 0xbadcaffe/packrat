@@ -10,6 +10,8 @@ enum Scenario {
     Retries,
     LowEntropy,
     SplitVlans,
+    SplitTagTypes,
+    SamePathPriorityChanges,
     SplitInterfaces,
     SplitWindow,
 }
@@ -39,7 +41,17 @@ fn write_fixture(path: &Path, scenario: Scenario) {
         } else {
             10
         };
-        packet.bytes.splice(12..12, [0x81, 0, 0, vlan]);
+        let tpid = if second_group && matches!(scenario, Scenario::SplitTagTypes) {
+            0x88a8_u16
+        } else {
+            0x8100_u16
+        };
+        let tci = if frame % 2 == 0 && matches!(scenario, Scenario::SamePathPriorityChanges) {
+            0xb000_u16 | vlan
+        } else {
+            vlan
+        };
+        packet.bytes.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
         let length = packet.bytes.len() as u32;
         let ticks = frame
             + if second_group && matches!(scenario, Scenario::SplitWindow) {
@@ -81,6 +93,8 @@ fn udp_dns_entropy_replay_requires_distinct_queries_in_one_capture_path_and_wind
         ("same-name-different-id", Retries),
         ("distinct-low-entropy", LowEntropy),
         ("split-vlans", SplitVlans),
+        ("split-tag-types", SplitTagTypes),
+        ("same-path-priority-changes", SamePathPriorityChanges),
         ("split-interfaces", SplitInterfaces),
         ("outside-window", SplitWindow),
     ]
@@ -88,7 +102,7 @@ fn udp_dns_entropy_replay_requires_distinct_queries_in_one_capture_path_and_wind
     .map(|(name, scenario)| {
         let file = format!("{name}.pcapng");
         write_fixture(&root.join(&file), scenario);
-        let expected = usize::from(matches!(scenario, Burst));
+        let expected = usize::from(matches!(scenario, Burst | SamePathPriorityChanges));
         let mut case = json!({
             "name":name, "capture":file, "expect_counts":{(rule):expected},
             "expect_snapshots":expected,
@@ -97,7 +111,7 @@ fn udp_dns_entropy_replay_requires_distinct_queries_in_one_capture_path_and_wind
             case["opening_frames"] = json!({(rule):[9]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule, "opening_frame":9, "frames":[1,3,4,5,6,7,8,9],
-                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":4},
+                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":5},
             }]);
         }
         case
@@ -117,5 +131,5 @@ fn udp_dns_entropy_replay_requires_distinct_queries_in_one_capture_path_and_wind
         String::from_utf8_lossy(&result.stderr)
     );
     let report: Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(report["passed"], 6);
+    assert_eq!(report["passed"], 8);
 }

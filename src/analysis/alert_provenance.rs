@@ -133,7 +133,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both advertisements with the switch-port inventory and planned router failover. Check endpoint default routes before attributing impact.",
         ),
         (
-            "IDS", "DNS tunnel behavior", "dns.high_entropy_query_burst", 4, Heuristic,
+            "IDS", "DNS tunnel behavior", "dns.high_entropy_query_burst", 5, Heuristic,
             "Compare the retained queries with expected DNS clients and resolver logs; investigate the originating process before concluding that data was transferred.",
         ),
         (

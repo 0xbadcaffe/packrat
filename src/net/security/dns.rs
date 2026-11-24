@@ -1,4 +1,5 @@
 use super::*;
+use super::scans::scan_scope;
 use crate::analysis::{dns_transactions, stream::DnsTcpObservation};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
@@ -12,7 +13,7 @@ const MAX_FRAMES_PER_QUERY: usize =
 
 #[derive(Hash, Eq, PartialEq)]
 struct TunnelKey {
-    scope: ServiceScope,
+    scope: ScanScope,
     client: String,
     resolver: String,
     suffix: String,
@@ -60,7 +61,7 @@ impl DnsTunnelTracker {
         let (label_length, entropy) = prefix.split('.').filter(|label| label.len() >= 24)
             .map(|label| (label.len(), shannon_entropy(label.as_bytes())))
             .max_by(|a, b| a.1.total_cmp(&b.1)).filter(|&(_, entropy)| entropy >= 3.5)?;
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let key = TunnelKey { scope, client: pkt.src.clone(), resolver: pkt.dst.clone(), suffix: suffix.into(), transport };
         if self.groups.len() >= MAX_GROUPS && !self.groups.contains_key(&key) {
             self.groups.retain(|_, group| now - group.last_seen <= TUNNEL_WINDOW_SECS);

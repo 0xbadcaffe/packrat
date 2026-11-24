@@ -33,3 +33,24 @@ fn dns_correlation_and_investigation_require_the_observed_tag_path() {
         assert_eq!(exchange.replies.iter().map(|entry| entry.packet).collect::<Vec<_>>(), [reply]);
     }
 }
+
+#[test]
+fn high_entropy_dns_burst_needs_eight_distinct_queries_on_one_tag_path() {
+    let mut core = AnalysisCore::default();
+    for frame in 1..=12 {
+        let name = format!("abcdefghijklmnpqrstuvwxyz234567{frame}.example.test");
+        let secondary = frame <= 8 && frame % 2 == 0;
+        let tpid = if secondary { 0x88a8_u16 } else { 0x8100_u16 };
+        let tci = if frame % 3 == 0 { 0xb014_u16 } else { 20_u16 };
+        let mut raw = dns_packet(frame, false, "10.0.0.5", "10.0.0.53", frame as u16, &name).bytes;
+        raw.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+        core.analyze(&parse_ethernet(&raw, frame, frame as f64));
+        let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == "DNS tunnel behavior").collect();
+        if frame < 12 {
+            assert!(alerts.is_empty(), "unexpected burst at frame {frame}");
+        } else {
+            assert_eq!(alerts.len(), 1);
+            assert_eq!(alerts[0].packet_refs, [1, 3, 5, 7, 9, 10, 11, 12]);
+        }
+    }
+}
