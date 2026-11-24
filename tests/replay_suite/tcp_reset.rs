@@ -45,7 +45,7 @@ fn reset_replay_separates_reopened_connections_from_unexplained_payload() {
         {"name":"payload without an observed reopen","capture":"post-reset-data.pcapng",
          "expect_counts":{(rule):1},"expect_snapshots":1,"opening_frames":{(rule):[3]},
          "opening_evidence":[{"rule_id":rule,"opening_frame":3,"frames":[2,3],
-            "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":10}}]}
+            "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":11}}]}
     ]});
     std::fs::write(&manifest, labels.to_string()).unwrap();
     let baseline = std::env::var("PACKRAT_REPLAY_BASELINE_ANALYZER").ok();

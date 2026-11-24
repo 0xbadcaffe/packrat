@@ -185,9 +185,11 @@ impl SecurityEngine {
             return UnknownOrNew;
         }
         let scope = scan_scope(pkt);
+        let capture_interface = (scope.0).0;
         let key = (scope, segment.key.clone());
-        self.tcp_integrity.retain(|_, state| {
-            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= TCP_STATE_TTL_SECS
+        // Timestamp progress on another capture interface cannot age this flow's evidence.
+        self.tcp_integrity.retain(|(observed_scope, _), state| {
+            (observed_scope.0).0 != capture_interface || pkt.timestamp - state.last_seen <= TCP_STATE_TTL_SECS
         });
         if !self.tcp_integrity.contains_key(&key)
             && self.tcp_integrity.len() >= MAX_TCP_FLOWS

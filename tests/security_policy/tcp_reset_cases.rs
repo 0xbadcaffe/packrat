@@ -168,7 +168,7 @@ fn detects_tcp_payload_continuing_after_reset() {
     assert_eq!(alert.severity, "MEDIUM");
     let rule = alert.provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "tcp.payload_after_observed_reset");
-    assert_eq!(rule.revision, 10);
+    assert_eq!(rule.revision, 11);
     assert_eq!(rule.confidence.to_string(), "Heuristic");
     assert!(alert.detail.contains("payload seq 101 followed reset frame #2 (same direction, seq 100)"));
     assert!(alert.detail.contains("reset acceptance and on-wire ordering unverified"));
@@ -337,7 +337,7 @@ fn ipv6_tcp_integrity_links_reset_and_conflict_evidence() {
     assert!(resets.detail.contains("[2001:db8::1]:50000"));
     let conflict = core.alert_center.items.iter().find(|alert| alert.title == "Conflicting TCP retransmission").unwrap();
     assert_eq!(conflict.packet_refs, [1, 4]);
-    assert_eq!(conflict.provenance.as_ref().unwrap().revision, 6);
+    assert_eq!(conflict.provenance.as_ref().unwrap().revision, 7);
 }
 
 #[test]

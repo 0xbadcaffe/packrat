@@ -37,7 +37,7 @@ fn periodic_replay_expires_history_only_on_the_advancing_interface() {
             case["opening_frames"] = json!({(rule):[8]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule,"opening_frame":8,"frames":[1,2,3,4,6,7,8],
-                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":19},
+                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":20},
             }]);
         }
         cases.push(case);
@@ -83,7 +83,7 @@ fn periodic_replay_distinguishes_fresh_tcp_segments_from_partial_retransmissions
             case["opening_frames"] = json!({(rule):[7]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule, "opening_frame":7, "frames":[1, 2, 3, 4, 5, 6, 7],
-                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":19},
+                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":20},
             }]);
         }
         cases.push(case);
