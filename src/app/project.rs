@@ -175,7 +175,7 @@ impl App {
     ) -> Result<(), String> {
         // Validate before replacing the active investigation.
         let tray = restore_investigation_tray(&state)?;
-        if let Some(report) = &state.alert_archive_report { report.validate()?; }
+        state.validate_archive_evidence()?;
         let incidents = state
             .incident_state
             .take()

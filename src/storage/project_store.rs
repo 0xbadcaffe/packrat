@@ -47,12 +47,14 @@ fn atomic_json_write(
 
 /// Save a project to `path`, keeping pinned packet byte arrays compact.
 pub fn save(state: &ProjectState, path: impl AsRef<Path>) -> Result<()> {
+    state.validate_archive_evidence().map_err(anyhow::Error::msg)?;
     let path = path.as_ref();
     atomic_json_write(state, path, MAX_PROJECT_BYTES, true, state.pinned_packets.is_empty())
 }
 
 /// Create a new project without replacing an existing case.
 pub fn create(state: &ProjectState, path: &Path) -> Result<()> {
+    state.validate_archive_evidence().map_err(anyhow::Error::msg)?;
     atomic_json_write(state, path, MAX_PROJECT_BYTES, false, state.pinned_packets.is_empty())
 }
 
@@ -68,9 +70,7 @@ pub fn load(path: impl AsRef<Path>) -> Result<ProjectState> {
     let mut state: ProjectState = serde_json::from_str(&data)
         .with_context(|| format!("invalid project file: {}", path.display()))?;
     anyhow::ensure!(state.metadata.schema_version <= SCHEMA_VERSION, "Project uses a newer unsupported schema");
-    if let Some(report) = &state.alert_archive_report {
-        report.validate().map_err(anyhow::Error::msg)?;
-    }
+    state.validate_archive_evidence().map_err(anyhow::Error::msg)?;
     // Schema migration hook — bump version and apply transforms as needed.
     if state.metadata.schema_version < SCHEMA_VERSION {
         state.metadata.schema_version = SCHEMA_VERSION;

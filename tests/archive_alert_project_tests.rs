@@ -8,6 +8,7 @@ use packrat_tui::storage::{packet_archive::PacketArchive, project_store};
 #[cfg(feature = "terminal-ui")]
 use packrat_tui::tabs::Tab;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 #[test]
 #[cfg(feature = "terminal-ui")]
@@ -79,7 +80,9 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
     let report = state.alert_archive_report.as_ref().unwrap();
     assert_eq!(serde_json::to_value(report).unwrap(), json!({
         "alert_id":alert.id, "capture_id":"previous", "session_id":"s",
-        "frames":{"1":"truncated","2":"length_unknown","3":"missing","4":"unreadable"}
+        "frames":{"1":"truncated","2":"length_unknown","3":"missing","4":"unreadable"},
+        "retained_sha256":{"1":format!("{:x}", Sha256::digest([1])),
+            "2":format!("{:x}", Sha256::digest([2]))}
     }));
     assert_eq!(state.alert_items[0].packet_refs, [1, 2, 3, 4]);
     assert_eq!(state.alert_items[0].capture_id.as_deref(), Some("previous"));
@@ -93,6 +96,27 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
     let original = std::fs::read(&output).unwrap();
     assert!(!run(Some("current")).status.success());
     assert_eq!(std::fs::read(&output).unwrap(), original);
+
+    let altered_path = root.join("altered.json");
+    let exported: Value = serde_json::from_slice(&original).unwrap();
+    let mut altered = exported.clone();
+    altered["pinned_packets"][0]["bytes"][0] = json!(99);
+    std::fs::write(&altered_path, altered.to_string()).unwrap();
+    assert!(project_store::load(&altered_path).unwrap_err().to_string().contains("frame #1"));
+    let altered_state = serde_json::from_value(altered).unwrap();
+    assert!(project_store::save(&altered_state, &output).is_err());
+    assert_eq!(std::fs::read(&output).unwrap(), original);
+
+    let mut wrong_scope = exported.clone();
+    wrong_scope["pinned_packet_scopes"]["1"] = json!("current");
+    std::fs::write(&altered_path, wrong_scope.to_string()).unwrap();
+    assert!(project_store::load(&altered_path).unwrap_err().to_string().contains("frame #1"));
+
+    let mut legacy = exported;
+    legacy["metadata"]["schema_version"] = json!(8);
+    legacy["alert_archive_report"].as_object_mut().unwrap().remove("retained_sha256");
+    std::fs::write(&altered_path, legacy.to_string()).unwrap();
+    assert!(project_store::load(&altered_path).unwrap().alert_archive_report.unwrap().retained_sha256.is_none());
 }
 
 #[test]

@@ -13,7 +13,7 @@ use crate::model::tags::TagStore;
 use crate::storage::case_bundle::ObjectEntry;
 use crate::net::packet::Packet;
 
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
 // Stable project-format index, shared by headless export and the terminal UI.
 pub(crate) const INVESTIGATE_TAB_INDEX: usize = 1;
 pub(crate) const MAX_PINNED_PACKETS: usize = 1024;
@@ -52,12 +52,25 @@ pub enum ArchivedFrameOutcome {
     OmittedAtLimit,
 }
 
+impl ArchivedFrameOutcome {
+    fn included(self) -> bool {
+        matches!(self, Self::Complete | Self::Truncated | Self::LengthUnknown)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AlertArchiveReport {
     pub alert_id: u64,
     pub capture_id: String,
     pub session_id: Option<String>,
     pub frames: std::collections::BTreeMap<u64, ArchivedFrameOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_sha256: Option<std::collections::BTreeMap<u64, String>>,
+}
+
+pub(crate) fn packet_bytes_sha256(packet: &Packet) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(&packet.bytes))
 }
 
 impl AlertArchiveReport {
@@ -70,6 +83,13 @@ impl AlertArchiveReport {
             || self.frames.len() > crate::analysis::alert_center::MAX_ALERT_PACKET_REFS + 3
         {
             return Err("Invalid saved alert archive report".into());
+        }
+        if let Some(digests) = &self.retained_sha256
+            && (!digests.keys().eq(self.frames.iter().filter_map(|(frame, outcome)| outcome.included().then_some(frame)))
+                || digests.values().any(|digest| digest.len() != 64 ||
+                    !digest.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))))
+        {
+            return Err("Invalid saved alert archive frame digests".into());
         }
         Ok(())
     }
@@ -165,6 +185,22 @@ pub struct ProjectState {
 }
 
 impl ProjectState {
+    pub(crate) fn validate_archive_evidence(&self) -> Result<(), String> {
+        let Some(report) = &self.alert_archive_report else { return Ok(()) };
+        report.validate()?;
+        let Some(digests) = &report.retained_sha256 else { return Ok(()) };
+        let mut verified = std::collections::HashSet::new();
+        for packet in &self.pinned_packets {
+            let Some(expected) = digests.get(&packet.no) else { continue };
+            if self.pinned_packet_scopes.get(&packet.no) != Some(&report.capture_id)
+                || !verified.insert(packet.no) || packet_bytes_sha256(packet) != *expected
+            {
+                return Err(format!("Saved archive evidence does not match its export record for frame #{}", packet.no));
+            }
+        }
+        Ok(())
+    }
+
     pub fn new(name: impl Into<String>, mode: ProjectSaveMode) -> Self {
         Self {
             metadata:       ProjectMetadata::new(name, mode),
