@@ -354,14 +354,14 @@ fn alert_summary_compares_the_recorded_flow_with_the_scoped_retained_trigger() {
     let scope = app.capture_id.clone().unwrap();
     let raw = [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0,
-        0x45, 0, 0, 28, 0, 0, 0, 0, 64, 17, 0, 0, 192, 0, 2, 1, 198, 51, 100, 2,
-        0xc3, 0x50, 0, 53, 0, 8, 0, 0,
+        0x45, 0, 0, 32, 0, 0, 0, 0, 64, 17, 0, 0, 192, 0, 2, 1, 198, 51, 100, 2,
+        0xc3, 0x50, 0, 53, 0, 12, 0, 0, 1, 2,
     ];
     let mut trigger = crate::net::parser::parse_ethernet(&raw, 10, 1.0);
     trigger.src = "203.0.113.17".into();
     trigger.src_port = Some(1234);
     trigger.capture = Some(CaptureMetadata {
-        captured_length: raw.len() as u32, wire_length: raw.len() as u32,
+        captured_length: raw.len() as u32, wire_length: raw.len() as u32 + 2,
         timestamp: None, link_type: 1, section_id: 0, interface_id: 0,
         interface_name: None, comments: Vec::new(),
     });
@@ -371,10 +371,15 @@ fn alert_summary_compares_the_recorded_flow_with_the_scoped_retained_trigger() {
     let mut alert = {
         let mut core = app.core.edit();
         core.alert_center.record(10, "IDS", "MEDIUM", "Scoped trigger", "test");
+        core.alert_center.items[0].packet_refs = vec![10, 20];
         core.alert_center.items[0].clone()
     };
     assert_eq!(app.alert_trigger_context(&alert).1, "Not recorded");
+    assert!(app.alert_evidence_context(&alert).1.is_none());
     assert!(app.investigate_selected_alert());
+    assert_eq!(app.alert_evidence_context(&alert).1.as_deref(), Some(
+        "2 captured / 4 declared TCP/UDP bytes across 1/2 cited frames; not a transfer total",
+    ));
     const WIRE: &str = "UDP 192.0.2.1:50000 -> 198.51.100.2:53";
     assert_eq!(app.alert_trigger_context(&alert).1, format!("{WIRE} (from retained trigger)"));
     alert.flow = Some(AlertFlow {
@@ -388,5 +393,6 @@ fn alert_summary_compares_the_recorded_flow_with_the_scoped_retained_trigger() {
     assert!(mismatch.contains("198.51.100.2:5353; retained trigger differs:"));
     assert!(mismatch.ends_with(WIRE));
     alert.capture_id = Some("other-capture".into());
+    assert!(app.alert_evidence_context(&alert).1.is_none());
     assert_eq!(app.alert_trigger_context(&alert).1, "UDP 192.0.2.1:50000 -> 198.51.100.2:5353 (recorded, not verified)");
 }

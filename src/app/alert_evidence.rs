@@ -170,19 +170,40 @@ impl App {
     }
 
     pub(crate) fn alert_evidence_status(&self, alert: &AlertItem) -> String {
+        self.describe_alert_evidence(alert, false).0
+    }
+
+    pub(super) fn alert_evidence_context(&self, alert: &AlertItem) -> (String, Option<String>) {
+        self.describe_alert_evidence(alert, true)
+    }
+
+    fn describe_alert_evidence(&self, alert: &AlertItem, include_payload: bool) -> (String, Option<String>) {
         let frames = alert.evidence_frame_numbers();
         if frames.is_empty() {
-            return "No packet references".into();
+            return ("No packet references".into(), None);
         }
         let scope = self.alert_evidence_scope(alert);
+        let (mut decoded, mut captured, mut declared) = (0, 0, 0);
         let slots: Vec<_> = self.local_alert_packets(alert, scope, &frames).into_iter()
-            .map(|slot| slot.and_then(|location| location.get(self)).map_or(FrameStatus::Missing, frame_status))
+            .map(|slot| {
+                let packet = slot.and_then(|location| location.get(self));
+                let status = packet.map_or(FrameStatus::Missing, frame_status);
+                if include_payload && alert.capture_id.is_some()
+                    && matches!(status, FrameStatus::Complete | FrameStatus::Truncated)
+                    && let Some(header) = packet.and_then(captured_transport_header)
+                {
+                    decoded += 1;
+                    captured += header.captured_payload_length;
+                    declared += header.declared_payload_length;
+                }
+                status
+            })
             .collect();
         let unresolved = slots.iter().filter(|&&slot| slot == FrameStatus::Missing).count();
         let invalid = slots.iter().filter(|&&slot| slot == FrameStatus::Unreadable).count();
         let retained = frames.len() - unresolved - invalid;
         if retained == 0 && invalid == 0 && let Some(reason) = scope.local_mismatch() {
-            return format!("0/{} verified here; {reason}", frames.len());
+            return (format!("0/{} verified here; {reason}", frames.len()), None);
         }
         let mut status = format!("{retained}/{} retained", frames.len());
         if scope == AlertEvidenceScope::DifferentCapture {
@@ -219,7 +240,11 @@ impl App {
         if scope == AlertEvidenceScope::Unscoped {
             status.push_str("; capture ID not recorded");
         }
-        status
+        let payload = (decoded > 0).then(|| format!(
+            "{captured} captured / {declared} declared TCP/UDP bytes across {decoded}/{} cited frames; not a transfer total",
+            frames.len(),
+        ));
+        (status, payload)
     }
 
     pub(super) fn alert_trigger_context(&self, alert: &AlertItem) -> (String, String) {

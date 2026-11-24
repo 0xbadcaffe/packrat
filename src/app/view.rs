@@ -145,6 +145,7 @@ impl AppView<'_> {
                 .find(|alert| alert.id == *id)
                 .map(|alert| {
                     let (trigger_frame, trigger_flow) = self.alert_trigger_context(alert);
+                    let (evidence, payload) = self.alert_evidence_context(alert);
                     InvestigationContext {
                         kind: "Alert",
                         title: alert.title.clone(),
@@ -173,7 +174,8 @@ impl AppView<'_> {
                                 "Capture ID".into(),
                                 alert.capture_id.as_deref().unwrap_or("Unscoped").into(),
                             ),
-                            ("Packet evidence".into(), self.alert_evidence_status(alert)),
+                            ("Packet evidence".into(), evidence),
+                            ("Cited payload".into(), payload.unwrap_or_else(|| "No verified TCP/UDP payload lengths".into())),
                             ("Reason".into(), alert.detail.clone()),
                             (
                                 "Recommendation".into(),
