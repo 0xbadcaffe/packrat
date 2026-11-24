@@ -78,6 +78,7 @@ pub(super) fn ipv6_probe(raw: &[u8]) -> Option<Ipv6Probe> {
                 flags: transport[13],
                 sequence: u32::from_be_bytes(transport[4..8].try_into().ok()?),
                 acknowledgement: u32::from_be_bytes(transport[8..12].try_into().ok()?),
+                payload_length: (transport.len() - header_length) as u32,
                 source_port: read_port(0)?,
                 destination_port: read_port(2)?,
                 complete: true,

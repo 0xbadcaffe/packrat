@@ -9,6 +9,10 @@ const MIN_BYTES_ABOVE_ENCRYPTED_ENTROPY: usize = 148;
 const STROBE_MIN_PACKETS: usize = 101;
 const MAX_RETAINED_FLOWS: NonZeroUsize = NonZeroUsize::new(8192).unwrap();
 
+pub(crate) fn acknowledges_syn(sequence: u32, payload_length: u32, acknowledgment: u32) -> bool {
+    acknowledgment.wrapping_sub(sequence.wrapping_add(1)) <= payload_length
+}
+
 fn observe_strobe(window: &mut VecDeque<f64>, timestamp: f64) -> bool {
     if !timestamp.is_finite() {
         return window.len() == STROBE_MIN_PACKETS;

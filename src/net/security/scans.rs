@@ -21,6 +21,7 @@ pub(super) struct ScanProbe {
 struct ScanTcpProbe {
     source_port: u16,
     sequence: u32,
+    payload_length: u32,
     syn_ack: Option<ScanSynAck>,
     reset_ack: Option<u64>,
     final_ack: Option<u64>,
@@ -30,6 +31,8 @@ struct ScanTcpProbe {
 struct ScanSynAck {
     order: (f64, u64),
     sequence: u32,
+    payload_length: u32,
+    client_next_sequence: u32,
 }
 
 enum ProbeChange { Distinct, Replaced, Ignored }
@@ -93,6 +96,7 @@ impl SecurityEngine {
                         flags: segment.flags,
                         sequence: segment.sequence,
                         acknowledgement: segment.acknowledgement,
+                        payload_length: segment.payload.len() as u32,
                         source_port: source.port(),
                         destination_port: destination.port(),
                         complete: segment.complete,
@@ -142,7 +146,8 @@ impl SecurityEngine {
             }
 
             if flags & (SYN | ACK | FIN | RST) == SYN {
-                self.record_scan_probe(pkt, destination_port, "TCP", Some((source_port, sequence)), retain);
+                let probe = ScanTcpProbe { source_port, sequence, payload_length: signal.payload_length, ..Default::default() };
+                self.record_scan_probe(pkt, destination_port, "TCP", Some(probe), retain);
                 self.record_syn_arrival(pkt, destination_port, source_port, sequence, retain);
                 if destination_port == 22 && control == SYN {
                     self.record_service_observation(
@@ -195,7 +200,7 @@ impl SecurityEngine {
         self.scan_sources.entry(key).or_default()
     }
 
-    fn record_scan_probe(&mut self, pkt: &Packet, port: u16, transport: &'static str, tcp: Option<(u16, u32)>, retain: bool) {
+    fn record_scan_probe(&mut self, pkt: &Packet, port: u16, transport: &'static str, tcp: Option<ScanTcpProbe>, retain: bool) {
         let key = scan_key(pkt, transport);
         let state = self.scan_state(key.clone());
         match state.push_probe(pkt, port, tcp) {
@@ -336,7 +341,7 @@ impl SecurityEngine {
 }
 
 impl SourceScanState {
-    fn push_probe(&mut self, pkt: &Packet, port: u16, tcp: Option<(u16, u32)>) -> ProbeChange {
+    fn push_probe(&mut self, pkt: &Packet, port: u16, tcp: Option<ScanTcpProbe>) -> ProbeChange {
         self.last_seen = if self.probes.is_empty() {
             pkt.timestamp
         } else {
@@ -366,7 +371,6 @@ impl SourceScanState {
                 self.icmp_alerted = false;
             }
         }
-        let tcp = tcp.map(|(source_port, sequence)| ScanTcpProbe { source_port, sequence, ..Default::default() });
         if let Some(attempt) = &tcp
             && self.linked_probes.iter().any(|prior| prior.destination == pkt.dst && prior.port == port
                 && prior.tcp.as_ref().is_some_and(|old| old.matches_syn(attempt)))

@@ -215,6 +215,7 @@ pub(super) struct TcpSignal {
     pub(super) flags: u8,
     pub(super) sequence: u32,
     pub(super) acknowledgement: u32,
+    pub(super) payload_length: u32,
     pub(super) source_port: u16,
     pub(super) destination_port: u16,
     pub(super) complete: bool,

@@ -79,7 +79,7 @@ struct SynSegment {
 
 impl SynSegment {
     fn acknowledges_syn(self, acknowledgment: u32) -> bool {
-        acknowledgment.wrapping_sub(self.sequence.wrapping_add(1)) <= self.payload_len
+        crate::net::flow::acknowledges_syn(self.sequence, self.payload_len, acknowledgment)
     }
 }
 

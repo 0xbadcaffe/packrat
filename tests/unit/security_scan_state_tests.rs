@@ -1,6 +1,39 @@
 use super::*;
 use crate::net::parser::parse_ethernet;
 
+fn scan_syn(sequence: u32) -> Option<ScanTcpProbe> {
+    Some(ScanTcpProbe { source_port: 40_000, sequence, ..Default::default() })
+}
+
+#[test]
+fn scan_reply_does_not_mutate_either_probe_when_acknowledgment_is_ambiguous() {
+    let mut engine = SecurityEngine::default();
+    let mut packet = parse_ethernet(&[], 1, 1.0);
+    packet.src = "192.0.2.1".into();
+    for frame in 1..=12 {
+        packet.no = frame;
+        packet.dst = format!("198.51.100.{frame}");
+        let mut attempt = scan_syn(100).unwrap();
+        attempt.payload_length = 5;
+        engine.record_scan_probe(&packet, 443, "TCP", Some(attempt), false);
+    }
+    let key = scan_key(&packet, "TCP");
+    packet.no = 13;
+    engine.record_scan_probe(&packet, 443, "TCP", scan_syn(102), false);
+    packet.no = 14;
+    std::mem::swap(&mut packet.src, &mut packet.dst);
+    let reply = TcpSignal {
+        flags: 0x12, sequence: 500, acknowledgement: 103, payload_length: 0,
+        source_port: 443, destination_port: 40_000, complete: true,
+    };
+    assert!(!engine.record_scan_reply(&packet, reply, false));
+    assert_eq!(engine.scan_sources[&key].pending_final_acks, 0);
+    assert!(engine.findings.ids_evidence.is_empty());
+    packet.no = 15;
+    assert!(engine.record_scan_reply(&packet, TcpSignal { acknowledgement: 106, ..reply }, false));
+    assert_eq!(engine.findings.ids_evidence[0].evidence_frame, 15);
+}
+
 #[test]
 fn scan_retains_only_scoped_reply_evidence_present_when_the_alert_opens() {
     let tcp_frame = |no, target, flags, ack: u32, client_port: u16, vlan| {
@@ -82,13 +115,13 @@ fn pending_scan_acks_are_removed_by_probe_replacement_expiration_and_eviction() 
         probe.src = "192.0.2.1".into();
         probe.dst = "198.51.100.1".into();
         let key = scan_key(&probe, "TCP");
-        engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)), false);
+        engine.record_scan_probe(&probe, 443, "TCP", scan_syn(100), false);
         let mut reply = probe.clone();
         std::mem::swap(&mut reply.src, &mut reply.dst);
         reply.no = 2;
         let signal = TcpSignal {
             flags: 0x12, sequence: 200, acknowledgement: 101,
-            source_port: 443, destination_port: 40_000, complete: true,
+            source_port: 443, destination_port: 40_000, complete: true, payload_length: 0,
         };
         engine.record_scan_reply(&reply, signal, false);
         engine.record_scan_reply(&reply, signal, false);
@@ -102,17 +135,17 @@ fn pending_scan_acks_are_removed_by_probe_replacement_expiration_and_eviction() 
             }
             "expire" => {
                 probe.timestamp += SCAN_WINDOW_SECS + 1.0;
-                engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 101)), false);
+                engine.record_scan_probe(&probe, 443, "TCP", scan_syn(101), false);
             }
             "evict" => {
                 probe.timestamp = 2.0;
                 for index in 0..MAX_SCAN_PROBES_PER_SOURCE {
                     probe.dst = format!("198.51.{}.{index}", index / 256);
-                    engine.record_scan_probe(&probe, 1_000 + index as u16, "TCP", Some((40_000, 101)), false);
+                    engine.record_scan_probe(&probe, 1_000 + index as u16, "TCP", scan_syn(101), false);
                     probe.no += 1;
                 }
             }
-            _ => engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 101)), false),
+            _ => engine.record_scan_probe(&probe, 443, "TCP", scan_syn(101), false),
         }
         assert_eq!(engine.scan_sources[&key].pending_final_acks, 0, "{change}");
     }
@@ -125,7 +158,8 @@ fn linked_scan_attempt_retention_is_bounded_and_releases_evicted_pending_acks() 
     for frame in 1..=65 {
         packet.no = frame;
         let mut probe = ScanProbe::new(&packet, 443, Some(ScanTcpProbe {
-            syn_ack: Some(ScanSynAck { order: (1.0, frame), sequence: 200 }),
+            syn_ack: Some(ScanSynAck { order: (1.0, frame), sequence: 200,
+                payload_length: 0, client_next_sequence: 101 }),
             ..Default::default()
         }));
         probe.horizontal_opening = Some(100);
@@ -145,21 +179,21 @@ fn linked_scan_attempts_expire_and_do_not_count_as_new_targets_or_extend_retries
     for host in 1..=12 {
         probe.no = host;
         probe.dst = format!("198.51.100.{host}");
-        engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)), false);
+        engine.record_scan_probe(&probe, 443, "TCP", scan_syn(100), false);
     }
     let key = scan_key(&probe, "TCP");
     let mut reply = probe.clone();
     std::mem::swap(&mut reply.src, &mut reply.dst);
     let signal = TcpSignal {
         flags: 0x12, sequence: 500, acknowledgement: 101,
-        source_port: 443, destination_port: 40_000, complete: true,
+        source_port: 443, destination_port: 40_000, complete: true, payload_length: 0,
     };
     reply.no = 13;
     engine.record_scan_reply(&reply, signal, false);
     probe.no = 14;
-    engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 200)), false);
+    engine.record_scan_probe(&probe, 443, "TCP", scan_syn(200), false);
     probe.no = 15;
-    engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)), false);
+    engine.record_scan_probe(&probe, 443, "TCP", scan_syn(100), false);
     let state = &engine.scan_sources[&key];
     assert_eq!(state.probes.len(), 12);
     assert_eq!(state.probes.last().unwrap().packet_no, 14);
@@ -174,7 +208,7 @@ fn linked_scan_attempts_expire_and_do_not_count_as_new_targets_or_extend_retries
     assert_eq!(engine.findings.ids_evidence.len(), updates);
     probe.no = 17;
     probe.timestamp = reply.timestamp;
-    engine.record_scan_probe(&probe, 443, "TCP", Some((40_000, 100)), false);
+    engine.record_scan_probe(&probe, 443, "TCP", scan_syn(100), false);
     let state = &engine.scan_sources[&key];
     assert_eq!(state.probes.len(), 1);
     assert!(state.linked_probes.is_empty());
@@ -188,20 +222,20 @@ fn tcp_scan_retries_do_not_extend_the_evidence_window_but_new_attempts_can() {
     packet.src = "192.0.2.1".into();
     packet.dst = "198.51.100.1".into();
     let key = scan_key(&packet, "TCP");
-    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 100)), false);
+    engine.record_scan_probe(&packet, 443, "TCP", scan_syn(100), false);
     packet.no = 2;
     packet.timestamp = 10.0;
-    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 100)), false);
+    engine.record_scan_probe(&packet, 443, "TCP", scan_syn(100), false);
     assert_eq!(engine.scan_sources[&key].probes[0].packet_no, 1);
 
     packet.no = 3;
     packet.timestamp = 11.0;
-    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 101)), false);
+    engine.record_scan_probe(&packet, 443, "TCP", scan_syn(101), false);
     assert_eq!(engine.scan_sources[&key].probes[0].packet_no, 3);
 
     packet.no = 4;
     packet.timestamp = 27.0;
-    engine.record_scan_probe(&packet, 443, "TCP", Some((40_000, 101)), false);
+    engine.record_scan_probe(&packet, 443, "TCP", scan_syn(101), false);
     assert_eq!(engine.scan_sources[&key].probes[0].packet_no, 4);
 }
 

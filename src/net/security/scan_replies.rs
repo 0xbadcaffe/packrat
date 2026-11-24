@@ -1,4 +1,5 @@
 use super::*;
+use crate::net::flow::acknowledges_syn;
 
 const MAX_LINKED_PROBES: usize = 64;
 
@@ -26,15 +27,17 @@ impl SecurityEngine {
             scope: service_scope(pkt),
         };
         let Some(state) = self.scan_sources.get_mut(&key) else { return false };
-        let Some(probe) = state.probes.iter_mut().chain(&mut state.linked_probes).find(|probe| {
+        let mut matches = state.probes.iter_mut().chain(&mut state.linked_probes).filter(|probe| {
             probe.destination == pkt.src && probe.port == tcp.source_port
                 && (pkt.timestamp, pkt.no) > (probe.timestamp, probe.packet_no)
                 && pkt.timestamp - probe.timestamp <= SCAN_WINDOW_SECS
                 && probe.tcp.as_ref().is_some_and(|attempt| {
                     attempt.source_port == tcp.destination_port
-                        && attempt.sequence.wrapping_add(1) == tcp.acknowledgement
+                        && acknowledges_syn(attempt.sequence, attempt.payload_length, tcp.acknowledgement)
                 })
-        }) else { return false };
+        });
+        let Some(probe) = matches.next() else { return false };
+        if matches.next().is_some() { return false; }
         let Some(attempt) = &mut probe.tcp else { return false };
         let was_pending = attempt.awaits_final_ack();
         let newly_matched = if reset {
@@ -45,6 +48,8 @@ impl SecurityEngine {
             let new = attempt.syn_ack.is_none();
             attempt.syn_ack.get_or_insert(ScanSynAck {
                 order: (pkt.timestamp, pkt.no), sequence: tcp.sequence,
+                payload_length: tcp.payload_length,
+                client_next_sequence: tcp.acknowledgement,
             });
             new
         };
@@ -61,18 +66,20 @@ impl SecurityEngine {
         if state.pending_final_acks == 0 {
             return false;
         }
-        let Some(probe) = state.probes.iter_mut().chain(&mut state.linked_probes).find(|probe| {
+        let mut matches = state.probes.iter_mut().chain(&mut state.linked_probes).filter(|probe| {
             probe.destination == pkt.dst && probe.port == tcp.destination_port
                 && pkt.timestamp - probe.timestamp <= SCAN_WINDOW_SECS
                 && probe.tcp.as_ref().is_some_and(|attempt| {
                     attempt.source_port == tcp.source_port && attempt.awaits_final_ack()
-                        && tcp.sequence == attempt.sequence.wrapping_add(1)
                         && attempt.syn_ack.as_ref().is_some_and(|reply| {
                             (pkt.timestamp, pkt.no) > reply.order
-                                && tcp.acknowledgement == reply.sequence.wrapping_add(1)
+                                && tcp.sequence == reply.client_next_sequence
+                                && acknowledges_syn(reply.sequence, reply.payload_length, tcp.acknowledgement)
                         })
                 })
-        }) else { return false };
+        });
+        let Some(probe) = matches.next() else { return false };
+        if matches.next().is_some() { return false; }
         let Some(attempt) = &mut probe.tcp else { return false };
         attempt.final_ack = Some(pkt.no);
         state.pending_final_acks -= 1;
