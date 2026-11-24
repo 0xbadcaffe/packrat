@@ -228,8 +228,14 @@ impl AlertJsonlWriter {
         existing_alerts: &[AlertItem],
         pending_alerts: &[AlertItem],
     ) -> Result<(), String> {
-        let latest: BTreeMap<_, _> = pending_alerts.iter()
-            .chain(existing_alerts)
+        self.backfill_snapshots(pending_alerts.iter().chain(existing_alerts))
+    }
+
+    pub(crate) fn backfill_snapshots<'a>(
+        &mut self,
+        snapshots: impl IntoIterator<Item = &'a AlertItem>,
+    ) -> Result<(), String> {
+        let latest: BTreeMap<_, _> = snapshots.into_iter()
             .map(|alert| (snapshot_key(alert), alert))
             .collect();
         self.write_alerts(latest.into_values())

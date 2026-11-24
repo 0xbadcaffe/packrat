@@ -194,6 +194,7 @@ impl App {
             alert_saving: self.save_alerts && core.alert_jsonl_writer.is_some(),
             alert_save_failed: self.save_alerts && core.alert_save_error.is_some(),
             alert_save_failures: core.alert_save_failures,
+            alert_save_backlog_dropped: core.alert_write_backlog.dropped,
             archive_enabled: self.packet_archive.is_some(),
             archive_paused: archive_pause_reason.is_some(),
             archive_pause_reason,

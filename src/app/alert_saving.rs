@@ -20,6 +20,7 @@ impl App {
             self.configure_core(|core| {
                 core.alert_jsonl_writer = None;
                 core.alert_save_error = None;
+                core.alert_write_backlog.clear();
                 core.alert_center.drain_pending_exports();
             });
             self.set_status("Alert saving disabled");
@@ -71,14 +72,15 @@ impl App {
             if core.alert_jsonl_writer.is_some() {
                 return;
             }
+            core.alert_write_backlog.extend(core.alert_center.drain_pending_exports());
             match open(&session).and_then(|mut writer| {
-                let pending = core.alert_center.drain_pending_exports();
-                writer.backfill(&core.alert_center.items, &pending)?;
+                writer.backfill_snapshots(core.alert_write_backlog.iter().chain(&core.alert_center.items))?;
                 Ok(writer)
             }) {
                 Ok(writer) => {
                     core.alert_jsonl_writer = Some(std::sync::Arc::new(std::sync::Mutex::new(writer)));
                     core.alert_save_error = None;
+                    core.alert_write_backlog.clear();
                 }
                 Err(error) => core.record_alert_save_failure(error),
             }

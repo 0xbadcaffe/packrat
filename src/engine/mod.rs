@@ -21,6 +21,7 @@ use crate::net::inspector::CredentialHit;
 use crate::net::packet::Packet;
 use crate::net::security::SecurityEngine;
 
+mod alert_write_backlog;
 mod artifacts;
 mod graph;
 mod inspect;
@@ -69,6 +70,7 @@ pub struct AnalysisCore {
     pub(crate) alert_jsonl_writer: Option<std::sync::Arc<std::sync::Mutex<crate::storage::alert_jsonl::AlertJsonlWriter>>>,
     pub(crate) alert_save_error: Option<String>,
     pub(crate) alert_save_failures: u64,
+    pub(crate) alert_write_backlog: alert_write_backlog::AlertWriteBacklog,
     pub credentials: Vec<CredentialHit>,
     pub hosts: HostInventory,
     pub streams: StreamAssembler,
@@ -99,6 +101,7 @@ impl Default for AnalysisCore {
             alert_jsonl_writer: None,
             alert_save_error: None,
             alert_save_failures: 0,
+            alert_write_backlog: Default::default(),
             credentials: Vec::new(),
             hosts: HostInventory::default(),
             streams: StreamAssembler::default(),

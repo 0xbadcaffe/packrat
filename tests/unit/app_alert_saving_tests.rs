@@ -22,6 +22,7 @@ fn saving_recovers_with_backfill_without_changing_the_preference() {
     app.poll_alert_saving_with(now + Duration::from_secs(1), |_| panic!("retried too soon"));
     assert_eq!(app.query_core(|core| core.alert_save_failures), Some(1));
     app.configure_core(|core| {
+        core.alert_center.items.clear(); // The first record now survives only in the retry queue.
         core.alert_center
             .record(2, "test", "HIGH", "Second", "Second retained alert");
     });
@@ -34,6 +35,7 @@ fn saving_recovers_with_backfill_without_changing_the_preference() {
             .unwrap()
     );
     assert_eq!(app.query_core(|core| core.alert_save_failures), Some(1));
+    assert_eq!(app.query_core(|core| core.alert_write_backlog.iter().count()), Some(0));
     let alerts: Vec<serde_json::Value> = std::fs::read_to_string(path)
         .unwrap()
         .lines()

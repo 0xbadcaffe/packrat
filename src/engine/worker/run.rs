@@ -160,8 +160,11 @@ pub(super) fn run(
                 }
             }
         };
-        let pending_alerts = core.alert_center.drain_pending_exports();
+        let mut pending_alerts = core.alert_center.drain_pending_exports();
         let writer = if pending_alerts.is_empty() { None } else { core.alert_jsonl_writer.clone() };
+        if writer.is_none() && core.alert_save_error.is_some() {
+            core.alert_write_backlog.extend(std::mem::take(&mut pending_alerts));
+        }
         if dirty && sequence % 32 == 0 {
             publish(&core, monitor, generation, sequence, analyzed, skipped);
             dirty = false;
@@ -176,6 +179,7 @@ pub(super) fn run(
                 if core.alert_jsonl_writer.as_ref().is_some_and(|active| Arc::ptr_eq(active, &writer)) {
                     core.record_alert_save_failure(error);
                     core.alert_jsonl_writer = None;
+                    core.alert_write_backlog.extend(pending_alerts);
                 }
             }
         }

@@ -87,10 +87,15 @@ fn a_failed_append_disables_saving_without_losing_the_in_memory_alert() {
         core.alert_center.record(1, "IDS", "HIGH", "Observed", "normal detail");
         Ok(())
     }).unwrap();
+    worker.try_update(2, |core| {
+        core.alert_center.record(2, "IDS", "HIGH", "During outage", "new detail");
+        Ok(())
+    }).unwrap();
     let core = worker.finish(|_| ()).unwrap();
     assert!(core.alert_jsonl_writer.is_none());
     assert!(core.alert_save_error.is_some());
     assert_eq!(core.alert_save_failures, 1);
-    assert_eq!(core.alert_center.items.len(), 1);
+    assert_eq!(core.alert_center.items.len(), 2);
+    assert_eq!(core.alert_write_backlog.iter().map(|alert| alert.packet_no).collect::<Vec<_>>(), [1, 2]);
     assert_eq!(std::fs::metadata(path).unwrap().len(), 0);
 }

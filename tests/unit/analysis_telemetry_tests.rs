@@ -21,6 +21,7 @@ fn metrics_do_not_report_unknown_loss_as_zero() {
         capture_queue_full_packets: Some(17),
         alert_saving: true,
         alert_save_failures: 2,
+        alert_save_backlog_dropped: 3,
         archive_enabled: true,
         archive_paused: true,
         ..Default::default()
@@ -31,6 +32,7 @@ fn metrics_do_not_report_unknown_loss_as_zero() {
     assert!(known.contains("packrat_capture_queue_full_packets_total 17"));
     assert!(known.contains("packrat_alert_saving 1"));
     assert!(known.contains("packrat_alert_save_failures_total 2"));
+    assert!(known.contains("packrat_alert_save_backlog_dropped_total 3"));
     assert!(known.contains("packrat_archive_paused 1"));
 }
 
