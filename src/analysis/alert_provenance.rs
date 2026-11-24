@@ -209,7 +209,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the echo requests match expected diagnostics or discovery.",
         ),
         (
-            "IDS", "NTLM authentication fan-out", "smb2.ntlm_authentication_fanout", 2, Correlated,
+            "IDS", "NTLM authentication fan-out", "smb2.ntlm_authentication_fanout", 3, Correlated,
             "Check whether the source normally contacts these hosts and corroborate with server logon events.",
         ),
         (

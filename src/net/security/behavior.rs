@@ -463,7 +463,7 @@ impl SecurityEngine {
             return;
         }
         state.targets.retain(|_, (seen, _)| state.last_seen - *seen <= 300.0);
-        if state.targets.is_empty() {
+        if state.targets.len() <= NTLM_TARGET_THRESHOLD / 2 {
             state.alerted = false;
         }
         if let Some(prior) = state.targets.get_mut(&pkt.dst) {
@@ -485,10 +485,10 @@ impl SecurityEngine {
                 pkt_no: pkt.no,
                 signature: "NTLM authentication fan-out",
                 severity: Severity::Medium,
-                detail: format!("{} sent SMB2 NTLM authentication to {count} internal hosts; outcomes unverified", pkt.src),
+                detail: format!("{} sent SMB2 NTLM authentication to {count} internal hosts within 5 minutes; outcomes unverified", pkt.src),
             },
             related_packets,
-            correlation_key: Some(format!("{:?}:{}", service_scope(pkt), pkt.src)),
+            correlation_key: Some(format!("{:?}:{}:episode:{}", service_scope(pkt), pkt.src, pkt.no)),
         });
     }
 }

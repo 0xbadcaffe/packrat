@@ -9,6 +9,8 @@ use rstest::rstest;
 mod dtp;
 #[path = "support/dhcp.rs"]
 mod dhcp_fixture;
+#[path = "support/smb_ntlm.rs"]
+mod smb_ntlm;
 
 fn packet(protocol: &str, destination_port: u16, info: &str, bytes: Vec<u8>) -> Packet {
     Packet {

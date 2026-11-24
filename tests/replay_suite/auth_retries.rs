@@ -1,5 +1,53 @@
 use super::{PcapNgWriter, json, run_suite};
 
+#[path = "../support/smb_ntlm.rs"]
+mod smb_ntlm;
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn ntlm_fanout_replay_distinguishes_rearmed_bursts_from_sustained_and_single_host_traffic() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "smb2.ntlm_authentication_fanout";
+    let payload = smb_ntlm::smb2_ntlm_request(3);
+    let mut cases = Vec::new();
+    for (name, late, diverse, openings) in [
+        ("rearmed", 604, true, &[3_u64, 7][..]),
+        ("sustained", 305, true, &[3][..]),
+        ("one-target", 604, false, &[][..]),
+    ] {
+        let file = format!("{name}.pcapng");
+        let mut writer = PcapNgWriter::create(&root.join(&file)).unwrap();
+        for (index, time) in [1, 3, 4, 302, late - 2, late - 1, late].into_iter().enumerate() {
+            let frame = index as u64 + 1;
+            let mut packet = super::support::tcp(frame, frame as u32 * 1024, 0x18, &payload, false);
+            let target = if diverse { frame as u8 } else { 1 };
+            packet.bytes[26..34].copy_from_slice(&[10, 0, 0, 9, 10, 0, 2, target]);
+            packet.bytes[36..38].copy_from_slice(&445_u16.to_be_bytes());
+            packet.timestamp = f64::from(time);
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+        let mut case = json!({
+            "name":name, "capture":file, "expect_snapshots":openings.len(),
+            "expect_counts":{(rule):openings.len()},
+        });
+        if !openings.is_empty() {
+            case["opening_frames"] = json!({(rule):openings});
+            let evidence: Vec<_> = openings.iter().map(|&frame| json!({
+                "rule_id":rule, "opening_frame":frame, "frames":[frame - 2, frame - 1, frame],
+                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":3},
+            })).collect();
+            case["opening_evidence"] = json!(evidence);
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("ntlm-fanout.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+}
+
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn delayed_auth_retries_do_not_open_a_new_burst() {

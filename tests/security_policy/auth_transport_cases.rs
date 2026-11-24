@@ -85,3 +85,45 @@ fn ntlm_fanout_uses_only_tcp_data_with_ack_and_matching_ports() {
     let finding = batch.ids.iter().find(|finding| finding.alert.signature == TITLE).unwrap();
     assert_eq!(finding.related_packets, [6, 7]);
 }
+
+#[test]
+fn ntlm_fanout_rearms_after_diversity_declines_without_reusing_a_reviewed_alert() {
+    let mut core = AnalysisCore::default();
+    let payload = cases_3::smb2_ntlm_request(3);
+    let observe = |core: &mut AnalysisCore, no, time, target, vlan| {
+        let mut packet = ipv4_tcp_packet(no, no as u32 * 1024, 0x18, &payload);
+        packet.bytes[26..34].copy_from_slice(&[10, 0, 0, 9, 10, 0, 2, target]);
+        packet.bytes[36..38].copy_from_slice(&445_u16.to_be_bytes());
+        packet.src = "10.0.0.9".into();
+        packet.dst = format!("10.0.2.{target}");
+        packet.dst_port = Some(445);
+        packet.vlan_id = Some(vlan);
+        packet.timestamp = time;
+        core.analyze(&packet);
+    };
+    let episodes = |core: &AnalysisCore| core.alert_center.items.iter()
+        .filter(|alert| alert.title == "NTLM authentication fan-out").cloned().collect::<Vec<_>>();
+
+    for (no, time, target) in [(1, 1.0, 1), (2, 3.0, 2), (3, 4.0, 3)] {
+        observe(&mut core, no, time, target, 10);
+    }
+    let first = episodes(&core).pop().unwrap();
+    assert!(core.alert_center.set_disposition(first.id, first.capture_id.as_deref(), AlertDisposition::Benign));
+    // Sustained activity dips to two active targets before another host joins.
+    observe(&mut core, 4, 302.0, 4, 10);
+    assert_eq!(episodes(&core).len(), 1);
+    observe(&mut core, 5, 602.0, 5, 10);
+    observe(&mut core, 6, 603.0, 6, 20);
+    observe(&mut core, 7, 603.0, 7, 10);
+    assert_eq!(episodes(&core).len(), 1);
+    observe(&mut core, 8, 604.0, 8, 10);
+    let alerts = episodes(&core);
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0].disposition, AlertDisposition::Benign);
+    assert_eq!(alerts[0].packet_refs, [1, 2, 3]);
+    assert_ne!(alerts[0].id, alerts[1].id);
+    assert_eq!(alerts[1].disposition, AlertDisposition::New);
+    assert_eq!(alerts[1].packet_refs, [5, 7, 8]);
+    assert_eq!(alerts[1].provenance.as_ref().unwrap().revision, 3);
+    assert!(alerts[1].detail.contains("outcomes unverified"));
+}
