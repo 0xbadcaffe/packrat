@@ -2,6 +2,54 @@ use super::{CaptureMetadata, CaptureTimestamp, PcapNgWriter, TimestampResolution
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn periodic_replay_expires_history_only_on_the_advancing_interface() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "traffic.periodic_fixed_size";
+    let mut cases = Vec::new();
+    for (file, marker_interface) in [("same-interface.pcapng", 0), ("other-interface.pcapng", 1)] {
+        let mut writer = PcapNgWriter::create(&root.join(file)).unwrap();
+        for frame in 1..=8 {
+            let marker = frame == 5;
+            let ticks = match frame {
+                5 => 4_000,
+                6.. if marker_interface == 0 => 4_000 + (frame - 5) * 10,
+                6.. => (frame - 1) * 10,
+                _ => frame * 10,
+            };
+            let payload: &[u8] = if marker { &[] } else { &[1; 12] };
+            let mut packet = support::tcp(frame, 100 + frame as u32 * 120, 0x10, payload, false);
+            let length = packet.bytes.len() as u32;
+            packet.capture = Some(CaptureMetadata {
+                timestamp: Some(CaptureTimestamp {
+                    ticks, resolution: TimestampResolution::Decimal(0), offset_seconds: 0,
+                }),
+                captured_length: length, wire_length: length, link_type: 1,
+                interface_id: if marker { marker_interface } else { 0 },
+                section_id: 0, interface_name: None, comments: Vec::new(),
+            });
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+        let count = usize::from(marker_interface != 0);
+        let mut case = json!({"name":file,"capture":file,"expect_counts":{(rule):count},"expect_snapshots":count});
+        if count > 0 {
+            case["opening_frames"] = json!({(rule):[8]});
+            case["opening_evidence"] = json!([{
+                "rule_id":rule,"opening_frame":8,"frames":[1,2,3,4,6,7,8],
+                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":18},
+            }]);
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("interface-expiry.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn periodic_replay_distinguishes_fresh_tcp_segments_from_partial_retransmissions() {
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();
@@ -35,7 +83,7 @@ fn periodic_replay_distinguishes_fresh_tcp_segments_from_partial_retransmissions
             case["opening_frames"] = json!({(rule):[7]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule, "opening_frame":7, "frames":[1, 2, 3, 4, 5, 6, 7],
-                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":17},
+                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":18},
             }]);
         }
         cases.push(case);

@@ -239,13 +239,15 @@ impl SecurityEngine {
         }) {
             return;
         }
-        self.beacon_flows.retain(|_, state| {
-            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= BEACON_WINDOW_SECS
-        });
-        self.exfil_flows.retain(|_, state| {
-            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
-        });
         let scope = scan_scope(pkt);
+        // Interleaved capture interfaces need not advance through time together.
+        let capture_interface = (scope.0).0;
+        self.beacon_flows.retain(|key, state| {
+            (key.scope.0).0 != capture_interface || pkt.timestamp - state.last_seen <= BEACON_WINDOW_SECS
+        });
+        self.exfil_flows.retain(|key, state| {
+            (key.scope.0).0 != capture_interface || pkt.timestamp - state.last_seen <= 3600.0
+        });
         // A partial retry does not represent one full, independently sized application send.
         if matches!(tcp_payload, TcpPayloadObservation::UnknownOrNew) {
             self.check_periodic_traffic(pkt, scope, archive_rules);

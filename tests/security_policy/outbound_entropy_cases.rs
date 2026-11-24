@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "behavior_expiry_cases.rs"]
+mod behavior_expiry_cases;
+
 #[rstest]
 #[case(false)]
 #[case(true)]
@@ -203,8 +206,8 @@ fn detects_large_high_entropy_outbound_transfer() {
             .any(|alert| alert.signature == "High-entropy outbound transfer")
     );
     for (rule, severity, revision, frames) in [
-        ("traffic.asymmetric_outbound", "MEDIUM", 15, (10..=17).collect::<Vec<_>>()),
-        ("traffic.high_entropy_outbound", "MEDIUM", 13, (1..=5).collect()),
+        ("traffic.asymmetric_outbound", "MEDIUM", 16, (10..=17).collect::<Vec<_>>()),
+        ("traffic.high_entropy_outbound", "MEDIUM", 14, (1..=5).collect()),
     ] {
         let alert = core
             .alert_center

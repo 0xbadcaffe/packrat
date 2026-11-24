@@ -173,15 +173,15 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the marking with the port's QoS trust policy and switch counters before inferring priority misuse.",
         ),
         (
-            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 17, Heuristic,
+            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 18, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
         (
-            "IDS", "Large asymmetric outbound transfer", "traffic.asymmetric_outbound", 15, Heuristic,
+            "IDS", "Large asymmetric outbound transfer", "traffic.asymmetric_outbound", 16, Heuristic,
             "Identify the owning process and destination. Check for an expected upload, backup, or sync job.",
         ),
         (
-            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 13, Heuristic,
+            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 14, Heuristic,
             "Compare the contributing flows with expected encrypted uploads or compression. A trigger socket does not identify all traffic in the window; corroborate with endpoint logs.",
         ),
         (
