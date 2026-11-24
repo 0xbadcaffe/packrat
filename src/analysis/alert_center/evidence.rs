@@ -39,6 +39,7 @@ impl AlertCenter {
     pub(crate) fn set_disposition_at(
         &mut self, id: u64, capture_id: Option<&str>, disposition: AlertDisposition, reviewed_unix_ms: Option<u64>,
     ) -> bool {
+        let selected = self.filtered_selection_anchor();
         let Some(item) = self.items.iter_mut().find(|item| {
             item.id == id && item.capture_id.as_deref() == capture_id
         }) else {
@@ -51,6 +52,7 @@ impl AlertCenter {
                 item.first_reviewed_unix_ms = reviewed_unix_ms.filter(|&timestamp| timestamp != 0);
             }
             self.pending_exports.push(item.clone());
+            self.restore_filtered_selection(selected);
         }
         true
     }

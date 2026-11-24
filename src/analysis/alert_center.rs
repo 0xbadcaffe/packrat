@@ -4,6 +4,8 @@ use std::collections::HashSet;
 use super::alert_provenance::{self, AlertProvenance};
 
 mod evidence;
+mod selection;
+pub use selection::AlertReviewFilter;
 
 const MAX_ALERTS: usize = 2_000;
 const AUTOMATIC_EVIDENCE_PRIORITY: u8 = 80;
@@ -175,6 +177,7 @@ pub struct AlertCenter {
     pub items: Vec<AlertItem>,
     pub selected: usize,
     pub severity_filter: AlertSeverityFilter,
+    pub review_filter: AlertReviewFilter,
     pub automation_mode: AutomationMode,
     pub(crate) capture_id: Option<String>,
     pub(crate) archive_evidence_rules: Option<Vec<String>>,
@@ -190,6 +193,7 @@ impl Default for AlertCenter {
             items: Vec::new(),
             selected: 0,
             severity_filter: AlertSeverityFilter::All,
+            review_filter: AlertReviewFilter::All,
             automation_mode: AutomationMode::Off,
             capture_id: None,
             archive_evidence_rules: None,
@@ -306,6 +310,7 @@ impl AlertCenter {
         let capture_id = self.capture_id.as_deref().unwrap_or_default();
         let fingerprint = format!("{capture_id}\0{source}\0{title}\0{correlation_key}");
         if !self.fingerprints.insert(fingerprint) {
+            let selected = self.filtered_selection_anchor();
             if let Some(item) = self.items.iter_mut().find(|item| {
                 item.capture_id == self.capture_id
                     && item.source == source
@@ -340,6 +345,7 @@ impl AlertCenter {
                 }
                 self.pending_exports.push(item.clone());
             }
+            self.restore_filtered_selection(selected);
             return false;
         }
         self.next_id += 1;
@@ -379,41 +385,11 @@ impl AlertCenter {
         if self.items.len() > MAX_ALERTS {
             let evicted = self.items.remove(0);
             self.fingerprints.remove(&fingerprint_for(&evicted));
-            self.selected = self.selected.saturating_sub(1);
+            if self.is_visible(&evicted) {
+                self.selected = self.selected.saturating_sub(1);
+            }
         }
         true
-    }
-
-    pub fn visible_indices(&self) -> Vec<usize> {
-        self.items.iter().enumerate().filter_map(|(index, item)| {
-            let visible = match self.severity_filter {
-                AlertSeverityFilter::All => true,
-                AlertSeverityFilter::Critical => item.severity == "CRITICAL" || item.severity == "CRIT",
-                AlertSeverityFilter::High => item.severity == "HIGH",
-                AlertSeverityFilter::Medium => item.severity == "MEDIUM" || item.severity == "WARN",
-                AlertSeverityFilter::Low => item.severity == "LOW" || item.severity == "INFO",
-            };
-            visible.then_some(index)
-        }).collect()
-    }
-
-    pub fn selected_item(&self) -> Option<&AlertItem> {
-        let visible = self.visible_indices();
-        visible.get(self.selected).and_then(|index| self.items.get(*index))
-    }
-
-    pub fn next(&mut self) {
-        let max = self.visible_indices().len().saturating_sub(1);
-        self.selected = (self.selected + 1).min(max);
-    }
-
-    pub fn previous(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
-    }
-
-    pub fn cycle_severity_filter(&mut self) {
-        self.severity_filter = self.severity_filter.cycle();
-        self.selected = 0;
     }
 
     pub fn cycle_automation_mode(&mut self) {

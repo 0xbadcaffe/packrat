@@ -46,6 +46,11 @@ pub(super) fn handle_security(app: &mut App, key: KeyEvent) {
                 app.configure_core(|core| core.alert_center.cycle_severity_filter());
                 return;
             }
+            KeyCode::Char('F') => {
+                app.alert_detail_scroll.set(0);
+                app.configure_core(|core| core.alert_center.cycle_review_filter());
+                return;
+            }
             KeyCode::PageUp | KeyCode::PageDown => {
                 let scroll = app.alert_detail_scroll.get();
                 let page = app.alert_detail_page.get();

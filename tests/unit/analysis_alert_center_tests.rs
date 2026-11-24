@@ -229,6 +229,38 @@ fn severity_filter_resets_and_bounds_selection() {
 }
 
 #[test]
+fn review_filter_composes_with_severity_and_preserves_the_selected_record() {
+    let mut center = AlertCenter::default();
+    for (frame, severity, title) in [(1, "HIGH", "A"), (2, "HIGH", "B"), (3, "LOW", "C"), (4, "HIGH", "D")] {
+        center.record(frame, "IDS", severity, title, "detail");
+    }
+    center.cycle_review_filter();
+    assert_eq!(center.review_filter, AlertReviewFilter::Open);
+    center.severity_filter = AlertSeverityFilter::High;
+    center.next();
+    assert_eq!(center.selected_item().unwrap().id, 2);
+    assert!(center.set_disposition(1, None, AlertDisposition::Benign));
+    assert_eq!(center.selected_item().unwrap().id, 2);
+    assert!(center.set_disposition(2, None, AlertDisposition::Confirmed));
+    assert_eq!(center.selected_item().unwrap().id, 2);
+    assert!(center.set_disposition(2, None, AlertDisposition::Closed));
+    assert_eq!(center.selected_item().unwrap().id, 4);
+    assert!(center.set_disposition(4, None, AlertDisposition::Contained));
+    assert!(center.selected_item().is_none());
+
+    center.cycle_review_filter();
+    assert_eq!(center.review_filter, AlertReviewFilter::Resolved);
+    assert_eq!(center.visible_indices(), [0, 1, 3]);
+    center.next();
+    assert_eq!(center.selected_item().unwrap().id, 2);
+    assert!(center.set_disposition(4, None, AlertDisposition::New));
+    assert_eq!(center.selected_item().unwrap().id, 2);
+    center.cycle_review_filter();
+    assert_eq!(center.visible_indices(), [0, 1, 3]);
+    assert_eq!(center.selected_item().unwrap().id, 1);
+}
+
+#[test]
 fn watch_pins_high_findings_and_triage_adds_deterministic_advice() {
     let mut center = AlertCenter::default();
     center.automation_mode = AutomationMode::Watch;

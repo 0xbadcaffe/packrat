@@ -19,6 +19,7 @@ impl App {
             .map(|alert| (alert.id, alert.capture_id.clone())));
         match target {
             Some(Some((id, capture_id))) => {
+                self.alert_detail_scroll.set(0);
                 let reviewed_unix_ms = crate::storage::alert_jsonl::unix_now_ms();
                 self.update_core(&format!("Alert #{id} marked {disposition}"), move |core| {
                     if core.alert_center.set_disposition_at(id, capture_id.as_deref(), disposition, reviewed_unix_ms) {

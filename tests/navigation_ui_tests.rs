@@ -121,3 +121,24 @@ fn long_selected_alert_scrolls_without_hiding_evidence_actions() {
         assert!(screen(&app, width, height).contains("IDS / Long observation"));
     }
 }
+
+#[test]
+fn alert_center_review_filter_keeps_resolved_history_accessible() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Security;
+    app.configure_core(|core| {
+        core.alert_center.record(1, "IDS", "HIGH", "ResolvedFinding", "detail");
+        core.alert_center.record(2, "IDS", "HIGH", "OpenFinding", "detail");
+        core.alert_center.set_disposition(1, None, packrat_tui::analysis::alert_center::AlertDisposition::Benign);
+    });
+    let filter = Event::Key(KeyEvent::new(KeyCode::Char('F'), KeyModifiers::SHIFT));
+    assert!(!event::handle(&mut app, filter.clone()));
+    let open = screen(&app, 80, 24);
+    assert!(open.contains("F: Open") && open.contains("OpenFinding") && !open.contains("ResolvedFinding"));
+    assert!(!event::handle(&mut app, filter.clone()));
+    let resolved = screen(&app, 80, 24);
+    assert!(resolved.contains("F: Resolved") && resolved.contains("ResolvedFinding") && !resolved.contains("OpenFinding"));
+    assert!(!event::handle(&mut app, filter));
+    let all = screen(&app, 80, 24);
+    assert!(all.contains("F: All") && all.contains("ResolvedFinding") && all.contains("OpenFinding"));
+}

@@ -130,9 +130,10 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect::<Vec<_>>();
     let title = format!(
-        " Alert Center - {} findings - severity: {} - automation: {} ",
-        visible_indices.len(),
+        " Alert Center | F: {} | f: {} | {} findings | automation: {} ",
+        app.core.alert_center.review_filter,
         app.core.alert_center.severity_filter,
+        visible_indices.len(),
         app.core.alert_center.automation_mode,
     );
     let table = Table::new(

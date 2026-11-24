@@ -68,6 +68,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         ("Security Tab", &[
             ("[/]",  "Previous / next detector view"),
             ("PgDn / PgUp", "Scroll selected finding details"),
+            ("F / f", "Cycle review state / severity filters in the Alert Center"),
             ("a c o w d u t b v i p", "Jump to common detector views"),
             ("V",    "Open selected alert with matching packets in Investigate"),
             ("E",    "Export selected alert's archived evidence to a separate case"),
