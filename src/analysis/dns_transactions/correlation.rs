@@ -1,8 +1,11 @@
+use std::collections::VecDeque;
+
 use super::{PendingQuery, Question, RecentResponse, RESPONSE_TTL_SECS, TRANSACTION_TTL_SECS, append_evidence};
 use crate::analysis::alert_center::MAX_ALERT_PACKET_REFS;
 
 const MAX_CANDIDATES: usize = 4;
 const MAX_QUERY_REPEATS: usize = 4;
+const MAX_TIMING_RETRIES: usize = 8;
 const MAX_PENDING_AGE_SECS: f64 = 2.0 * TRANSACTION_TTL_SECS;
 
 #[derive(Debug, Default)]
@@ -18,7 +21,13 @@ pub(super) struct Exchange {
     pub(super) repeat_frames: Vec<u64>,
     pub(super) repeats_omitted: bool,
     latest_query: (f64, u64),
-    latest_retry_frames: Vec<u64>,
+    timing_retries: VecDeque<QueryRetry>,
+}
+
+#[derive(Debug)]
+struct QueryRetry {
+    order: (f64, u64),
+    frames: Vec<u64>,
 }
 
 impl Exchange {
@@ -29,7 +38,7 @@ impl Exchange {
             reply: None,
             repeat_frames: Vec::new(),
             repeats_omitted: false,
-            latest_retry_frames: Vec::new(),
+            timing_retries: VecDeque::new(),
         }
     }
 
@@ -44,11 +53,16 @@ impl Exchange {
             *self = Self::new(query);
             return;
         }
-        if query.packet_no == self.query.packet_no || self.repeat_frames.contains(&query.packet_no) {
+        if query.packet_no == self.query.packet_no || self.repeat_frames.contains(&query.packet_no)
+            || self.timing_retries.iter().any(|retry| retry.order.1 == query.packet_no)
+        {
             return;
         }
         self.latest_query = order;
-        self.latest_retry_frames = query.frames;
+        if self.timing_retries.len() == MAX_TIMING_RETRIES {
+            self.timing_retries.pop_front();
+        }
+        self.timing_retries.push_back(QueryRetry { order, frames: query.frames });
         if self.repeat_frames.len() < MAX_QUERY_REPEATS {
             self.repeat_frames.push(query.packet_no);
         } else {
@@ -68,10 +82,17 @@ impl Exchange {
 
     pub(super) fn timing_retry(&self) -> Option<(u64, &[u64])> {
         let reply = self.reply.as_ref()?;
-        (reply.timestamp - self.query.timestamp > TRANSACTION_TTL_SECS
-            && self.latest_query <= (reply.timestamp, reply.first.packet)
-            && reply.timestamp - self.latest_query.0 <= TRANSACTION_TTL_SECS)
-            .then_some((self.latest_query.1, &self.latest_retry_frames))
+        if reply.timestamp - self.query.timestamp <= TRANSACTION_TTL_SECS {
+            return None;
+        }
+        let retry = self.retry_preceding((reply.timestamp, reply.first.packet))?;
+        Some((retry.order.1, &retry.frames))
+    }
+
+    fn retry_preceding(&self, order: (f64, u64)) -> Option<&QueryRetry> {
+        self.timing_retries.iter().rev().find(|retry| {
+            retry.order <= order && order.0 - retry.order.0 <= TRANSACTION_TTL_SECS
+        })
     }
 
     fn is_pending_at(&self, now: f64) -> bool {
@@ -123,7 +144,9 @@ impl ExchangeBucket {
         for (index, entry) in self.entries.iter().enumerate() {
             let newest = entry.reply.as_ref().map_or((entry.query.timestamp, entry.query.packet_no),
                 |reply| (reply.timestamp, reply.first.packet));
-            if newest > order {
+            if newest > order || (entry.reply.is_none() && order.0 - entry.query.timestamp > TRANSACTION_TTL_SECS
+                && entry.retry_preceding(order).is_none())
+            {
                 continue;
             }
             let same_resolver = entry.query.server == resolver;

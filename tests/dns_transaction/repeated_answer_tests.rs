@@ -48,3 +48,43 @@ fn changed_dns_response_codes_follow_capture_order_after_baseline_promotion() {
         assert!(change[0].detail.contains(&format!("response code ({expected}) in capture order")));
     }
 }
+
+#[test]
+fn late_dns_reply_uses_the_latest_retained_retry_that_precedes_it() {
+    let (client, resolver) = ("192.0.2.10", "192.0.2.53");
+    let query = dns_packet(1, false, client, resolver, 87, "safe.example");
+    let mut tracker = DnsTransactionTracker::default();
+    tracker.observe(&query);
+    for (no, timestamp) in [(2, 22.0), (3, 29.0), (4, 43.0)] {
+        let mut retry = dns_packet(no, false, client, resolver, 87, "safe.example");
+        retry.timestamp = timestamp;
+        tracker.observe(&retry);
+    }
+    let mut reply = dns_packet(5, true, resolver, client, 87, "safe.example");
+    reply.timestamp = 34.0;
+    assert!(tracker.observe(&reply).is_empty());
+    let exchange = tracker.exchange_for_packet(&query).unwrap();
+    assert_eq!(exchange.timing_retry.unwrap().packet, 3);
+    let mut second = dns_packet(6, true, "192.0.2.54", client, 87, "safe.example");
+    second.timestamp = 35.0;
+    let conflict = tracker.observe(&second);
+    assert_eq!(conflict[0].kind, DnsFindingKind::ConflictingResponse);
+    assert_eq!(conflict[0].related_packets, [1, 5, 3]);
+}
+
+#[test]
+fn dns_reply_without_a_retained_preceding_retry_does_not_bind_to_a_future_retry() {
+    let (client, resolver) = ("192.0.2.10", "192.0.2.53");
+    let mut tracker = DnsTransactionTracker::default();
+    tracker.observe(&dns_packet(1, false, client, resolver, 88, "safe.example"));
+    for (no, timestamp) in (2..=10).zip([29.0, 38.0, 39.0, 40.0, 41.0, 42.0, 43.0, 44.0, 45.0]) {
+        let mut retry = dns_packet(no, false, client, resolver, 88, "safe.example");
+        retry.timestamp = timestamp;
+        tracker.observe(&retry);
+    }
+    let mut reply = dns_packet(11, true, resolver, client, 88, "safe.example");
+    reply.timestamp = 34.0;
+    let findings = tracker.observe(&reply);
+    assert_eq!(findings[0].kind, DnsFindingKind::ReplyWithoutObservedQuery);
+    assert!(findings[0].related_packets.is_empty());
+}
