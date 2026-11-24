@@ -56,7 +56,7 @@ fn endpoint_evidence_requires_matching_incident_target_and_provenance() {
         action: "read".into(),
         successful: true,
     };
-    let report = correlate(incident, &[event.clone()]);
+    let report = correlate(incident, &[event.clone(), event.clone()]);
     assert!(
         report
             .evidence
@@ -65,6 +65,14 @@ fn endpoint_evidence_requires_matching_incident_target_and_provenance() {
                 && entry.confidence == ImpactConfidence::Observed)
     );
     assert!(!report.compromise_confirmed);
+    assert_eq!(report.evidence.iter().filter(|entry| entry.subject == event.subject).count(), 1);
+    let mut conflicting = event.clone();
+    conflicting.successful = false;
+    let report = correlate(incident, &[event.clone(), conflicting, event.clone()]);
+    assert_eq!(report.conflicting_endpoint_report_ids, 1);
+    assert!(!report.evidence.iter().any(|entry| entry.subject == event.subject));
+    assert!(report.evidence.iter().any(|entry| entry.category == "files"
+        && entry.confidence == ImpactConfidence::Unknown));
     assert_eq!(report.capture_id.as_deref(), Some("capture-a"));
     for capture_id in [None, Some("capture-b".into())] {
         let unrelated = EndpointEvidence { capture_id, ..event.clone() };

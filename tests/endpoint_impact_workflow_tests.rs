@@ -85,6 +85,7 @@ fn importing_endpoint_reports_after_opening_a_case_preserves_scoped_evidence() {
     app.start_background_analysis().unwrap();
     app.open_project(&project).unwrap();
     app.load_endpoint_evidence(&report);
+    app.load_endpoint_evidence(&report);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while !app.analysis_idle() {
         app.poll_analysis();

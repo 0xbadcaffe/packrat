@@ -1,6 +1,7 @@
 //! Evidence-based impact assessment. Detection alone never proves compromise.
 
 use crate::analysis::incident::Incident;
+use std::collections::{BTreeMap, HashSet};
 
 const MAX_ENDPOINT_EVIDENCE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ENDPOINT_EVIDENCE_EVENTS: usize = 10_000;
@@ -27,11 +28,13 @@ pub struct ImpactReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_id: Option<String>,
     pub compromise_confirmed: bool,
+    #[serde(default)]
+    pub conflicting_endpoint_report_ids: usize,
     pub evidence: Vec<ImpactEvidence>,
     pub limitations: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndpointEvidence {
     pub incident_id: u64,
@@ -46,7 +49,7 @@ pub struct EndpointEvidence {
     pub successful: bool,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EndpointCategory {
     File,
@@ -57,6 +60,7 @@ pub enum EndpointCategory {
 pub fn correlate(incident: &Incident, events: &[EndpointEvidence]) -> ImpactReport {
     let mut report = assess(incident);
     let Some(capture_id) = report.capture_id.as_deref() else { return report; };
+    let mut reports = BTreeMap::<_, Option<&EndpointEvidence>>::new();
     for event in events
         .iter()
         .filter(|event| event.capture_id.as_deref() == Some(capture_id)
@@ -68,6 +72,17 @@ pub fn correlate(incident: &Incident, events: &[EndpointEvidence]) -> ImpactRepo
         {
             continue;
         }
+        reports.entry((event.source.as_str(), event.evidence_id.as_str()))
+            .and_modify(|prior| {
+                if prior.is_some_and(|prior| prior != event) { *prior = None; }
+            })
+            .or_insert(Some(event));
+    }
+    for event in reports.into_values() {
+        let Some(event) = event else {
+            report.conflicting_endpoint_report_ids += 1;
+            continue;
+        };
         let category = match event.category {
             EndpointCategory::File => "files",
             EndpointCategory::Data => "data",
@@ -86,6 +101,9 @@ pub fn correlate(incident: &Incident, events: &[EndpointEvidence]) -> ImpactRepo
                 event.source, event.evidence_id, event.action, event.successful),
             packet_numbers: Vec::new(),
         });
+    }
+    if report.conflicting_endpoint_report_ids > 0 {
+        report.limitations.push("Conflicting endpoint reports with the same reporter and evidence ID were omitted.".into());
     }
     report
 }
@@ -125,7 +143,11 @@ pub(crate) fn merge_endpoint_evidence(
     saved: &mut Vec<EndpointEvidence>, imported: Vec<EndpointEvidence>,
 ) -> Result<(), String> {
     let prior = saved.len();
-    saved.extend(imported);
+    let unique = {
+        let mut seen: HashSet<_> = saved.iter().collect();
+        imported.iter().map(|event| seen.insert(event)).collect::<Vec<_>>()
+    };
+    saved.extend(imported.into_iter().zip(unique).filter_map(|(event, keep)| keep.then_some(event)));
     if let Err(error) = validate_endpoint_evidence(saved) {
         saved.truncate(prior);
         return Err(error);
@@ -138,6 +160,7 @@ pub fn assess(incident: &Incident) -> ImpactReport {
         target: incident.target.clone(),
         capture_id: incident.capture_id.clone().filter(|id| crate::storage::packet_archive::valid_capture_id(id)),
         compromise_confirmed: false,
+        conflicting_endpoint_report_ids: 0,
         evidence: Vec::new(),
         limitations: vec![
             "A detection indicates suspicious activity; it does not establish successful exploitation.".into(),
