@@ -28,6 +28,69 @@ fn flow() -> AlertFlow {
     }
 }
 
+#[test]
+fn candidate_trigger_recovery_requires_matching_saved_fields_and_capture() {
+    use packrat_tui::{net::packet::CaptureMetadata, storage::packet_archive::PacketArchive};
+    let mut log = tempfile::NamedTempFile::new().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive");
+    let mut archive = PacketArchive::open(&path).unwrap();
+    let frame = |no, time| {
+        let mut packet = packets::tcp(no, 1, 0x02, &[]);
+        packet.timestamp = time;
+        let size = packet.bytes.len() as u32;
+        packet.capture = Some(CaptureMetadata {
+            timestamp: None, captured_length: size, wire_length: size, link_type: 1,
+            section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+        });
+        packet
+    };
+    archive.append_scoped("capture-a", &[frame(1, 800.), frame(2, 801.), frame(3, 810.),
+        frame(4, 803.), frame(6, 0.)]).unwrap();
+    archive.append_scoped("capture-b", &[frame(5, 804.)]).unwrap();
+    drop(archive);
+    let matching = AlertFlow { source: "10.0.0.1:40000".parse().unwrap(),
+        destination: "10.0.0.2:80".parse().unwrap(), ..flow() };
+    for (id, time, tuple) in [(1, 800., Some(matching)), (2, 801., None), (3, 802., None),
+        (4, 0., Some(flow())), (5, 0., None), (6, 0., None)] {
+        let mut row = record(id, time, tuple, "session-a", "capture-a");
+        row["alert"]["packet_no"] = json!(id);
+        writeln!(log, "{row}").unwrap();
+    }
+    let archive = path.to_str().unwrap();
+    assert_eq!(run(log.path(), "1", &["--evidence-archive", archive])["matches"], json!([]));
+    assert!(!command(log.path(), "1").args(SCOPE).arg("--recover-candidate-triggers")
+        .output().unwrap().status.success());
+    let report = run(log.path(), "1", &["--evidence-archive", archive, "--recover-candidate-triggers"]);
+    assert_eq!(report["matching_alerts_in_sample"], 1);
+    assert_eq!(report["matches"][0]["alert_id"], 2);
+    assert_eq!(report["matches"][0]["trigger_evidence"], json!({"frame_number":2,"status":"derived_from_wire"}));
+    assert_eq!(report["matches"][0]["captured_path_comparison"], "same_observed_path");
+    assert_eq!(report["candidate_trigger_recovery"], json!({"eligible_alerts":5,"examined_frames":5,
+        "recovered_triggers":1,"missing_frames":1,"header_unavailable_frames":0,"timestamp_unavailable_frames":1,
+        "disagreed_with_saved_fields":2,"read_failed_frames":0,"omitted_alerts":0}));
+}
+
+#[test]
+fn candidate_trigger_recovery_keeps_the_archive_lookup_budget() {
+    let mut log = tempfile::NamedTempFile::new().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive");
+    drop(packrat_tui::storage::packet_archive::PacketArchive::open(&path).unwrap());
+    writeln!(log, "{}", record(1, 800., Some(flow()), "session-a", "capture-a")).unwrap();
+    for id in 2..=71 {
+        let mut row = record(id, 0., None, "session-a", "capture-a");
+        row["alert"]["packet_no"] = json!(id);
+        writeln!(log, "{row}").unwrap();
+    }
+    let report = run(log.path(), "1", &["--evidence-archive", path.to_str().unwrap(), "--recover-candidate-triggers"]);
+    assert_eq!(report["candidate_trigger_recovery"]["eligible_alerts"], 70);
+    assert_eq!(report["candidate_trigger_recovery"]["examined_frames"], 64);
+    assert_eq!(report["candidate_trigger_recovery"]["missing_frames"], 64);
+    assert_eq!(report["candidate_trigger_recovery"]["omitted_alerts"], 6);
+    assert_eq!(report["matches"], json!([]));
+}
+
 fn command(log: &Path, id: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_packrat-archive"));
     command.arg("--alerts").arg(log).args(["--related-to", id]);
