@@ -12,6 +12,47 @@ fn server_reply(frame: u64, kind: u8, observed_mac: u8, server: Option<u8>, time
     packet
 }
 
+fn tagged_dhcp(packet: Packet, provider: bool) -> Packet {
+    let mut raw = packet.bytes;
+    let tpid = if provider { 0x88a8_u16 } else { 0x8100_u16 };
+    let tci = if packet.no % 2 == 0 { 0xb014_u16 } else { 20_u16 };
+    raw.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+    packrat_tui::net::parser::parse_ethernet(&raw, packet.no, packet.timestamp)
+}
+
+#[test]
+fn dhcp_server_evidence_stays_on_the_observed_tag_path() {
+    let mut core = AnalysisCore::default();
+    for (no, server, provider) in [(1, 1, false), (2, 2, true), (3, 3, false), (4, 4, true)] {
+        core.analyze(&tagged_dhcp(server_reply(no, 2, server, Some(server), no as f64), provider));
+        if no < 3 {
+            assert!(core.alert_center.items.iter().all(|alert| alert.title != SERVER_CHANGE));
+        }
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == SERVER_CHANGE).collect();
+    assert_eq!(alerts.len(), 2);
+    for (alert, frames, tag) in [(alerts[0], [1, 3], "0x8100"), (alerts[1], [2, 4], "0x88a8")] {
+        assert_eq!(alert.packet_refs, frames);
+        assert!(alert.detail.contains(tag));
+    }
+}
+
+#[test]
+fn dhcp_client_threshold_cannot_combine_tag_paths() {
+    let mut core = AnalysisCore::default();
+    for identity in 0..96_u8 {
+        let frame = u64::from(identity) + 1;
+        let provider = identity < 64 && identity % 2 == 1;
+        core.analyze(&tagged_dhcp(discovery(frame, identity, 1.0), provider));
+        if frame < 96 {
+            assert!(core.alert_center.items.iter().all(|alert| alert.title != BURST));
+        }
+    }
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == BURST).unwrap();
+    assert_eq!(alert.packet_refs, (1..=63).step_by(2).chain(65..=96).collect::<Vec<_>>());
+    assert!(alert.detail.contains("0x8100"));
+}
+
 #[test]
 fn dhcp_server_change_retains_both_replies_and_uses_advertised_identifier() {
     let mut core = AnalysisCore::default();
@@ -160,7 +201,7 @@ fn dhcp_identity_burst_keeps_one_frame_per_identity_and_explains_uncertainty() {
     assert_eq!(alerts[0].packet_refs, std::iter::once(1).chain(81..=143).collect::<Vec<_>>());
     let rule = alerts[0].provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "dhcp.discover_identity_burst");
-    assert_eq!(rule.revision, 4);
+    assert_eq!(rule.revision, 5);
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use super::scans::scan_scope;
 
 const DHCP_CLIENT_WINDOW_SECS: f64 = 10.0;
 const DHCP_SERVER_WINDOW_SECS: f64 = 3600.0;
@@ -19,7 +20,7 @@ impl SecurityEngine {
         if !matches!(message.message_type, 1 | 2 | 5) {
             return;
         }
-        let scope = (service_scope(pkt), message.relay_address);
+        let scope = (scan_scope(pkt), message.relay_address);
         if self.dhcp_scopes.len() >= MAX_DHCP_SCOPES
             && !self.dhcp_scopes.contains_key(&scope)
             && let Some(oldest) = self.dhcp_scopes.iter()
@@ -372,8 +373,15 @@ fn network_scope_name(scope: ServiceScope) -> String {
     }
 }
 
-fn dhcp_scope_name((path, relay): (ServiceScope, Option<Ipv4Addr>)) -> String {
+fn dhcp_scope_name(((path, [outer, inner]), relay): (ScanScope, Option<Ipv4Addr>)) -> String {
     let mut name = network_scope_name(path);
+    if outer != 0 {
+        name.push_str(&format!(" (tag type 0x{outer:04x}"));
+        if inner != 0 {
+            name.push_str(&format!("/0x{inner:04x}"));
+        }
+        name.push(')');
+    }
     if let Some(relay) = relay {
         name.push_str(&format!(", advertised relay address {relay}"));
     }

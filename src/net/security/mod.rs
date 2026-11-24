@@ -198,7 +198,7 @@ pub struct SecurityEngine {
     admin_fanout: admin_fanout::AdminFanout,
     ftp_control: ftp_control::FtpControl,
     ntlm_fanout: ntlm_fanout::NtlmFanout,
-    dhcp_scopes: HashMap<(ServiceScope, Option<Ipv4Addr>), DhcpScopeState>,
+    dhcp_scopes: HashMap<(ScanScope, Option<Ipv4Addr>), DhcpScopeState>,
     dhcp_server_evidence: crate::net::recent_evidence::RecentEvidence<1024, 3600>,
     dhcp_client_evidence: crate::net::recent_evidence::RecentEvidence<1024, 10>,
     ipv6_fragments: Ipv6FragmentReassembler,

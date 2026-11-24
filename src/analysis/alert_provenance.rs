@@ -221,11 +221,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check whether the source normally contacts these hosts and corroborate with server logon events.",
         ),
         (
-            "IDS", "DHCP client identity burst", "dhcp.discover_identity_burst", 4, Heuristic,
+            "IDS", "DHCP client identity burst", "dhcp.discover_identity_burst", 5, Heuristic,
             "Compare the sampled client identities with expected reconnects and check DHCP server logs for lease pool exhaustion.",
         ),
         (
-            "IDS", "DHCP server identity changed", "dhcp.new_server_identifier", 5, Correlated,
+            "IDS", "DHCP server identity changed", "dhcp.new_server_identifier", 6, Correlated,
             "Compare the retained replies with the approved DHCP server inventory and check for planned failover or migration.",
         ),
         (
