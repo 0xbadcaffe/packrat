@@ -218,7 +218,7 @@ pub fn alert_flow_summary(
         directional_flows: Vec::new(),
         tcp_syn_ack_matches: Vec::new(),
         unassigned_frames: Vec::new(),
-        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP sequence matches identify candidate handshake frames, not endpoint acceptance or a specific retransmission. Later ACK candidates do not cross a cited reset or another SYN. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
+        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP sequence matches identify candidate handshake frames, not endpoint acceptance or a specific retransmission. Earlier SYN candidates do not cross a cited reset or a different initial SYN in the same direction. Later ACK candidates do not cross a cited reset or another SYN. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
     for frame in metadata.frames {
@@ -303,8 +303,13 @@ fn syn_ack_matches(flows: &BTreeMap<FlowKey, FlowCounts>) -> Vec<SynAckMatch> {
         }
         let Some(request) = flows.get(&key.reversed()) else { continue; };
         for &(syn_ack_frame, server_sequence, acknowledgment) in &response.syn_acks {
+            let sequence = acknowledgment.wrapping_sub(1);
+            let boundary = request.resets.iter().chain(&response.resets).copied()
+                .chain(request.initial_syns.iter().filter_map(|&(frame, prior)| (prior != sequence).then_some(frame)))
+                .filter(|&frame| frame < syn_ack_frame)
+                .max().unwrap_or(0);
             let (prior_syn_candidates, latest_candidate_syn_frame) = request.initial_syns.iter()
-                .filter(|&&(frame, sequence)| frame < syn_ack_frame && sequence.wrapping_add(1) == acknowledgment)
+                .filter(|&&(frame, prior)| boundary < frame && frame < syn_ack_frame && prior == sequence)
                 .fold((0, 0_u64), |(count, latest), &(frame, _)| (count + 1, latest.max(frame)));
             if prior_syn_candidates > 0 {
                 let (later_ack_candidates, earliest_candidate_ack_frame) = later_ack_candidates(
