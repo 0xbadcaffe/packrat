@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::net::packet::Packet;
 
-pub(super) fn packet_times(packet: &Packet) -> (Option<f64>, Option<i128>) {
+pub(in crate::storage) fn packet_times(packet: &Packet) -> (Option<f64>, Option<i128>) {
     let capture_ns = packet.capture.as_ref()
         .and_then(|metadata| metadata.timestamp)
         .map(|time| time.nanoseconds());

@@ -32,7 +32,7 @@ fn flow() -> AlertFlow {
 
 #[test]
 fn candidate_trigger_recovery_requires_matching_saved_fields_and_capture() {
-    use packrat_tui::{net::packet::CaptureMetadata, storage::packet_archive::PacketArchive};
+    use packrat_tui::{net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution}, storage::packet_archive::PacketArchive};
     let mut log = tempfile::NamedTempFile::new().unwrap();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("archive");
@@ -47,7 +47,14 @@ fn candidate_trigger_recovery_requires_matching_saved_fields_and_capture() {
         });
         packet
     };
-    archive.append_scoped("capture-a", &[frame(1, 800.), frame(2, 801.), frame(3, 810.),
+    let dated_frame = |no, legacy, observed| {
+        let mut packet = frame(no, legacy);
+        packet.capture.as_mut().unwrap().timestamp = Some(CaptureTimestamp {
+            ticks: observed, resolution: TimestampResolution::Decimal(0), offset_seconds: 0,
+        });
+        packet
+    };
+    archive.append_scoped("capture-a", &[frame(1, 800.), dated_frame(2, 810., 801), dated_frame(3, 802., 810),
         frame(4, 803.), frame(6, 0.)]).unwrap();
     archive.append_scoped("capture-b", &[frame(5, 804.)]).unwrap();
     drop(archive);

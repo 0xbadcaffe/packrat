@@ -9,12 +9,10 @@ use crate::analysis::packet_fields::{CapturedVlanTag, MAX_EVIDENCE_VLAN_TAGS, ca
 use crate::net::packet::Packet;
 
 use super::{
-    AlertLogs, FrameStatus, PacketArchive, evidence_frame_set_sha256, frame_status, latest_alert_in_logs,
+    AlertLogs, FrameStatus, PacketArchive, evidence_frame_set_sha256, flow_timing, frame_status, latest_alert_in_logs,
     scoped_frames,
 };
 
-#[path = "flow_timing.rs"]
-mod flow_timing;
 #[path = "syn_fanout.rs"]
 mod syn_fanout;
 

@@ -17,7 +17,9 @@ use super::alert_jsonl::ExistingAlertRecord;
 
 mod verify;
 mod case;
+mod flow_timing;
 mod metadata;
+pub(super) use flow_timing::packet_times;
 pub use case::create_alert_project;
 #[cfg(feature = "terminal-ui")]
 pub(crate) use case::{AlertProjectSummary, save_alert_archive_project};

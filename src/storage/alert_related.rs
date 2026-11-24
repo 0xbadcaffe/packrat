@@ -10,7 +10,7 @@ use anyhow::{Result, ensure};
 use serde::Serialize;
 
 use super::{
-    alert_evidence::{FrameStatus, frame_status},
+    alert_evidence::{FrameStatus, frame_status, packet_times},
     alert_history::{AlertHistoryIntegrity, scan_alert_records},
     packet_archive::{PacketArchive, valid_capture_id},
 };
@@ -436,9 +436,9 @@ fn read_trigger(archive: &mut PacketArchive, capture: &str, frame: u64) -> Resul
         let wire = captured_transport_header(&packet)?;
         let capture = packet.capture.as_ref()?;
         let flow = AlertFlow::from_captured_header(&wire)?;
-        let time = packet.timestamp;
+        let (time, _) = packet_times(&packet);
         Some(TriggerFrame::Transport {
-            flow, time: (time.is_finite() && time > 0.0).then_some(time),
+            flow, time,
             path: CapturePath { section_id: capture.section_id, interface_id: capture.interface_id, vlan_stack: wire.vlan_stack },
         })
     })();
