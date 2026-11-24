@@ -338,3 +338,53 @@ fn alert_summary_distinguishes_archive_read_failure_from_missing_frames() {
     assert_eq!(app.alert_trigger_status(&alert), "#10: archive read failed at last check");
     assert_eq!(app.alert_evidence_status(&alert), "0/1 retained; 1 failed archive lookup at last check");
 }
+
+#[test]
+fn alert_summary_compares_the_recorded_flow_with_the_scoped_retained_trigger() {
+    use crate::analysis::alert_center::{AlertFlow, AlertTransport};
+    use crate::net::packet::CaptureMetadata;
+    use crate::storage::packet_archive::ArchiveWorker;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let mut app = App::new_for_test();
+    let path = scratch.path().join("archive");
+    app.set_packet_archive(ArchiveWorker::open(&path).unwrap()).unwrap();
+    let scope = app.capture_id.clone().unwrap();
+    let raw = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0,
+        0x45, 0, 0, 28, 0, 0, 0, 0, 64, 17, 0, 0, 192, 0, 2, 1, 198, 51, 100, 2,
+        0xc3, 0x50, 0, 53, 0, 8, 0, 0,
+    ];
+    let mut trigger = crate::net::parser::parse_ethernet(&raw, 10, 1.0);
+    trigger.src = "203.0.113.17".into();
+    trigger.src_port = Some(1234);
+    trigger.capture = Some(CaptureMetadata {
+        captured_length: raw.len() as u32, wire_length: raw.len() as u32,
+        timestamp: None, link_type: 1, section_id: 0, interface_id: 0,
+        interface_name: None, comments: Vec::new(),
+    });
+    let archive = app.packet_archive.as_mut().unwrap();
+    archive.record_scoped(&scope, &trigger).unwrap();
+    archive.finish().unwrap();
+    let mut alert = {
+        let mut core = app.core.edit();
+        core.alert_center.record(10, "IDS", "MEDIUM", "Scoped trigger", "test");
+        core.alert_center.items[0].clone()
+    };
+    assert_eq!(app.alert_trigger_context(&alert).1, "Not recorded");
+    assert!(app.investigate_selected_alert());
+    const WIRE: &str = "UDP 192.0.2.1:50000 -> 198.51.100.2:53";
+    assert_eq!(app.alert_trigger_context(&alert).1, format!("{WIRE} (from retained trigger)"));
+    alert.flow = Some(AlertFlow {
+        transport: AlertTransport::Udp,
+        source: "192.0.2.1:50000".parse().unwrap(),
+        destination: "198.51.100.2:53".parse().unwrap(),
+    });
+    assert_eq!(app.alert_trigger_context(&alert).1, format!("{WIRE} (matches retained trigger)"));
+    alert.flow.as_mut().unwrap().destination.set_port(5353);
+    let mismatch = app.alert_trigger_context(&alert).1;
+    assert!(mismatch.contains("198.51.100.2:5353; retained trigger differs:"));
+    assert!(mismatch.ends_with(WIRE));
+    alert.capture_id = Some("other-capture".into());
+    assert_eq!(app.alert_trigger_context(&alert).1, "UDP 192.0.2.1:50000 -> 198.51.100.2:5353 (recorded, not verified)");
+}

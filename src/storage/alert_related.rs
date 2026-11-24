@@ -15,7 +15,7 @@ use super::{
     packet_archive::{PacketArchive, valid_capture_id},
 };
 use crate::analysis::{
-    alert_center::{AlertDisposition, AlertFlow, AlertItem, AlertTransport},
+    alert_center::{AlertDisposition, AlertFlow, AlertItem},
     packet_fields::{CapturedVlanTag, captured_transport_header},
 };
 
@@ -355,14 +355,9 @@ fn read_trigger(archive: &mut PacketArchive, capture: &str, frame: u64) -> Resul
         }
         let wire = captured_transport_header(&packet)?;
         let capture = packet.capture.as_ref()?;
-        let transport = match wire.protocol {
-            6 => AlertTransport::Tcp,
-            17 => AlertTransport::Udp,
-            _ => return None,
-        };
-        let flow = AlertFlow { transport, source: wire.source, destination: wire.destination };
+        let flow = AlertFlow::from_captured_header(&wire)?;
         let time = packet.timestamp;
-        usable_flow(flow).then_some(TriggerFrame::Transport {
+        Some(TriggerFrame::Transport {
             flow, time: (time.is_finite() && time > 0.0).then_some(time),
             path: CapturePath { section_id: capture.section_id, interface_id: capture.interface_id, vlan_stack: wire.vlan_stack },
         })

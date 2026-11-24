@@ -1,5 +1,5 @@
 use super::*;
-use crate::analysis::alert_center::{AlertDisposition, AlertTransport};
+use crate::analysis::alert_center::AlertDisposition;
 
 pub struct AppView<'a> {
     app: &'a App,
@@ -143,56 +143,50 @@ impl AppView<'_> {
                 .items
                 .iter()
                 .find(|alert| alert.id == *id)
-                .map(|alert| InvestigationContext {
-                    kind: "Alert",
-                    title: alert.title.clone(),
-                    details: vec![
-                        ("Severity".into(), alert.severity.clone()),
-                        ("Priority".into(), alert.priority.to_string()),
-                        ("State".into(), alert.disposition.to_string()),
-                        ("First recorded review".into(), alert.first_reviewed_unix_ms
-                            .and_then(|timestamp| i64::try_from(timestamp).ok())
-                            .and_then(chrono::DateTime::from_timestamp_millis)
-                            .map_or_else(|| "Not recorded".into(), |time| time.format("%Y-%m-%d %H:%M:%S UTC").to_string())),
-                        ("Source".into(), alert.source.clone()),
-                        (
-                            "Rule".into(),
-                            alert.provenance.as_ref().map(|rule| rule.rule_label())
-                                .unwrap_or_else(|| "Not recorded".into()),
-                        ),
-                        (
-                            "Evidence confidence".into(),
-                            alert.provenance.as_ref().map(|rule| rule.confidence.to_string())
-                                .unwrap_or_else(|| "Not recorded".into()),
-                        ),
-                        ("Trigger frame".into(), self.alert_trigger_status(alert)),
-                        (
-                            "Trigger flow".into(),
-                            alert.flow.map_or_else(|| "Not recorded".into(), |flow| {
-                                let transport = match flow.transport {
-                                    AlertTransport::Tcp => "TCP",
-                                    AlertTransport::Udp => "UDP",
-                                };
-                                format!("{transport} {} -> {}", flow.source, flow.destination)
-                            }),
-                        ),
-                        (
-                            "Capture ID".into(),
-                            alert.capture_id.as_deref().unwrap_or("Unscoped").into(),
-                        ),
-                        ("Packet evidence".into(), self.alert_evidence_status(alert)),
-                        ("Reason".into(), alert.detail.clone()),
-                        (
-                            "Recommendation".into(),
-                            alert
-                                .provenance
-                                .as_ref()
-                                .map(|rule| rule.verification_hint.clone())
-                                .or_else(|| alert.recommendation.clone())
-                                .unwrap_or_else(|| "manual review".into()),
-                        ),
-                    ],
-                    available: true,
+                .map(|alert| {
+                    let (trigger_frame, trigger_flow) = self.alert_trigger_context(alert);
+                    InvestigationContext {
+                        kind: "Alert",
+                        title: alert.title.clone(),
+                        details: vec![
+                            ("Severity".into(), alert.severity.clone()),
+                            ("Priority".into(), alert.priority.to_string()),
+                            ("State".into(), alert.disposition.to_string()),
+                            ("First recorded review".into(), alert.first_reviewed_unix_ms
+                                .and_then(|timestamp| i64::try_from(timestamp).ok())
+                                .and_then(chrono::DateTime::from_timestamp_millis)
+                                .map_or_else(|| "Not recorded".into(), |time| time.format("%Y-%m-%d %H:%M:%S UTC").to_string())),
+                            ("Source".into(), alert.source.clone()),
+                            (
+                                "Rule".into(),
+                                alert.provenance.as_ref().map(|rule| rule.rule_label())
+                                    .unwrap_or_else(|| "Not recorded".into()),
+                            ),
+                            (
+                                "Evidence confidence".into(),
+                                alert.provenance.as_ref().map(|rule| rule.confidence.to_string())
+                                    .unwrap_or_else(|| "Not recorded".into()),
+                            ),
+                            ("Trigger frame".into(), trigger_frame),
+                            ("Trigger flow".into(), trigger_flow),
+                            (
+                                "Capture ID".into(),
+                                alert.capture_id.as_deref().unwrap_or("Unscoped").into(),
+                            ),
+                            ("Packet evidence".into(), self.alert_evidence_status(alert)),
+                            ("Reason".into(), alert.detail.clone()),
+                            (
+                                "Recommendation".into(),
+                                alert
+                                    .provenance
+                                    .as_ref()
+                                    .map(|rule| rule.verification_hint.clone())
+                                    .or_else(|| alert.recommendation.clone())
+                                    .unwrap_or_else(|| "manual review".into()),
+                            ),
+                        ],
+                        available: true,
+                    }
                 })
                 .unwrap_or_else(|| missing("Alert", format!("Alert #{id}"))),
             InvestigationItem::Object(id) => self

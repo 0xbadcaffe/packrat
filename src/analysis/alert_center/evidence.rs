@@ -1,6 +1,19 @@
 use super::{
-    AUTOMATIC_EVIDENCE_PRIORITY, AlertCenter, AlertDisposition, AlertItem, AutomationMode, retain_packet_ref,
+    AUTOMATIC_EVIDENCE_PRIORITY, AlertCenter, AlertDisposition, AlertFlow, AlertItem, AlertTransport,
+    AutomationMode, retain_packet_ref,
 };
+
+impl AlertFlow {
+    pub(crate) fn from_captured_header(wire: &crate::analysis::packet_fields::CapturedTransportHeader) -> Option<Self> {
+        let transport = match wire.protocol {
+            6 => AlertTransport::Tcp,
+            17 => AlertTransport::Udp,
+            _ => return None,
+        };
+        (wire.source.port() != 0 && wire.destination.port() != 0 && wire.source != wire.destination)
+            .then_some(Self { transport, source: wire.source, destination: wire.destination })
+    }
+}
 
 impl AlertCenter {
     pub(crate) fn attach_ids_evidence(

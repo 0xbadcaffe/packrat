@@ -1,5 +1,8 @@
 use super::*;
-use crate::analysis::alert_center::AlertItem;
+use crate::analysis::{
+    alert_center::{AlertFlow, AlertItem, AlertTransport},
+    packet_fields::captured_transport_header,
+};
 use crate::storage::alert_evidence::{FrameStatus, frame_status};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -219,14 +222,15 @@ impl App {
         status
     }
 
-    pub(super) fn alert_trigger_status(&self, alert: &AlertItem) -> String {
+    pub(super) fn alert_trigger_context(&self, alert: &AlertItem) -> (String, String) {
         let frame = alert.packet_no;
         if frame == 0 {
-            return "Not recorded".into();
+            return ("Not recorded".into(), describe_trigger_flow(alert.flow, None));
         }
         let scope = self.alert_evidence_scope(alert);
         let slot = self.local_alert_packets(alert, scope, &[frame]).pop().flatten();
-        let status = slot.and_then(|location| location.get(self)).map_or(FrameStatus::Missing, frame_status);
+        let packet = slot.and_then(|location| location.get(self));
+        let status = packet.map_or(FrameStatus::Missing, frame_status);
         let description = match status {
             FrameStatus::Complete => "retained, complete capture",
             FrameStatus::Truncated => "retained, truncated",
@@ -242,7 +246,15 @@ impl App {
                 },
             FrameStatus::Missing => "not retained here",
         };
-        format!("#{frame}: {description}")
+        let observed = packet.filter(|_| alert.capture_id.is_some()
+            && matches!(status, FrameStatus::Complete | FrameStatus::Truncated))
+            .and_then(captured_transport_header).as_ref().and_then(AlertFlow::from_captured_header);
+        (format!("#{frame}: {description}"), describe_trigger_flow(alert.flow, observed))
+    }
+
+    #[cfg(test)]
+    pub(super) fn alert_trigger_status(&self, alert: &AlertItem) -> String {
+        self.alert_trigger_context(alert).0
     }
 
     /// Resolve sorted, unique alert references in one pass without opening the archive.
@@ -270,5 +282,19 @@ impl App {
             }
         }
         locations
+    }
+}
+
+fn describe_trigger_flow(recorded: Option<AlertFlow>, observed: Option<AlertFlow>) -> String {
+    let tuple = |flow: AlertFlow| {
+        let transport = match flow.transport { AlertTransport::Tcp => "TCP", AlertTransport::Udp => "UDP" };
+        format!("{transport} {} -> {}", flow.source, flow.destination)
+    };
+    match (recorded, observed) {
+        (Some(recorded), Some(wire)) if recorded == wire => format!("{} (matches retained trigger)", tuple(wire)),
+        (Some(recorded), Some(wire)) => format!("Recorded: {}; retained trigger differs: {}", tuple(recorded), tuple(wire)),
+        (Some(recorded), None) => format!("{} (recorded, not verified)", tuple(recorded)),
+        (None, Some(wire)) => format!("{} (from retained trigger)", tuple(wire)),
+        (None, None) => "Not recorded".into(),
     }
 }
