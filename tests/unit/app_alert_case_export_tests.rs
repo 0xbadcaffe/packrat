@@ -104,16 +104,48 @@ fn selected_alert_archive_export_keeps_the_exact_historical_capture_separate() {
 }
 
 #[test]
-fn selected_alert_archive_export_refuses_unscoped_and_missing_archive() {
+fn selected_alert_case_export_refuses_unscoped_and_wrong_capture_evidence() {
     let scratch = tempfile::tempdir().unwrap();
     let output = scratch.path().join("no-case.json");
     let mut app = App::new_for_test();
+    let scope = App::new_capture_id();
+    app.clear_packets_for_scope(Some(scope)).unwrap();
+    app.inject_packet(packet(1));
     app.core.edit().alert_center.record(1, "IDS", "HIGH", "Unscoped finding", "fixture");
+    app.core.edit().alert_center.items[0].capture_id = None;
     assert!(app.start_alert_archive_case(output.clone()).unwrap_err().contains("no capture ID"));
     app.core.edit().alert_center.items[0].capture_id = Some("old-capture".into());
     assert!(app.start_alert_archive_case(output.clone()).unwrap_err().contains("no packet archive"));
     assert!(!output.exists());
     assert!(app.alert_case_export.is_none());
+}
+
+#[test]
+fn case_export_uses_only_scoped_local_frames_when_no_archive_is_attached() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("local-case.json");
+    let mut app = App::new_for_test();
+    let scope = App::new_capture_id();
+    app.clear_packets_for_scope(Some(scope.clone())).unwrap();
+    app.inject_packet(packet(1));
+    {
+        let mut core = app.core.edit();
+        core.alert_center.record(1, "IDS", "HIGH", "Live finding", "fixture");
+        core.alert_center.items[0].packet_refs.push(2);
+    }
+    assert!(app.packet_archive.is_none());
+    app.start_alert_archive_case(output.clone()).unwrap();
+    finish_export(&mut app);
+    let project = project_store::load(&output).unwrap();
+    let report = project.alert_archive_report.unwrap();
+    assert_eq!(report.capture_id, scope.as_ref());
+    assert_eq!(report.session_id.as_deref(), Some(app.alert_session_id.as_ref()));
+    assert_eq!(report.local_fallback_frames.into_iter().collect::<Vec<_>>(), [1]);
+    assert_eq!(report.frames[&2], ArchivedFrameOutcome::Missing);
+    assert_eq!(project.pinned_packets.len(), 1);
+    assert_eq!(project.pinned_packets[0].bytes, app.packets[0].bytes);
+    assert!(project.metadata.description.unwrap().contains("No archive checked"));
+    assert!(app.status_msg.as_deref().unwrap().contains("1 retained, 1 missing"));
 }
 
 #[test]
@@ -177,7 +209,6 @@ fn reexport_preserves_the_recorded_historical_session_without_relabeling_it() {
     let expected_session = project.alert_archive_report.as_ref().unwrap().session_id.clone().unwrap();
 
     let mut review = App::new_for_test();
-    review.set_packet_archive(ArchiveWorker::open(&archive).unwrap()).unwrap();
     assert_ne!(review.alert_session_id.as_ref(), expected_session);
     review.apply_project_state(project).unwrap();
     review.worklist.active = Some(0);

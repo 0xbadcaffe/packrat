@@ -46,11 +46,11 @@ pub fn create_alert_project(
     ensure!(!session_id.is_empty() && session_id.len() <= 128 && session_id.bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')), "Invalid session ID");
     let alert = latest_alert_in_logs(logs, session_id, alert_id, Some(capture_id))?;
-    save_alert_archive_project(archive, &alert, Some(session_id), output, BTreeMap::new())
+    save_alert_archive_project(Some(archive), &alert, Some(session_id), output, BTreeMap::new())
 }
 
 pub(crate) fn save_alert_archive_project(
-    archive: &mut PacketArchive, alert: &AlertItem, session_id: Option<&str>, output: &Path,
+    mut archive: Option<&mut PacketArchive>, alert: &AlertItem, session_id: Option<&str>, output: &Path,
     mut local_fallback: BTreeMap<u64, Packet>,
 ) -> Result<AlertProjectSummary> {
     let (capture_id, frames) = scoped_frames(alert)?;
@@ -72,7 +72,7 @@ pub(crate) fn save_alert_archive_project(
     let ordered = frames.iter().find(|&&frame| frame == trigger).into_iter()
         .chain(frames.iter().filter(|&&frame| frame != trigger));
     for &frame in ordered {
-        let archived = archive.packet_for_capture(capture_id, frame);
+        let archived = archive.as_deref_mut().map_or(Ok(None), |reader| reader.packet_for_capture(capture_id, frame));
         let local = if matches!(&archived, Ok(Some(packet)) if frame_status(packet) != FrameStatus::Unreadable) {
             None
         } else {
@@ -133,11 +133,12 @@ pub(crate) fn save_alert_archive_project(
     let identity = session_id.map_or_else(|| format!("Capture {capture_id}"),
         |session| format!("Session {session}, capture {capture_id}"));
     state.metadata.description = Some(format!(
-        "{identity}. {} retained ({} from local evidence, {} truncated, {} length unknown), {} missing, {} unreadable, {} over the tray limit.{}",
+        "{identity}. {} retained ({} from local evidence, {} truncated, {} length unknown), {} missing, {} unreadable, {} over the tray limit.{}{}",
         summary.retained_frames, summary.local_fallback_frames, summary.truncated_frames, summary.length_unknown_frames, summary.missing_frames,
         summary.unreadable_frames, summary.omitted_at_limit,
         summary.trigger_frame.as_ref().filter(|trigger| !trigger.included)
             .map_or_else(String::new, |trigger| format!(" Trigger #{} not included.", trigger.frame_number)),
+        if archive.is_none() { " No archive checked; only retained local evidence was used." } else { "" },
     ));
     state.alert_items.push(alert.clone());
     report.retained_sha256 = Some(retained_sha256);

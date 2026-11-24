@@ -83,7 +83,7 @@ fn selected_alert_shows_evidence_availability_and_keeps_the_action_visible() {
     for (width, height) in [(80, 24), (140, 40)] {
         let text = screen(&app, width, height);
         assert!(text.contains("0/1 retained; 1 unavailable; capture ID not recorded"), "{text}");
-        assert!(text.contains("V inspect  E archive case"), "{text}");
+        assert!(text.contains("V inspect  E export case"), "{text}");
     }
 }
 
@@ -135,7 +135,7 @@ fn long_selected_alert_scrolls_without_hiding_evidence_actions() {
         for _ in 0..40 {
             press(&mut app, KeyCode::PageDown);
             let page = screen(&app, width, height);
-            assert!(page.contains("V inspect  E archive case"), "{page}");
+            assert!(page.contains("V inspect  E export case"), "{page}");
             found_end |= page.contains("EndMarker");
         }
         let end = screen(&app, width, height);

@@ -207,7 +207,7 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
     let wrap = ratatui::widgets::Wrap { trim: true };
     let mut body = inner;
     if app.core.alert_center.selected_item().is_some() {
-        let footer = Paragraph::new("V inspect  E archive case  m pin  Enter review  C confirm  z benign  x close")
+        let footer = Paragraph::new("V inspect  E export case  m pin  Enter review  C confirm  z benign  x close")
             .style(Style::default().fg(C_FG2()))
             .wrap(wrap);
         let height = footer.line_count(inner.width).min(usize::from(inner.height)) as u16;

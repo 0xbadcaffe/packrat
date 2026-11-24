@@ -71,7 +71,7 @@ pub fn draw(f: &mut Frame, app: &App) {
             ("F / f", "Cycle review state / severity filters in the Alert Center"),
             ("a c o w d u t b v i p", "Jump to common detector views"),
             ("V",    "Open selected alert with matching packets in Investigate"),
-            ("E",    "Export selected alert's archived evidence to a separate case"),
+            ("E",    "Export selected alert evidence to a separate case"),
             ("m",    "Pin selected alert to the investigation tray"),
             ("l / y", "RouteLedger mode / promote observed routes"),
             ("r", "Refresh selected NetRegistry address with WHOIS"),

@@ -1,6 +1,7 @@
 use super::{App, alert_evidence::AlertEvidenceScope};
 use crate::model::project::{MAX_PINNED_BYTES, pinned_packet_cost};
 use crate::storage::alert_evidence::{AlertProjectSummary, FrameStatus, frame_status, save_alert_archive_project};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::thread::{Builder, JoinHandle};
 
@@ -13,7 +14,7 @@ impl App {
     pub(crate) fn export_selected_alert_archive_case(&mut self) {
         let output = PathBuf::from(format!("packrat_alert_{:016x}.json", rand::random::<u64>()));
         let message = match self.start_alert_archive_case(output) {
-            Ok(()) => "Exporting selected alert's archived evidence".into(),
+            Ok(()) => "Exporting selected alert evidence".into(),
             Err(error) => format!("Alert case export unavailable: {error}"),
         };
         self.set_status(message);
@@ -29,7 +30,7 @@ impl App {
         if alert.capture_id.is_none() {
             return Err("selected alert has no capture ID".into());
         }
-        let mut archive = self.packet_archive.as_ref().ok_or("no packet archive is attached")?.reader()?;
+        let mut archive = self.packet_archive.as_ref().map(|archive| archive.reader()).transpose()?;
         let frames = alert.evidence_frame_numbers();
         let scope = self.alert_evidence_scope(&alert);
         let session = if scope == AlertEvidenceScope::CurrentCapture && !self.offline_review() {
@@ -41,16 +42,19 @@ impl App {
         let mut bytes_left = MAX_PINNED_BYTES;
         let trigger = frames.binary_search(&alert.packet_no).ok();
         let order = trigger.into_iter().chain((0..frames.len()).filter(|&index| Some(index) != trigger));
-        let local = order.filter_map(|index| {
+        let local: BTreeMap<_, _> = order.filter_map(|index| {
             let packet = slots[index]?.get(self)?;
             let cost = pinned_packet_cost(packet);
             if cost > bytes_left || frame_status(packet) == FrameStatus::Unreadable { return None; }
             bytes_left -= cost;
             Some((frames[index], packet.clone()))
         }).collect();
+        if archive.is_none() && local.is_empty() {
+            return Err("no packet archive is attached and no matching local evidence is retained".into());
+        }
         let destination = output.clone();
         let worker = Builder::new().name("packrat-alert-case".into()).spawn(move || {
-            save_alert_archive_project(&mut archive, &alert, session.as_deref(), &destination, local)
+            save_alert_archive_project(archive.as_mut(), &alert, session.as_deref(), &destination, local)
                 .map_err(|error| error.to_string())
         }).map_err(|error| format!("could not start export: {error}"))?;
         self.alert_case_export = Some(PendingAlertCase { output, worker });
