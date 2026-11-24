@@ -3,6 +3,7 @@ use super::scans::scan_scope;
 
 pub(super) enum TcpPayloadObservation {
     UnknownOrNew,
+    BeforeConnectionStart,
     Empty,
     Repeat,
     Partial { fresh: Vec<std::ops::Range<usize>>, repeated_bytes: usize },
@@ -135,7 +136,7 @@ impl SecurityEngine {
     // ─── TCP Integrity / Evasion ────────────────────────────────────────────
 
     pub(super) fn check_tcp_integrity(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) -> TcpPayloadObservation {
-        use TcpPayloadObservation::{Empty, Repeat, UnknownOrNew};
+        use TcpPayloadObservation::{BeforeConnectionStart, Empty, Repeat, UnknownOrNew};
         const MAX_RESET_EVIDENCE_BYTES: usize = 2_048;
         let retain_reset = || archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "tcp.payload_after_observed_reset"));
         if !pkt.timestamp.is_finite() ||
@@ -205,7 +206,7 @@ impl SecurityEngine {
 
         let state = self.tcp_integrity.entry(key).or_default();
         if state.started_at.is_some_and(|start| pkt.timestamp < start) {
-            return if segment.payload.is_empty() { Empty } else { UnknownOrNew };
+            return if segment.payload.is_empty() { Empty } else { BeforeConnectionStart };
         }
         let in_time_order = observation_precedes(
             (state.last_seen, state.last_seen_frame), (pkt.timestamp, pkt.no),
@@ -219,12 +220,14 @@ impl SecurityEngine {
         }
 
         let direction = usize::from(!segment.from_a);
+        let mut started_connection = false;
         if in_time_order && segment.flags & (SYN | ACK | FIN | RST) == SYN {
             let opening = state.opening_sequences[direction];
             let follows_reset = state.reset.is_some();
             if follows_reset || opening != Some(segment.sequence) {
                 // The other peer can send an opening SYN before either side acknowledges.
                 if follows_reset || state.started_at.is_none() || state.past_opening || opening.is_some() {
+                    started_connection = true;
                     *state = TcpIntegrityState {
                         last_seen: pkt.timestamp,
                         last_seen_frame: pkt.no,
@@ -349,6 +352,9 @@ impl SecurityEngine {
                     "{scope:?}:{:?}:{}:{}", segment.key, segment.from_a, conflict.previous_frame
                 )),
             });
+        }
+        if started_connection {
+            self.start_periodic_tcp_connection(pkt, scope);
         }
         payload_observation
     }

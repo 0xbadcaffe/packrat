@@ -290,7 +290,7 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .find(|event| event["type"] == "alert").unwrap();
     assert_eq!(finding["alert"]["provenance"]["confidence"], "heuristic");
-    assert_eq!(finding["alert"]["provenance"]["revision"], 18);
+    assert_eq!(finding["alert"]["provenance"]["revision"], 19);
     let detail = finding["alert"]["detail"].as_str().unwrap();
     assert!(detail.starts_with("7 TCP packets") && detail.contains("gaps 10.0-10.0s (mean 10.0s), sizes 900-900 bytes on wire, 12-12 captured payload bytes per packet"));
     assert_eq!(finding["alert"]["flow"], json!({

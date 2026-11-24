@@ -125,7 +125,8 @@ pub const DETECTOR_SIGNATURES: &[&str] = &[
 
 mod admin_fanout;
 mod behavior;
-use behavior::{BeaconSample, BeaconState, BehaviorFlowKey};
+mod periodic;
+use periodic::{BeaconSample, BeaconState, BehaviorFlowKey};
 mod control_plane;
 mod dns;
 mod engine;
