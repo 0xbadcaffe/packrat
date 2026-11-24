@@ -157,10 +157,40 @@ fn industrial_alert_exposes_a_policy_hint_not_a_claim_of_execution() {
         .find(|alert| alert.title == "Industrial state-changing command").unwrap();
     let provenance = alert.provenance.as_ref().unwrap();
     assert_eq!(provenance.rule_id, "industrial.state_change");
-    assert_eq!(provenance.revision, 8);
+    assert_eq!(provenance.revision, 9);
     assert_eq!(provenance.confidence, packrat_tui::analysis::alert_provenance::EvidenceConfidence::Heuristic);
     assert!(provenance.verification_hint.contains("does not prove a state change"));
     assert_eq!(alert.packet_refs, [1]);
+}
+
+#[test]
+fn industrial_findings_keep_separate_review_state_for_each_tag_path() {
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+    use packrat_tui::net::parser::parse_ethernet;
+
+    let mut fixture = [0_u8; 8];
+    fixture[5] = 2;
+    fixture[7] = 6;
+    let make = |frame, tpid: u16, tci: u16| {
+        let mut wire = industrial_packet("Modbus", 502, true, &fixture).bytes;
+        wire.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+        parse_ethernet(&wire, frame, frame as f64)
+    };
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    core.analyze(&make(1, 0x8100, 20));
+    let first = &core.alert_center.items[0];
+    let (id, scope) = (first.id, first.capture_id.clone());
+    assert!(core.alert_center.set_disposition(id, scope.as_deref(), AlertDisposition::Benign));
+    core.analyze(&make(2, 0x88a8, 20));
+    core.analyze(&make(3, 0x8100, 0xb014));
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|item| item.title == "Industrial state-changing command").collect();
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0].packet_refs, [1, 3]);
+    assert_eq!(alerts[0].disposition, AlertDisposition::Benign);
+    assert!(alerts[0].detail.contains("tag type 0x8100"));
+    assert_eq!(alerts[1].packet_refs, [2]);
+    assert_eq!(alerts[1].disposition, AlertDisposition::New);
+    assert!(alerts[1].detail.contains("tag type 0x88a8"));
 }
 
 #[test]

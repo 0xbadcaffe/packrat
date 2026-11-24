@@ -256,7 +256,7 @@ impl SecurityEngine {
     pub(super) fn record_industrial_finding(
         &mut self, pkt: &Packet, finding: industrial_policy::IndustrialFinding, frames: Vec<u64>,
     ) {
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let interface = pkt.capture.as_ref().and_then(|meta| meta.interface_name.as_deref());
         let flow = crate::analysis::alert_center::AlertFlow::from_packet(pkt);
         let transport = flow.map(|flow| flow.transport);
@@ -360,28 +360,28 @@ impl SecurityEngine {
     }
 }
 
-fn network_scope_name(scope: ServiceScope) -> String {
-    let (interface, outer_vlan, vlan) = scope;
+fn network_scope_name(((interface, outer_vlan, vlan), [outer_type, inner_type]): ScanScope) -> String {
     let interface = interface.map_or_else(
         || "unknown capture interface".to_owned(),
         |(section, id)| format!("capture section {section}, interface {id}"),
     );
-    match (outer_vlan, vlan) {
+    let mut name = match (outer_vlan, vlan) {
         (Some(outer), Some(inner)) => format!("{interface}, VLAN {outer}/{inner}"),
         (_, Some(vlan)) | (Some(vlan), _) => format!("{interface}, VLAN {vlan}"),
         _ => format!("{interface}, untagged"),
-    }
-}
-
-fn dhcp_scope_name(((path, [outer, inner]), relay): (ScanScope, Option<Ipv4Addr>)) -> String {
-    let mut name = network_scope_name(path);
-    if outer != 0 {
-        name.push_str(&format!(" (tag type 0x{outer:04x}"));
-        if inner != 0 {
-            name.push_str(&format!("/0x{inner:04x}"));
+    };
+    if outer_type != 0 {
+        name.push_str(&format!(" (tag type 0x{outer_type:04x}"));
+        if inner_type != 0 {
+            name.push_str(&format!("/0x{inner_type:04x}"));
         }
         name.push(')');
     }
+    name
+}
+
+fn dhcp_scope_name((path, relay): (ScanScope, Option<Ipv4Addr>)) -> String {
+    let mut name = network_scope_name(path);
     if let Some(relay) = relay {
         name.push_str(&format!(", advertised relay address {relay}"));
     }
