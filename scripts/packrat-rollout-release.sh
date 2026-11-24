@@ -92,6 +92,7 @@ triage_watcher_ready() {
             and .capture_id == $scope.capture_id and .session_id == $scope.alert_session_id
             and ($gap_free == 0 or (.packet_counter_gap == false and .alert_sample_gap == false))
             and ($archive == "" or (.poll_started_at | type == "number" and . > $after))
+            and ($archive == "" or $after == 0 or .evidence_check_failures == 0)
             and ($require_journal == 0 or (.journal_status == "current" and .journal_pending_events == 0)))
         | if .packets == null and $gap_free == 0 then "legacy" else .packets | select(counter) end
     ' <<< "$check") || return 1

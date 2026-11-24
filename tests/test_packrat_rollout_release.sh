@@ -276,10 +276,19 @@ cmp -s -- "$archive_candidate" "$installed_archive"
     for started in null 1699999999 1700000000 1700000001; do
         (
             triage_after=1700000000
-            triage_sample=$(jq --argjson start "$started" '.poll_started_at=$start' <<< "$valid_triage_sample")
+            triage_sample=$(jq --argjson start "$started" '.poll_started_at=$start | .evidence_check_failures=0' <<< "$valid_triage_sample")
             if [[ $started == 1700000001 ]]; then alert_watcher_ready "$scope" 1
             elif alert_watcher_ready "$scope" 1; then exit 1
             fi
+        )
+    done
+    for failures in 1 null; do
+        (
+            triage_sample=$(jq --argjson failures "$failures" '
+                .poll_started_at=1700000001 | .evidence_check_failures=$failures' <<< "$valid_triage_sample")
+            alert_watcher_ready "$scope" 1
+            triage_after=1700000000
+            if alert_watcher_ready "$scope" 1; then exit 1; fi
         )
     done
 )
