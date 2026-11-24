@@ -59,6 +59,51 @@ fn authentication_reply_bursts_require_tcp_data_with_ack(
     assert_eq!(episodes[1].packet_refs, [51, 52, 53, 54, 55]);
 }
 
+#[rstest::rstest]
+#[case(80, "http.unauthorized_burst", 17)]
+#[case(21, "ftp.not_logged_in_burst", 7)]
+#[case(445, "smb2.logon_failure_burst", 7)]
+#[case(22, "ssh.connection_start_burst", 6)]
+fn authentication_bursts_are_separate_on_same_id_different_tag_paths(
+    #[case] port: u16,
+    #[case] rule: &str,
+    #[case] revision: u16,
+) {
+    use packrat_tui::net::parser::parse_ethernet;
+
+    let payload = match port {
+        80 => b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n".to_vec(),
+        21 => b"530 Not logged in\r\n".to_vec(),
+        445 => cases_3::smb2_session_setup_reply(0xc000_006d, 1),
+        22 => Vec::new(),
+        _ => unreachable!(),
+    };
+    let mut core = AnalysisCore::default();
+    for no in 1..=10_u64 {
+        let secondary_path = no % 2 == 0;
+        let sequence = no.div_ceil(2) as u32 * 1024;
+        let mut raw = ipv4_tcp_packet(no, sequence, if port == 22 { 0x02 } else { 0x18 }, &payload).bytes;
+        let (source, destination) = if port == 22 { (50_000_u16, port) } else { (port, 50_000_u16) };
+        raw[34..36].copy_from_slice(&source.to_be_bytes());
+        raw[36..38].copy_from_slice(&destination.to_be_bytes());
+        let tpid = if secondary_path { 0x88a8_u16 } else { 0x8100_u16 };
+        let tci = if no % 4 < 2 { 20_u16 } else { 0xb014_u16 };
+        raw.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+        core.analyze(&parse_ethernet(&raw, no, no as f64));
+        if no < 9 {
+            assert!(core.alert_center.items.iter().all(|alert| alert.source != "AUTH"));
+        }
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "AUTH").collect();
+    assert_eq!(alerts.len(), 2);
+    for (alert, frames) in alerts.into_iter().zip([[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]]) {
+        let provenance = alert.provenance.as_ref().unwrap();
+        assert_eq!(provenance.rule_id, rule);
+        assert_eq!(provenance.revision, revision);
+        assert_eq!(alert.packet_refs, frames);
+    }
+}
+
 #[cfg(feature = "terminal-ui")]
 #[rstest::rstest]
 #[case(21, "ftp.not_logged_in_burst")]

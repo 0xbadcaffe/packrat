@@ -83,7 +83,7 @@ fn split_401_bursts_use_only_complete_scoped_headers_and_keep_each_frame() {
             let alert = &alerts[0]["alert"];
             assert_eq!(alerts[0]["opening"], true);
             assert_eq!(alert["packet_no"], 21);
-            assert_eq!(alert["provenance"]["revision"], 16);
+            assert_eq!(alert["provenance"]["revision"], 17);
             assert!(alert["detail"].as_str().unwrap().contains("for 5/5 sampled 401 replies"));
             let mut frames: Vec<_> = alert["packet_refs"].as_array().unwrap().iter()
                 .map(|frame| frame.as_u64().unwrap()).collect();
@@ -118,7 +118,7 @@ fn coalesced_401_headers_keep_distinct_observations_and_unique_frames(#[case] ou
         .filter(|row| row["alert"]["provenance"]["rule_id"] == rule)
         .map(|row| &row["alert"]).collect::<Vec<_>>().try_into().unwrap();
     assert_eq!(alert["packet_no"], trigger);
-    assert_eq!(alert["provenance"]["revision"], 16);
+    assert_eq!(alert["provenance"]["revision"], 17);
     assert!(alert["detail"].as_str().unwrap().contains("for 5/5 sampled 401 replies"));
     let mut frames: Vec<_> = alert["packet_refs"].as_array().unwrap()
         .iter().map(|frame| frame.as_u64().unwrap()).collect();

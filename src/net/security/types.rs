@@ -402,7 +402,7 @@ pub(super) struct BfKey {
     pub(super) dst: String,
     pub(super) port: u16,
     pub(super) service: &'static str,
-    pub(super) scope: ServiceScope,
+    pub(super) scope: ScanScope,
 }
 
 pub(super) type ServiceScope = (Option<(u32, u32)>, Option<u16>, Option<u16>);

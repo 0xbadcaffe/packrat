@@ -1,4 +1,5 @@
 use super::*;
+use super::scans::scan_scope;
 use crate::analysis::stream::HttpAuthObservation;
 
 const AUTH_WINDOW_SECS: f64 = 30.0;
@@ -105,7 +106,7 @@ impl SecurityEngine {
             dst: server.clone(),
             port,
             service,
-            scope: service_scope(pkt),
+            scope: scan_scope(pkt),
         };
         let now = pkt.timestamp;
         if !now.is_finite() {

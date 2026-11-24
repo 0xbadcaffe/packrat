@@ -142,6 +142,7 @@ impl AnalysisCore {
                 pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
                 pkt.outer_vlan_id,
                 pkt.vlan_id,
+                crate::net::parser::ethernet_vlan_tag_types(&pkt.bytes),
             );
             let mut packet_refs = alert.packet_refs.clone();
             let exchange = if alert.service == "HTTP" {

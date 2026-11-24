@@ -84,13 +84,49 @@ fn delayed_auth_retries_do_not_open_a_new_burst() {
             "opening_frames":{(rule):[5,15]},
             "opening_evidence":[
                 {"rule_id":rule,"opening_frame":5,"frames":[1,2,3,4,5],
-                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":16}},
+                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":17}},
                 {"rule_id":rule,"opening_frame":15,"frames":[11,12,13,14,15],
-                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":16}}
+                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":17}}
             ]
         }]
     });
     std::fs::write(&manifest, labels.to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn complete_http_auth_replies_do_not_merge_across_wire_tag_paths() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "http.unauthorized_burst";
+    let payload = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+    let mut cases = Vec::new();
+    for (file, split) in [("same-path.pcapng", false), ("two-paths.pcapng", true)] {
+        let mut writer = PcapNgWriter::create(&root.join(file)).unwrap();
+        for frame in 1..=5 {
+            let mut packet = super::support::tcp(frame, frame as u32 * 1024, 0x18, payload, true);
+            let tpid = if split && frame % 2 == 0 { 0x88a8_u16 } else { 0x8100_u16 };
+            let tci = if frame % 2 == 0 { 0xb014_u16 } else { 20_u16 };
+            packet.bytes.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+        let openings = usize::from(!split);
+        let mut case = json!({"name":file,"capture":file,"expect_snapshots":openings,
+            "expect_counts":{(rule):openings}});
+        if !split {
+            case["opening_frames"] = json!({(rule):[5]});
+            case["opening_evidence"] = json!([{
+                "rule_id":rule,"opening_frame":5,"frames":[1,2,3,4,5],
+                "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":17},
+            }]);
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("complete-auth-tag-paths.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
 }
@@ -133,7 +169,7 @@ fn auth_replay_distinguishes_status_lines_from_body_text_at_segment_boundaries()
             json!({"name":"actual 401 responses","capture":file,
                 "expect_snapshots":1,"expect_counts":{(rule):1},"opening_frames":{(rule):[12]},
                 "opening_evidence":[{"rule_id":rule,"opening_frame":12,"frames":(3..=12).collect::<Vec<_>>(),
-                    "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":16}}]})
+                    "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":17}}]})
         });
     }
     let manifest = root.join("auth-status-boundaries.json");
