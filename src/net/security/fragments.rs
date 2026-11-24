@@ -13,14 +13,19 @@ impl SecurityEngine {
     // ─── IPv4 Fragment Integrity ────────────────────────────────────────────
 
     pub(super) fn check_ipv4_fragments(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
+        if !pkt.timestamp.is_finite() {
+            return;
+        }
         let fragment = match parse_ipv4_fragment(&pkt.bytes) {
             Some(fragment) => fragment,
             None => return,
         };
 
-        let key = (scan_scope(pkt), fragment.key.clone());
-        self.fragment_states.retain(|_, state| {
-            pkt.timestamp < state.last_seen
+        let scope = scan_scope(pkt);
+        let capture_interface = (scope.0).0;
+        let key = (scope, fragment.key.clone());
+        self.fragment_states.retain(|(observed_scope, _), state| {
+            (observed_scope.0).0 != capture_interface
                 || pkt.timestamp - state.last_seen <= FRAGMENT_STATE_TTL_SECS
         });
         if !self.fragment_states.contains_key(&key)
@@ -30,7 +35,7 @@ impl SecurityEngine {
                 .fragment_states
                 .iter()
                 .min_by(|left, right| {
-                    left.1.last_seen.total_cmp(&right.1.last_seen).then(left.0.cmp(right.0))
+                    left.1.last_observation_order.cmp(&right.1.last_observation_order).then(left.0.cmp(right.0))
                 })
                 .map(|(key, _)| key.clone())
             {
@@ -60,11 +65,13 @@ impl SecurityEngine {
             ));
         }
 
+        self.evidence_observation_order = self.evidence_observation_order.saturating_add(1);
         let state = self
             .fragment_states
             .entry(key.clone())
-            .or_default();
+            .or_insert_with(|| FragmentState { last_seen: pkt.timestamp, ..Default::default() });
         state.last_seen = state.last_seen.max(pkt.timestamp);
+        state.last_observation_order = self.evidence_observation_order;
 
         let conflict = if !state.overlap_alerted && !fragment.malformed_length
             && let Some(frame) = conflicting_fragment_frame(&state.slices, &fragment)
@@ -211,8 +218,8 @@ impl SecurityEngine {
             return if segment.payload.is_empty() { Empty } else { BeforeConnectionStart };
         }
         // Capacity spans capture clocks, but TCP ordering below is local to this path.
-        self.tcp_observation_order = self.tcp_observation_order.saturating_add(1);
-        state.last_observation_order = self.tcp_observation_order;
+        self.evidence_observation_order = self.evidence_observation_order.saturating_add(1);
+        state.last_observation_order = self.evidence_observation_order;
         let in_time_order = observation_precedes(
             (state.last_seen, state.last_seen_frame), (pkt.timestamp, pkt.no),
         );
@@ -234,7 +241,7 @@ impl SecurityEngine {
                 if follows_reset || state.started_at.is_none() || state.past_opening || opening.is_some() {
                     started_connection = true;
                     *state = TcpIntegrityState {
-                        last_observation_order: self.tcp_observation_order,
+                        last_observation_order: self.evidence_observation_order,
                         last_seen: pkt.timestamp,
                         last_seen_frame: pkt.no,
                         started_at: Some(pkt.timestamp),

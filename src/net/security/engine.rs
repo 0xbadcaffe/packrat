@@ -34,7 +34,7 @@ impl SecurityEngine {
             fragment_states: HashMap::new(),
             ipv4_fragment_evidence: Default::default(),
             tcp_integrity: HashMap::new(),
-            tcp_observation_order: 0,
+            evidence_observation_order: 0,
             tcp_overlap_evidence: Default::default(),
             scan_sources: HashMap::new(),
             scan_packet_evidence: Default::default(),
@@ -83,7 +83,7 @@ impl SecurityEngine {
         self.fragment_states.clear();
         self.ipv4_fragment_evidence = Default::default();
         self.tcp_integrity.clear();
-        self.tcp_observation_order = 0;
+        self.evidence_observation_order = 0;
         self.tcp_overlap_evidence = Default::default();
         self.scan_sources.clear();
         self.scan_packet_evidence = Default::default();

@@ -1,5 +1,6 @@
 use super::archive_fixture::{drain, finish, roll_history, start};
 use super::ipv4_fragment_packet;
+use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use packrat_tui::storage::packet_archive::PacketArchive;
 
 #[test]
@@ -11,7 +12,23 @@ fn ipv4_overlap_archives_the_exact_older_fragment_under_the_default_selective_po
     app.inject_packet(original.clone());
     app.inject_packet(ipv4_fragment_packet(2, 7, 0, true, b"abcdefghijklmnop"));
     app.inject_packet(ipv4_fragment_packet(3, 8, 0, true, b"abcdefghijklmnop"));
-    let trigger = roll_history(&mut app, 4);
+    let mut other_clock = ipv4_fragment_packet(4, 9, 0, true, b"abcdefgh");
+    other_clock.timestamp = 400.0;
+    let length = other_clock.bytes.len() as u32;
+    other_clock.capture = Some(CaptureMetadata {
+        timestamp: Some(CaptureTimestamp {
+            ticks: 400, resolution: TimestampResolution::Decimal(0), offset_seconds: 0,
+        }),
+        captured_length: length,
+        wire_length: length,
+        link_type: 1,
+        section_id: 0,
+        interface_id: 1,
+        interface_name: None,
+        comments: Vec::new(),
+    });
+    app.inject_packet(other_clock);
+    let trigger = roll_history(&mut app, 5);
     let mut incoming = ipv4_fragment_packet(trigger, 7, 8, false, b"XXXXXXXX");
     incoming.timestamp = 0.5;
     app.inject_packet(incoming.clone());
@@ -20,6 +37,7 @@ fn ipv4_overlap_archives_the_exact_older_fragment_under_the_default_selective_po
     let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
         alert.title == "Conflicting IPv4 fragments").cloned()).unwrap().unwrap();
     assert_eq!(alert.packet_refs, [1, trigger]);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 4);
     let scope = alert.capture_id.unwrap();
     let mut archive = PacketArchive::open_readonly(&path).unwrap();
     assert_eq!(archive.count().unwrap(), 2);
@@ -54,6 +72,7 @@ fn opted_in_ipv4_fragment_burst_archives_only_cited_offsets() {
             alert.provenance.as_ref().is_some_and(|p| p.rule_id == rule)).cloned()).unwrap().unwrap();
         let refs: Vec<_> = (1..=64).chain(std::iter::once(trigger)).collect();
         assert_eq!(alert.packet_refs, refs);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 4);
         let scope = alert.capture_id.unwrap();
         let mut archive = PacketArchive::open_readonly(&path).unwrap();
         assert_eq!(archive.count().unwrap(), if opt_in { refs.len() as u64 } else { 0 });

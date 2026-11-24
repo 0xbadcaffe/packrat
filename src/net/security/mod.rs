@@ -183,7 +183,7 @@ pub struct SecurityEngine {
     fragment_states: HashMap<(ScanScope, FragmentKey), FragmentState>,
     ipv4_fragment_evidence: crate::net::recent_evidence::RecentEvidence<1024, 120>,
     tcp_integrity: HashMap<(ScanScope, TcpFlowKey), TcpIntegrityState>,
-    tcp_observation_order: u64,
+    evidence_observation_order: u64,
     tcp_overlap_evidence: crate::net::recent_evidence::RecentEvidence<1024, 300>,
     scan_sources: HashMap<ScanSourceKey, SourceScanState>,
     scan_packet_evidence: crate::net::recent_evidence::RecentEvidence<2048, 30>,

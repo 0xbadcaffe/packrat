@@ -53,7 +53,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the fragment flags, offset, payload length, and other frames for the datagram; size alone does not establish intent.",
         ),
         (
-            "IDS", "IPv4 fragment flood", "ipv4.fragment_observation_burst", 3, Correlated,
+            "IDS", "IPv4 fragment flood", "ipv4.fragment_observation_burst", 4, Correlated,
             "Inspect the retained fragment offsets and compare with link MTU, source behavior, and endpoint resource pressure. Volume alone does not establish denial of service.",
         ),
         (
@@ -205,7 +205,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both frames and their TCP sequence ranges. Check capture duplication or offload and verify what the receiver processed independently.",
         ),
         (
-            "IDS", "Conflicting IPv4 fragments", "ipv4.conflicting_fragments", 3, DirectObservation,
+            "IDS", "Conflicting IPv4 fragments", "ipv4.conflicting_fragments", 4, DirectObservation,
             "Compare both frames and their capture scope; check receiver logs for reassembly outcome.",
         ),
         (

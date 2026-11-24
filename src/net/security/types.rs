@@ -23,6 +23,7 @@ pub(super) struct FragmentState {
     pub(super) retained_bytes: usize,
     pub(super) offset_frames: Vec<(u32, u64)>,
     pub(super) last_seen: f64,
+    pub(super) last_observation_order: u64,
     pub(super) overlap_alerted: bool,
 }
 

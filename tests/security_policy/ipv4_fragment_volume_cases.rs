@@ -70,6 +70,6 @@ fn ipv4_fragment_volume_counts_distinct_complete_offsets_and_keeps_evidence() {
     assert_eq!(alert.severity, "MEDIUM");
     assert_eq!(alert.packet_no, 265);
     assert_eq!(alert.packet_refs, (201..=265).collect::<Vec<_>>());
-    assert_eq!(alert.provenance.as_ref().unwrap().revision, 3);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 4);
     assert!(alert.detail.contains("resource impact unverified"));
 }
