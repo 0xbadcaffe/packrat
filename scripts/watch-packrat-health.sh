@@ -407,7 +407,9 @@ read_health() {
                      then "capture_queue_high" else empty end),
                     (if (counter_delta($queue_full; $baseline.queue_full) // 0) > 0 then "capture_queue_packets_dropped"
                      elif $usable and $run != null and $queue_full != null and $baseline.queue_full.run == $run
-                          and $queue_full < $baseline.queue_full.total then "capture_queue_counter_regressed" else empty end),
+                          and $queue_full < $baseline.queue_full.total then "capture_queue_counter_regressed"
+                     elif $usable and $queue_full > 0 and counter_delta($queue_full; $baseline.queue_full) == null
+                          then "capture_queue_drops_already_present" else empty end),
                     (if $archive_paused == true then "archive_paused"
                      elif $require_archive != "0" then
                         if $archive_enabled == false then "archive_disabled"

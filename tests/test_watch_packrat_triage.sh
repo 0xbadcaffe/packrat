@@ -51,7 +51,7 @@ live current 12 "$queue" "$medium" | jq '.socket_context_status="available" | .h
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
 bash "$watch" --check "$state" | jq -e '.status=="current" and .socket_context_status=="available" and .alert_save_failures==2
-    and .alert_save_backlog_dropped==0
+    and .alert_save_backlog_dropped==0 and .capture_queue_full_packets==8
     and (.healthy_capture_seconds | type=="number" and .>=0) and .flow_cache=={retained_summaries:8192,summary_evictions:4}' >/dev/null
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
@@ -77,6 +77,17 @@ jq '.health.alert_save_backlog_dropped=1' "$report" >"$scratch/backlog-loss.json
 bash "$watch" --once "$failed_state" -- cat "$scratch/backlog-loss.json" >/dev/null
 check_status "$failed_state" triage_unhealthy 1
 jq -e '.status=="degraded" and .issues==["alert_backlog_snapshots_dropped"] and .alert_save_backlog_dropped==1' "$failed_state" >/dev/null
+queue_state="$scratch/queue.json"
+for counter in 8 10 10 2; do
+    live current 12 '[]' | jq --argjson counter "$counter" '
+        .health.capture_queue_full_packets=$counter | .health.capture_queue_full_packets_delta=0
+    ' >"$scratch/queue-report.json"
+    bash "$watch" --once "$queue_state" -- cat "$scratch/queue-report.json"
+done >"$scratch/queue-results.jsonl"
+jq -se 'map(.status)==["current","degraded","current","degraded"]
+    and map(.issues)==[[],["capture_queue_packets_dropped"],[],["capture_queue_counter_regressed"]]
+    and .[1].healthy_capture_since==null and .[2].healthy_capture_since==.[2].poll_started_at
+    and .[2].capture_queue_full_packets==10' "$scratch/queue-results.jsonl" >/dev/null
 for marker in unavailable not_recorded not_checked not_configured 'private malformed value'; do
     jq --arg marker "$marker" '.socket_context_status=$marker' "$report" >"$scratch/socket-report.json"
     bash "$watch" --once "$failed_state" -- cat "$scratch/socket-report.json" >/dev/null

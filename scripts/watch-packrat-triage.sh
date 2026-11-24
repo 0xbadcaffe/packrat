@@ -144,6 +144,7 @@ check_snapshot() {
                then .socket_context_status | socket_status else null end),
            alert_save_failures:(if $age >= -5 and $age <= .max_age_seconds then .alert_save_failures | counter else null end),
            alert_save_backlog_dropped:(if $age >= -5 and $age <= .max_age_seconds then .alert_save_backlog_dropped | counter else null end),
+           capture_queue_full_packets:(if $age >= -5 and $age <= .max_age_seconds then .capture_queue_full_packets | counter else null end),
            invalid_alert_rows:(if $age >= -5 and $age <= .max_age_seconds
                then .invalid_alert_rows | sample_count else null end),
            duplicate_alert_ids:(if $age >= -5 and $age <= .max_age_seconds
@@ -396,6 +397,7 @@ if [[ -f $state && -O $state ]]; then
                     and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
             | {status,capture_id,session_id,recent_alerts,alert_sample_gap:(.alert_sample_gap == true),
                 packets:(.packets | counter),packet_counter_gap:(.packet_counter_gap == true),
+                capture_queue_full_packets:(.capture_queue_full_packets | counter),
                 buffer_drops:(.buffer_drops | if $fresh and type == "number" and . >= 0 and . <= 4294967295
                     and floor == . then . else null end),
                 review_queue:(.review_queue | if type == "array" and length <= 5 then
@@ -444,8 +446,15 @@ while :; do
                                 or $item.disposition == "Closed" then "resolved"
                             else "still_in_recent_sample" end)}]
                 end;
-            . as $now | (($prior | observed) and observed and
+            (($prior | observed) and observed and
                $prior.capture_id == .capture_id and $prior.session_id == .session_id) as $comparable
+            | (if $comparable and .capture_queue_full_packets != null and $prior.capture_queue_full_packets != null
+               then if .capture_queue_full_packets > $prior.capture_queue_full_packets then "capture_queue_packets_dropped"
+                    elif .capture_queue_full_packets < $prior.capture_queue_full_packets then "capture_queue_counter_regressed"
+                    else null end
+               else null end) as $queue_issue
+            | if $queue_issue != null then .status = "degraded" | .issues = ((.issues // []) + [$queue_issue] | unique) else . end
+            | . as $now
             | ($comparable and .packets != null and $prior.packets != null and .packets < $prior.packets) as $regressed
             | alert_ids as $ids | ($ids[-1] // 0) as $seen
             | ([$prior.highest_observed_alert_id, ($prior | alert_ids | last)] | max // 0) as $high
@@ -486,7 +495,7 @@ while :; do
                 else null end}
             | if (observed | not) and ($prior | observed) then
                 .last_observed = ($prior | {
-                    status,capture_id,session_id,highest_observed_alert_id,alert_sample_gap,packets,packet_counter_gap,
+                    status,capture_id,session_id,highest_observed_alert_id,alert_sample_gap,packets,packet_counter_gap,capture_queue_full_packets,
                     review_queue: [(.review_queue // [])[] | compact_alert], recent_alerts: [.recent_alerts[] | compact_alert]
                 })
               else . end' <<< "$snapshot")
