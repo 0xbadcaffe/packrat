@@ -28,7 +28,7 @@ fn periodic_replay_distinguishes_fresh_tcp_segments_from_partial_retransmissions
             case["opening_frames"] = json!({(rule):[7]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule, "opening_frame":7, "frames":[1, 2, 3, 4, 5, 6, 7],
-                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":14},
+                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":15},
             }]);
         }
         cases.push(case);
@@ -46,15 +46,16 @@ fn replay_separates_periodic_episodes_after_directional_expiry_but_not_a_continu
     let root = scratch.path();
     let rule = "traffic.periodic_fixed_size";
     let mut cases = Vec::new();
-    for (file, second_start, background_ticks, background_reverse, expected) in [
-        ("continuous.pcapng", 70, &[][..], false, vec![7]),
-        ("renewed.pcapng", 3661, &[][..], false, vec![7, 14]),
-        ("reverse-background.pcapng", 3661, &[1000, 2750, 3650][..], true, vec![7, 17]),
-        ("same-direction-background.pcapng", 3661, &[1000, 2750, 3650][..], false, vec![7, 17]),
+    for (file, second_start, background_ticks, background_reverse, background_size, expected) in [
+        ("continuous.pcapng", 70, &[][..], false, 120, vec![7]),
+        ("renewed.pcapng", 3661, &[][..], false, 120, vec![7, 14]),
+        ("reverse-background.pcapng", 3661, &[1000, 2750, 3650][..], true, 120, vec![7, 17]),
+        ("same-direction-background.pcapng", 3661, &[1000, 2750, 3650][..], false, 120, vec![7, 17]),
+        ("same-size-background.pcapng", 3661, &[1000, 2750, 3650][..], false, 12, vec![7, 17]),
     ] {
         let mut writer = PcapNgWriter::create(&root.join(file)).unwrap();
         let schedule = (0..7).map(|i| (i * 10, false, 12))
-            .chain(background_ticks.iter().map(|&tick| (tick, background_reverse, 120)))
+            .chain(background_ticks.iter().map(|&tick| (tick, background_reverse, background_size)))
             .chain((0..7).map(|i| (second_start + i * 10, false, 12)));
         for (index, (ticks, reverse, payload_size)) in schedule.enumerate() {
             let frame = index as u64 + 1;
@@ -79,8 +80,12 @@ fn replay_separates_periodic_episodes_after_directional_expiry_but_not_a_continu
     }
     let manifest = root.join("periodic-episodes.json");
     std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
-    let output = run_suite(&manifest);
+    let baseline = std::env::var("PACKRAT_REPLAY_BASELINE_ANALYZER").ok();
+    let output = super::run_suite_with_baseline(&manifest, baseline.as_deref());
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 4);
+    assert_eq!(report["passed"], 5);
+    if baseline.is_some() {
+        println!("{}", String::from_utf8_lossy(&output.stdout));
+    }
 }

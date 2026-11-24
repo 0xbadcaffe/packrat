@@ -59,7 +59,9 @@ impl BeaconDirection {
 struct BeaconEpisode {
     direction: usize,
     last_seen: f64,
+    previous_size_sample_at: f64,
     sizes: std::ops::RangeInclusive<u32>,
+    gaps: std::ops::RangeInclusive<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -390,8 +392,13 @@ impl SecurityEngine {
                 state.directions = Default::default();
                 state.rearmed_at = Some(pkt.timestamp);
             } else {
-                if direction == episode.direction && episode.sizes.contains(&size) {
-                    episode.last_seen = episode.last_seen.max(pkt.timestamp);
+                if direction == episode.direction && episode.sizes.contains(&size)
+                    && pkt.timestamp > episode.previous_size_sample_at
+                {
+                    if episode.gaps.contains(&(pkt.timestamp - episode.previous_size_sample_at)) {
+                        episode.last_seen = pkt.timestamp;
+                    }
+                    episode.previous_size_sample_at = pkt.timestamp;
                 }
                 return;
             }
@@ -425,8 +432,11 @@ impl SecurityEngine {
             return;
         };
         let margin = stats.size_max.div_ceil(10);
+        let jitter = stats.interval_mean * 0.15;
         state.episode = Some(BeaconEpisode { direction, last_seen: pkt.timestamp,
-            sizes: stats.size_min.saturating_sub(margin)..=stats.size_max.saturating_add(margin) });
+            previous_size_sample_at: pkt.timestamp,
+            sizes: stats.size_min.saturating_sub(margin)..=stats.size_max.saturating_add(margin),
+            gaps: (stats.interval_min - jitter).max(0.0)..=(stats.interval_max + jitter) });
         let related_packets: Vec<_> = evidence[..evidence.len() - 1]
             .iter()
             .map(|sample| sample.packet_no)

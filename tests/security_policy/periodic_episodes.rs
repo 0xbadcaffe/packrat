@@ -59,15 +59,14 @@ fn a_periodic_burst_after_idle_expiry_keeps_its_own_evidence_and_review_state() 
     let (first_id, scope) = (first.id, first.capture_id.clone());
     assert!(core.alert_center.set_disposition(first_id, scope.as_deref(), AlertDisposition::Benign));
     for index in 0..7 {
-        // The first packet lands on the inclusive expiry boundary, so this is not a new alert.
-        core.analyze(&make(index + 8, 3660.0 + index as f64 * 10.0));
+        core.analyze(&make(index + 8, 70.0 + index as f64 * 10.0));
     }
     assert_eq!(core.alert_center.items.len(), 1);
     for index in 0..6 {
-        core.analyze(&make(index + 15, 7321.0 + index as f64 * 10.0));
+        core.analyze(&make(index + 15, 3731.0 + index as f64 * 10.0));
     }
     assert_eq!(core.alert_center.items.len(), 1);
-    core.analyze(&make(21, 7381.0));
+    core.analyze(&make(21, 3791.0));
 
     let alerts = &core.alert_center.items;
     assert_eq!(alerts.len(), 2);
@@ -81,8 +80,10 @@ fn a_periodic_burst_after_idle_expiry_keeps_its_own_evidence_and_review_state() 
     assert!(alerts[1].detail.contains("Timing alone does not establish command-and-control"));
 }
 
-#[test]
-fn unrelated_same_direction_sizes_cannot_keep_a_periodic_episode_open() {
+#[rstest::rstest]
+#[case(450)]
+#[case(120)]
+fn irregular_same_direction_traffic_cannot_keep_a_periodic_episode_open(#[case] size: usize) {
     let mut core = AnalysisCore::default();
     let periodic = |frame, time| periodic_datagram(frame, time, 120, 50000, false);
     for index in 0..7 {
@@ -90,7 +91,7 @@ fn unrelated_same_direction_sizes_cannot_keep_a_periodic_episode_open() {
     }
     assert_eq!(core.alert_center.items.len(), 1);
     for (frame, time) in [(8, 1_000.0), (9, 2_750.0), (10, 3_650.0)] {
-        core.analyze(&periodic_datagram(frame, time, 450, 50000, false));
+        core.analyze(&periodic_datagram(frame, time, size, 50000, false));
     }
     assert_eq!(core.alert_center.items.len(), 1);
     for index in 0..7 {
