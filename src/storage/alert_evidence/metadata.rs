@@ -10,7 +10,7 @@ use crate::net::packet::Packet;
 
 use super::{
     AlertLogs, FrameStatus, PacketArchive, evidence_frame_set_sha256, flow_timing, frame_status, latest_alert_in_logs,
-    scoped_frames,
+    recorded_trigger_flow_sha256, scoped_frames,
 };
 
 #[path = "syn_fanout.rs"]
@@ -221,6 +221,7 @@ pub struct AlertFlowSummary {
     max_vlan_tags: usize,
     trigger_frame: Option<TriggerFrame>,
     trigger_tuple_status: TriggerTupleStatus,
+    recorded_trigger_flow_sha256: Option<String>,
     directional_flows: Vec<DirectionalFlow>,
     tcp_syn_ack_matches: Vec<SynAckMatch>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -292,6 +293,7 @@ pub fn alert_flow_summary(
         truncated_frames: 0, length_unknown_frames: 0, retained_frames_without_flow: 0,
         max_vlan_tags: MAX_EVIDENCE_VLAN_TAGS,
         trigger_frame: None,
+        recorded_trigger_flow_sha256: metadata.recorded_trigger_flow.map(recorded_trigger_flow_sha256),
         trigger_tuple_status: if metadata.recorded_trigger_flow.is_some() {
             TriggerTupleStatus::TriggerHeaderUnavailable
         } else {

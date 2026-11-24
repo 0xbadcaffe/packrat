@@ -14,6 +14,7 @@ set -euo pipefail
 session=session-a capture=00000000000000000000000000000001
 base='{"rule_id":"scan.horizontal","revision":7,"confidence":"heuristic","severity":"HIGH",
        "disposition":"New","last_seen":42,"evidence_frame_count":2,"trigger_frame_number":4,
+       "recorded_trigger_flow_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
        "evidence_frame_set_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}'
 if [[ ${TEST_MODE:-normal} == by_rule || ${TEST_MODE:-normal} == wrong_rule ]]; then
     base=$(jq -c '. + {rule_id:"ipv6.ra_router_link_change",severity:"MEDIUM"}' <<< "$base")
@@ -21,6 +22,8 @@ elif [[ ${TEST_MODE:-normal} == info ]]; then
     base=$(jq -c '. + {rule_id:"vlan.vid_one_observed",severity:"INFO"}' <<< "$base")
 elif [[ ${TEST_MODE:-normal} == legacy_trigger ]]; then
     base=$(jq -c 'del(.trigger_frame_number)' <<< "$base")
+elif [[ ${TEST_MODE:-normal} == legacy_tuple ]]; then
+    base=$(jq -c 'del(.recorded_trigger_flow_sha256)' <<< "$base")
 fi
 if [[ $1 == --list-saved ]]; then
     [[ ! -v PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE ]]
@@ -74,6 +77,7 @@ case $4 in
 esac
 if [[ ${TEST_MODE:-normal} == invalid_counts && $4 == 1 ]]; then counts='{"complete":1}'; fi
 if [[ ${TEST_MODE:-normal} == trigger_drift && $4 == 1 ]]; then base=$(jq -c '.trigger_frame_number=5' <<< "$base"); fi
+if [[ ${TEST_MODE:-normal} == tuple_drift && $4 == 1 ]]; then base=$(jq -c '.recorded_trigger_flow_sha256=("b"*64)' <<< "$base"); fi
 case $4 in
     1|3) base=$(jq -c '.reader_rule_revision=8' <<< "$base") ;;
     2) base=$(jq -c '.reader_rule_revision=7' <<< "$base") ;;
@@ -108,6 +112,7 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
      evidence_frame_set_sha256:("0"*64),referenced_frames:2,missing_frames:0,unreadable_frames:0,
      truncated_frames:0,length_unknown_frames:0,
      retained_frames_without_flow:0,trigger_tuple_status:"matches_wire",
+     recorded_trigger_flow_sha256:("a"*64),
      trigger_frame:{frame_number:4,status:"complete",transport_header_observed:true},
      directional_flows:[{evidence_frames:2,endpoint:"private endpoint",cited_timing:{
         timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,tied_timestamps:0,
@@ -129,6 +134,8 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "trigger_status" then .trigger_frame.transport_header_observed=false
       elif $mode == "trigger_private" then .trigger_frame.status="private payload"
       elif $mode == "trigger_drift" then .trigger_frame.frame_number=5
+      elif $mode == "tuple_drift" then .recorded_trigger_flow_sha256=("b"*64)
+      elif $mode == "legacy_tuple" then del(.recorded_trigger_flow_sha256)
       elif $mode == "legacy_timing" then del(.directional_flows[0].cited_timing)
       elif $mode == "invalid_timing" then .directional_flows[0].cited_timing.backwards_timestamps=1
       elif $mode == "malformed_timing" then .directional_flows[0].cited_timing="private time"
@@ -213,6 +220,16 @@ FLOW_MODE=trigger_drift run_review --flow-context | jq -e '
 TEST_MODE=legacy_trigger FLOW_MODE=connection_pair run_review --flow-context | jq -e '
     .findings[0].flow_context | .trigger_connection_status=="snapshot_unverified"
     and (has("cited_trigger_connection") | not)' >/dev/null
+TEST_MODE=tuple_drift run_review --flow-context | jq -e '
+    .findings[0] | .packet_evidence_status=="changed_during_review" and .flow_context_status=="not_checked"
+    and (has("recorded_trigger_flow_sha256") | not)' >/dev/null
+FLOW_MODE=tuple_drift run_review --flow-context | jq -e '
+    .findings[0] | .packet_evidence_status=="complete" and .flow_context_status=="changed_during_review"
+    and (has("flow_context") | not)' >/dev/null
+TEST_MODE=legacy_tuple FLOW_MODE=connection_pair run_review --flow-context | jq -e '
+    .findings[0].flow_context | .trigger_tuple_status=="snapshot_unverified" and .trigger_connection_status=="reported"' >/dev/null
+FLOW_MODE=legacy_tuple run_review --flow-context | jq -e '
+    .findings[0] | .flow_context_status=="checked" and .flow_context.trigger_tuple_status=="snapshot_unverified"' >/dev/null
 for mode in connection_pair connection_other connection_mismatch; do
     FLOW_MODE=$mode run_review --flow-context | jq -e --arg mode "$mode" '
         .findings[0].flow_context | .trigger_connection_status=="reported"

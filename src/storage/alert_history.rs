@@ -7,7 +7,7 @@ use std::{collections::HashSet, fs::File, io::{Read, Seek, SeekFrom}, ops::Range
 use crate::analysis::alert_center::{AlertDisposition, AlertFlow, CREDENTIAL_ALERT_DETAIL, MAX_ALERT_PACKET_REFS};
 use crate::analysis::alert_provenance::{EvidenceConfidence, registered_rule_revision, rule_id_for};
 use super::alert_jsonl::{ExistingAlertRecord, MAX_ALERT_LINE};
-use super::alert_evidence::evidence_frame_set_sha256;
+use super::alert_evidence::{evidence_frame_set_sha256, recorded_trigger_flow_sha256};
 use super::packet_archive::valid_capture_id;
 
 pub const MAX_HISTORY_LIMIT: usize = 512;
@@ -54,6 +54,7 @@ pub struct AlertHistoryEntry {
     pub first_review_delay_ms: Option<u64>,
     pub hit_count: u64,
     pub trigger_frame_number: Option<u64>,
+    pub recorded_trigger_flow_sha256: Option<String>,
     pub evidence_frame_count: usize,
     pub evidence_frame_set_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -269,6 +270,7 @@ fn filtered_alerts_report(
             first_review_delay_ms,
             hit_count: alert.hit_count,
             trigger_frame_number: (alert.packet_no != 0).then_some(alert.packet_no),
+            recorded_trigger_flow_sha256: alert.flow.map(recorded_trigger_flow_sha256),
             evidence_frame_count,
             evidence_frame_set_sha256: evidence_frame_set_sha256(&evidence_frames),
             flow: alert.flow,

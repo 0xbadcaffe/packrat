@@ -1,7 +1,55 @@
 use std::{io::Write, process::Command};
 
-use packrat_tui::analysis::alert_center::{AlertCenter, AlertDisposition};
+use packrat_tui::analysis::alert_center::{AlertCenter, AlertDisposition, AlertFlow, AlertTransport};
+use packrat_tui::storage::packet_archive::PacketArchive;
 use serde_json::{Value, json};
+
+#[test]
+fn saved_trigger_flow_change_is_visible_without_changing_the_frame_set() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = directory.path().join("alerts.jsonl");
+    let archive = directory.path().join("archive");
+    drop(PacketArchive::open(&archive).unwrap());
+    let tool = env!("CARGO_BIN_EXE_packrat-archive");
+    let mut center = AlertCenter::default();
+    center.record(4, "IDS", "HIGH", "Retained finding", "fixture");
+    let mut alert = center.items[0].clone();
+    alert.capture_id = Some("capture-a".into());
+    let snapshot = |flow| {
+        let mut alert = alert.clone();
+        alert.flow = flow;
+        std::fs::write(&log, json!({
+            "schema_version":1, "record_type":"alert", "session_id":"session-a", "alert":alert
+        }).to_string()).unwrap();
+        let history = Command::new(tool).arg("--alerts").arg(&log).output().unwrap();
+        let summary = Command::new(tool).arg(&archive).arg("--alert-flow-summary").arg(&log)
+            .args(["session-a", "1", "--capture-id", "capture-a"]).output().unwrap();
+        assert!(history.status.success() && summary.status.success(), "{history:?} {summary:?}");
+        let history: Value = serde_json::from_slice(&history.stdout).unwrap();
+        let summary: Value = serde_json::from_slice(&summary.stdout).unwrap();
+        assert_eq!(history[0]["recorded_trigger_flow_sha256"], summary["recorded_trigger_flow_sha256"]);
+        assert_eq!(history[0]["evidence_frame_set_sha256"], summary["evidence_frame_set_sha256"]);
+        (summary["evidence_frame_set_sha256"].clone(), summary["recorded_trigger_flow_sha256"].clone())
+    };
+    let original = AlertFlow {
+        transport: AlertTransport::Tcp,
+        source: "192.0.2.10:40000".parse().unwrap(),
+        destination: "[2001:db8::5]:443".parse().unwrap(),
+    };
+    let (frames, tuple) = snapshot(Some(original));
+    assert_eq!(tuple.as_str().unwrap().len(), 64);
+    for changed in [
+        AlertFlow { transport: AlertTransport::Udp, ..original },
+        AlertFlow { source: "192.0.2.10:40001".parse().unwrap(), ..original },
+        AlertFlow { destination: "[2001:db8::6]:443".parse().unwrap(), ..original },
+        AlertFlow { source: original.destination, destination: original.source, ..original },
+    ] {
+        let (other_frames, other_tuple) = snapshot(Some(changed));
+        assert_eq!(frames, other_frames);
+        assert_ne!(tuple, other_tuple);
+    }
+    assert_eq!(snapshot(None), (frames, Value::Null));
+}
 
 #[test]
 fn exact_alert_lookup_reaches_rotated_history_and_rejects_scope_collisions() {

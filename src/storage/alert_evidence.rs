@@ -7,7 +7,7 @@ use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
 
-use crate::analysis::alert_center::{AlertItem, MAX_ALERT_PACKET_REFS};
+use crate::analysis::alert_center::{AlertFlow, AlertItem, AlertTransport, MAX_ALERT_PACKET_REFS};
 use crate::export::pcapng::PcapNgWriter;
 use crate::model::project::{ArchivedFrameOutcome, ProjectState};
 use crate::net::packet::Packet;
@@ -315,6 +315,33 @@ pub(super) fn evidence_frame_set_sha256(sorted_unique_frames: &[u64]) -> String 
     let mut digest = Sha256::new();
     for frame in sorted_unique_frames {
         digest.update(frame.to_be_bytes());
+    }
+    format!("{:x}", digest.finalize())
+}
+
+pub(super) fn recorded_trigger_flow_sha256(flow: AlertFlow) -> String {
+    use std::net::SocketAddr;
+
+    let mut digest = Sha256::new();
+    digest.update(b"packrat-recorded-trigger-flow-v1");
+    digest.update([match flow.transport {
+        AlertTransport::Tcp => 6,
+        AlertTransport::Udp => 17,
+    }]);
+    for address in [flow.source, flow.destination] {
+        match address {
+            SocketAddr::V4(v4) => {
+                digest.update([4]);
+                digest.update(v4.ip().octets());
+            }
+            SocketAddr::V6(v6) => {
+                digest.update([6]);
+                digest.update(v6.ip().octets());
+                digest.update(v6.flowinfo().to_be_bytes());
+                digest.update(v6.scope_id().to_be_bytes());
+            }
+        }
+        digest.update(address.port().to_be_bytes());
     }
     format!("{:x}", digest.finalize())
 }

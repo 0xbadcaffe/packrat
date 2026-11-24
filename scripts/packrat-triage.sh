@@ -242,7 +242,8 @@ report_saved_index() {
             review_shortlist_truncated:($review | length > $offset + 5),
             next_review_offset:(if ($review | length) > $offset + 5 then $offset + 5 else null end),
             review_shortlist:($review[$offset:$offset + 5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,revision,confidence,evidence_frame_count,evidence_frame_set_sha256,last_seen}
-                + (if has("trigger_frame_number") then {trigger_frame_number} else {} end))),
+                + (if has("trigger_frame_number") then {trigger_frame_number} else {} end)
+                + (if has("recorded_trigger_flow_sha256") then {recorded_trigger_flow_sha256} else {} end))),
             alert_log_integrity:$integrity, review_latency:((.review_latency | review_latency) // null),
             captures:($scoped | group_by([.session_id, .capture_id]) | map(
               map(select(priority)) as $priority
