@@ -108,6 +108,11 @@ live current 14 '[]' "$medium" | jq '.alert_log_integrity.stopped_at_limit=true 
 bash "$watch" --once "$scratch/bounded-state.json" -- cat "$scratch/bounded-report.json" >/dev/null
 bash "$watch" --check "$scratch/bounded-state.json" |
     jq -e '.status=="current" and .alert_log_scan_complete==false and .alert_sample_gap==true' >/dev/null
+legacy='[{"alert_id":1,"severity":"WARN","archive_rule":true},{"alert_id":2,"severity":"CRIT"},{"alert_id":3,"severity":"INFO","archive_rule":true}]'
+live current 15 "$legacy" "$legacy" >"$scratch/severity-report.json"
+bash "$watch" --once "$scratch/severity-state.json" -- cat "$scratch/severity-report.json" >"$scratch/severity-output"
+jq -e '[.recent_alerts[].severity]==["MEDIUM","CRITICAL","INFO"]
+    and [.review_queue[].severity]==["MEDIUM","CRITICAL"]' "$scratch/severity-output" >/dev/null
 for marker in unavailable not_recorded not_checked not_configured 'private malformed value'; do
     jq --arg marker "$marker" '.socket_context_status=$marker' "$report" >"$scratch/socket-report.json"
     bash "$watch" --once "$failed_state" -- cat "$scratch/socket-report.json" >/dev/null

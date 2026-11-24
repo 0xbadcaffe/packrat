@@ -22,7 +22,7 @@ mock_archive() {
             [[ $2 == "$PACKRAT_TRIAGE_PROJECT" && $3 == "$PACKRAT_TEST_LOG" &&
                $4 == 1700000000-432 && $5 == 00000000000000000000000000000001 && $6 == 42 ]] || return 2
         else
-            if [[ ${PACKRAT_TEST_AUTO_QUEUE:-} == yes || ${PACKRAT_TEST_AUTO_QUEUE:-} == many ]]; then id=$5; fi
+            case ${PACKRAT_TEST_AUTO_QUEUE:-} in yes|many|vlan) id=$5 ;; esac
             [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 $id --capture-id 00000000000000000000000000000001${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
         fi
         [[ $id != "${PACKRAT_TEST_EVIDENCE_FAIL_ID:-}" ]] || return 2
@@ -106,6 +106,11 @@ mock_archive() {
                   ($valid + {alert_id:41,severity:"CRITICAL",disposition:"New"})
               ] elif $queue == "socket" then [$valid + {severity:"HIGH",disposition:"New"}]
                 elif $queue == "many" then [range(60;53;-1) | $valid + {alert_id:.,severity:"HIGH",disposition:"New"}]
+                elif $queue == "vlan" then [
+                  ($valid + {alert_id:43,severity:"INFO",disposition:"New",rule_id:"vlan.vid_one_observed"}),
+                  ($valid + {severity:"WARN",disposition:"New",rule_id:"vlan.mac_crossing"}),
+                  ($valid + {alert_id:41,severity:"CRIT",disposition:"Reviewing",rule_id:"test.critical"})
+                ]
                 elif $queue == "configured" then [
                   ($valid + {alert_id:43,severity:"MEDIUM",disposition:"New",rule_id:"traffic.periodic_fixed_size"}),
                   ($valid + {severity:"MEDIUM",disposition:"Reviewing",rule_id:"tcp.payload_after_observed_reset"})
@@ -273,6 +278,14 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
         and .open_archive_rule_alerts_in_sample==1 and .review_queue_truncated==false
         and (.review_queue | map({alert_id,severity,archive_rule,packet_evidence_status}))==
             [{alert_id:42,severity:"MEDIUM",archive_rule:true,packet_evidence_status:"partial"}]' >/dev/null
+    jq -c '.archive_evidence_rules=["vlan.mac_crossing","vlan.vid_one_observed"]' "$health" >"$scratch/vlan-health.json"
+    mv -- "$scratch/vlan-health.json" "$health"
+    PACKRAT_TEST_AUTO_QUEUE=vlan run_auto | jq -e '
+        [.alerts[].severity]==["INFO","MEDIUM","CRITICAL"]
+        and .open_priority_alerts_in_sample==1 and .open_archive_rule_alerts_in_sample==1
+        and [.review_queue[]|[.alert_id,.severity,.archive_rule]]==[[41,"CRITICAL",false],[42,"MEDIUM",true]]
+        and [.evidence_checks[]|[.alert_id,.status]]==[[41,"checked"],[42,"checked"]]
+    ' >/dev/null
     result=$(PACKRAT_TEST_AUTO_QUEUE=backlog run_auto)
     jq -e '.has_more_alerts and .priority_sample_limit == 512 and .priority_sample_at_limit == false
         and (.alerts | length) == 50 and all(.alerts[]; .alert_id != 42)

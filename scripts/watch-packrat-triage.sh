@@ -268,7 +268,8 @@ sanitize() {
     jq -cse "$snapshot_validation"'
         def token: scope_id;
         def flag: if type == "boolean" then . else null end;
-        def severity: if . == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" then . else null end;
+        def severity: if . == "WARN" then "MEDIUM" elif . == "CRIT" then "CRITICAL"
+            elif IN("CRITICAL","HIGH","MEDIUM","LOW","INFO") then . else null end;
         def disposition: if IN("New","Reviewing","Confirmed","Benign","Contained","Closed") then . else null end;
         def evidence: if (.evidence_frame_set_sha256 | type == "string" and test("\\A[0-9a-f]{64}\\z"))
             and (.evidence_frame_count | counter | . != null and . <= 131)

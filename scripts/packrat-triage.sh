@@ -395,7 +395,9 @@ if (( read_status != 0 )) || ! history=$(jq -cse --argjson limit "$query_limit" 
     report alert_log_unavailable
     exit 2
 fi
-alerts=$(jq -c '.alerts' <<< "$history")
+# Preserve stored labels in the log; use one vocabulary for triage and evidence selection.
+alerts=$(jq -c '.alerts | map(.severity |=
+    if . == "WARN" then "MEDIUM" elif . == "CRIT" then "CRITICAL" else . end)' <<< "$history")
 integrity=$(jq -c '.integrity | {invalid_records,oversized_records,stopped_at_limit} + if .stopped_at_scan_budget == true then {stopped_at_scan_budget:true} else {} end' <<< "$history")
 if [[ -n $capture ]] && ! jq -e --arg session "$session" --arg capture "$capture" --arg target "$target_alert" '
     all(.[]; type == "object" and .session_id == $session and .capture_id == $capture
