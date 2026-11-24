@@ -81,6 +81,8 @@ impl FlowKey {
 #[derive(Default, Serialize)]
 struct FlowCounts {
     evidence_frames: usize,
+    cited_declared_payload_bytes: usize,
+    cited_captured_payload_bytes: usize,
     frames: Vec<FlowFrameRef>,
     contains_trigger_frame: bool,
     initial_syn_frames: usize,
@@ -216,7 +218,7 @@ pub fn alert_flow_summary(
         directional_flows: Vec::new(),
         tcp_syn_ack_matches: Vec::new(),
         unassigned_frames: Vec::new(),
-        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. TCP sequence matches identify candidate handshake frames, not endpoint acceptance or a specific retransmission. Later ACK candidates do not cross a cited reset or another SYN. Truncated frames may contribute a complete transport header, not missing payload. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
+        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP sequence matches identify candidate handshake frames, not endpoint acceptance or a specific retransmission. Later ACK candidates do not cross a cited reset or another SYN. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
     for frame in metadata.frames {
@@ -240,7 +242,7 @@ pub fn alert_flow_summary(
             result.unassigned_frames.push(reference);
             continue;
         };
-        let Some(flow) = packet.flow else {
+        let Some((flow, header)) = packet.flow.zip(packet.transport) else {
             result.retained_frames_without_flow += 1;
             result.unassigned_frames.push(reference);
             continue;
@@ -262,9 +264,9 @@ pub fn alert_flow_summary(
         counts.frames.push(reference);
         counts.evidence_frames = counts.frames.len();
         counts.contains_trigger_frame |= is_trigger;
-        if let Some(header) = packet.transport
-            && let (Some(flags), Some((sequence, acknowledgment))) = (header.tcp_flags, header.tcp_sequence_pair)
-        {
+        counts.cited_declared_payload_bytes += header.declared_payload_length;
+        counts.cited_captured_payload_bytes += header.captured_payload_length;
+        if let (Some(flags), Some((sequence, acknowledgment))) = (header.tcp_flags, header.tcp_sequence_pair) {
             match flags & 0x17 {
                 0x02 => counts.initial_syns.push((frame.frame_number, sequence)),
                 0x12 => counts.syn_acks.push((frame.frame_number, sequence, acknowledgment)),

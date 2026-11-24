@@ -23,7 +23,7 @@ fn archive_links_syn_acks_only_to_preceding_reverse_syn_sequences_on_the_same_pa
         json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
     ).unwrap();
     let packet = |no, reverse, flags, sequence, ack: u32, vlan, interface_id| {
-        let mut packet = packets::tcp(no, sequence, flags, b"");
+        let mut packet = packets::tcp(no, sequence, flags, if matches!(no, 8 | 9) { &[1; 3] } else { &[] });
         packet.bytes[42..46].copy_from_slice(&ack.to_be_bytes());
         if reverse {
             for index in 0..4 { packet.bytes.swap(26 + index, 30 + index); }
@@ -71,6 +71,9 @@ fn archive_links_syn_acks_only_to_preceding_reverse_syn_sequences_on_the_same_pa
          "later_ack_candidates":0,"earliest_candidate_ack_frame":null}
     ]));
     assert!(report["limitation"].as_str().unwrap().contains("not endpoint acceptance"));
+    let outbound = report["directional_flows"].as_array().unwrap().iter().find(|flow| flow["source"] == "10.0.0.1:40000" && flow["vlan_id"] == 10 && flow["interface_id"] == 3).unwrap();
+    assert_eq!(outbound["cited_declared_payload_bytes"], 6);
+    assert_eq!(outbound["cited_captured_payload_bytes"], 6);
 }
 
 #[test]
@@ -101,7 +104,7 @@ fn truncated_payloads_corroborate_complete_headers_without_claiming_complete_evi
         });
         packet
     };
-    let tcp = truncate(packets::tcp(1, 100, 0x02, &[0; 32]), 54);
+    let tcp = truncate(packets::tcp(1, 100, 0x02, &[0; 32]), 56);
     let mut wrong_wire_length = tcp.clone();
     wrong_wire_length.no = 2;
     wrong_wire_length.capture.as_mut().unwrap().wire_length -= 1;
@@ -147,6 +150,9 @@ fn truncated_payloads_corroborate_complete_headers_without_claiming_complete_evi
         .map(|frame| frame["frame_number"].as_u64().unwrap()).collect::<Vec<_>>(), [2, 4, 5, 6]);
     let flows = report["directional_flows"].as_array().unwrap();
     assert_eq!(flows.len(), 2);
+    let tcp = flows.iter().find(|flow| flow["protocol"] == "tcp").unwrap();
+    assert_eq!(tcp["cited_declared_payload_bytes"], 32);
+    assert_eq!(tcp["cited_captured_payload_bytes"], 2);
     assert!(flows.iter().any(|flow| flow["protocol"] == "udp" && flow["frames"] ==
         json!([{"frame_number":3,"status":"truncated"}])));
     let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
