@@ -60,10 +60,10 @@ fn authentication_reply_bursts_require_tcp_data_with_ack(
 }
 
 #[rstest::rstest]
-#[case(80, "http.unauthorized_burst", 17)]
-#[case(21, "ftp.not_logged_in_burst", 7)]
-#[case(445, "smb2.logon_failure_burst", 7)]
-#[case(22, "ssh.connection_start_burst", 6)]
+#[case(80, "http.unauthorized_burst", 18)]
+#[case(21, "ftp.not_logged_in_burst", 8)]
+#[case(445, "smb2.logon_failure_burst", 8)]
+#[case(22, "ssh.connection_start_burst", 7)]
 fn authentication_bursts_are_separate_on_same_id_different_tag_paths(
     #[case] port: u16,
     #[case] rule: &str,

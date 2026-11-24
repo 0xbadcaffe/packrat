@@ -20,6 +20,9 @@ impl AuthRetryHistory {
             let oldest = self.0.iter().enumerate()
                 .min_by(|(_, (a, _)), (_, (b, _))| a.total_cmp(b))
                 .map_or(0, |(index, _)| index);
+            if now < self.0[oldest].0 {
+                return false;
+            }
             self.0.remove(oldest);
         }
         self.0.push((now, token));
@@ -113,14 +116,16 @@ impl SecurityEngine {
             return;
         }
         if self.bf_windows.len() >= MAX_ENTRIES && !self.bf_windows.contains_key(&key) {
-            if let Some(oldest) = self
+            let Some((oldest, window)) = self
                 .bf_windows
                 .iter()
-                .min_by(|(_, a), (_, b)| a.last_seen.total_cmp(&b.last_seen))
-                .map(|(key, _)| key.clone())
-            {
-                self.bf_windows.remove(&oldest);
+                .min_by(|(key_a, a), (key_b, b)| a.last_seen.total_cmp(&b.last_seen).then(key_a.cmp(key_b)))
+            else { return; };
+            if now < window.last_seen {
+                return;
             }
+            let oldest = oldest.clone();
+            self.bf_windows.remove(&oldest);
         }
         let window = self.bf_windows.entry(key.clone()).or_insert(BfWindow {
             observations: Vec::new(),

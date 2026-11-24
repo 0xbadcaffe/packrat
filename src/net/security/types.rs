@@ -396,7 +396,7 @@ pub struct BruteForceAlert {
 }
 
 /// Internal tracking key for brute force attempts
-#[derive(Hash, Eq, PartialEq, Clone)]
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone)]
 pub(super) struct BfKey {
     pub(super) src: String,
     pub(super) dst: String,

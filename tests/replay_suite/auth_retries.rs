@@ -5,6 +5,46 @@ mod smb_ntlm;
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn authentication_replay_preserves_recent_evidence_when_capacity_is_full() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "ftp.not_logged_in_burst";
+    let mut cases = Vec::new();
+    for (file, duplicate) in [("distinct.pcapng", false), ("duplicate.pcapng", true)] {
+        let mut writer = PcapNgWriter::create(&root.join(file)).unwrap();
+        for frame in 1..=1_005_u64 {
+            let (server, timestamp, sequence) = match frame {
+                1 => (1, 10.0, 100),
+                2..=1_000 => (frame, 11.0, 100),
+                1_001 => (frame, 9.0, 100),
+                1_005 if duplicate => (1, 12.0, 100),
+                _ => (1, 12.0, 200 + (frame as u32 - 1_002) * 100),
+            };
+            let mut packet = super::support::tcp(frame, sequence, 0x18, b"530 Not logged in\r\n", true);
+            packet.bytes[26..30].copy_from_slice(&[10, 2, (server / 256) as u8, server as u8]);
+            packet.bytes[34..36].copy_from_slice(&21_u16.to_be_bytes());
+            packet.timestamp = timestamp;
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+        let count = usize::from(!duplicate);
+        let mut case = json!({"name":file,"capture":file,"expect_snapshots":count,"expect_counts":{(rule):count}});
+        if !duplicate {
+            case["opening_frames"] = json!({(rule):[1_005]});
+            case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":1_005,
+                "frames":[1,1_002,1_003,1_004,1_005],
+                "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":8}}]);
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("auth-cache-pressure.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn ntlm_fanout_replay_distinguishes_rearmed_bursts_from_sustained_and_single_host_traffic() {
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();
@@ -84,9 +124,9 @@ fn delayed_auth_retries_do_not_open_a_new_burst() {
             "opening_frames":{(rule):[5,15]},
             "opening_evidence":[
                 {"rule_id":rule,"opening_frame":5,"frames":[1,2,3,4,5],
-                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":17}},
+                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":18}},
                 {"rule_id":rule,"opening_frame":15,"frames":[11,12,13,14,15],
-                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":17}}
+                 "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":18}}
             ]
         }]
     });
@@ -120,7 +160,7 @@ fn complete_http_auth_replies_do_not_merge_across_wire_tag_paths() {
             case["opening_frames"] = json!({(rule):[5]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule,"opening_frame":5,"frames":[1,2,3,4,5],
-                "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":17},
+                "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":18},
             }]);
         }
         cases.push(case);
@@ -169,7 +209,7 @@ fn auth_replay_distinguishes_status_lines_from_body_text_at_segment_boundaries()
             json!({"name":"actual 401 responses","capture":file,
                 "expect_snapshots":1,"expect_counts":{(rule):1},"opening_frames":{(rule):[12]},
                 "opening_evidence":[{"rule_id":rule,"opening_frame":12,"frames":(3..=12).collect::<Vec<_>>(),
-                    "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":17}}]})
+                    "classification":{"severity":"MEDIUM","confidence":"direct_observation","revision":18}}]})
         });
     }
     let manifest = root.join("auth-status-boundaries.json");
