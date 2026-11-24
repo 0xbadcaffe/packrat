@@ -120,7 +120,7 @@ impl SecurityEngine {
             && inspection.complete && !inspection.fragmented && inspection.extension_count <= 32
             && let Some(message) = ndp_message_name(inspection.transport)
         {
-            let scope = service_scope(pkt);
+            let scope = scan_scope(pkt);
             let source = Ipv6Addr::from(inspection.source);
             let destination = Ipv6Addr::from(inspection.destination);
             self.push_ids_finding(IdsFinding {

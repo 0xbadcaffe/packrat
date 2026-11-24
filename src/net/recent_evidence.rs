@@ -2,11 +2,21 @@ use super::packet::Packet;
 use std::collections::{HashMap, VecDeque};
 
 const MAX_PACKET_COST: usize = 2048;
-type CandidateKey = (Option<(u32, u32)>, Option<u16>, Option<u16>, u64);
+type CandidateKey = (Option<(u32, u32)>, Option<u16>, Option<u16>, [u16; 2], u64);
 
 fn key(packet: &Packet, frame: u64) -> CandidateKey {
-    (packet.capture.as_ref().map(|c| (c.section_id, c.interface_id)), packet.outer_vlan_id, packet.vlan_id, frame)
+    (
+        packet.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
+        packet.outer_vlan_id,
+        packet.vlan_id,
+        super::parser::ethernet_vlan_tag_types(&packet.bytes),
+        frame,
+    )
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/recent_evidence_tests.rs"]
+mod tests;
 
 #[derive(Default)]
 pub(crate) struct RecentEvidence<const CAPACITY: usize, const MAX_AGE_SECS: u64> {

@@ -132,15 +132,20 @@ fn malformed_tcp_findings_do_not_share_review_state_across_paths_ports_or_reason
         make(2, 10, 0, 443, 0x40), make(3, 20, 0, 443, 0x40),
         make(4, 10, 1, 443, 0x40), make(5, 10, 0, 445, 0x40),
         make(6, 10, 0, 443, 0x60),
+        {
+            let mut provider = make(7, 10, 0, 443, 0x40);
+            provider.bytes[12..14].copy_from_slice(&0x88a8_u16.to_be_bytes());
+            provider
+        },
     ] {
         core.analyze(&packet);
     }
     let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == "Malformed TCP header").collect();
-    assert_eq!(alerts.len(), 5);
+    assert_eq!(alerts.len(), 6);
     assert_eq!(alerts[0].hit_count, 2);
     assert_eq!(alerts[0].packet_refs, [1, 2]);
     assert_eq!(alerts[0].disposition, AlertDisposition::Benign);
-    for (alert, frame) in alerts[1..].iter().zip(3..=6) {
+    for (alert, frame) in alerts[1..].iter().zip(3..=7) {
         assert_eq!(alert.packet_refs, [frame]);
         assert_eq!(alert.disposition, AlertDisposition::New);
     }

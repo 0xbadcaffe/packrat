@@ -157,7 +157,7 @@ impl SecurityEngine {
                         detail: format!("{reason} from {endpoints}"),
                     },
                     related_packets: Vec::new(),
-                    correlation_key: Some(format!("{:?}:{endpoints}:{reason}", service_scope(pkt))),
+                    correlation_key: Some(format!("{:?}:{endpoints}:{reason}", scan_scope(pkt))),
                 });
                 return UnknownOrNew;
             }
