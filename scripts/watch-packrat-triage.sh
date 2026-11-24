@@ -9,6 +9,14 @@ snapshot_validation='
     def socket_status: if IN("not_configured","not_checked","not_recorded","available","unavailable") then . else null end;
     def flow_cache: if type == "object" then {retained_summaries:(.retained_summaries | counter),summary_evictions:(.summary_evictions | counter)}
         | if any(.[]; . == null) then null else . end else null end;
+    def archive_usage:
+        if type != "object" then null else {
+            frames:(.frames | counter), payload_bytes:(.payload_bytes | counter),
+            max_frames:(.max_frames | counter), max_payload_bytes:(.max_payload_bytes | counter)
+        } | if .frames == null or .payload_bytes == null or
+            .max_frames <= 0 or .max_payload_bytes <= 0 then null else . end end;
+    def near_archive_limit:
+        if . == null then null else (.frames / .max_frames >= 0.9 or .payload_bytes / .max_payload_bytes >= 0.9) end;
     def evidence_check_failures:
         if type == "array" and length <= 5 and
             all(.[]; type == "object" and (.status | scope_id) != null)
@@ -74,6 +82,7 @@ usage() {
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Check reports validated alert sample counts separately from capture health. A highest observed ID is not a total.' \
+        'Check includes current disk space and archive capacity without exposing storage paths.' \
         'socket_context_status describes the optional snapshot store, not capture health or per-alert attribution.' \
         'healthy_capture_seconds restarts after a packet counter regression; packet_counter_gap marks the affected capture.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
@@ -174,6 +183,17 @@ check_snapshot() {
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
            triage_status:.status, age_seconds:$age, max_age_seconds, packets:(.packets | counter), flow_cache:(if $age >= -5 and $age <= .max_age_seconds then .flow_cache | flow_cache else null end),
+           storage:(if $age >= -5 and $age <= .max_age_seconds and (.status | IN("current","degraded")) then
+               (.archive | if IN("enabled","paused","disabled") then . else null end) as $archive
+               | (if $archive | IN("enabled","paused") then .archive_usage | archive_usage else null end) as $usage
+               | {disk_free_mib:(.disk_free_mib | counter),
+                  disk_space_low:(if (.disk_free_mib | counter) != null and (.issues | type) == "array"
+                     then (.issues | index("disk_space_low") != null) else null end),
+                  archive:$archive, archive_usage:$usage, archive_near_limit:($usage | near_archive_limit),
+                  archive_pause_reason:(if $archive == "paused" and
+                      (.archive_pause_reason | IN("frame_limit","byte_limit","disk_reserve","queue_unavailable","write_failed"))
+                      then .archive_pause_reason else null end)}
+               else null end),
            evidence_check_failures:(if $age >= -5 and $age <= .max_age_seconds
                then .evidence_checks | evidence_check_failures else null end),
            socket_context_status:(if $age >= -5 and $age <= .max_age_seconds
@@ -326,12 +346,6 @@ sanitize() {
         def archive_rules:
             if type == "array" and length <= 16 and all(.[]; type == "string" and
                 test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z")) then unique else null end;
-        def archive_usage:
-            if type != "object" then null else {
-                frames:(.frames | counter), payload_bytes:(.payload_bytes | counter),
-                max_frames:(.max_frames | counter), max_payload_bytes:(.max_payload_bytes | counter)
-            } | if .frames == null or .payload_bytes == null or
-                .max_frames <= 0 or .max_payload_bytes <= 0 then null else . end end;
         select(length == 1) | .[0] | objects
         | select(.record_type == "capture_triage" and (.status | token) != null)
         | select(.status != "current" or (.health.issues == [] and
@@ -381,8 +395,7 @@ sanitize() {
                    next_evidence_step:(.next_evidence_step | token)}
                 | select(.alert_id > 0 and (.severity == "HIGH" or .severity == "CRITICAL" or
                     (.archive_rule == true and (.severity == "MEDIUM" or .severity == "LOW"))))) else null end)
-          } + $sample | .archive_near_limit = (.archive_usage | if . == null then null else
-                (.frames / .max_frames >= 0.9 or .payload_bytes / .max_payload_bytes >= 0.9) end)
+          } + $sample | .archive_near_limit = (.archive_usage | near_archive_limit)
             | select(valid_current) | mark_backlog_loss'
 }
 read_status() {

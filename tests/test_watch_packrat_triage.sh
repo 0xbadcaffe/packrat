@@ -54,7 +54,22 @@ bash "$watch" --check "$state" | jq -e '.status=="current" and .socket_context_s
     and .alert_save_backlog_dropped==0 and .capture_queue_full_packets==8 and .alert_log_scan_complete==true
     and .alert_log_advanced_during_review==false
     and .alert_counts=={status:"sampled",recent_sample_count:1,review_queue_sample_count:1,highest_observed_alert_id:9}
+    and .storage=={disk_free_mib:2048,disk_space_low:false,archive:"enabled",
+        archive_usage:{frames:1,max_frames:100,payload_bytes:1024,max_payload_bytes:65536},
+        archive_near_limit:false,archive_pause_reason:null}
     and (.healthy_capture_seconds | type=="number" and .>=0) and .flow_cache=={retained_summaries:8192,summary_evictions:4}' >/dev/null
+storage_state="$scratch/storage.json"
+jq '.status="degraded" | .archive="paused" | .archive_pause_reason="disk_reserve" |
+    .disk_free_mib=128 | .archive_usage.frames=90 | .archive_usage.path="private" |
+    .issues=["archive_paused","disk_space_low"]' "$state" >"$storage_state"
+{ bash "$watch" --check "$storage_state" || [[ $? == 1 ]]; } | jq -e '
+    .status=="triage_unhealthy" and .storage=={disk_free_mib:128,disk_space_low:true,archive:"paused",
+        archive_usage:{frames:90,max_frames:100,payload_bytes:1024,max_payload_bytes:65536},
+        archive_near_limit:true,archive_pause_reason:"disk_reserve"}' >/dev/null
+jq '.archive_usage.max_frames=0 | .disk_free_mib="private" | .archive_pause_reason="private"' "$storage_state" >"$scratch/bad-storage.json"
+{ bash "$watch" --check "$scratch/bad-storage.json" || [[ $? == 1 ]]; } | jq -e '
+    .storage=={disk_free_mib:null,disk_space_low:null,archive:"paused",
+        archive_usage:null,archive_near_limit:null,archive_pause_reason:null}' >/dev/null
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .journal_status=="not_checked" and .journal_pending_events==0
@@ -449,7 +464,7 @@ live current 73 '[]' "$medium" >"$report"
 bash "$watch" --once "$state" -- cat "$report" >/dev/null
 jq '.updated_at=(now - 360 | todateiso8601)' "$state" >"$state.next"
 mv -- "$state.next" "$state"
-{ bash "$watch" --check "$state" || [[ $? == 1 ]]; } | jq -e '.status=="snapshot_stale" and .healthy_capture_seconds==null' >/dev/null
+{ bash "$watch" --check "$state" || [[ $? == 1 ]]; } | jq -e '.status=="snapshot_stale" and .healthy_capture_seconds==null and .storage==null' >/dev/null
 live current 74 '[]' "$bulk" >"$report"
 PACKRAT_TRIAGE_WATCH_INTERVAL=1 bash "$watch" "$state" -- cat -- "$report" >"$scratch/stale-events" &
 watch_pid=$!
