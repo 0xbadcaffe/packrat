@@ -228,6 +228,7 @@ sudo() {
     case $2 in
         test|realpath) shift; command "$@"; return ;;
         mkdir) trace+=("reserve:${*: -1}"); [[ $scenario != evidence_reservation_lost ]]; return ;;
+        rmdir) trace+=("unreserve:${*: -1}"); return ;;
         stat) ;;
         *) return 1 ;;
     esac
@@ -402,6 +403,7 @@ stop_capture() {
     if [[ $primary_cutover == true && $1 == "$main_session" ]]; then
         primary_cutover=false
         [[ ${3-} == 42 ]] || return 2
+        if [[ $scenario == *shutdown_alert* ]]; then printf '%s\n' 'shutdown finding' >>"$data_dir/alerts.jsonl"; fi
     fi
     [[ $scenario != cannot_stop ]]
 }
@@ -418,11 +420,12 @@ alert_watcher_ready() {
     if [[ $scenario == last_moment_save_failure ]]; then save_failures=1; fi
     [[ $scenario != watcher_lost_before_cutover ]]
 }
-await_primary_watcher() { [[ $scenario != watcher_lost_after_cutover && ( $scenario != analyzer_watcher_fail || $main_starts != 1 ) ]]; }
+await_primary_watcher() { [[ $scenario != watcher_lost_after_cutover && $scenario != shutdown_alert_watcher_lost && ( $scenario != analyzer_watcher_fail || $main_starts != 1 ) ]]; }
 promote_companions() { if [[ $scenario == analyzer_* ]]; then trace+=("analyzer"); [[ $scenario == analyzer_success ]]; fi; }
 stage_alert_log_size() {
     case $scenario in
         staged_finding) printf '%s\n' 512 ;;
+        shutdown_staged_finding) if "$primary_cutover"; then printf '%s\n' 0; else printf '%s\n' 512; fi ;;
         staged_log_missing) return 1 ;;
         *) printf '%s\n' 0 ;;
     esac

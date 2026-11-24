@@ -6,6 +6,18 @@ run_scenario analyzer_failure 1 backup start:packrat-stage:/candidate stop:packr
 run_scenario analyzer_watcher_fail 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
     install:/candidate start:packrat:/usr/local/bin/packrat stop:packrat:/usr/local/bin/packrat \
     install:/backup/packrat start:packrat:/usr/local/bin/packrat allow-existing-drops retire-stage
+for shutdown_case in shutdown_alert shutdown_staged_finding; do
+    run_scenario "$shutdown_case" 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
+        stop:packrat:/usr/local/bin/packrat install:/backup/packrat start:packrat:/usr/local/bin/packrat \
+        allow-existing-drops retire-stage
+    grep -Fq 'during primary shutdown; candidate not installed' "$scratch/rollout-output"
+done
+run_scenario shutdown_alert_watcher_lost 1 backup start:packrat-stage:/candidate stop:packrat:/usr/local/bin/packrat \
+    stop:packrat:/usr/local/bin/packrat install:/backup/packrat start:packrat:/usr/local/bin/packrat allow-existing-drops
+run_scenario evidence_shutdown_alert 1 backup start:packrat-stage:/candidate evidence-profile \
+    "reserve:$data_dir/alert-evidence-archive" stop:packrat:/usr/local/bin/packrat \
+    "unreserve:$data_dir/alert-evidence-archive" stop:packrat:/usr/local/bin/packrat install:/backup/packrat \
+    start:packrat:/usr/local/bin/packrat original-profile allow-existing-drops retire-stage
 prepare_retention_case() {
     archive_path=/existing archive_flag=--archive-alert-evidence
     if [[ $scenario == retain_rule_health_fail ]]; then

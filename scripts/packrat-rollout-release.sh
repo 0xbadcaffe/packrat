@@ -206,6 +206,19 @@ create_rollout_backup() {
     fi
 }
 
+verify_stopped_alert_logs() {
+    local expected=$1 primary_now stage_size
+    if primary_now=$(primary_alert_log_stamp) && [[ $primary_now == "$expected" ]] &&
+       stage_size=$(stage_alert_log_size) && [[ $stage_size == 0 ]]; then
+        return 0
+    fi
+    error 'Alert log changed or became unavailable during primary shutdown; candidate not installed. Review both logs.'
+    if "$enable_alert_evidence"; then
+        sudo -n rmdir -- "$archive_path" || error 'Inspect the reserved archive before retrying'
+    fi
+    return 1
+}
+
 stage_companion_updates() {
     local tool proposed destination previous
     for tool in "${companion_tools[@]}"; do

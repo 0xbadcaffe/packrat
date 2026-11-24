@@ -391,7 +391,8 @@ rollout() {
         error "Could not stop the current capture; verified staging capture left running"
         return 1
     fi
-    if replace_installed "$stage_binary" && start_capture "$main_session" "$installed"; then
+    if verify_stopped_alert_logs "$alert_log_before" &&
+       replace_installed "$stage_binary" && start_capture "$main_session" "$installed"; then
         if ! await_primary_watcher 0 1; then
             if ! companion_update_selected; then
                 error "Replacement is live but alert monitoring could not be verified; staging capture left running"
@@ -410,7 +411,7 @@ rollout() {
             error "Companion installation failed; inspect rollback files under $backup_dir"
         fi
     fi
-    error "Replacement failed health checks; attempting rollback"
+    error "Rollout did not complete; restoring the previous capture"
     archive_path=$original_archive_path archive_flag=$original_archive_flag
     archive_limits=("${original_archive_limits[@]}") archive_rule_args=("${original_archive_rules[@]}")
     if stop_capture "$main_session" "$installed" &&
