@@ -232,6 +232,8 @@ impl AnalysisCore {
         // IOC matching
         let matched = self.ioc_engine.check_packet(pkt);
         let prior_hits = self.ioc_engine.hits.len().saturating_sub(matched);
+        let mut packet_flow = None;
+        let mut ioc_scope = None;
         for hit in self.ioc_engine.hits.iter().skip(prior_hits) {
             self.operator_graph.on_ioc_hit(
                 &hit.ioc.value,
@@ -241,8 +243,15 @@ impl AnalysisCore {
                 hit.ts,
                 &pkt.src,
             );
-            self.alert_center.record_correlated(
-                hit.pkt_no,
+            let flow = *packet_flow.get_or_insert_with(|| AlertFlow::from_packet(pkt));
+            let scope = ioc_scope.get_or_insert_with(service_alert_scope);
+            // Keep short-lived client ports from creating a separate review for every DNS lookup.
+            let correlation = format!(
+                "{scope:?}:{:?}:{:?}:{:?}>{:?}:{:?}",
+                hit.ioc.value, hit.context, pkt.src, pkt.dst, flow.map(|key| key.transport),
+            );
+            self.alert_center.record_with_context(
+                (hit.pkt_no, &[], flow),
                 pkt.timestamp,
                 "IOC",
                 "HIGH",
@@ -251,7 +260,7 @@ impl AnalysisCore {
                     "{} matched {} ({})",
                     hit.context, hit.ioc.value, hit.ioc.description
                 ),
-                &hit.ioc.value,
+                correlation,
             );
         }
 
@@ -280,7 +289,7 @@ impl AnalysisCore {
             };
             let (flow, conversation) = rule_context.get_or_insert_with(|| {
                 let scope = service_alert_scope();
-                let flow = AlertFlow::from_packet(pkt);
+                let flow = *packet_flow.get_or_insert_with(|| AlertFlow::from_packet(pkt));
                 let conversation = match flow {
                     Some(key) => format!("{scope:?}:{key:?}"),
                     None => format!("{scope:?}:{:?}:{:?}:{:?}>{:?}:{:?}",

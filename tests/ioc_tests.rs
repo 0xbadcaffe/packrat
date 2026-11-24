@@ -177,6 +177,38 @@ fn domain_indicator_alert_points_to_the_wire_question_frame() {
 }
 
 #[test]
+fn indicator_reviews_keep_distinct_clients_and_vlan_paths_separate() {
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    core.ioc_engine.load_ioc(make_ioc(IocKind::Domain, "indicator.test"));
+    for (no, client, tpid, tci) in [
+        (1, 10, 0x8100_u16, 20_u16),
+        (2, 10, 0x8100, 0xb014),
+        (3, 10, 0x88a8, 20),
+        (4, 11, 0x8100, 20),
+    ] {
+        let mut ethernet = dns_packet(no, &["cdn", "indicator", "test"], false, false).bytes;
+        ethernet[29] = client;
+        ethernet[34..36].copy_from_slice(&(40_000 + no as u16).to_be_bytes());
+        let mut tagged = ethernet[..12].to_vec();
+        tagged.extend(tpid.to_be_bytes());
+        tagged.extend(tci.to_be_bytes());
+        tagged.extend(&ethernet[12..]);
+        core.analyze(&packrat_tui::net::parser::parse_ethernet(&tagged, no, no as f64));
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "IOC").collect();
+    assert_eq!(alerts.len(), 3);
+    for (index, frames) in [&[1, 2][..], &[3][..], &[4][..]].into_iter().enumerate() {
+        let item = alerts[index];
+        assert_eq!(item.packet_refs, frames);
+        assert_eq!(item.title, "Domain match");
+        let flow = item.flow.unwrap();
+        assert_eq!(flow.destination.port(), 53);
+        assert_eq!(flow.source.port(), 40_000 + u16::try_from(*frames.last().unwrap()).unwrap());
+        assert_eq!(flow.source.ip().to_string(), if index == 2 { "192.0.2.11" } else { "192.0.2.10" });
+    }
+}
+
+#[test]
 fn full_indicator_history_does_not_drop_new_ip_or_domain_alerts() {
     let mut core = packrat_tui::engine::AnalysisCore::default();
     core.ioc_engine.load_ioc(make_ioc(IocKind::Ip, "203.0.113.7"));
