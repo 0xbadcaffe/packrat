@@ -161,6 +161,17 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "tuple_drift" then .recorded_trigger_flow_sha256=("b"*64)
       elif $mode == "legacy_tuple" then del(.recorded_trigger_flow_sha256)
       elif $mode == "legacy_timing" then del(.directional_flows[0].cited_timing)
+      elif ($mode | startswith("payload_")) then
+          .directional_flows[0] += {cited_declared_payload_bytes:150,cited_captured_payload_bytes:100}
+          | if $mode=="payload_bad_order" then .directional_flows[0].cited_captured_payload_bytes=151
+            elif $mode=="payload_missing_counter" then del(.directional_flows[0].cited_declared_payload_bytes)
+            elif $mode=="payload_overbound" then .directional_flows[0].cited_declared_payload_bytes=2097153
+            elif $mode=="payload_fractional" then .directional_flows[0].cited_captured_payload_bytes=1.5
+            elif $mode=="payload_mixed_directions" then
+                .directional_flows[1]=(.directional_flows[0] | .frames |= .[:1] | .evidence_frames=1)
+                | .directional_flows[0].frames |= .[1:]
+                | .directional_flows[0] += {evidence_frames:1,cited_declared_payload_bytes:300,cited_captured_payload_bytes:300}
+              else . end
       elif $mode == "invalid_timing" then .directional_flows[0].cited_timing.backwards_timestamps=1
       elif $mode == "malformed_timing" then .directional_flows[0].cited_timing="private time"
       elif ($mode | startswith("connection_")) then
@@ -238,7 +249,7 @@ run_review --flow-context | jq -e '
         timing_status:"reported",cited_timing:{timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,
             tied_timestamps:0,backwards_timestamps:0,directions_with_forward_gaps:1},
         udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0,tcp_flag_status:"not_reported",
-        udp_dns_timing_status:"not_reported",
+        udp_dns_timing_status:"not_reported",cited_payload_status:"not_reported",
         udp_dns_reply_timestamps:{capture_clock:0,legacy_packet_time:0,unavailable:0,not_reported:1}}
     and (tostring | contains("private") | not)' >/dev/null
 [[ $(cat "$dir/flow-checks") == 1 ]]
@@ -305,6 +316,16 @@ FLOW_MODE=tcp_bad_flags run_review --flow-context | jq -e '
     .findings[0].flow_context | .tcp_flag_status=="invalid" and (has("cited_tcp_flags")|not)' >/dev/null
 FLOW_MODE=udp_flags run_review --flow-context | jq -e '
     .findings[0].flow_context | .tcp_flag_status=="no_tcp_headers" and (has("cited_tcp_flags")|not)' >/dev/null
+FLOW_MODE=payload_mixed_directions run_review --flow-context | jq -e '
+    .findings[0].flow_context | .cited_payload_status=="reported"
+    and .cited_payload_bytes=={declared:450,captured:400,declared_not_captured:50}
+    and .trigger_direction_cited_payload_bytes=={declared:300,captured:300,declared_not_captured:0}
+    and (tostring | contains("private") | not)' >/dev/null
+for mode in payload_bad_order payload_missing_counter payload_overbound payload_fractional; do
+    FLOW_MODE=$mode run_review --flow-context | jq -e '
+        .findings[0] | .flow_context_status=="checked" and .flow_context.cited_payload_status=="invalid"
+        and (.flow_context | (has("cited_payload_bytes") or has("trigger_direction_cited_payload_bytes"))|not)' >/dev/null
+done
 FLOW_MODE=no_flow run_review --flow-context | jq -e '
     .findings[0] | .packet_evidence_status=="complete" and .flow_context_status=="checked"
     and .flow_context.retained_flow_frames==0 and .flow_context.retained_frames_without_flow==2
@@ -312,7 +333,7 @@ FLOW_MODE=no_flow run_review --flow-context | jq -e '
     and .flow_context.trigger_transport_header_observed==false
     and .flow_context.trigger_connection_status=="no_trigger_header"
     and .flow_context.timing_status=="no_flow_headers" and .flow_context.tcp_flag_status=="no_flow_headers"
-    and .flow_context.udp_dns_timing_status=="no_dns_replies"
+    and .flow_context.udp_dns_timing_status=="no_dns_replies" and .flow_context.cited_payload_status=="no_flow_headers"
     and (.flow_context|has("cited_timing")|not)' >/dev/null
 for mode in legacy_timing invalid_timing malformed_timing; do
     wanted=invalid

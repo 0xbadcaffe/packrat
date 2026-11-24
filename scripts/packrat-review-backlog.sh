@@ -10,6 +10,7 @@ usage() {
         'With --flow-context, report cited transport-header coverage, initial SYN fan-out, and candidate TCP and UDP DNS links without disclosing endpoints.' \
         'Flow context requires the same cited frame numbers and availability as the evidence check.' \
         'Trigger connection counts use the observed wire tuple and capture path, and cover cited frames only.' \
+        'Payload byte counts include retransmitted copies and cover cited frames only; they do not establish delivery.' \
         'Timing counts describe adjacent cited frames, not full-flow cadence.' \
         'UDP DNS timing counts distinguish capture-clock, legacy, unavailable, and unreported reply times.' \
         'Review latency covers the saved-alert sample, not the current shortlist or rule filter.' \
@@ -154,6 +155,28 @@ check_flow_context() {
                     )
                 )}
               else {timing_status:"invalid"} end;
+        def valid_payload_counts:
+            (.evidence_frames * 65535) as $limit
+            | all([.cited_declared_payload_bytes,.cited_captured_payload_bytes][];
+                type == "number" and . >= 0 and . <= $limit and floor == .)
+            and .cited_captured_payload_bytes <= .cited_declared_payload_bytes;
+        def payload_totals:
+            {declared:([.[].cited_declared_payload_bytes] | add),
+             captured:([.[].cited_captured_payload_bytes] | add)}
+            | . + {declared_not_captured:(.declared - .captured)};
+        def payload_context:
+            .trigger_frame.frame_number as $trigger
+            | .directional_flows
+            | if length == 0 then {cited_payload_status:"no_flow_headers"}
+              elif all(.[]; (has("cited_declared_payload_bytes") or has("cited_captured_payload_bytes")) | not)
+                then {cited_payload_status:"not_reported"}
+              elif all(.[]; valid_payload_counts) then
+                {cited_payload_status:"reported",cited_payload_bytes:payload_totals}
+                + (if $trigger != null and $selected.trigger_frame_number == $trigger then
+                       ([.[] | select(any(.frames[]; .frame_number == $trigger))]
+                        | if length == 1 then {trigger_direction_cited_payload_bytes:payload_totals} else {} end)
+                   else {} end)
+              else {cited_payload_status:"invalid"} end;
         def flag_fields: {initial_syn_frames,syn_ack_frames,reset_frames};
         def valid_flag_counts:
             .evidence_frames as $frames | .protocol as $protocol | flag_fields
@@ -242,7 +265,7 @@ check_flow_context() {
                 udp_dns_replies:(.udp_dns_reply_candidates|length),
                 udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),
                 udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}
-                + timing_context + tcp_flag_context + syn_fanout + dns_timing_context
+                + timing_context + tcp_flag_context + syn_fanout + dns_timing_context + payload_context
                 + (if $selected | has("trigger_frame_number") then trigger_connection($flow_frames)
                    else {trigger_connection_status:"snapshot_unverified"} end)} end
           end
