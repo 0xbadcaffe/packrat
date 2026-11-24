@@ -148,7 +148,7 @@ impl AppView<'_> {
                 .map(|alert| {
                     let (trigger_frame, trigger_flow) = self.alert_trigger_context(alert);
                     let (evidence, payload) = self.alert_evidence_context(alert);
-                    InvestigationContext {
+                    let mut context = InvestigationContext {
                         kind: "Alert",
                         title: alert.title.clone(),
                         details: vec![
@@ -190,7 +190,9 @@ impl AppView<'_> {
                             ),
                         ],
                         available: true,
-                    }
+                    };
+                    context.details.extend(self.saved_alert_archive_details(alert));
+                    context
                 })
                 .unwrap_or_else(|| missing("Alert", format!("Alert #{id}"))),
             InvestigationItem::Object(id) => self

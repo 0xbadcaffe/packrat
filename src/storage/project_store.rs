@@ -68,6 +68,9 @@ pub fn load(path: impl AsRef<Path>) -> Result<ProjectState> {
     let mut state: ProjectState = serde_json::from_str(&data)
         .with_context(|| format!("invalid project file: {}", path.display()))?;
     anyhow::ensure!(state.metadata.schema_version <= SCHEMA_VERSION, "Project uses a newer unsupported schema");
+    if let Some(report) = &state.alert_archive_report {
+        report.validate().map_err(anyhow::Error::msg)?;
+    }
     // Schema migration hook — bump version and apply transforms as needed.
     if state.metadata.schema_version < SCHEMA_VERSION {
         state.metadata.schema_version = SCHEMA_VERSION;

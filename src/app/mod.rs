@@ -161,6 +161,7 @@ pub struct App {
     pub notebook: Notebook,
     pub packet_archive: Option<crate::storage::packet_archive::ArchiveWorker>,
     last_alert_archive_check: Option<alert_evidence::AlertArchiveCheck>,
+    saved_alert_archive_report: Option<crate::model::project::AlertArchiveReport>,
     alert_case_export: Option<alert_case_export::PendingAlertCase>,
     capture_id: Option<std::sync::Arc<str>>,
     capture_frame_high_water: u64,

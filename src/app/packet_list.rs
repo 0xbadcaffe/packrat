@@ -44,6 +44,7 @@ impl App {
         self.filtered.clear();
         self.selected = None;
         self.worklist = InvestigationTray::default();
+        self.saved_alert_archive_report = None;
         self.investigation_scroll = 0;
         self.reset_header_focus();
         self.total_bytes = 0;

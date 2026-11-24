@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::analysis::alert_center::AlertItem;
 use crate::model::project::{
-    INVESTIGATE_TAB_INDEX, MAX_PINNED_BYTES, MAX_PINNED_PACKETS, ProjectSaveMode, ProjectState,
+    AlertArchiveReport, ArchivedFrameOutcome, INVESTIGATE_TAB_INDEX, MAX_PINNED_BYTES, MAX_PINNED_PACKETS, ProjectSaveMode, ProjectState,
     SavedInvestigationItem, pinned_packet_cost,
 };
 use crate::storage::project_store;
@@ -55,6 +55,10 @@ pub(crate) fn save_alert_archive_project(
         id: alert_id, capture_id: Some(capture_id.to_owned()),
     });
     let mut summary = AlertProjectSummary::default();
+    let mut report = AlertArchiveReport {
+        alert_id, capture_id: capture_id.to_owned(), session_id: session_id.map(str::to_owned),
+        frames: Default::default(),
+    };
     let mut bytes_left = MAX_PINNED_BYTES;
     let ordered = frames.iter().find(|&&frame| frame == trigger).into_iter()
         .chain(frames.iter().filter(|&&frame| frame != trigger));
@@ -90,6 +94,15 @@ pub(crate) fn save_alert_archive_project(
         if frame == trigger {
             summary.trigger_frame = Some(CaseTrigger { frame_number: frame, status, included });
         }
+        let outcome = match (status, included) {
+            (FrameStatus::Missing, _) => ArchivedFrameOutcome::Missing,
+            (FrameStatus::Unreadable, _) => ArchivedFrameOutcome::Unreadable,
+            (_, false) => ArchivedFrameOutcome::OmittedAtLimit,
+            (FrameStatus::Complete, true) => ArchivedFrameOutcome::Complete,
+            (FrameStatus::Truncated, true) => ArchivedFrameOutcome::Truncated,
+            (FrameStatus::LengthUnknown, true) => ArchivedFrameOutcome::LengthUnknown,
+        };
+        report.frames.insert(frame, outcome);
     }
     state.pinned_packets.sort_unstable_by_key(|packet| packet.no);
     state.investigation_items.extend(state.pinned_packets.iter().map(|packet| SavedInvestigationItem::Packet(packet.no)));
@@ -108,6 +121,7 @@ pub(crate) fn save_alert_archive_project(
             .map_or_else(String::new, |trigger| format!(" Trigger #{} not included.", trigger.frame_number)),
     ));
     state.alert_items.push(alert.clone());
+    state.alert_archive_report = Some(report);
     project_store::create(&state, output)?;
     Ok(summary)
 }

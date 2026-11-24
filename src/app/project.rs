@@ -74,6 +74,7 @@ impl App {
         // Carved object metadata
         state.carved_objects = core.carved_objects.iter().map(ObjectEntry::from).collect();
         state.alert_items = core.alert_center.items.clone();
+        state.alert_archive_report = self.saved_alert_archive_report.clone();
         state.alert_automation = core.alert_center.automation_mode;
         state.investigation_items = self
             .worklist
@@ -174,6 +175,7 @@ impl App {
     ) -> Result<(), String> {
         // Validate before replacing the active investigation.
         let tray = restore_investigation_tray(&state)?;
+        if let Some(report) = &state.alert_archive_report { report.validate()?; }
         let incidents = state
             .incident_state
             .take()
@@ -265,6 +267,7 @@ impl App {
         self.filter.input = state.active_filter;
         self.rebuild_filtered();
         self.worklist = tray;
+        self.saved_alert_archive_report = state.alert_archive_report;
         self.response_preview = state.guard_simulation;
         if state.active_tab < Tab::COUNT {
             self.active_tab = Tab::from_index(state.active_tab);

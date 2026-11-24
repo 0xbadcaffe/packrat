@@ -177,6 +177,28 @@ impl App {
         self.describe_alert_evidence(alert, true)
     }
 
+    pub(super) fn saved_alert_archive_details(&self, alert: &AlertItem) -> Vec<(String, String)> {
+        use crate::model::project::ArchivedFrameOutcome;
+
+        let Some(report) = self.saved_alert_archive_report.as_ref().filter(|report| {
+            report.alert_id == alert.id && Some(report.capture_id.as_str()) == alert.capture_id.as_deref()
+                && report.frames.keys().copied().eq(alert.evidence_frame_numbers())
+        }) else { return Vec::new() };
+        let mut details: Vec<_> = [
+            (ArchivedFrameOutcome::Missing, "Missing at export"),
+            (ArchivedFrameOutcome::Unreadable, "Unreadable at export"),
+            (ArchivedFrameOutcome::OmittedAtLimit, "Omitted at export (limit)"),
+        ].into_iter().filter_map(|(kind, label)| {
+            let numbers: Vec<_> = report.frames.iter().filter(|(_, status)| **status == kind)
+                .map(|(frame, _)| format!("#{frame}")).collect();
+            (!numbers.is_empty()).then(|| (label.into(), numbers.join(", ")))
+        }).collect();
+        if details.is_empty() {
+            details.push(("Archive export".into(), "All cited frames included at export".into()));
+        }
+        details
+    }
+
     fn describe_alert_evidence(&self, alert: &AlertItem, include_payload: bool) -> (String, Option<String>) {
         let frames = alert.evidence_frame_numbers();
         if frames.is_empty() {

@@ -76,6 +76,11 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
         "trigger_frame":{"frame_number":2,"status":"length_unknown","included":true}
     }));
     let state = project_store::load(&output).unwrap();
+    let report = state.alert_archive_report.as_ref().unwrap();
+    assert_eq!(serde_json::to_value(report).unwrap(), json!({
+        "alert_id":alert.id, "capture_id":"previous", "session_id":"s",
+        "frames":{"1":"truncated","2":"length_unknown","3":"missing","4":"unreadable"}
+    }));
     assert_eq!(state.alert_items[0].packet_refs, [1, 2, 3, 4]);
     assert_eq!(state.alert_items[0].capture_id.as_deref(), Some("previous"));
     assert_eq!(state.pinned_packets.iter().map(|p| (p.no, p.bytes[0])).collect::<Vec<_>>(), [(1, 1), (2, 2)]);

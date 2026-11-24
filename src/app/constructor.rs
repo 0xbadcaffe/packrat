@@ -118,6 +118,7 @@ impl App {
             notebook: Notebook::default(),
             packet_archive: None,
             last_alert_archive_check: None,
+            saved_alert_archive_report: None,
             alert_case_export: None,
             capture_id: None,
             capture_frame_high_water: 0,

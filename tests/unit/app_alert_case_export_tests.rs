@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::project::SavedInvestigationItem;
+use crate::model::project::{ArchivedFrameOutcome, SavedInvestigationItem};
 use crate::storage::{packet_archive::ArchiveWorker, project_store};
 
 fn finish_export(app: &mut App) {
@@ -62,6 +62,24 @@ fn selected_alert_archive_export_keeps_the_exact_historical_capture_separate() {
     assert!(app.worklist.items.is_empty());
     assert_eq!(app.capture_id, Some(live_scope));
     assert_eq!(app.packets[0].info, "live packet");
+
+    let report = project.alert_archive_report.clone().unwrap();
+    assert_eq!(report.capture_id, past_scope.as_ref());
+    assert_eq!(report.session_id, None);
+    assert_eq!(report.frames.get(&2), Some(&ArchivedFrameOutcome::Missing));
+    let mut review = App::new_for_test();
+    review.apply_project_state(project).unwrap();
+    review.worklist.active = Some(0);
+    let details = review.active_investigation_context().unwrap().details;
+    assert!(details.iter().any(|(label, value)| label == "Missing at export" && value == "#2"));
+    let mut saved = review.snapshot_project("reviewed", ProjectSaveMode::Lightweight).unwrap();
+    assert_eq!(saved.alert_archive_report.as_ref(), Some(&report));
+    saved.alert_archive_report.as_mut().unwrap().frames.insert(2, ArchivedFrameOutcome::OmittedAtLimit);
+    review.apply_project_state(saved).unwrap();
+    assert!(review.active_investigation_context().unwrap().details.iter().any(|(label, value)|
+        label == "Omitted at export (limit)" && value == "#2"));
+    review.core.edit().alert_center.items[0].packet_refs.push(3);
+    assert!(!review.active_investigation_context().unwrap().details.iter().any(|(label, _)| label.contains("at export")));
 
     let original = std::fs::read(&output).unwrap();
     app.start_alert_archive_case(output.clone()).unwrap();

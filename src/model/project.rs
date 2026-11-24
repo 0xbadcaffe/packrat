@@ -13,7 +13,7 @@ use crate::model::tags::TagStore;
 use crate::storage::case_bundle::ObjectEntry;
 use crate::net::packet::Packet;
 
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 // Stable project-format index, shared by headless export and the terminal UI.
 pub(crate) const INVESTIGATE_TAB_INDEX: usize = 1;
 pub(crate) const MAX_PINNED_PACKETS: usize = 1024;
@@ -39,6 +39,40 @@ pub enum SavedInvestigationItem {
     Object(u64),
     GraphNode(String),
     Note(u64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchivedFrameOutcome {
+    Complete,
+    Truncated,
+    LengthUnknown,
+    Missing,
+    Unreadable,
+    OmittedAtLimit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AlertArchiveReport {
+    pub alert_id: u64,
+    pub capture_id: String,
+    pub session_id: Option<String>,
+    pub frames: std::collections::BTreeMap<u64, ArchivedFrameOutcome>,
+}
+
+impl AlertArchiveReport {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        use crate::storage::packet_archive::valid_capture_id;
+
+        if self.alert_id == 0 || !valid_capture_id(&self.capture_id)
+            || self.session_id.as_deref().is_some_and(|id| !valid_capture_id(id))
+            || self.frames.is_empty() || self.frames.contains_key(&0)
+            || self.frames.len() > crate::analysis::alert_center::MAX_ALERT_PACKET_REFS + 3
+        {
+            return Err("Invalid saved alert archive report".into());
+        }
+        Ok(())
+    }
 }
 
 // ─── Core types ───────────────────────────────────────────────────────────────
@@ -114,6 +148,8 @@ pub struct ProjectState {
     pub endpoint_evidence: Vec<crate::analysis::impact::EndpointEvidence>,
     #[serde(default)]
     pub alert_items: Vec<AlertItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert_archive_report: Option<AlertArchiveReport>,
     #[serde(default)]
     pub alert_automation: AutomationMode,
     #[serde(default)]
@@ -145,6 +181,7 @@ impl ProjectState {
             incident_state: None,
             endpoint_evidence: Vec::new(),
             alert_items: Vec::new(),
+            alert_archive_report: None,
             alert_automation: AutomationMode::Off,
             investigation_items: Vec::new(),
             active_investigation: None,
