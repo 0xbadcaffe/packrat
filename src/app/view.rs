@@ -160,6 +160,8 @@ impl AppView<'_> {
                                 .and_then(|timestamp| i64::try_from(timestamp).ok())
                                 .and_then(chrono::DateTime::from_timestamp_millis)
                                 .map_or_else(|| "Not recorded".into(), |time| time.format("%Y-%m-%d %H:%M:%S UTC").to_string())),
+                            ("Capture time".into(), alert.observation_window()),
+                            ("Observations".into(), alert.hit_count.to_string()),
                             ("Source".into(), alert.source.clone()),
                             (
                                 "Rule".into(),

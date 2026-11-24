@@ -88,6 +88,34 @@ fn selected_alert_shows_evidence_availability_and_keeps_the_action_visible() {
 }
 
 #[test]
+fn alert_views_show_capture_time_separately_from_frame_and_review_order() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Security;
+    app.configure_core(|core| {
+        for (frame, time) in [(10, 9.5), (11, 3.25), (12, 0.0)] {
+            core.alert_center.record_correlated(
+                frame, time, "IDS", "HIGH", "Observation window", "detail", "same",
+            );
+        }
+    });
+
+    let expected = "first 3.250000 s, last 9.500000 s";
+    let detail = screen(&app, 120, 32);
+    assert!(detail.contains(expected) && detail.contains("3 hits"), "{detail}");
+    assert!(app.investigate_selected_alert());
+    let summary = screen(&app, 120, 40);
+    assert!(summary.contains(expected) && summary.contains("Observations  3"), "{summary}");
+
+    app.active_tab = Tab::Security;
+    app.configure_core(|core| {
+        core.alert_center.items[0].first_seen = 0.0;
+        core.alert_center.items[0].last_seen = 0.0;
+    });
+    let detail = screen(&app, 120, 32);
+    assert!(detail.contains("first not recorded, last not recorded"), "{detail}");
+}
+
+#[test]
 fn long_selected_alert_scrolls_without_hiding_evidence_actions() {
     let mut app = App::new_for_test();
     app.active_tab = Tab::Security;

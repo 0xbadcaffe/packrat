@@ -65,6 +65,25 @@ impl AlertDisposition {
 }
 
 impl AlertItem {
+    #[cfg(feature = "terminal-ui")]
+    pub(crate) fn observation_window(&self) -> String {
+        // Saved alerts do not distinguish elapsed capture time from wall-clock time.
+        let timestamp = |seconds: f64| {
+            if !seconds.is_finite() || seconds == 0.0 {
+                "not recorded".into()
+            } else if (0.000001..1.0e15).contains(&seconds.abs()) {
+                format!("{seconds:.6} s")
+            } else {
+                format!("{seconds:.6e} s")
+            }
+        };
+        format!(
+            "first {}, last {}",
+            timestamp(self.first_seen),
+            timestamp(self.last_seen)
+        )
+    }
+
     pub(super) fn reopen_for_escalation(&mut self, priority: u8, evidence_changed: bool) {
         if !self.disposition.is_resolved() { return; }
         let reviewed = *self.reviewed_priority.get_or_insert(self.priority);

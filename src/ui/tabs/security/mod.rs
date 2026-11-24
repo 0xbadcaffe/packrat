@@ -178,6 +178,10 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
                 ),
                 Style::default().fg(C_FG3()),
             )),
+            Line::from(Span::styled(
+                format!("Capture time: {}", item.observation_window()),
+                Style::default().fg(C_FG2()),
+            )),
             Line::from(Span::styled(&item.detail, Style::default().fg(C_FG()))),
             Line::from(Span::styled(
                 app.alert_evidence_status(item),
