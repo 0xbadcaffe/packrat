@@ -59,7 +59,7 @@ fn scan_replay_links_payload_handshakes_without_citing_overlapping_candidates() 
                 "name":file,"capture":file,"expect_counts":{(rule):1},
                 "expect_snapshots":2,"opening_frames":{(rule):[17]},
                 "opening_evidence":[{"rule_id":rule,"opening_frame":17,"frames":expected,
-                    "classification":{"severity":"HIGH","confidence":"heuristic","revision":16}}]
+                    "classification":{"severity":"HIGH","confidence":"heuristic","revision":17}}]
             })
         })
         .collect();

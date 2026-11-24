@@ -262,7 +262,7 @@ impl SecurityEngine {
         sequence: u32,
         retain: bool,
     ) {
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let key = SynTargetKey {
             address: pkt.dst.clone(),
             port,
@@ -419,11 +419,24 @@ impl ScanProbe {
     }
 }
 
+fn scan_scope(pkt: &Packet) -> ScanScope {
+    let mut tag_types = [0; 2];
+    if pkt.vlan_id.is_some() {
+        // Keep wire tag types in order without treating PCP or DEI as a separate path.
+        for (index, tag_type) in tag_types.iter_mut().enumerate() {
+            let candidate = u16_be_at(&pkt.bytes, 12 + index * 4);
+            if !crate::net::parser::is_vlan_ether_type(candidate) { break; }
+            *tag_type = candidate;
+        }
+    }
+    (service_scope(pkt), tag_types)
+}
+
 fn scan_key(pkt: &Packet, transport: &'static str) -> ScanSourceKey {
     ScanSourceKey {
         address: pkt.src.clone(),
         transport,
-        scope: service_scope(pkt),
+        scope: scan_scope(pkt),
     }
 }
 

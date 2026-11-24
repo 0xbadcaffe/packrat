@@ -337,7 +337,7 @@ fn registered_rules_record_confidence_independently_of_severity() {
     let alerts = center.drain_pending_exports();
     let scan = alerts[0].provenance.as_ref().unwrap();
     assert_eq!(scan.rule_id, "scan.horizontal");
-    assert_eq!(scan.revision, 16);
+    assert_eq!(scan.revision, 17);
     assert_eq!(scan.confidence, EvidenceConfidence::Heuristic);
     assert!(scan.verification_hint.contains("handshakes"));
     assert_eq!(

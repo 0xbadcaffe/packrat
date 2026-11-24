@@ -21,6 +21,8 @@ mod control_plane;
 mod scans;
 #[path = "replay_suite/scan_handshake_payload.rs"]
 mod scan_handshake_payload;
+#[path = "replay_suite/scan_tag_paths.rs"]
+mod scan_tag_paths;
 #[path = "replay_suite/ipv6_udp_discovery.rs"]
 mod ipv6_udp_discovery;
 #[path = "replay_suite/dhcp.rs"]

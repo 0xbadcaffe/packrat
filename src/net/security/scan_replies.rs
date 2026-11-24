@@ -24,7 +24,7 @@ impl SecurityEngine {
         let key = ScanSourceKey {
             address: pkt.dst.clone(),
             transport: "TCP",
-            scope: service_scope(pkt),
+            scope: scan_scope(pkt),
         };
         let Some(state) = self.scan_sources.get_mut(&key) else { return false };
         let mut matches = state.probes.iter_mut().chain(&mut state.linked_probes).filter(|probe| {

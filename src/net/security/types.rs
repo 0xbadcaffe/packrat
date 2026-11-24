@@ -146,8 +146,10 @@ pub(super) enum TcpFrame<'a> {
 pub(super) struct ScanSourceKey {
     pub(super) address: String,
     pub(super) transport: &'static str,
-    pub(super) scope: ServiceScope,
+    pub(super) scope: ScanScope,
 }
+
+pub(super) type ScanScope = (ServiceScope, [u16; 2]);
 
 #[derive(Debug, Default)]
 pub(super) struct SourceScanState {
@@ -171,7 +173,7 @@ pub(super) struct SynFloodState {
 pub(super) struct SynTargetKey {
     pub(super) address: String,
     pub(super) port: u16,
-    pub(super) scope: ServiceScope,
+    pub(super) scope: ScanScope,
 }
 
 #[derive(Debug)]

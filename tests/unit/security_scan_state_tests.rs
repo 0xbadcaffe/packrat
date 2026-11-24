@@ -6,6 +6,24 @@ fn scan_syn(sequence: u32) -> Option<ScanTcpProbe> {
 }
 
 #[test]
+fn scan_scope_keeps_tag_order_but_ignores_priority_and_drop_eligibility() {
+    let packet = |outer: u16, inner: u16, marking: u16| {
+        let mut raw = vec![0; 14];
+        raw[12..14].copy_from_slice(&0x88b5_u16.to_be_bytes());
+        let tags = [outer, 100, inner, 20 | marking];
+        raw.splice(12..12, tags.into_iter().flat_map(u16::to_be_bytes));
+        parse_ethernet(&raw, 1, 1.0)
+    };
+    let original = packet(0x88a8, 0x8100, 0);
+    let reordered = packet(0x8100, 0x88a8, 0);
+    let marked = packet(0x88a8, 0x8100, 0xb000);
+    assert_eq!((original.outer_vlan_id, original.vlan_id), (Some(100), Some(20)));
+    assert_eq!((reordered.outer_vlan_id, reordered.vlan_id), (Some(100), Some(20)));
+    assert_ne!(scan_scope(&original), scan_scope(&reordered));
+    assert_eq!(scan_scope(&original), scan_scope(&marked));
+}
+
+#[test]
 fn scan_reply_does_not_mutate_either_probe_when_acknowledgment_is_ambiguous() {
     let mut engine = SecurityEngine::default();
     let mut packet = parse_ethernet(&[], 1, 1.0);

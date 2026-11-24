@@ -279,7 +279,7 @@ fn scan_replay_distinguishes_complete_distinct_observations_from_repeats_and_tru
                [Some(true), Some(false), Some(false)]);
     let alerts: Vec<_> = records.iter().map(|record| &record["alert"]).collect();
     assert!(alerts[0]["detail"].as_str().unwrap().contains("over 0.160s within a 15s observation window"));
-    assert_eq!(alerts[2]["provenance"]["revision"], 16);
+    assert_eq!(alerts[2]["provenance"]["revision"], 17);
     for field in ["id", "hit_count", "packet_no", "flow", "first_seen", "last_seen", "detail"] {
         assert_eq!(alerts[0][field], alerts[2][field], "{field}");
     }
