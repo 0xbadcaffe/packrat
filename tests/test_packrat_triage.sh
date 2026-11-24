@@ -112,6 +112,7 @@ mock_archive() {
               ] elif $queue == "socket" then [$valid + {severity:"HIGH",disposition:"New"}]
                 elif $queue == "many" then [range(60;53;-1) | $valid + {alert_id:.,severity:"HIGH",disposition:"New"}]
                 elif $queue == "vlan" then [
+                  ($valid + {alert_id:44,severity:"INFO",disposition:"New",rule_id:"vlan.tag_stack_observed"}),
                   ($valid + {alert_id:43,severity:"INFO",disposition:"New",rule_id:"vlan.vid_one_observed"}),
                   ($valid + {severity:"WARN",disposition:"New",rule_id:"vlan.mac_crossing"}),
                   ($valid + {alert_id:41,severity:"CRIT",disposition:"Reviewing",rule_id:"test.critical"})
@@ -286,10 +287,11 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
     jq -c '.archive_evidence_rules=["vlan.mac_crossing","vlan.vid_one_observed"]' "$health" >"$scratch/vlan-health.json"
     mv -- "$scratch/vlan-health.json" "$health"
     PACKRAT_TEST_AUTO_QUEUE=vlan run_auto | jq -e '
-        [.alerts[].severity]==["INFO","MEDIUM","CRITICAL"]
-        and .open_priority_alerts_in_sample==1 and .open_archive_rule_alerts_in_sample==1
-        and [.review_queue[]|[.alert_id,.severity,.archive_rule]]==[[41,"CRITICAL",false],[42,"MEDIUM",true]]
-        and [.evidence_checks[]|[.alert_id,.status]]==[[41,"checked"],[42,"checked"]]
+        [.alerts[].severity]==["INFO","INFO","MEDIUM","CRITICAL"]
+        and .open_priority_alerts_in_sample==1 and .open_archive_rule_alerts_in_sample==2
+        and [.review_queue[]|[.alert_id,.severity,.archive_rule]]==[[41,"CRITICAL",false],[42,"MEDIUM",true],[43,"INFO",true]]
+        and [.evidence_checks[]|[.alert_id,.status]]==[[41,"checked"],[42,"checked"],[43,"checked"]]
+        and .alerts[0].packet_evidence_status=="not_checked"
     ' >/dev/null
     result=$(PACKRAT_TEST_AUTO_QUEUE=backlog run_auto)
     jq -e '.has_more_alerts and .priority_sample_limit == 512 and .priority_sample_at_limit == false

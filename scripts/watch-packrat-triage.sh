@@ -351,6 +351,8 @@ sanitize() {
         | select(.status != "current" or (.health.issues == [] and
             (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null)))
         | (.alerts | recent_sample) as $sample
+        | (.health | if archive_mode == "alert_evidence"
+            then .archive_evidence_rules | archive_rules else null end) as $archive_rule_ids
         | {
             status, capture_id:(.health.capture_id | token), session_id:(.health.alert_session_id | token),
             interface:(.health.capture_interface | token),
@@ -365,8 +367,7 @@ sanitize() {
             alert_save_failures:(.health.alert_save_failures | counter),
             alert_save_backlog_dropped:(.health.alert_save_backlog_dropped | counter),
             archive_mode:(.health | archive_mode),
-            archive_rule_ids:(.health | if archive_mode == "alert_evidence"
-                then .archive_evidence_rules | archive_rules else null end),
+            archive_rule_ids:$archive_rule_ids,
             archive_usage:(.health.archive_usage | archive_usage),
             archive_pause_reason:(.health.archive_pause_reason | token),
             disk_free_mib:(.health.disk_free_mib | counter),
@@ -394,7 +395,8 @@ sanitize() {
                    archive_rule:(.archive_rule | flag), in_recent_alerts:(.in_recent_alerts | flag),
                    next_evidence_step:(.next_evidence_step | token)}
                 | select(.alert_id > 0 and (.severity == "HIGH" or .severity == "CRITICAL" or
-                    (.archive_rule == true and (.severity == "MEDIUM" or .severity == "LOW"))))) else null end)
+                    (.archive_rule == true and ((.severity | IN("MEDIUM","LOW")) or
+                        (.severity == "INFO" and (.rule_id as $id | any($archive_rule_ids[]?; . == $id)))))))) else null end)
           } + $sample | .archive_near_limit = (.archive_usage | near_archive_limit)
             | select(valid_current) | mark_backlog_loss'
 }

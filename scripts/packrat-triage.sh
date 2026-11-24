@@ -16,7 +16,7 @@ usage() {
         'PACKRAT_TRIAGE_MAX_AGE and PACKRAT_TRIAGE_READ_TIMEOUT override freshness and log-read deadlines in seconds.' \
         'Set PACKRAT_TRIAGE_ARCHIVE or PACKRAT_TRIAGE_PROJECT, plus PACKRAT_TRIAGE_EVIDENCE_ALERT_ID, to check one alert.' \
         'In live mode, PACKRAT_TRIAGE_AUTO_EVIDENCE=1 with PACKRAT_TRIAGE_ARCHIVE checks up to five open alerts in one read-timeout budget.' \
-        'Automatic checks prefer CRITICAL, HIGH, then opted-in MEDIUM/LOW rules; newest eligible alerts first.' \
+        'Automatic checks prefer CRITICAL, HIGH, then opted-in MEDIUM, LOW, and INFO rules; newest eligible alerts first.' \
         '--saved-alert uses its explicit ID when an evidence source is supplied without PACKRAT_TRIAGE_EVIDENCE_ALERT_ID.' \
         'Evidence status distinguishes timeouts, deferred lookups, and references that changed during triage.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
@@ -165,10 +165,10 @@ report() {
         | (if $alerts == null then null else $alerts[:$limit] |
             map(with_evidence($evidence)) end) as $sample
         | (if $alerts == null then null else [
-            ("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | $alerts | to_entries[]
+            ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO") as $severity | $alerts | to_entries[]
             | (.key < $limit) as $recent | .value
             | select(.severity == $severity and unresolved)
-            | ($severity == "MEDIUM" or $severity == "LOW") as $opt_in
+            | ($severity | IN("MEDIUM","LOW","INFO")) as $opt_in
             | select(($opt_in | not) or (.rule_id as $rule | any($rules[]; . == $rule)))
             | with_evidence($evidence)
             | {alert_id,title,rule_id,revision,severity,disposition,hit_count,confidence,verify,packet_evidence_status,evidence_frame_count,evidence_frame_set_sha256,
@@ -195,8 +195,8 @@ report_saved_index() {
         def seen: numbers | select(isfinite and . > 0);
         def priority: .severity | IN("HIGH","CRITICAL");
         def valid_alert_id: .alert_id | type == "number" and . >= 1 and . <= 999999999999999 and floor == .;
-        def selected: if $rule == "" then priority else .rule_id == $rule and (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW")) end;
-        def review_rank: [({LOW:0,MEDIUM:1,HIGH:2,CRITICAL:3}[.severity]), ((.last_seen | seen) // 0), .session_id, .capture_id, .alert_id];
+        def selected: if $rule == "" then priority else .rule_id == $rule and (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW","INFO")) end;
+        def review_rank: [({INFO:-1,LOW:0,MEDIUM:1,HIGH:2,CRITICAL:3}[.severity]), ((.last_seen | seen) // 0), .session_id, .capture_id, .alert_id];
         def review_latency:
             objects | .unmeasured_alerts as $total
             | {sampled_alerts,measured_alerts,unmeasured_alerts,min_ms,median_ms,max_ms}
@@ -437,7 +437,7 @@ if jq -e '.health | .archive_enabled == true and (.archive_paused | type == "boo
         then .archive_evidence_rules else [] end' <<< "$state")
     if [[ $auto_evidence == 1 ]]; then
         candidates=$(jq -r --argjson rules "$archive_rules" "$unresolved_jq"'
-        limit(5; ("CRITICAL", "HIGH", "MEDIUM", "LOW") as $severity | .[]
+        limit(5; ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO") as $severity | .[]
             | select(.severity == $severity and unresolved
                 and ($severity == "CRITICAL" or $severity == "HIGH"
                     or (.rule_id as $rule | any($rules[]; . == $rule)))

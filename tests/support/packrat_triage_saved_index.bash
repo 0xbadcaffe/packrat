@@ -67,6 +67,11 @@ PACKRAT_TEST_INDEX_EXTRA="$extra" list_saved --review-rule test.rule "$PACKRAT_T
 PACKRAT_TEST_INDEX_EXTRA="$extra" list_saved --review-rule other.rule --review-offset 1 "$PACKRAT_TEST_LOG" | jq -e '
     .review_rule == "other.rule" and .review_eligible_in_sample == 1 and .review_shortlist == []' >/dev/null
 if list_saved --review-rule 'bad rule' "$PACKRAT_TEST_LOG" >/dev/null 2>&1; then exit 1; fi
+info='[{"alert_id":4,"severity":"INFO","rule_id":"vlan.vid_one_observed"}]'
+PACKRAT_TEST_INDEX_EXTRA="$info" list_saved --review-rule vlan.vid_one_observed "$PACKRAT_TEST_LOG" | jq -e '
+    .review_eligible_in_sample == 1 and [.review_shortlist[] | [.alert_id,.severity]] == [[4,"INFO"]]' >/dev/null
+PACKRAT_TEST_INDEX_EXTRA="$info" list_saved "$PACKRAT_TEST_LOG" | jq -e '
+    .review_eligible_in_sample == 3 and all(.review_shortlist[]; .severity != "INFO")' >/dev/null
 requested=' --session 1700000000-432 --capture-id 00000000000000000000000000000001'
 PACKRAT_TEST_INDEX_SCOPE="$requested" PACKRAT_TEST_INDEX_EXTRA="$extra" list_saved \
     --review-scope 1700000000-432 00000000000000000000000000000001 --review-rule test.rule "$PACKRAT_TEST_LOG" | jq -e '

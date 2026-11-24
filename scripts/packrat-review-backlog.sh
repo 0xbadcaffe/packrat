@@ -192,7 +192,7 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --a
         and (.alert_id | numbers | . >= 1 and . <= 999999999999999 and floor == .)
         and (.disposition == "New" or .disposition == "Reviewing" or .disposition == "Confirmed");
     def priority: .severity == "HIGH" or .severity == "CRITICAL";
-    def selected: if $rule == "" then priority else .rule_id == $rule and (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW")) end;
+    def selected: if $rule == "" then priority else .rule_id == $rule and (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW","INFO")) end;
     def valid_entry: valid_reference and selected
         and ($capture == "" or (.session_id == $session and .capture_id == $capture))
         and (.capture_id | strings | test("\\A[0-9a-f]{32}\\z"))

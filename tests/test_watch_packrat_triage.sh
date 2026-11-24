@@ -152,11 +152,14 @@ for advanced in true null false; do
         and .alert_counts.status==(if $advanced==false then "complete" else "unverified" end)
         and .alert_sample_gap==false' >/dev/null
 done
-legacy='[{"alert_id":1,"severity":"WARN","archive_rule":true},{"alert_id":2,"severity":"CRIT"},{"alert_id":3,"severity":"INFO","archive_rule":true}]'
-live current 15 "$legacy" "$legacy" >"$scratch/severity-report.json"
+legacy='[{"alert_id":1,"severity":"WARN","archive_rule":true},{"alert_id":2,"severity":"CRIT"},
+    {"alert_id":3,"severity":"INFO","archive_rule":true,"rule_id":"vlan.vid_one_observed"},
+    {"alert_id":4,"severity":"INFO","archive_rule":true,"rule_id":"vlan.tag_stack_observed"},
+    {"alert_id":5,"severity":"INFO","archive_rule":false,"rule_id":"vlan.vid_one_observed"}]'
+live current 15 "$legacy" "$legacy" | jq '.health.archive_evidence_rules=["vlan.vid_one_observed"]' >"$scratch/severity-report.json"
 bash "$watch" --once "$scratch/severity-state.json" -- cat "$scratch/severity-report.json" >"$scratch/severity-output"
-jq -e '[.recent_alerts[].severity]==["MEDIUM","CRITICAL","INFO"]
-    and [.review_queue[].severity]==["MEDIUM","CRITICAL"]' "$scratch/severity-output" >/dev/null
+jq -e '[.recent_alerts[].severity]==["MEDIUM","CRITICAL","INFO","INFO","INFO"]
+    and [.review_queue[].alert_id]==[1,2,3] and [.review_queue[].severity]==["MEDIUM","CRITICAL","INFO"]' "$scratch/severity-output" >/dev/null
 for marker in unavailable not_recorded not_checked not_configured 'private malformed value'; do
     jq --arg marker "$marker" '.socket_context_status=$marker' "$report" >"$scratch/socket-report.json"
     bash "$watch" --once "$failed_state" -- cat "$scratch/socket-report.json" >/dev/null

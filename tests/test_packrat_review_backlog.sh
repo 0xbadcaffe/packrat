@@ -17,6 +17,8 @@ base='{"rule_id":"scan.horizontal","revision":7,"confidence":"heuristic","severi
        "evidence_frame_set_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}'
 if [[ ${TEST_MODE:-normal} == by_rule || ${TEST_MODE:-normal} == wrong_rule ]]; then
     base=$(jq -c '. + {rule_id:"ipv6.ra_router_link_change",severity:"MEDIUM"}' <<< "$base")
+elif [[ ${TEST_MODE:-normal} == info ]]; then
+    base=$(jq -c '. + {rule_id:"vlan.vid_one_observed",severity:"INFO"}' <<< "$base")
 fi
 if [[ $1 == --list-saved ]]; then
     [[ ! -v PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE ]]
@@ -231,6 +233,9 @@ TEST_MODE=by_rule run_review --review-rule ipv6.ra_router_link_change | jq -e '
 : > "$dir/checks"
 if TEST_MODE=wrong_rule run_review --review-rule other.rule >/dev/null 2>&1; then exit 1; fi
 [[ ! -s $dir/checks ]]
+TEST_MODE=info run_review --review-rule vlan.vid_one_observed | jq -e '
+    [.findings[] | [.rule_id,.severity,.packet_evidence_status]] == [["vlan.vid_one_observed","INFO","complete"]]' >/dev/null
+: > "$dir/checks"
 TEST_MODE=by_rule run_review --review-scope session-a 00000000000000000000000000000001 \
     --review-rule ipv6.ra_router_link_change | jq -e '
     .review_scope == {session_id:"session-a",capture_id:"00000000000000000000000000000001"}
