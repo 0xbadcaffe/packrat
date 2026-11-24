@@ -160,7 +160,7 @@ fn detects_large_high_entropy_outbound_transfer() {
             .any(|alert| alert.signature == "High-entropy outbound transfer")
     );
     for (rule, severity, revision, frames) in [
-        ("traffic.asymmetric_outbound", "MEDIUM", 8, (10..=17).collect::<Vec<_>>()),
+        ("traffic.asymmetric_outbound", "MEDIUM", 9, (10..=17).collect::<Vec<_>>()),
         ("traffic.high_entropy_outbound", "MEDIUM", 8, (1..=5).collect()),
     ] {
         let alert = core
@@ -398,4 +398,26 @@ fn outbound_volume_does_not_combine_tcp_udp_or_unverified_transport() {
         engine.update(&packet);
     }
     assert!(engine.ids_alerts.iter().all(|alert| alert.signature != "Large asymmetric outbound transfer"));
+}
+
+#[test]
+fn outbound_tcp_ack_only_traffic_does_not_count_toward_transfer_volume() {
+    const TITLE: &str = "Large asymmetric outbound transfer";
+    let mut security = SecurityEngine::default();
+    for no in 1..=19_000 {
+        let mut ack = outbound_tcp(no, &[]);
+        ack.bytes[47] = 0x10;
+        security.update(&ack);
+    }
+    assert!(security.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+
+    let payload = vec![0; 60_000];
+    for no in 19_001..=19_016 {
+        security.update(&outbound_tcp(no, &payload));
+    }
+    assert!(security.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+    security.update(&outbound_tcp(19_017, &payload));
+    let alert = security.ids_alerts.iter().find(|alert| alert.signature == TITLE).unwrap();
+    assert_eq!(alert.pkt_no, 19_017);
+    assert!(alert.detail.contains("payload-free TCP frames"));
 }

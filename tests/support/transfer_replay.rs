@@ -69,6 +69,47 @@ pub fn write_timed_fixture(
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn tcp_control_and_data_replay_distinguishes_an_upload_from_ack_only_traffic() {
+    use serde_json::{Value, json};
+
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "traffic.asymmetric_outbound";
+    for (name, frames, flags, payload) in [
+        ("acks", 19_000, 0x10, Vec::new()),
+        ("upload", 17, 0x18, vec![0; 60_000]),
+    ] {
+        let mut writer = PcapNgWriter::create(&root.join(format!("{name}.pcapng"))).unwrap();
+        for frame in 1..=frames {
+            let mut packet = super::support::tcp(frame, frame as u32 * 60_000, flags, &payload, false);
+            packet.bytes[26..34].copy_from_slice(&[10, 0, 0, 5, 198, 51, 100, 10]);
+            packet.timestamp = frame as f64 / 10.0;
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+    }
+    let manifest = root.join("tcp-volume.json");
+    let labels = json!({"version":1,"strict":true,"cases":[
+        {"name":"ACK-only traffic","capture":"acks.pcapng","expect_counts":{(rule):0},"expect_snapshots":0},
+        {"name":"outbound payload","capture":"upload.pcapng","expect_counts":{(rule):1},"expect_snapshots":1,
+         "opening_frames":{(rule):[17]},
+         "opening_evidence":[{"rule_id":rule,"opening_frame":17,"frames":(10..=17).collect::<Vec<_>>()}]}
+    ]});
+    std::fs::write(&manifest, labels.to_string()).unwrap();
+    let baseline = std::env::var("PACKRAT_REPLAY_BASELINE_ANALYZER").ok();
+    let output = super::run_suite_with_baseline(&manifest, baseline.as_deref());
+    assert!(output.status.success(), "{}\n{}",
+        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], 2);
+    assert_eq!(report["cases"][0]["summary"]["analyzed"], 19_000);
+    if baseline.is_some() {
+        println!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn outbound_entropy_replay_reports_separate_episodes() {
     use serde_json::{Value, json};
 

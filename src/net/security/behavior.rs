@@ -239,8 +239,10 @@ impl SecurityEngine {
         if source_internal != destination_internal {
             let outbound = source_internal;
             transport = transfer_transport(pkt);
-            // Observed reverse traffic remains in the baseline; removing it would inflate the ratio.
-            if outbound && matches!(transport, TransferTransport::Tcp) && matches!(tcp_payload, TcpPayloadObservation::Repeat) {
+            // Keep observed reverse bytes; omit verified empty segments and recognized outbound retries.
+            if outbound && matches!(transport, TransferTransport::Tcp)
+                && matches!(tcp_payload, TcpPayloadObservation::Repeat | TcpPayloadObservation::Empty)
+            {
                 return;
             }
             let (internal, external) = if outbound {
@@ -287,7 +289,7 @@ impl SecurityEngine {
                     "Large asymmetric outbound transfer",
                     severity,
                     format!(
-                        "{} to {}: {} captured outbound bytes in the rolling hour, excluding recognized outbound TCP payload retries; {comparison}; transfer intent unverified",
+                        "{} to {}: {} captured outbound bytes in the rolling hour, excluding recognized outbound TCP payload retries and payload-free TCP frames; {comparison}; transfer intent unverified",
                         pkt.src, pkt.dst, state.outbound_bytes
                     ),
                     state.outbound_frames.iter().chain(&state.inbound_frames).map(|&(_, frame)| frame).collect::<Vec<_>>(),
