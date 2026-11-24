@@ -1,4 +1,5 @@
 use super::*;
+use super::scans::scan_scope;
 use crate::net::recent_evidence::RecentEvidence;
 use std::collections::BTreeMap;
 
@@ -16,7 +17,7 @@ struct SourceState {
 
 #[derive(Default)]
 pub(super) struct NtlmFanout {
-    sources: HashMap<(String, ServiceScope), SourceState>,
+    sources: HashMap<(String, ScanScope), SourceState>,
     evidence: RecentEvidence<512, WINDOW_SECS>,
 }
 
@@ -32,7 +33,7 @@ impl SecurityEngine {
             return;
         }
         let window = WINDOW_SECS as f64;
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let tracker = &mut self.ntlm_fanout;
         tracker.sources.retain(|_, state| pkt.timestamp - state.last_seen <= window);
         let key = (pkt.src.clone(), scope);

@@ -11,10 +11,12 @@ fn ntlm_fanout_replay_distinguishes_rearmed_bursts_from_sustained_and_single_hos
     let rule = "smb2.ntlm_authentication_fanout";
     let payload = smb_ntlm::smb2_ntlm_request(3);
     let mut cases = Vec::new();
-    for (name, late, diverse, openings) in [
-        ("rearmed", 604, true, &[3_u64, 7][..]),
-        ("sustained", 305, true, &[3][..]),
-        ("one-target", 604, false, &[][..]),
+    for (name, late, diverse, tagged_paths, openings) in [
+        ("rearmed", 604, true, None, &[3_u64, 7][..]),
+        ("sustained", 305, true, None, &[3][..]),
+        ("one-target", 604, false, None, &[][..]),
+        ("same-tag-type-different-priority", 604, true, Some(false), &[3, 7][..]),
+        ("same-vlan-id-distinct-tag-types", 604, true, Some(true), &[][..]),
     ] {
         let file = format!("{name}.pcapng");
         let mut writer = PcapNgWriter::create(&root.join(&file)).unwrap();
@@ -24,6 +26,11 @@ fn ntlm_fanout_replay_distinguishes_rearmed_bursts_from_sustained_and_single_hos
             let target = if diverse { frame as u8 } else { 1 };
             packet.bytes[26..34].copy_from_slice(&[10, 0, 0, 9, 10, 0, 2, target]);
             packet.bytes[36..38].copy_from_slice(&445_u16.to_be_bytes());
+            if let Some(split) = tagged_paths {
+                let tpid = if split && frame % 3 == 2 { 0x88a8_u16 } else { 0x8100_u16 };
+                let tci = if frame % 2 == 0 { 0xb014_u16 } else { 20_u16 };
+                packet.bytes.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+            }
             packet.timestamp = f64::from(time);
             writer.write_packet(&packet).unwrap();
         }
@@ -36,7 +43,7 @@ fn ntlm_fanout_replay_distinguishes_rearmed_bursts_from_sustained_and_single_hos
             case["opening_frames"] = json!({(rule):openings});
             let evidence: Vec<_> = openings.iter().map(|&frame| json!({
                 "rule_id":rule, "opening_frame":frame, "frames":[frame - 2, frame - 1, frame],
-                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":3},
+                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":4},
             })).collect();
             case["opening_evidence"] = json!(evidence);
         }
