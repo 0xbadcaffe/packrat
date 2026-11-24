@@ -1,4 +1,5 @@
 use super::*;
+use super::scans::scan_scope;
 
 impl SecurityEngine {
     pub(super) fn check_ids(&mut self, pkt: &Packet) {
@@ -10,7 +11,9 @@ impl SecurityEngine {
                 self.push_ids_finding(IdsFinding {
                     alert,
                     related_packets: Vec::new(),
-                    correlation_key,
+                    correlation_key: Some(correlation_key.unwrap_or_else(|| {
+                        format!("{:?}:{}>{}", scan_scope(pkt), pkt.src, pkt.dst)
+                    })),
                 });
             }
         });
@@ -38,7 +41,7 @@ impl SecurityEngine {
                     .collect(),
                 correlation_key: Some(format!(
                     "ipv6-datagram:{:?}:{}>{}:{identification}",
-                    service_scope(triggering_frame),
+                    scan_scope(triggering_frame),
                     triggering_frame.src,
                     triggering_frame.dst,
                 )),
@@ -67,7 +70,7 @@ impl SecurityEngine {
                         pkt.src, pkt.dst,
                     ),
                 },
-                Some(format!("{:?}:{}:{client_port}>{}:{port}:{field}", service_scope(pkt), pkt.src, pkt.dst)),
+                Some(format!("{:?}:{}:{client_port}>{}:{port}:{field}", scan_scope(pkt), pkt.src, pkt.dst)),
             );
         }
 
@@ -85,7 +88,7 @@ impl SecurityEngine {
                         pkt.src, pkt.dst
                     ),
                 },
-                Some(format!("{:?}:{}>{}", service_scope(pkt), pkt.src, pkt.dst)),
+                Some(format!("{:?}:{}>{}", scan_scope(pkt), pkt.src, pkt.dst)),
             );
         }
         if src_port == 445
@@ -103,7 +106,7 @@ impl SecurityEngine {
                         pkt.src, pkt.dst
                     ),
                 },
-                Some(format!("{:?}:{}>{}:{client_port}:{session_id}", service_scope(pkt), pkt.src, pkt.dst)),
+                Some(format!("{:?}:{}>{}:{client_port}:{session_id}", scan_scope(pkt), pkt.src, pkt.dst)),
             );
         }
 
@@ -153,7 +156,7 @@ impl SecurityEngine {
                         pkt.src, pkt.dst
                     ),
                 },
-                Some(format!("{:?}:{}>{}", service_scope(pkt), pkt.src, pkt.dst)),
+                Some(format!("{:?}:{}>{}", scan_scope(pkt), pkt.src, pkt.dst)),
             );
         }
 

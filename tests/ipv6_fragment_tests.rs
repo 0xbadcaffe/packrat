@@ -268,12 +268,23 @@ fn ipv6_rejection_cites_the_frame_that_conflicts_with_the_final_length() {
     }
 }
 
-#[test]
-fn reassembled_ids_alert_opens_all_contributing_frames() {
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn reassembled_ids_alert_opens_all_contributing_frames(#[case] reuse_id_on_distinct_tag_paths: bool) {
     let mut core = AnalysisCore::default();
-    for (id, frame_base) in [(21, 10), (22, 20)] {
-        core.analyze(&fragment_packet(frame_base, id, 24, false, b"ript>"));
-        core.analyze(&fragment_packet(frame_base + 1, id, 0, true, b"abcdefghijklmnopqrstu<sc"));
+    for (id, frame_base, tpid) in [(21, 10, 0x8100_u16), (22, 20, 0x88a8)] {
+        let id = if reuse_id_on_distinct_tag_paths { 21 } else { id };
+        for mut packet in [
+            fragment_packet(frame_base, id, 24, false, b"ript>"),
+            fragment_packet(frame_base + 1, id, 0, true, b"abcdefghijklmnopqrstu<sc"),
+        ] {
+            if reuse_id_on_distinct_tag_paths {
+                packet.bytes.splice(12..12, [tpid, 20].into_iter().flat_map(u16::to_be_bytes));
+                packet = packrat_tui::net::parser::parse_ethernet(&packet.bytes, packet.no, packet.timestamp);
+            }
+            core.analyze(&packet);
+        }
     }
     let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == "XSS Probe").collect();
     assert_eq!(alerts.len(), 2);

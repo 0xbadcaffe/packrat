@@ -81,23 +81,23 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare retained headers with the full stream and with proxy and server logs. The finding does not establish divergent parsing or compromise.",
         ),
         (
-            "IDS", "Directory Traversal", "payload.path_traversal_marker", 1, Heuristic,
+            "IDS", "Directory Traversal", "payload.path_traversal_marker", 2, Heuristic,
             "Locate the byte pattern in the reconstructed application message and check server access logs before inferring a traversal attempt.",
         ),
         (
-            "IDS", "SQL Injection Probe", "payload.sql_like_marker", 1, Heuristic,
+            "IDS", "SQL Injection Probe", "payload.sql_like_marker", 2, Heuristic,
             "Verify the match in application context and compare with server logs. Text alone does not establish a database query or execution.",
         ),
         (
-            "IDS", "XSS Probe", "payload.script_like_marker", 1, Heuristic,
+            "IDS", "XSS Probe", "payload.script_like_marker", 2, Heuristic,
             "Verify whether the matched text was user input and how the application handled it. The match does not establish browser execution.",
         ),
         (
-            "IDS", "Heartbleed (CVE-2014-0160)", "tls.legacy_heartbeat_pattern", 1, Heuristic,
+            "IDS", "Heartbleed (CVE-2014-0160)", "tls.legacy_heartbeat_pattern", 2, Heuristic,
             "Verify message framing and the endpoint's patch status. The byte pattern does not establish a TLS heartbeat or information disclosure.",
         ),
         (
-            "IDS", "Repeated NOP-like byte pattern", "payload.nop_like_byte_run", 1, Heuristic,
+            "IDS", "Repeated NOP-like byte pattern", "payload.nop_like_byte_run", 2, Heuristic,
             "Inspect the retained transport payload and expected application format; a repeated byte alone does not identify executable content.",
         ),
         (
@@ -229,15 +229,15 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the retained replies with the approved DHCP server inventory and check for planned failover or migration.",
         ),
         (
-            "IDS", "SMBv1 server response", "smb1.successful_server_response", 1, DirectObservation,
+            "IDS", "SMBv1 server response", "smb1.successful_server_response", 2, DirectObservation,
             "Identify the server and legacy dependency; verify SMBv1 configuration and pilot removal before disabling it.",
         ),
         (
-            "IDS", "SMB2 anonymous session accepted", "smb2.anonymous_session_accepted", 1, DirectObservation,
+            "IDS", "SMB2 anonymous session accepted", "smb2.anonymous_session_accepted", 2, DirectObservation,
             "Verify the server's anonymous access policy and check subsequent TREE_CONNECT responses or server share audit logs.",
         ),
         (
-            "IDS", "Cleartext HTTP Basic authorization", "http.cleartext_basic_authorization", 1, DirectObservation,
+            "IDS", "Cleartext HTTP Basic authorization", "http.cleartext_basic_authorization", 2, DirectObservation,
             "Verify where TLS terminates, review who could read the captured traffic, and rotate exposed credentials as appropriate.",
         ),
         (
@@ -265,7 +265,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the selected cipher in ServerHello and remove RC4 from the server or proxy's allowed cipher suites.",
         ),
         (
-            "IDS", "NBNS WPAD address reply", "nbns.wpad_address_reply", 1, DirectObservation,
+            "IDS", "NBNS WPAD address reply", "nbns.wpad_address_reply", 2, DirectObservation,
             "Check whether the responder is an approved proxy discovery service and whether the client used it.",
         ),
         (
@@ -329,7 +329,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check the queried name against approved domains or threat intelligence. Identify the originating process before escalating.",
         ),
         (
-            "IDS", "Log4Shell (CVE-2021-44228)", "log4j.literal_lookup_marker", 2, Heuristic,
+            "IDS", "Log4Shell (CVE-2021-44228)", "log4j.literal_lookup_marker", 3, Heuristic,
             "Check whether the receiving application uses an affected library. Corroborate with application and outbound connection logs before escalating.",
         ),
         (
