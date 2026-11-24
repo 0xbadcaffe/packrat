@@ -153,8 +153,8 @@ impl AnalysisCore {
             } else {
                 String::new()
             };
-            self.alert_center.record_correlated_with_evidence(
-                (pkt.no, &packet_refs),
+            self.alert_center.record_with_context(
+                (pkt.no, &packet_refs, AlertFlow::from_packet(pkt)),
                 pkt.timestamp,
                 "AUTH",
                 severity,

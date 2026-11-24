@@ -147,6 +147,7 @@ impl SecurityEngine {
                 if destination_port == 22 && control == SYN {
                     self.record_service_observation(
                         pkt, "SSH", false, destination_port, (source_port, sequence), Vec::new(),
+                        archive_rules,
                     );
                 }
             } else if control == (SYN | ACK) || control == (RST | ACK) {

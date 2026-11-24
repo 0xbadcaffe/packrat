@@ -29,6 +29,7 @@ impl SecurityEngine {
             arp_evidence: Default::default(),
             os_by_ip: HashMap::new(),
             bf_windows: HashMap::new(),
+            auth_sample_evidence: Default::default(),
             dns_tunnel: Default::default(),
             fragment_states: HashMap::new(),
             ipv4_fragment_evidence: Default::default(),
@@ -76,6 +77,7 @@ impl SecurityEngine {
         self.arp_evidence = Default::default();
         self.os_by_ip.clear();
         self.bf_windows.clear();
+        self.auth_sample_evidence = Default::default();
         self.dns_tunnel.clear();
         self.fragment_states.clear();
         self.ipv4_fragment_evidence = Default::default();
@@ -172,7 +174,7 @@ impl SecurityEngine {
         self.check_os_fingerprint(pkt);
         self.check_vuln(pkt);
         self.check_ftp_control(pkt);
-        self.check_brute_force(pkt, http_auth);
+        self.check_brute_force(pkt, http_auth, archive_rules);
         self.check_http(pkt);
         self.check_tls(pkt, tls);
         self.check_dns_tunnel(pkt, &dns, archive_rules);

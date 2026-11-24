@@ -36,6 +36,8 @@ fn authentication_reply_bursts_require_tcp_data_with_ack(
     let alert = core.alert_center.items.iter().find(|alert| alert.source == "AUTH").unwrap();
     assert_eq!(alert.provenance.as_ref().unwrap().rule_id, rule);
     assert_eq!(alert.packet_refs, [6, 7, 8, 9, 10]);
+    let flow = alert.flow.expect("validated trigger tuple");
+    assert_eq!((flow.source.port(), flow.destination.port()), (server_port, 50_000));
     let (old_id, scope) = (alert.id, alert.capture_id.clone());
     assert!(core.alert_center.set_disposition(old_id, scope.as_deref(), AlertDisposition::Benign));
     for (no, original) in (46..=50).zip(6..=10) {
@@ -55,6 +57,70 @@ fn authentication_reply_bursts_require_tcp_data_with_ack(
     assert_ne!(episodes[1].id, old_id);
     assert_eq!(episodes[1].disposition, AlertDisposition::New);
     assert_eq!(episodes[1].packet_refs, [51, 52, 53, 54, 55]);
+}
+
+#[cfg(feature = "terminal-ui")]
+#[rstest::rstest]
+#[case(21, "ftp.not_logged_in_burst")]
+#[case(22, "ssh.connection_start_burst")]
+#[case(445, "smb2.logon_failure_burst")]
+fn opted_in_transport_auth_samples_survive_history_rollover(
+    #[case] port: u16,
+    #[case] rule: &str,
+) {
+    use super::archive_fixture::{finish, roll_history, start};
+    use packrat_tui::net::parser::parse_ethernet;
+    use packrat_tui::storage::packet_archive::PacketArchive;
+
+    let payload = match port {
+        21 => b"530 Not logged in\r\n".to_vec(),
+        22 => Vec::new(),
+        445 => cases_3::smb2_session_setup_reply(0xc000_006d, 1),
+        _ => unreachable!(),
+    };
+    let (flags, source_port, destination_port) = if port == 22 {
+        (0x02, 50_000_u16, port)
+    } else {
+        (0x18, port, 50_000_u16)
+    };
+    let make = |frame, time, token, vlan| {
+        let mut bytes = ipv4_tcp_packet(frame, token, flags, &payload).bytes;
+        bytes[34..36].copy_from_slice(&source_port.to_be_bytes());
+        bytes[36..38].copy_from_slice(&destination_port.to_be_bytes());
+        bytes.splice(12..12, [0x81, 0, 0, vlan]);
+        parse_ethernet(&bytes, frame, time)
+    };
+    for selected in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("archive");
+        let rules = vec![if selected { rule } else { "http.unauthorized_burst" }.into()];
+        let mut app = start(&path, rules);
+        let mut expected: Vec<_> = (1..=4).map(|frame| make(frame, frame as f64, frame as u32 * 1024, 10)).collect();
+        for packet in &expected {
+            app.inject_packet(packet.clone());
+        }
+        app.inject_packet(make(5, 5.0, 6 * 1024, 20));
+        app.inject_packet(make(6, 6.0, 4 * 1024, 10));
+        let trigger = roll_history(&mut app, 7);
+        let last = make(trigger, 3.5, 5 * 1024, 10);
+        app.inject_packet(last.clone());
+        expected.push(last);
+        finish(&mut app);
+
+        let alert = app.query_core(move |core| core.alert_center.items.iter()
+            .find(|item| item.provenance.as_ref().is_some_and(|p| p.rule_id == rule)).cloned())
+            .unwrap().unwrap();
+        assert_eq!(alert.packet_refs, [1, 2, 3, 4, trigger]);
+        let flow = alert.flow.expect("validated trigger tuple");
+        assert_eq!((flow.source.port(), flow.destination.port()), (source_port, destination_port));
+        let scope = alert.capture_id.unwrap();
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { 5 } else { 0 });
+        for packet in expected {
+            let recovered = archive.packet_for_capture(&scope, packet.no).unwrap();
+            assert_eq!(recovered.map(|frame| frame.bytes), selected.then_some(packet.bytes));
+        }
+    }
 }
 
 #[test]

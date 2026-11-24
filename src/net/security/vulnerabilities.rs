@@ -60,7 +60,7 @@ impl SecurityEngine {
 
     // ─── Repeated Service Observations ────────────────────────────────────────
 
-    pub(super) fn check_brute_force(&mut self, pkt: &Packet, http_auth: HttpAuthObservation) {
+    pub(super) fn check_brute_force(&mut self, pkt: &Packet, http_auth: HttpAuthObservation, archive_rules: Option<&[String]>) {
         let (Some(server_port @ (21 | 80 | 443 | 445 | 8080)), Some(client_port)) =
             (pkt.src_port, pkt.dst_port)
         else {
@@ -78,7 +78,7 @@ impl SecurityEngine {
                 HttpAuthObservation::Packet if is_http_unauthorized(payload) => "HTTP",
                 HttpAuthObservation::Stream(responses) => {
                     for (sequence, frames) in responses {
-                        self.record_service_observation(pkt, "HTTP", true, server_port, (client_port, sequence), frames);
+                        self.record_service_observation(pkt, "HTTP", true, server_port, (client_port, sequence), frames, archive_rules);
                     }
                     return;
                 }
@@ -86,7 +86,7 @@ impl SecurityEngine {
             },
             _ => return,
         };
-        self.record_service_observation(pkt, service, true, server_port, (client_port, sequence), Vec::new());
+        self.record_service_observation(pkt, service, true, server_port, (client_port, sequence), Vec::new(), archive_rules);
     }
 
     pub(super) fn record_service_observation(
@@ -97,6 +97,7 @@ impl SecurityEngine {
         port: u16,
         token: (u16, u32),
         related_frames: Vec<u64>,
+        archive_rules: Option<&[String]>,
     ) {
         let (client, server) = if response { (&pkt.dst, &pkt.src) } else { (&pkt.src, &pkt.dst) };
         let key = BfKey {
@@ -141,6 +142,17 @@ impl SecurityEngine {
             || !window.recent_tokens.remember(now, window.last_seen, token)
         {
             return;
+        }
+        let archive_rule = match service {
+            "FTP" => Some("ftp.not_logged_in_burst"),
+            "SMB" => Some("smb2.logon_failure_burst"),
+            "SSH" => Some("ssh.connection_start_burst"),
+            _ => None, // HTTP retains its reconstructed exchanges separately.
+        };
+        let retain = archive_rule.zip(archive_rules)
+            .is_some_and(|(rule, rules)| rules.iter().any(|configured| configured == rule));
+        if retain {
+            self.auth_sample_evidence.remember(pkt);
         }
         window.observations.push(AuthObservation {
             timestamp: now,
@@ -187,6 +199,12 @@ impl SecurityEngine {
                     Some((frame, entry.http_stream.clone()?, entry.transport_token.1))
                 }).collect(),
             };
+            if retain {
+                self.findings.retained_evidence.extend(alert.packet_refs.iter().filter_map(|&frame| {
+                    // The burst already checked the window against its capture-time watermark.
+                    self.auth_sample_evidence.cited_packet(pkt, frame).cloned()
+                }));
+            }
             self.findings.authentication.push(alert.clone());
             self.brute_force.push(alert);
         }
