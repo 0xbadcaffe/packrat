@@ -57,7 +57,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the retained fragment offsets and compare with link MTU, source behavior, and endpoint resource pressure. Volume alone does not establish denial of service.",
         ),
         (
-            "IDS", "Malformed TCP header", "tcp.invalid_header", 2, DirectObservation,
+            "IDS", "Malformed TCP header", "tcp.invalid_header", 3, DirectObservation,
             "Check the TCP header length against the captured and declared IP lengths. Confirm truncation and endpoint handling independently.",
         ),
         (

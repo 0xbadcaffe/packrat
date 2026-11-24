@@ -187,6 +187,7 @@ pub(super) struct RouterAdvertisementState {
 }
 
 pub(super) struct Ipv6Inspection<'a> {
+    pub(super) declared_transport_len: usize,
     pub(super) hop_limit: u8,
     pub(super) source: [u8; 16],
     pub(super) destination: [u8; 16],

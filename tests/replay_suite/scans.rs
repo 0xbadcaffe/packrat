@@ -6,6 +6,67 @@ use std::path::Path;
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn tcp_header_replay_distinguishes_proven_invalid_offsets_from_truncation() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "tcp.invalid_header";
+    let mut cases = Vec::new();
+    for (name, offset, captured_tcp, expected) in [
+        ("ipv6-valid-short-capture", 0x60, 13, 0),
+        ("ipv6-offset-not-captured", 0xb0, 12, 0),
+        ("ipv6-observed-invalid-offset", 0xb0, 13, 1),
+    ] {
+        let file = format!("{name}.pcapng");
+        let tcp = super::support::tcp(1, 100, 0x18, &[0; 20], false);
+        let mut bytes = vec![0; 54];
+        bytes[12..14].copy_from_slice(&0x86dd_u16.to_be_bytes());
+        bytes[14] = 0x60;
+        bytes[18..20].copy_from_slice(&48_u16.to_be_bytes());
+        bytes[20] = 60;
+        bytes[21] = 64;
+        for (start, address) in [(22, "2001:db8::1"), (38, "2001:db8::2")] {
+            bytes[start..start + 16].copy_from_slice(&address.parse::<std::net::Ipv6Addr>().unwrap().octets());
+        }
+        bytes.extend_from_slice(&[6, 0, 0, 0, 0, 0, 0, 0]);
+        bytes.extend_from_slice(&tcp.bytes[34..]);
+        bytes[74] = offset;
+        let wire_length = bytes.len() as u32;
+        bytes.truncate(62 + captured_tcp);
+        let mut packet = parse_ethernet(&bytes, 1, 1.0);
+        packet.capture = Some(CaptureMetadata {
+            timestamp: Some(CaptureTimestamp { ticks: 1, resolution: TimestampResolution::Decimal(0), offset_seconds: 0 }),
+            captured_length: bytes.len() as u32, wire_length, link_type: 1, interface_id: 0,
+            section_id: 0, interface_name: None, comments: Vec::new(),
+        });
+        let mut writer = PcapNgWriter::create(&root.join(&file)).unwrap();
+        writer.write_packet(&packet).unwrap();
+        writer.flush().unwrap();
+        let mut case = json!({
+            "name":name, "capture":file, "allow_truncated":true,
+            "expect_counts":{(rule):expected}, "expect_snapshots":expected,
+        });
+        if expected == 1 {
+            case["opening_frames"] = json!({(rule):[1]});
+            case["opening_evidence"] = json!([{
+                "rule_id":rule,"opening_frame":1,"frames":[1],
+                "classification":{"severity":"HIGH","confidence":"direct_observation","revision":3},
+            }]);
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("tcp-framing.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], 3);
+    for case in report["cases"].as_array().unwrap() {
+        assert_eq!(case["summary"]["truncated_frames"], 1);
+    }
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn admin_fanout_replay_requires_a_timely_syn_or_its_exact_retry() {
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();

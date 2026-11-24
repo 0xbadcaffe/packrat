@@ -10,6 +10,7 @@ pub(super) fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
     let packet_end = declared_end.min(raw.len());
     let mut next_header = raw[ip_offset + 6];
     let mut transport = &raw[ip_offset + 40..packet_end];
+    let mut declared_transport_len = payload_len;
     let mut extension_count = 0usize;
     let mut fragmented = false;
 
@@ -30,6 +31,7 @@ pub(super) fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
         };
         extension_count += 1;
         next_header = following;
+        declared_transport_len -= length;
         fragmented |= current == 44;
         // A non-initial fragment does not begin at the next protocol header.
         if extension_count > 32
@@ -42,6 +44,7 @@ pub(super) fn parse_ipv6_inspection(raw: &[u8]) -> Option<Ipv6Inspection<'_>> {
     }
 
     Some(Ipv6Inspection {
+        declared_transport_len,
         hop_limit: raw[ip_offset + 7],
         source: raw[ip_offset + 8..ip_offset + 24].try_into().ok()?,
         destination: raw[ip_offset + 24..ip_offset + 40].try_into().ok()?,
@@ -90,14 +93,12 @@ pub(super) fn ipv6_probe(raw: &[u8]) -> Option<Ipv6Probe> {
 
 pub(super) fn parse_ipv6_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
     let packet = parse_ipv6_inspection(raw)?;
-    if packet.next_header != 6 || packet.fragmented || !packet.complete || packet.extension_count > 32
-        || packet.transport.is_empty()
-    {
+    if packet.next_header != 6 || packet.fragmented || packet.extension_count > 32 {
         return None;
     }
     parse_tcp_transport(
         packet.transport,
-        packet.transport.len(),
+        packet.declared_transport_len,
         Ipv6Addr::from(packet.source).into(),
         Ipv6Addr::from(packet.destination).into(),
     )

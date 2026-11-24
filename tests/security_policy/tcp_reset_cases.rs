@@ -48,6 +48,42 @@ fn ipv6_tcp_packet(no: u64, sequence: u32, flags: u8, payload: &[u8]) -> Packet 
 }
 
 #[test]
+fn tcp_header_evidence_uses_declared_lengths_after_complete_ip_headers() {
+    let fixtures: [(fn(u64, u32, u8, &[u8]) -> Packet, usize); 2] =
+        [(ipv4_tcp_packet, 34), (ipv6_tcp_packet, 62)];
+    for (packet, transport) in fixtures {
+        let mut security = SecurityEngine::default();
+        for (frame, captured, offset, expected) in [
+            (1, 12, 0xb0, None),
+            (2, 13, 0x60, None),
+            (3, 13, 0xb0, Some("exceeds the IP transport length")),
+            (4, 13, 0x40, Some("smaller than 20 bytes")),
+        ] {
+            let mut packet = packet(frame, 100, 0x18, &[0; 20]);
+            packet.bytes[transport + 12] = offset;
+            packet.bytes.truncate(transport + captured);
+            let batch = security.inspect(&packet);
+            let finding = batch.ids.iter().find(|finding| finding.alert.signature == "Malformed TCP header");
+            assert_eq!(finding.is_some(), expected.is_some());
+            if let Some(reason) = expected {
+                assert!(finding.unwrap().alert.detail.contains(reason));
+            }
+        }
+    }
+
+    let mut incomplete_chain = ipv6_tcp_packet(5, 100, 0x18, &[0; 20]);
+    incomplete_chain.bytes.truncate(60);
+    let mut fragmented = ipv6_tcp_packet(6, 100, 0x18, &[0; 20]);
+    fragmented.bytes[20] = 44;
+    fragmented.bytes[57] = 1;
+    fragmented.bytes[74] = 0xb0;
+    for packet in [incomplete_chain, fragmented] {
+        assert!(SecurityEngine::default().inspect(&packet).ids.iter()
+            .all(|finding| finding.alert.signature != "Malformed TCP header"));
+    }
+}
+
+#[test]
 fn detects_tcp_payload_continuing_after_reset() {
     let mut core = AnalysisCore::default();
     core.analyze(&ipv4_tcp_packet(1, 90, 0x18, b"previous"));
