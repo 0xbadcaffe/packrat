@@ -13,6 +13,9 @@ use super::{
     scoped_frames,
 };
 
+#[path = "flow_timing.rs"]
+mod flow_timing;
+
 #[derive(Serialize)]
 pub struct AlertPacketMetadata {
     record_type: &'static str,
@@ -37,6 +40,8 @@ struct FrameMetadata {
 #[derive(Serialize)]
 struct PacketMetadata {
     timestamp: Option<f64>,
+    #[serde(skip)]
+    capture_time_ns: Option<i128>,
     recorded_source: Option<IpAddr>,
     recorded_destination: Option<IpAddr>,
     captured_length: Option<u32>,
@@ -106,6 +111,7 @@ struct FlowCounts {
     reset_frames: usize,
     first_seen: Option<f64>,
     last_seen: Option<f64>,
+    cited_timing: flow_timing::CitedTiming,
     #[serde(skip)]
     initial_syns: Vec<SynSegment>,
     #[serde(skip)]
@@ -191,6 +197,7 @@ pub struct AlertFlowSummary {
     tcp_syn_ack_matches: Vec<SynAckMatch>,
     udp_dns_reply_candidates: Vec<DnsReplyCandidates>,
     unassigned_frames: Vec<FlowFrameRef>,
+    timing_limitation: &'static str,
     limitation: &'static str,
 }
 
@@ -229,6 +236,7 @@ impl PacketMetadata {
         });
         Self {
             timestamp: packet.timestamp.is_finite().then_some(packet.timestamp),
+            capture_time_ns: capture.and_then(|metadata| metadata.timestamp).map(|time| time.nanoseconds()),
             recorded_source: packet.src.parse().ok(),
             recorded_destination: packet.dst.parse().ok(),
             captured_length: capture.map(|value| value.captured_length),
@@ -263,6 +271,7 @@ pub fn alert_flow_summary(
         tcp_syn_ack_matches: Vec::new(),
         udp_dns_reply_candidates: Vec::new(),
         unassigned_frames: Vec::new(),
+        timing_limitation: "Gaps use capture-clock timestamps of adjacent cited frames in the same direction, in frame order. Frames missing capture time break the chain. Uncited or unassigned frames may intervene; these gaps do not establish full-flow cadence.",
         limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP handshake candidates account for declared SYN payload, but sequence matches do not establish endpoint acceptance or a specific retransmission. Earlier SYN candidates do not cross a cited reset or a different initial SYN in the same direction. Later ACK candidates do not cross a cited reset or another SYN. UDP DNS candidates match complete cited datagrams with one question, the reverse tuple and path, and a 30-second window. These are candidate links, not proof of acceptance. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
@@ -315,6 +324,7 @@ pub fn alert_flow_summary(
         counts.contains_trigger_frame |= is_trigger;
         counts.cited_declared_payload_bytes += header.declared_payload_length;
         counts.cited_captured_payload_bytes += header.captured_payload_length;
+        counts.cited_timing.observe(packet.capture_time_ns);
         if let (Some(flags), Some((sequence, acknowledgment))) = (header.tcp_flags, header.tcp_sequence_pair) {
             let syn = u32::try_from(header.declared_payload_length).ok().map(|payload_len| {
                 SynSegment { frame: frame.frame_number, sequence, payload_len }
