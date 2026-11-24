@@ -93,6 +93,62 @@ fn attach_capture_time(packet: &mut Packet, ticks: u64) {
 }
 
 #[test]
+fn dns_summary_distinguishes_missing_legacy_time_from_capture_clock_zero() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive");
+    let log = root.path().join("alerts.jsonl");
+    let mut alerts = AlertCenter::default();
+    alerts.record(6, "IDS", "MEDIUM", "Saved finding", "fixture");
+    let mut alert = alerts.items.remove(0);
+    alert.capture_id = Some("scope-a".into());
+    alert.packet_refs = (1..=6).collect();
+    std::fs::write(
+        &log,
+        json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
+    ).unwrap();
+
+    let mut archive = PacketArchive::open(&path).unwrap();
+    for (no, reply, vlan, legacy, exact) in [
+        (1, false, 10, 0.0, None),
+        (2, true, 10, 0.0, None),
+        (3, false, 20, 500.0, Some(0)),
+        (4, true, 20, 600.0, Some(1_000_000)),
+        (5, false, 30, 7.0, None),
+        (6, true, 30, 8.0, None),
+    ] {
+        let mut packet = dns_frame(no, 17, b"sample", reply, vlan, 1);
+        packet.timestamp = legacy;
+        if let Some(ticks) = exact {
+            attach_capture_time(&mut packet, ticks);
+            packet.capture.as_mut().unwrap().timestamp.as_mut().unwrap().offset_seconds = 0;
+        }
+        archive.append_scoped("scope-a", &[packet]).unwrap();
+    }
+    drop(archive);
+
+    let run = |action| {
+        let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+            .arg(&path).arg(action).arg(&log)
+            .args(["session-a", "1", "--capture-id", "scope-a"]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let summary = run("--alert-flow-summary");
+    assert_eq!(summary["udp_dns_reply_candidates"], json!([
+        {"reply_frame":2,"query_candidate_frames":[],"timestamp_basis":"unavailable"},
+        {"reply_frame":4,"query_candidate_frames":[3],"timestamp_basis":"capture_clock"},
+        {"reply_frame":6,"query_candidate_frames":[5],"timestamp_basis":"legacy_packet_time"}
+    ]));
+    let flows = summary["directional_flows"].as_array().unwrap();
+    assert!(flows.iter().filter(|flow| flow["vlan_id"] == 10)
+        .all(|flow| flow["first_seen"].is_null() && flow["last_seen"].is_null()));
+    let metadata = run("--alert-packet-metadata");
+    let timestamps: Vec<_> = metadata["frames"].as_array().unwrap().iter()
+        .map(|frame| frame["packet"]["timestamp"].as_f64()).collect();
+    assert_eq!(timestamps, [None, None, Some(0.0), Some(0.001), Some(7.0), Some(8.0)]);
+}
+
+#[test]
 fn dns_candidates_use_capture_time_at_the_window_boundary_without_mixing_clocks() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("archive");

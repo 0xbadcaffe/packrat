@@ -266,9 +266,9 @@ impl PacketMetadata {
                 source: wire.source, destination: wire.destination,
             }
         });
+        let (timestamp, capture_time_ns) = flow_timing::packet_times(packet);
         Self {
-            timestamp: packet.timestamp.is_finite().then_some(packet.timestamp),
-            capture_time_ns: capture.and_then(|metadata| metadata.timestamp).map(|time| time.nanoseconds()),
+            timestamp, capture_time_ns,
             recorded_source: packet.src.parse().ok(),
             recorded_destination: packet.dst.parse().ok(),
             captured_length: capture.map(|value| value.captured_length),

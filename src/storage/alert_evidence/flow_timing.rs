@@ -1,5 +1,18 @@
 use serde::Serialize;
 
+use crate::net::packet::Packet;
+
+pub(super) fn packet_times(packet: &Packet) -> (Option<f64>, Option<i128>) {
+    let capture_ns = packet.capture.as_ref()
+        .and_then(|metadata| metadata.timestamp)
+        .map(|time| time.nanoseconds());
+    // A missing capture timestamp can be represented as zero in legacy packet time.
+    let seconds = capture_ns.map(|ns| ns as f64 / 1e9).or_else(|| {
+        (packet.timestamp.is_finite() && packet.timestamp != 0.0).then_some(packet.timestamp)
+    });
+    (seconds, capture_ns)
+}
+
 #[derive(Default, Serialize)]
 pub(super) struct CitedTiming {
     timestamped_frames: usize,
