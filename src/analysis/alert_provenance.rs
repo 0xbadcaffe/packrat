@@ -305,7 +305,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the captured DNS opcode and question count. Check resolver logs for a format error; this does not establish compromise.",
         ),
         (
-            "IDS", "DNS NXDOMAIN burst", "dns.nxdomain_distinct_names", 3, Correlated,
+            "IDS", "DNS NXDOMAIN burst", "dns.nxdomain_distinct_names", 4, Correlated,
             "Review the queried names and client process; search suffixes and misconfiguration can also cause bursts.",
         ),
         (

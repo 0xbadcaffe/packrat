@@ -24,6 +24,59 @@ pub enum Scenario {
     ChangedWire,
 }
 
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn nxdomain_replay_separates_rearmed_bursts_from_sustained_activity() {
+    use serde_json::{Value, json};
+
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "dns.nxdomain_distinct_names";
+    let mut cases = Vec::new();
+    for (file, sustained, repeated, renewed_at, expected) in [
+        ("renewed.pcapng", false, false, 62.0, &[40_u64, 104][..]),
+        ("outside-window.pcapng", false, false, 63.0, &[40][..]),
+        ("sustained.pcapng", true, false, 62.0, &[40][..]),
+        ("one-name.pcapng", false, true, 62.0, &[][..]),
+    ] {
+        let mut capture = PcapNgWriter::create(&root.join(file)).unwrap();
+        let phases = [(0..20, 1.0), (0..12, 20.0), (20..28, 34.0), (28..40, renewed_at)];
+        let mut id = 0_u16;
+        for (names, start) in phases.into_iter().take(if sustained { 3 } else { 4 }) {
+            for (offset, name) in names.enumerate() {
+                id += 1;
+                let frame = u64::from(id) * 2 - 1;
+                let name = format!("missing{}.example", if repeated { 0 } else { name });
+                for reply in [false, true] {
+                    let mut wire = message(id, name.as_bytes(), reply);
+                    if reply { wire[3] = 0x83; }
+                    let mut packet = udp_frame(frame + u64::from(reply), &wire, reply, 53, 40_000);
+                    packet.timestamp = start + offset as f64 / 10.0 + f64::from(u8::from(reply)) / 100.0;
+                    capture.write_packet(&packet).unwrap();
+                }
+            }
+        }
+        capture.flush().unwrap();
+        let mut case = json!({
+            "name":file, "capture":file, "expect_snapshots":expected.len(),
+            "expect_counts":{(rule):expected.len()},
+        });
+        if !expected.is_empty() {
+            case["opening_frames"] = json!({(rule):expected});
+            case["opening_evidence"] = json!(expected.iter().map(|&frame| json!({
+                "rule_id":rule, "opening_frame":frame, "frames":(frame - 39..=frame).collect::<Vec<_>>(),
+                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":4},
+            })).collect::<Vec<_>>());
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("dns-negative-episodes.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = super::run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap()["passed"], 4);
+}
+
 pub fn write_fixture(path: &Path, scenario: Scenario) {
     write_answer_sequence(path, scenario, false);
 }

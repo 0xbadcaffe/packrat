@@ -109,6 +109,9 @@ pub(crate) fn alert_correlation_key(packet: &Packet, finding: &DnsFinding, id: O
         dns_payload(packet).map_or(DnsTransport::Udp, |(transport, ..)| transport)
     };
     let scope = DnsScope::from_packet(packet, transport);
+    if finding.kind == DnsFindingKind::NxDomainBurst {
+        return format!("{scope:?}:{}>{}:episode:{}", packet.src, packet.dst, packet.no);
+    }
     if matches!(
         finding.kind,
         DnsFindingKind::QuestionMismatch

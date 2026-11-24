@@ -96,6 +96,51 @@ fn nxdomain_burst_counts_distinct_matched_names_and_keeps_packet_pairs() {
     assert!(core.incidents.incidents.is_empty());
 }
 
+#[test]
+fn nxdomain_diversity_rearms_without_mutating_the_reviewed_burst() {
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+
+    let mut core = AnalysisCore::default();
+    let mut transaction = 0_u16;
+    let mut observe = |core: &mut AnalysisCore, name: u16, timestamp: f64| {
+        transaction += 1;
+        let first = u64::from(transaction) * 2 - 1;
+        let name = format!("missing{name}.example");
+        let mut query = dns_packet(first, false, "10.0.0.5", "10.0.0.53", transaction, &name);
+        let mut reply = dns_packet(first + 1, true, "10.0.0.53", "10.0.0.5", transaction, &name);
+        query.timestamp = timestamp;
+        reply.timestamp = timestamp + 0.01;
+        reply.bytes[45] = 0x83;
+        core.analyze(&query);
+        core.analyze(&reply);
+    };
+    let alerts = |core: &AnalysisCore| core.alert_center.items.iter()
+        .filter(|alert| alert.title == "DNS NXDOMAIN burst").cloned().collect::<Vec<_>>();
+    for name in 0..20 {
+        observe(&mut core, name, 1.0 + f64::from(name) / 10.0);
+    }
+    let first = alerts(&core).pop().unwrap();
+    assert!(core.alert_center.set_disposition(first.id, first.capture_id.as_deref(), AlertDisposition::Benign));
+    for name in 0..12 {
+        observe(&mut core, name, 20.0 + f64::from(name) / 10.0);
+    }
+    for name in 20..28 {
+        observe(&mut core, name, 34.0 + f64::from(name - 20) / 10.0);
+    }
+    assert_eq!(alerts(&core).len(), 1);
+    for name in 28..40 {
+        observe(&mut core, name, 63.0 + f64::from(name - 28) / 100.0);
+    }
+    let episodes = alerts(&core);
+    assert_eq!(episodes.len(), 2);
+    assert_eq!(episodes[0].id, first.id);
+    assert_eq!(episodes[0].disposition, AlertDisposition::Benign);
+    assert_eq!(episodes[0].packet_refs, (1..=40).collect::<Vec<_>>());
+    assert_eq!(episodes[1].disposition, AlertDisposition::New);
+    assert_eq!(episodes[1].packet_refs, (65..=104).collect::<Vec<_>>());
+    assert!(episodes[1].detail.contains("cause unverified"));
+}
+
 fn tcp_frame(no: u64, sequence: u32, flags: u8, reply: bool, data: &[u8]) -> Packet {
     let mut raw = dns_packet(no, reply, "", "", 0, "example.test").bytes;
     raw.resize(54, 0);

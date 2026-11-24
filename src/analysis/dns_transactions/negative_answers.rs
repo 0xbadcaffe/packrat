@@ -6,6 +6,7 @@ use super::{DnsFinding, DnsFindingKind, DnsMessage, DnsScope, PendingQuery, reco
 
 const WINDOW_SECS: f64 = 30.0;
 const THRESHOLD: usize = 20;
+const REARM_NAMES: usize = THRESHOLD / 2;
 const MAX_NAMES: usize = 64;
 const MAX_CLIENTS: usize = 512;
 const FRAMES_PER_MESSAGE: usize = 3;
@@ -94,7 +95,7 @@ impl NegativeAnswers {
         state
             .names
             .retain(|_, sample| state.latest_time - sample.timestamp <= WINDOW_SECS);
-        if state.names.is_empty() {
+        if state.names.len() <= REARM_NAMES {
             state.alerted = false;
         }
         if let Some(current) = state.names.get_mut(&query.question.name) {
@@ -137,7 +138,7 @@ impl NegativeAnswers {
         Some(DnsFinding {
             kind: DnsFindingKind::NxDomainBurst,
             detail: format!(
-                "{} received NXDOMAIN from {} for {count} distinct queried names in 30 seconds{evidence_note}",
+                "{} received NXDOMAIN from {} for {count} distinct queried names in 30 seconds; cause unverified{evidence_note}",
                 pkt.dst, pkt.src
             ),
             related_packets,
