@@ -463,10 +463,26 @@ impl App {
     }
 
     pub fn investigation_scroll_down(&mut self) {
-        self.investigation_scroll = self.investigation_scroll.saturating_add(1);
+        self.investigation_scroll = self.effective_investigation_scroll().saturating_add(1);
     }
 
     pub fn investigation_scroll_up(&mut self) {
-        self.investigation_scroll = self.investigation_scroll.saturating_sub(1);
+        self.investigation_scroll = self.effective_investigation_scroll().saturating_sub(1);
+    }
+
+    pub(crate) fn clear_investigation_scroll_feedback(&self) {
+        self.investigation_scroll_feedback.set(None);
+    }
+
+    pub(crate) fn record_investigation_scroll(&self, effective: usize) {
+        self.investigation_scroll_feedback
+            .set(Some((self.investigation_scroll, effective)));
+    }
+
+    fn effective_investigation_scroll(&self) -> usize {
+        match self.investigation_scroll_feedback.take() {
+            Some((requested, effective)) if requested == self.investigation_scroll => effective,
+            _ => self.investigation_scroll,
+        }
     }
 }

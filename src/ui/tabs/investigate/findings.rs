@@ -19,10 +19,7 @@ pub(super) fn draw_strings(f: &mut Frame, app: &App, packet: &Packet, area: Rect
     if lines.is_empty() {
         lines.push(Line::from("No printable strings of length >= 4."));
     }
-    f.render_widget(
-        wrapped_panel(lines, "Packet Strings", app.investigation_scroll, area),
-        area,
-    );
+    render_wrapped_panel(f, app, lines, "Packet Strings", area);
 }
 
 pub(super) fn draw_encrypted(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
@@ -111,10 +108,7 @@ pub(super) fn draw_encrypted(f: &mut Frame, app: &App, packet: &Packet, area: Re
             "No TLS/QUIC session context is tied to this packet yet.",
         ));
     }
-    f.render_widget(
-        wrapped_panel(lines, "Encrypted Context", app.investigation_scroll, area),
-        area,
-    );
+    render_wrapped_panel(f, app, lines, "Encrypted Context", area);
 }
 
 pub(super) fn draw_security(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
@@ -190,10 +184,7 @@ pub(super) fn draw_security(f: &mut Frame, app: &App, packet: &Packet, area: Rec
     if count == 0 {
         lines.push(Line::from("No packet-specific security findings recorded."));
     }
-    f.render_widget(
-        wrapped_panel(lines, "Security Context", app.investigation_scroll, area),
-        area,
-    );
+    render_wrapped_panel(f, app, lines, "Security Context", area);
 }
 
 pub(super) fn draw_notes(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
@@ -207,8 +198,5 @@ pub(super) fn draw_notes(f: &mut Frame, app: &App, packet: &Packet, area: Rect) 
             .map(|note| Line::from(format!("#{} {}", note.id, note.text)))
             .collect()
     };
-    f.render_widget(
-        wrapped_panel(lines, "Packet Notes", app.investigation_scroll, area),
-        area,
-    );
+    render_wrapped_panel(f, app, lines, "Packet Notes", area);
 }

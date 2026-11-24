@@ -230,6 +230,7 @@ pub struct App {
     pub worklist: InvestigationTray,
     pub investigation_view: InvestigationView,
     pub investigation_scroll: usize,
+    investigation_scroll_feedback: std::cell::Cell<Option<(usize, usize)>>,
     dns_transaction_selection: Option<investigation_dns::DnsSelection>,
     pub header_cursor: usize,
     pub byte_cursor: usize,

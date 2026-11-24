@@ -92,10 +92,7 @@ pub(super) fn draw_stream_context(f: &mut Frame, app: &App, area: Rect) {
         lines.insert(0, Line::from("Retained evidence only; stream coverage may be incomplete"));
     }
     lines.extend(stream_segment_lines(stream));
-    f.render_widget(
-        wrapped_panel(lines, "Stream Reassembly", app.investigation_scroll, area),
-        area,
-    );
+    render_wrapped_panel(f, app, lines, "Stream Reassembly", area);
 }
 
 pub(super) fn stream_segment_lines(stream: &ReassembledStream) -> Vec<Line<'static>> {

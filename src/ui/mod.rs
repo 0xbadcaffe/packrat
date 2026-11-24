@@ -30,6 +30,7 @@ pub fn draw(f: &mut Frame, app: &crate::app::App) {
 }
 
 pub fn draw_view(f: &mut Frame, app: &App) {
+    app.clear_investigation_scroll_feedback();
     // Apply the active theme before rendering any widget.
     theme::set_theme(theme::palette_by_name(&app.selected_theme_name));
 

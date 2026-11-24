@@ -174,6 +174,7 @@ impl App {
             worklist: InvestigationTray::default(),
             investigation_view: InvestigationView::Summary,
             investigation_scroll: 0,
+            investigation_scroll_feedback: Default::default(),
             dns_transaction_selection: None,
             header_cursor: 0,
             byte_cursor: 0,

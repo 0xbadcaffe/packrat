@@ -202,10 +202,7 @@ fn draw_artifact_context(f: &mut Frame, app: &App, area: Rect) {
         "n/p next or previous item  d remove  M pin current source context  Alt+Left back",
         Style::default().fg(C_FG3()),
     )));
-    f.render_widget(
-        wrapped_panel(lines, "Context Inspector", app.investigation_scroll, area),
-        area,
-    );
+    render_wrapped_panel(f, app, lines, "Context Inspector", area);
 }
 
 fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
@@ -269,10 +266,7 @@ fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
     if let Some(scope) = app.saved_packet_capture(packet.no) {
         lines.insert(1, Line::from(format!("Retained evidence subset | Capture: {scope}")));
     }
-    f.render_widget(
-        wrapped_panel(lines, "Summary", app.investigation_scroll, area),
-        area,
-    );
+    render_wrapped_panel(f, app, lines, "Summary", area);
 }
 
 fn packet_label(packet: &Packet) -> String {
@@ -357,17 +351,25 @@ fn packet_flow_id(packet: &Packet) -> String {
     }
 }
 
-fn wrapped_panel(lines: Vec<Line<'static>>, title: &'static str, scroll: usize, area: Rect) -> Paragraph<'static> {
+fn render_wrapped_panel(
+    f: &mut Frame,
+    app: &crate::app::App,
+    lines: Vec<Line<'static>>,
+    title: &'static str,
+    area: Rect,
+) {
     let block = panel(title);
     let inner = block.inner(area);
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let scroll = app.investigation_scroll;
     let offset = if scroll > 0 && inner.height > 0 {
         let max = paragraph.line_count(inner.width).saturating_sub(usize::from(inner.height));
         scroll.min(max).min(usize::from(u16::MAX)) as u16
     } else {
         0
     };
-    paragraph.scroll((offset, 0)).block(block)
+    app.record_investigation_scroll(usize::from(offset));
+    f.render_widget(paragraph.scroll((offset, 0)).block(block), area);
 }
 
 #[cfg(test)]
