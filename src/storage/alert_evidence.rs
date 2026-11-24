@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::analysis::alert_center::{AlertItem, MAX_ALERT_PACKET_REFS};
 use crate::export::pcapng::PcapNgWriter;
-use crate::model::project::ProjectState;
+use crate::model::project::{ArchivedFrameOutcome, ProjectState};
 use crate::net::packet::Packet;
 use crate::storage::packet_archive::{PacketArchive, valid_capture_id};
 use super::alert_history::{AlertLogs, ReverseAlertLines};
@@ -53,6 +53,15 @@ pub struct EvidenceAvailability {
 pub struct FrameAvailability {
     pub frame_number: u64,
     pub status: FrameStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_export: Option<ProjectExportFrame>,
+}
+
+#[derive(Serialize)]
+struct ProjectExportFrame {
+    recorded_outcome: ArchivedFrameOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recorded_source: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
@@ -180,7 +189,7 @@ pub fn alert_evidence_across_logs(
             Ok(None) => FrameStatus::Missing,
             Err(_) => FrameStatus::Unreadable,
         };
-        FrameAvailability { frame_number, status }
+        FrameAvailability { frame_number, status, project_export: None }
     }).collect();
     Ok(EvidenceAvailability {
         session_id: session_id.to_owned(),
@@ -203,6 +212,11 @@ pub fn project_alert_evidence(
     let (capture_id, frames) = scoped_frames(&alert)?;
     let project = super::project_store::load(project)?;
     let pins = project_pins(&project, capture_id, &frames);
+    let report = project.alert_archive_report.as_ref().filter(|report| {
+        report.alert_id == alert_id && report.capture_id == capture_id
+            && report.session_id.as_deref().is_none_or(|session| session == session_id)
+            && report.frames.keys().copied().eq(frames.iter().copied())
+    });
     Ok(EvidenceAvailability {
         session_id: session_id.to_owned(),
         capture_id: capture_id.to_owned(),
@@ -214,7 +228,14 @@ pub fn project_alert_evidence(
                 ProjectPin::Duplicate => FrameStatus::Unreadable,
                 ProjectPin::Unique(packet) => frame_status(packet),
             };
-            FrameAvailability { frame_number, status }
+            let project_export = report.and_then(|report| {
+                let recorded_outcome = *report.frames.get(&frame_number)?;
+                let recorded_source = recorded_outcome.included().then(|| {
+                    if report.local_fallback_frames.contains(&frame_number) { "local_fallback" } else { "archive" }
+                });
+                Some(ProjectExportFrame { recorded_outcome, recorded_source })
+            });
+            FrameAvailability { frame_number, status, project_export }
         }).collect(),
     })
 }
