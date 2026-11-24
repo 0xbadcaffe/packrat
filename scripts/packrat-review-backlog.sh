@@ -7,7 +7,7 @@ usage() {
     printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--socket-context FILE] [--flow-context] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
-        'With --flow-context, report cited transport-header coverage and candidate TCP and UDP DNS links without disclosing endpoints.' \
+        'With --flow-context, report cited transport-header coverage, TCP flag counts, and candidate TCP and UDP DNS links without disclosing endpoints.' \
         'Timing counts describe adjacent cited frames, not full-flow cadence.' \
         'Reader rule revisions are compared with saved revisions without reclassifying findings.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
@@ -111,6 +111,23 @@ check_flow_context() {
                     )
                 )}
               else {timing_status:"invalid"} end;
+        def flag_fields: {initial_syn_frames,syn_ack_frames,reset_frames};
+        def valid_flag_counts:
+            .evidence_frames as $frames | .protocol as $protocol | flag_fields
+            | all(.[]; count) and (([.[]] | add) <= $frames)
+              and ($protocol == "tcp" or ($protocol == "udp" and all(.[]; . == 0)));
+        def tcp_flag_context:
+            .directional_flows
+            | if length == 0 then {tcp_flag_status:"no_flow_headers"}
+              elif all(.[]; has("initial_syn_frames") or has("syn_ack_frames") or has("reset_frames") | not)
+                then {tcp_flag_status:"not_reported"}
+              elif any(.[]; valid_flag_counts | not) then {tcp_flag_status:"invalid"}
+              elif all(.[]; .protocol == "udp") then {tcp_flag_status:"no_tcp_headers"}
+              else {tcp_flag_status:"reported",cited_tcp_flags:{
+                  initial_syn_frames:([.[].initial_syn_frames] | add),
+                  syn_ack_frames:([.[].syn_ack_frames] | add),
+                  reset_frames:([.[].reset_frames] | add)
+              }} end;
         def valid_trigger:
             (.trigger_tuple_status | IN("not_recorded","trigger_header_unavailable","matches_wire","differs_from_wire"))
             and (.trigger_frame | . == null or
@@ -153,7 +170,7 @@ check_flow_context() {
                 udp_dns_replies:(.udp_dns_reply_candidates|length),
                 udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),
                 udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}
-                + timing_context}
+                + timing_context + tcp_flag_context}
           end
     ' <<< "$raw"
 }

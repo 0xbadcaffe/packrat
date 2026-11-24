@@ -111,12 +111,18 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "malformed_timing" then .directional_flows[0].cited_timing="private time"
       elif ($mode | startswith("tcp_")) then
           .udp_dns_reply_candidates=[]
+          | .directional_flows=[
+              {protocol:"tcp",evidence_frames:1,initial_syn_frames:1,syn_ack_frames:0,reset_frames:0},
+              {protocol:"tcp",evidence_frames:1,initial_syn_frames:0,syn_ack_frames:1,reset_frames:0}]
           | .tcp_syn_ack_matches=[{syn_ack_frame:2,latest_candidate_syn_frame:1,
               prior_syn_candidates:1,later_ack_candidates:0,earliest_candidate_ack_frame:null}]
           | if $mode == "tcp_impossible_ack" then .tcp_syn_ack_matches[0].earliest_candidate_ack_frame=3
             elif $mode == "tcp_duplicate" then .tcp_syn_ack_matches += .tcp_syn_ack_matches
             elif $mode == "tcp_wrong_order" then .tcp_syn_ack_matches[0].latest_candidate_syn_frame=4
+            elif $mode == "tcp_bad_flags" then .directional_flows[0].reset_frames=1
             else . end
+      elif $mode == "udp_flags" then
+          .directional_flows[0] += {protocol:"udp",initial_syn_frames:0,syn_ack_frames:0,reset_frames:0}
       elif $mode == "no_flow" then
           .directional_flows=[] | .tcp_syn_ack_matches=[] | .udp_dns_reply_candidates=[]
           | .retained_frames_without_flow=2 | .trigger_tuple_status="trigger_header_unavailable"
@@ -156,19 +162,25 @@ run_review --flow-context | jq -e '
         trigger_frame_status:"complete",trigger_transport_header_observed:true,trigger_tuple_status:"matches_wire",
         timing_status:"reported",cited_timing:{timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,
             tied_timestamps:0,backwards_timestamps:0,directions_with_forward_gaps:1},
-        udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0}
+        udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0,tcp_flag_status:"not_reported"}
     and (tostring | contains("private") | not)' >/dev/null
 [[ $(cat "$dir/flow-checks") == 1 ]]
 FLOW_MODE=tcp_pair run_review --flow-context | jq -e '
     .findings[0].flow_context | .tcp_syn_ack_matches==1
     and .tcp_syn_ack_without_later_ack_candidates==1 and .tcp_syn_ack_with_later_ack_candidates==0
-    and .tcp_syn_ack_ambiguous_candidates==0' >/dev/null
+    and .tcp_syn_ack_ambiguous_candidates==0 and .tcp_flag_status=="reported"
+    and .cited_tcp_flags=={initial_syn_frames:1,syn_ack_frames:1,reset_frames:0}' >/dev/null
+FLOW_MODE=tcp_bad_flags run_review --flow-context | jq -e '
+    .findings[0].flow_context | .tcp_flag_status=="invalid" and (has("cited_tcp_flags")|not)' >/dev/null
+FLOW_MODE=udp_flags run_review --flow-context | jq -e '
+    .findings[0].flow_context | .tcp_flag_status=="no_tcp_headers" and (has("cited_tcp_flags")|not)' >/dev/null
 FLOW_MODE=no_flow run_review --flow-context | jq -e '
     .findings[0] | .packet_evidence_status=="complete" and .flow_context_status=="checked"
     and .flow_context.retained_flow_frames==0 and .flow_context.retained_frames_without_flow==2
     and .flow_context.trigger_tuple_status=="trigger_header_unavailable"
     and .flow_context.trigger_transport_header_observed==false
-    and .flow_context.timing_status=="no_flow_headers" and (.flow_context|has("cited_timing")|not)' >/dev/null
+    and .flow_context.timing_status=="no_flow_headers" and .flow_context.tcp_flag_status=="no_flow_headers"
+    and (.flow_context|has("cited_timing")|not)' >/dev/null
 for mode in legacy_timing invalid_timing malformed_timing; do
     wanted=invalid
     if [[ $mode == legacy_timing ]]; then wanted=not_reported; fi

@@ -221,7 +221,7 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
         finding["flow_context"],
         json!({"directional_flows":2,"tcp_syn_ack_matches":0,"udp_dns_replies":1,
                "tcp_syn_ack_with_later_ack_candidates":0,"tcp_syn_ack_without_later_ack_candidates":0,
-               "tcp_syn_ack_ambiguous_candidates":0,
+               "tcp_syn_ack_ambiguous_candidates":0,"tcp_flag_status":"no_tcp_headers",
                "retained_flow_frames":3,"retained_frames_without_flow":1,
                "trigger_frame_status":"complete","trigger_transport_header_observed":false,
                "trigger_tuple_status":"not_recorded",
