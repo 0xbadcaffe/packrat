@@ -153,6 +153,8 @@ fn auth_replay_measures_ordered_gap_filled_and_unavailable_response_evidence() {
         ("ordered", Ordered),
         ("gap-filled", GapFilled),
         ("prefix-missing", PrefixMissing),
+        ("same-tag-path", TaggedGapFilled),
+        ("split-tag-path", SplitTagTypes),
     ].into_iter().map(|(name, delivery)| {
         let file = format!("{name}.pcapng");
         if let Some(trigger) = write_coalesced_auth_capture(&root.join(&file), delivery) {

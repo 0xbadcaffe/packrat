@@ -121,6 +121,29 @@ fn same_endpoints_on_different_qinq_scopes_never_share_bytes() {
 }
 
 #[test]
+fn tcp_segments_are_isolated_by_ordered_wire_tag_types_not_priority() {
+    let make = |frame, seq, tpids: [u16; 2], tci: u16, payload: &[u8]| {
+        let original = packets::tcp(frame, seq, 0x18, payload);
+        let mut raw = original.bytes;
+        raw.splice(12..12, [tpids[0], tci, tpids[1], tci].into_iter().flat_map(u16::to_be_bytes));
+        parse_ethernet(&raw, frame, frame as f64)
+    };
+    let first = make(1, 100, [0x88a8, 0x8100], 20, b"hello ");
+    let different = make(2, 106, [0x8100, 0x88a8], 20, b"unrelated");
+    let same = make(3, 106, [0x88a8, 0x8100], 0xb014, b"world");
+    let mut assembler = StreamAssembler::default();
+    for packet in [&first, &different, &same] {
+        assembler.ingest(packet);
+    }
+    let key = |packet| StreamKey::from_packet(packet).unwrap().id();
+    assert_ne!(key(&first), key(&different));
+    assert_eq!(key(&first), key(&same));
+    assert_eq!(assembler.len(), 2);
+    assert_eq!(assembler.get(&key(&first)).unwrap().client_data, b"hello world");
+    assert_eq!(assembler.get(&key(&different)).unwrap().client_data, b"unrelated");
+}
+
+#[test]
 fn interfaces_and_sections_are_part_of_stream_identity() {
     let mut assembler = StreamAssembler::default();
     let mut ids = std::collections::HashSet::new();

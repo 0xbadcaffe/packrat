@@ -420,16 +420,7 @@ impl ScanProbe {
 }
 
 pub(super) fn scan_scope(pkt: &Packet) -> ScanScope {
-    let mut tag_types = [0; 2];
-    if pkt.vlan_id.is_some() {
-        // Keep wire tag types in order without treating PCP or DEI as a separate path.
-        for (index, tag_type) in tag_types.iter_mut().enumerate() {
-            let candidate = u16_be_at(&pkt.bytes, 12 + index * 4);
-            if !crate::net::parser::is_vlan_ether_type(candidate) { break; }
-            *tag_type = candidate;
-        }
-    }
-    (service_scope(pkt), tag_types)
+    (service_scope(pkt), crate::net::parser::ethernet_vlan_tag_types(&pkt.bytes))
 }
 
 fn scan_key(pkt: &Packet, transport: &'static str) -> ScanSourceKey {

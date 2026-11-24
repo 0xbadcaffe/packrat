@@ -9,6 +9,16 @@ pub(crate) fn is_vlan_ether_type(ether_type: u16) -> bool {
     matches!(ether_type, 0x8100 | 0x88a8)
 }
 
+pub(crate) fn ethernet_vlan_tag_types(raw: &[u8]) -> [u16; MAX_PARSED_VLAN_TAGS as usize] {
+    let mut types = [0; MAX_PARSED_VLAN_TAGS as usize];
+    for (slot, tag) in types.iter_mut().zip(raw.get(12..).unwrap_or_default().chunks_exact(4)) {
+        let ether_type = u16::from_be_bytes([tag[0], tag[1]]);
+        if !is_vlan_ether_type(ether_type) { break; }
+        *slot = ether_type;
+    }
+    types
+}
+
 pub(crate) fn ethernet_network_header(raw: &[u8]) -> Option<(usize, u16)> {
     let mut offset = 12usize;
     for depth in 0..=MAX_PARSED_VLAN_TAGS {

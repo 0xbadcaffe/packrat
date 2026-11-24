@@ -86,6 +86,7 @@ pub struct StreamKey {
     pub proto: String,
     pub vlan_id: Option<u16>,
     pub outer_vlan_id: Option<u16>,
+    pub vlan_tag_types: [u16; 2],
     pub interface: Option<String>,
     pub interface_id: u32,
     pub section: u32,
@@ -108,6 +109,7 @@ impl StreamKey {
             proto: "TCP".into(),
             vlan_id: pkt.vlan_id,
             outer_vlan_id: pkt.outer_vlan_id,
+            vlan_tag_types: crate::net::parser::ethernet_vlan_tag_types(&pkt.bytes),
             interface: pkt
                 .capture
                 .as_ref()
@@ -123,6 +125,7 @@ impl StreamKey {
     pub fn id(&self) -> String {
         if self.vlan_id.is_none()
             && self.outer_vlan_id.is_none()
+            && self.vlan_tag_types == [0; 2]
             && self.interface.is_none()
             && self.section == 0
             && self.interface_id == 0
@@ -130,7 +133,7 @@ impl StreamKey {
             return format!("{}-{}", self.ep_a, self.ep_b);
         }
         let interface = self.interface.as_deref().unwrap_or("");
-        format!(
+        let id = format!(
             "{}-{}|{}:{}:{}:{}|{}|{:?}|{:?}",
             self.ep_a,
             self.ep_b,
@@ -141,7 +144,10 @@ impl StreamKey {
             self.section,
             self.outer_vlan_id,
             self.vlan_id
-        )
+        );
+        let [outer, inner] = self.vlan_tag_types;
+        // Legacy tagged IDs have no way to prove which wire path they refer to.
+        if outer != 0 { format!("{id}|tpid:{outer:04x}:{inner:04x}") } else { id }
     }
 }
 
@@ -264,6 +270,7 @@ impl Default for StreamKey {
             proto: String::new(),
             vlan_id: None,
             outer_vlan_id: None,
+            vlan_tag_types: [0; 2],
             interface: None,
             interface_id: 0,
             section: 0,

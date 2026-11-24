@@ -52,6 +52,8 @@ pub enum AuthResponseDelivery {
     Ordered,
     GapFilled,
     PrefixMissing,
+    TaggedGapFilled,
+    SplitTagTypes,
 }
 
 pub fn write_coalesced_auth_capture(path: &Path, delivery: AuthResponseDelivery) -> Option<u64> {
@@ -59,7 +61,17 @@ pub fn write_coalesced_auth_capture(path: &Path, delivery: AuthResponseDelivery)
     let response = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
     let mut writer = PcapNgWriter::create(path).unwrap();
     let mut write = |frame, sequence, flags, payload, reverse| {
-        writer.write_packet(&tcp(frame, sequence, flags, payload, reverse)).unwrap();
+        let mut packet = tcp(frame, sequence, flags, payload, reverse);
+        if matches!(delivery, AuthResponseDelivery::TaggedGapFilled | AuthResponseDelivery::SplitTagTypes) {
+            let tpid = if matches!(delivery, AuthResponseDelivery::SplitTagTypes) && frame == 8 {
+                0x88a8_u16
+            } else {
+                0x8100_u16
+            };
+            let tci = if frame % 2 == 0 { 0xb014_u16 } else { 20_u16 };
+            packet.bytes.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+        }
+        writer.write_packet(&packet).unwrap();
     };
     write(1, 100, 0x02, &[], false);
     write(2, 500, 0x12, &[], true);
@@ -80,6 +92,11 @@ pub fn write_coalesced_auth_capture(path: &Path, delivery: AuthResponseDelivery)
             write(9, 501, 0x18, &coalesced[..split], true);
             write(10, later_sequence, 0x18, &coalesced[split..], true);
             Some(9)
+        }
+        AuthResponseDelivery::TaggedGapFilled | AuthResponseDelivery::SplitTagTypes => {
+            write(8, later_sequence, 0x18, &coalesced[split..], true);
+            write(9, 501, 0x18, &coalesced[..split], true);
+            matches!(delivery, AuthResponseDelivery::TaggedGapFilled).then_some(9)
         }
         AuthResponseDelivery::PrefixMissing => {
             write(8, later_sequence, 0x18, &coalesced[split..], true);
