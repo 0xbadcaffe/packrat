@@ -25,12 +25,34 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
     jq -e '.status == "saved" and .health == null and .evidence_status.status == "checked"
         and [.evidence_status.frames[].status] == ["truncated","missing"]' <<< "$result" >/dev/null
     status=0
-    result=$(PACKRAT_TEST_EVIDENCE_DRIFT=1 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+    result=$(PACKRAT_TEST_EVIDENCE_DIGEST="$(printf '%064d' 1)" \
+        bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
     [[ $status == 2 ]]
     jq -e '.status == "current" and .alerts[0].alert_id == 42
         and .alerts[0].packet_evidence_status == "changed_during_review" and .alerts[0].next_evidence_step == "retry_evidence_check"
         and .alerts[0].evidence_availability == null
         and .evidence_status == {status:"alert_evidence_changed",alert_id:42,frames:null}' <<< "$result" >/dev/null
+    status=0
+    result=$(PACKRAT_TEST_FRAME_ORDINALS='[1,3]' bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+    [[ $status == 2 ]]
+    jq -e '.status == "current" and .alerts[0].packet_evidence_status == "check_failed"
+        and .alerts[0].next_evidence_step == "retry_evidence_check" and .alerts[0].evidence_availability == null
+        and .evidence_status == {status:"evidence_frame_set_mismatch",alert_id:42,frames:null}' <<< "$result" >/dev/null
+    for ordinals in '[1,1]' '[2,1]' '[1,9007199254740992]' '[1,2.5]'; do
+        status=0
+        result=$(PACKRAT_TEST_FRAME_ORDINALS="$ordinals" bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+        [[ $status == 2 ]]
+        jq -e '.evidence_status == {status:"unavailable",alert_id:42,frames:null}' <<< "$result" >/dev/null
+    done
+    status=0
+    result=$(PACKRAT_TEST_EVIDENCE_PADDING=65536 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
+    [[ $status == 2 ]]
+    jq -e '.evidence_status == {status:"unavailable",alert_id:42,frames:null}' <<< "$result" >/dev/null
+    result=$(PACKRAT_TEST_FRAME_ORDINALS='[256,4294967297]' \
+        PACKRAT_TEST_SAVED_DIGEST=7c4903dab8d29954dfd65e2681b89e185c3ced72702936b99b752353a640c0df \
+        bash "$triage" "$health" "$PACKRAT_TEST_LOG")
+    jq -e '.evidence_status.status == "checked" and
+        [.evidence_status.frames[].frame_number] == [256,4294967297]' <<< "$result" >/dev/null
     status=0
     result=$(PACKRAT_TEST_ALERT_COUNT=0 bash "$triage" "$health" "$PACKRAT_TEST_LOG") || status=$?
     [[ $status == 2 ]]

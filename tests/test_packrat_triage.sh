@@ -7,6 +7,7 @@ trap 'rm -rf -- "$scratch"' EXIT
 health="$scratch/latest.json"
 export PACKRAT_TEST_LOG="$scratch/alerts.jsonl" PACKRAT_TEST_CALL="$scratch/archive-called"
 export PACKRAT_TEST_STATE="$health"
+export PACKRAT_TEST_DEFAULT_DIGEST=8c7654ecfd7b0b623b803e2f4e02ad1cc84278efdfcd7c4c9208edd81f17e115
 touch -- "$PACKRAT_TEST_LOG" "$scratch/other.jsonl"
 unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT PACKRAT_TRIAGE_ARCHIVE PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
 unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE PACKRAT_TRIAGE_AUTO_EVIDENCE PACKRAT_TRIAGE_PROJECT
@@ -31,11 +32,14 @@ mock_archive() {
             mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"
         fi
         jq -cn --arg capture "${PACKRAT_TEST_EVIDENCE_SCOPE:-00000000000000000000000000000001}" \
-            --arg drift "${PACKRAT_TEST_EVIDENCE_DRIFT:-0}" --argjson id "$id" \
+            --arg digest "${PACKRAT_TEST_EVIDENCE_DIGEST:-${PACKRAT_TEST_SAVED_DIGEST:-$PACKRAT_TEST_DEFAULT_DIGEST}}" \
+            --argjson ordinals "${PACKRAT_TEST_FRAME_ORDINALS:-[1,2]}" --argjson id "$id" \
+            --argjson extra "${PACKRAT_TEST_EVIDENCE_PADDING:-0}" \
             --argjson statuses "${PACKRAT_TEST_FRAME_STATUSES:-[\"truncated\",\"missing\"]}" '
             {session_id:"1700000000-432",capture_id:$capture,alert_id:$id,
-             evidence_frame_set_sha256:($drift * 64),
-             frames:($statuses | to_entries | map({frame_number:(.key + 1),status:.value,bytes:[0,1]}))}'
+             evidence_frame_set_sha256:$digest,
+             frames:($statuses | to_entries | map({frame_number:$ordinals[.key],status:.value,bytes:[0,1]}))}
+            | if $extra > 0 then . + {padding:("x" * $extra)} else . end'
         return
     fi
     local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' selector='--limit 512'
@@ -98,9 +102,10 @@ mock_archive() {
         '
     else
         jq -cn --arg mismatch "${PACKRAT_TEST_WRONG_ALERT_SCOPE:-}" --arg queue "${PACKRAT_TEST_AUTO_QUEUE:-}" \
-            --argjson refs "${PACKRAT_TEST_FRAME_COUNT:-2}" --argjson first "${PACKRAT_TEST_FIRST_SEEN:-1700000000}" '
+            --argjson refs "${PACKRAT_TEST_FRAME_COUNT:-2}" --argjson first "${PACKRAT_TEST_FIRST_SEEN:-1700000000}" \
+            --arg digest "${PACKRAT_TEST_SAVED_DIGEST:-$PACKRAT_TEST_DEFAULT_DIGEST}" '
             {alert_id:42,title:"Scoped alert",session_id:"1700000000-432",capture_id:"00000000000000000000000000000001",
-             evidence_frame_count:$refs,evidence_frame_set_sha256:("0"*64),
+             evidence_frame_count:$refs,evidence_frame_set_sha256:$digest,
              first_seen:$first,last_seen:1700000000,
              flow:{transport:"tcp",source:"192.0.2.1:4321",destination:"192.0.2.2:443"}} as $valid
             | if $queue == "yes" then [
@@ -206,12 +211,12 @@ unset PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
     }
     jq -c '.archive_enabled = true | .archive_paused = false' <<< "$sample" >"$health"
     result=$(PACKRAT_TEST_AUTO_QUEUE=yes run_auto)
-    jq -e '.evidence_selection == "automatic" and .evidence_status.alert_id == 42
+    jq -e --arg digest "$PACKRAT_TEST_DEFAULT_DIGEST" '.evidence_selection == "automatic" and .evidence_status.alert_id == 42
         and [.evidence_checks[].alert_id] == [42,41,44]
         and [.alerts[].packet_evidence_status] == ["not_checked","not_checked","not_checked","no_references","partial","partial","partial"]
         and .open_priority_alerts_in_sample == 4 and [.review_queue[].alert_id] == [45,42,41,44] and .review_queue[1].disposition=="Confirmed"
         and .review_queue[1].rule_id=="test.rule" and .review_queue[1].revision==10 and .review_queue[0].revision==null
-        and .review_queue[1].evidence_frame_count==2 and .review_queue[1].evidence_frame_set_sha256==("0"*64)
+        and .review_queue[1].evidence_frame_count==2 and .review_queue[1].evidence_frame_set_sha256==$digest
         and [.review_queue[].next_evidence_step] == ["corroborate_with_host_or_service_logs",
             "inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames","inspect_retained_and_recover_missing_frames"]' \
         <<< "$result" >/dev/null

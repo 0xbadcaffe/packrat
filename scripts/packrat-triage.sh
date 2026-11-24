@@ -168,6 +168,7 @@ report() {
                    and (.rule_id as $rule | $policy | index($rule) == null)
                then "not_selected_by_current_policy"
                else (($evidence.status // "") | {alert_evidence_changed:"changed_during_review",unavailable:"check_failed",
+                     evidence_frame_set_mismatch:"check_failed",
                      timed_out:"check_timed_out",deferred:"check_deferred"}[.] // "not_checked") end) as $availability
             | . + {packet_evidence_status:$availability,evidence_availability:$counts,
                  next_evidence_step:(if $counts.unreadable then "check_archive_integrity"
