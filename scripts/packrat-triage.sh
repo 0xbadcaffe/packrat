@@ -19,6 +19,7 @@ usage() {
         'Automatic checks prefer CRITICAL, HIGH, then opted-in MEDIUM, LOW, and INFO rules; newest eligible alerts first.' \
         '--saved-alert uses its explicit ID when an evidence source is supplied without PACKRAT_TRIAGE_EVIDENCE_ALERT_ID.' \
         'Evidence status distinguishes timeouts, deferred lookups, and references that changed during triage.' \
+        'If evidence is outside the live scan budget, use --saved-alert with the exact capture and session.' \
         'By default, allow three poll intervals plus five seconds, or 360 seconds for older records.'
 }
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
@@ -310,52 +311,9 @@ verify_watch_identity() {
         return 1
     }
 }
-log_stamp() {
-    [[ -f $1 ]] && stat -L --format='%d:%i %s %y %z' -- "$1"
-}
-previous_log_stamps() {
-    local path stamp
-    for path in "${previous_logs[@]}"; do
-        stamp=$(log_stamp "$path") || return 1
-        printf '%s\n' "$stamp"
-    done
-}
-check_evidence() {
-    local response expected
-    local -a evidence_args
-    if [[ -n $project ]]; then
-        evidence_args=(--project-alert-status "$project" "$1" "$session" "$capture" "$evidence_id")
-    else
-        evidence_args=("$archive" --alert-status "$1" "$session" "$evidence_id" --capture-id "$capture")
-    fi
-    response=$(timeout --kill-after=2s "${2}s" packrat-archive \
-        "${evidence_args[@]}" "${previous_args[@]}") || return "$?"
-    expected=$(jq -c --argjson id "$evidence_id" --argjson limit "$alert_limit" '
-        {match:(first(.alerts[] | select(.alert_id == $id) |
-            {digest:.evidence_frame_set_sha256, count:.evidence_frame_count}) // null),
-         outside_report: ([.alerts[:$limit][] | select(.alert_id == $id)] | length) == 0,
-         stopped_at_limit:.integrity.stopped_at_limit}
-    ' <<< "$history") || return 1
-    jq -cse --arg session "$session" --arg capture "$capture" --argjson id "$evidence_id" \
-        --argjson expected "$expected" '
-        select(length == 1) | .[0] | objects
-        | select(.session_id == $session and .capture_id == $capture and .alert_id == $id
-            and (.evidence_frame_set_sha256 | type == "string" and test("\\A[0-9a-f]{64}\\z"))
-            and (.frames | type == "array" and length >= 1 and length <= 131
-                and all(.[]; type == "object"
-                    and (.frame_number | type == "number" and isfinite and . > 0 and floor == .)
-                    and (.status == "complete" or .status == "truncated" or .status == "missing"
-                        or .status == "length_unknown" or .status == "unreadable"))
-                and (map(.frame_number) | . == unique)))
-        | if ($expected.match != null and ($expected.match.digest != .evidence_frame_set_sha256
-                  or $expected.match.count != (.frames | length)))
-              or ($expected.match == null and ($expected.stopped_at_limit | not))
-          then {status:"alert_evidence_changed", alert_id, frames:null}
-          else {status:"checked", alert_id, frames:(.frames | map({frame_number,status})),
-                in_recent_alerts:($expected.outside_report | not)}
-          end
-    ' <<< "$response"
-}
+triage_script=$(realpath -- "${BASH_SOURCE[0]}") || exit 2
+# shellcheck source=scripts/packrat-triage-evidence.sh
+source "${triage_script%/*}/packrat-triage-evidence.sh" || exit 2
 scope_args=()
 if [[ $mode == live ]]; then
     if ! state=$(load_state "$health_file"); then
