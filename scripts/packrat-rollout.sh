@@ -80,7 +80,8 @@ capture_health_sample() {
             and .capture_link_decodable != false
             and (.pcap_buffer_drops | type == "number" and . >= 0 and . <= 4294967295 and floor == .)
             and (if $fresh then .pcap_buffer_drops == 0 and .capture_queue_full_packets == 0
-                 and .capture_truncated_frames == 0 and scoped
+                 and .capture_truncated_frames == 0 and (.alert_save_failures | . == null or . == 0)
+                 and (.alert_save_backlog_dropped | . == null or . == 0) and scoped
                  else .capture_interface == null or .capture_interface == $interface end)
             and ($archive == "" or (.archive_enabled == true and .archive_paused == false
                 and (if $evidence_only then .archive_alert_evidence_only == true and
@@ -129,17 +130,6 @@ private_alert_log_stat() {
 primary_alert_log_stamp() { private_alert_log_stat "$data_dir/alerts.jsonl" '%d:%i:%s:%y:%z'; }
 primary_alert_log_identity() { private_alert_log_stat "$data_dir/alerts.jsonl" '%d:%i'; }
 stage_alert_log_size() { private_alert_log_stat "$(alert_log_for_session "$bridge_session")" '%s'; }
-
-primary_capture_stamp() {
-    local pid
-    pid=$(capture_pid "$main_session" "$installed") || return 1
-    curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$health_addr/health" |
-        jq -ce --arg pid "$pid" '
-            select(.service == "packrat" and .status == "ok"
-                and .telemetry_fresh == true and .capture_active == true)
-            | {pid:$pid, capture_run_id, capture_id, alert_session_id}
-        '
-}
 
 alert_watcher_ready() {
     local capture_stamp=$1 identity latest_identity drops
@@ -387,8 +377,9 @@ rollout() {
         retire_bridge || error "Inspect $bridge_session before retrying"
         return 1
     fi
-    if ! alert_log_now=$(primary_alert_log_stamp) || [[ $alert_log_now != "$alert_log_before" ]]; then
-        error "Primary alert log changed during the final cutover checks; current capture not stopped"
+    if ! primary_now=$(primary_capture_stamp) || [[ $primary_now != "$primary_before" ]] ||
+       ! alert_log_now=$(primary_alert_log_stamp) || [[ $alert_log_now != "$alert_log_before" ]]; then
+        error "Primary capture or alert log changed during final checks; current capture not stopped"
         if "$enable_alert_evidence"; then
             sudo -n rmdir -- "$archive_path" || error "Inspect the reserved archive before retrying"
         fi

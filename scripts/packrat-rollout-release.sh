@@ -8,6 +8,19 @@ installed_archive=/usr/local/bin/packrat-archive
 companion_tools=(analyzer archive)
 companion_update_selected() { [[ -n $analyzer_candidate || -n $archive_candidate ]]; }
 
+primary_capture_stamp() {
+    local pid
+    pid=$(capture_pid "$main_session" "$installed") || return 1
+    curl --disable --fail --silent --noproxy '*' --max-time 3 "http://$health_addr/health" |
+        jq -ce --arg pid "$pid" '
+            def optional_count: . == null or (type == "number" and . >= 0 and . <= 9007199254740991 and floor == .);
+            select(.service == "packrat" and .status == "ok" and .telemetry_fresh == true and .capture_active == true
+                and .alert_saving == true and (.alert_save_failed | not)
+                and (.alert_save_failures | optional_count) and (.alert_save_backlog_dropped | optional_count))
+            | {pid:$pid, capture_run_id, capture_id, alert_session_id, alert_save_failures, alert_save_backlog_dropped}
+        '
+}
+
 identify_capture_build() {
     local before after pid running installed_hash progress packets scope timestamp
     before=$(primary_capture_stamp) || return 1

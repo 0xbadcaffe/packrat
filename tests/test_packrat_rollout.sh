@@ -78,11 +78,17 @@ source "$root/scripts/packrat-rollout.sh"
     for update in '.service = "other"' '.capture_interface = "eth0"' 'del(.capture_interface)' \
         '.capture_id = "invalid"' '.capture_run_id = null' '.pcap_buffer_drops = 1' \
         '.capture_queue_full_packets = 1' '.capture_truncated_frames = 1' 'del(.capture_queue_full_packets)' \
-        '.capture_truncated_frames = "0"'; do
+        '.capture_truncated_frames = "0"' '.alert_save_failures=1' '.alert_save_backlog_dropped=1' \
+        '.alert_save_failures="0"'; do
         sample=$(jq -c "$update" <<< "$good")
         if capture_health_sample "$stage_health_addr" true; then exit 1; fi
     done
     expected_addr=$health_addr
+    capture_pid() { printf '%s\n' 42; }
+    sample=$(jq -c '.alert_save_failures=2 | .alert_save_backlog_dropped=1' <<< "$good")
+    primary_capture_stamp | jq -e '.alert_save_failures==2 and .alert_save_backlog_dropped==1' >/dev/null
+    sample=$(jq -c '.alert_save_failures="2"' <<< "$sample")
+    if primary_capture_stamp; then exit 1; fi
     sample=$(jq -c 'del(.capture_interface) | .pcap_buffer_drops = 1' <<< "$good")
     [[ $(capture_health_sample) == legacy ]]
     sample=$(jq -c '.capture_interface = "eth0"' <<< "$good")
@@ -360,7 +366,7 @@ prepare_backup_and_stage() {
 }
 primary_capture_stamp() {
     [[ $primary_stamp != unavailable ]] || return 1
-    printf '{"pid":"42","capture_id":"%s"}\n' "$primary_stamp"
+    printf '{"pid":"42","capture_id":"%s","alert_save_failures":%s}\n' "$primary_stamp" "$save_failures"
 }
 start_capture() {
     local session=$1 binary=$2 require_zero=${3:-true}
@@ -409,6 +415,7 @@ write_capture_receipt() { [[ $scenario != receipt_fail ]]; }
 capture_health_sample() { [[ $* == "$stage_health_addr true" && $scenario != stage_loss_before_cutover ]]; }
 alert_watcher_ready() {
     if [[ $scenario == last_moment_alert ]]; then printf '%s\n' late >>"$data_dir/alerts.jsonl"; fi
+    if [[ $scenario == last_moment_save_failure ]]; then save_failures=1; fi
     [[ $scenario != watcher_lost_before_cutover ]]
 }
 await_primary_watcher() { [[ $scenario != watcher_lost_after_cutover && ( $scenario != analyzer_watcher_fail || $main_starts != 1 ) ]]; }
@@ -428,7 +435,7 @@ run_scenario() {
     local -a trace=()
     local main_starts=0
     local primary_cutover=true
-    local primary_stamp=original
+    local primary_stamp=original save_failures=0
     local archive_path='' archive_flag=--archive enable_alert_evidence=false analyzer_candidate='' retain_rule='' remove_rule=''
     local -a archive_limits=() archive_rule_args=()
     if [[ $scenario == *_rule_health_fail ]]; then prepare_retention_case; fi
@@ -462,6 +469,7 @@ run_scenario primary_changed 1 backup start:packrat-stage:/candidate retire-stag
 run_scenario primary_disappears 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario watcher_lost_before_cutover 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario last_moment_alert 1 backup start:packrat-stage:/candidate retire-stage
+run_scenario last_moment_save_failure 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario staged_finding 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario staged_log_missing 1 backup start:packrat-stage:/candidate retire-stage
 run_scenario stage_loss_before_cutover 1 backup start:packrat-stage:/candidate retire-stage
