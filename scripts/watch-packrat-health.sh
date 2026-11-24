@@ -355,6 +355,7 @@ read_health() {
             flow_cache: (if $usable then $h.flow_cache | objects | {retained_summaries,summary_evictions}
                 | select(all(.[]; type == "number" and . >= 0 and . <= 9007199254740991 and floor == .)) else empty end) // null,
             alert_saving: ($h.alert_saving // false),
+            alert_save_failures: (if $usable then $h.alert_save_failures | numbers | select(. >= 0 and . <= 9007199254740991 and floor == .) else empty end) // null,
             alert_watcher_alive: (if $pipeline == false or $source == false or $context == false then false else $watcher end),
             alert_watcher_pipeline_alive: $pipeline,
             alert_watcher_source_matches: $source,
@@ -458,13 +459,12 @@ publish_state() {
     printf '%s\n' "$record" >"$pending_state" && mv -T -- "$pending_state" "$state_file" || return 1
     pending_state=
 }
-
 while :; do
     if ! state=$(read_health); then
         state=$(jq -cn --argjson baseline "$baseline" '
             {issues:["monitor_input_error"],next_baseline:($baseline // {} | .packets=null)}')
     fi
-    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .pcap_buffer_drops, .capture_truncated_frames, .capture_queue_full_packets, .archive_enabled, .archive_paused, .archive_pause_reason, .archive_alert_evidence_only, .archive_evidence_rules]' <<< "$state") || exit 2
+    change_key=$(jq -c '[.issues, .capture_run_id, .capture_interface, .capture_link_type, .capture_id, .alert_session_id, .alert_log_identity, .alert_save_failures, .pcap_buffer_drops, .capture_truncated_frames, .capture_queue_full_packets, .archive_enabled, .archive_paused, .archive_pause_reason, .archive_alert_evidence_only, .archive_evidence_rules]' <<< "$state") || exit 2
     event=
     if "$once"; then
         event=sample
