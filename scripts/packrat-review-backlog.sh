@@ -8,6 +8,7 @@ usage() {
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
         'With --flow-context, report cited transport-header coverage, initial SYN fan-out, and candidate TCP and UDP DNS links without disclosing endpoints.' \
+        'Flow context requires the same cited frame numbers and availability as the evidence check.' \
         'Trigger connection counts use the observed wire tuple and capture path, and cover cited frames only.' \
         'Timing counts describe adjacent cited frames, not full-flow cadence.' \
         'UDP DNS timing counts distinguish capture-clock, legacy, unavailable, and unreported reply times.' \
@@ -82,6 +83,30 @@ check_flow_context() {
         def frame: type == "number" and . >= 1 and . <= 9007199254740991 and floor == .;
         def count: type == "number" and . >= 0 and . <= $selected.evidence_frame_count and floor == .;
         def frames: type == "array" and length <= $selected.evidence_frame_count;
+        def frame_ref:
+            type == "object" and (.frame_number | frame)
+            and (.status | IN("complete","truncated","length_unknown","missing","unreadable"));
+        def retained: .status | IN("complete","truncated","length_unknown");
+        def valid_partition:
+            (.unassigned_frames | frames and all(.[]; frame_ref))
+            and (.directional_flows | frames and all(.[];
+                (.protocol | IN("tcp","udp")) and (.evidence_frames | count and . > 0)
+                and (.evidence_frames as $n | .frames | frames and length == $n and all(.[]; frame_ref and retained))));
+        def cited_refs:
+            [.directional_flows[].frames[], .unassigned_frames[] | {frame_number,status}] | sort_by(.frame_number);
+        def valid_citations:
+            ([.directional_flows[] | select(.protocol == "tcp") | .frames[].frame_number]) as $tcp
+            | ([.directional_flows[] | select(.protocol == "udp") | .frames[].frame_number]) as $udp
+            | (if .trigger_frame == null then true else
+                .trigger_frame as $trigger
+                | any($verified.frame_receipt[]; .frame_number == $trigger.frame_number and .status == $trigger.status)
+                and ((($tcp + $udp) | index($trigger.frame_number) != null) == $trigger.transport_header_observed)
+              end)
+            and all(.tcp_syn_ack_matches[]; . as $match
+                | ($tcp | index($match.syn_ack_frame) != null and index($match.latest_candidate_syn_frame) != null
+                    and ($match.earliest_candidate_ack_frame == null or index($match.earliest_candidate_ack_frame) != null)))
+            and all(.udp_dns_reply_candidates[]; . as $match | ($udp | index($match.reply_frame) != null)
+                and all($match.query_candidate_frames[]; . as $query | $udp | index($query) != null));
         def valid_syn_ack_match:
             .syn_ack_frame as $response
             | ($response | frame) and (.latest_candidate_syn_frame | frame and . < $response)
@@ -193,7 +218,7 @@ check_flow_context() {
              or .truncated_frames != ($verified.evidence_availability.truncated // 0)
              or .length_unknown_frames != ($verified.evidence_availability.length_unknown // 0)
           then {flow_context_status:"changed_during_review"}
-          else select((.directional_flows | frames and all(.[]; .evidence_frames | count and . > 0))
+          else select(valid_partition
                 and (.retained_frames_without_flow | count) and valid_trigger
                 and (.tcp_syn_ack_matches | frames and all(.[]; valid_syn_ack_match)
                      and length == (unique_by(.syn_ack_frame)|length))
@@ -201,7 +226,9 @@ check_flow_context() {
                      and length == (unique_by(.reply_frame)|length)))
             | ([.directional_flows[].evidence_frames] | add // 0) as $flow_frames
             | select($flow_frames + .retained_frames_without_flow + .missing_frames + .unreadable_frames == .referenced_frames)
-            | {flow_context_status:"checked",flow_context:{
+            | if cited_refs != $verified.frame_receipt then {flow_context_status:"changed_during_review"}
+              elif valid_citations | not then {flow_context_status:"citation_unverified"}
+              else {flow_context_status:"checked",flow_context:{
                 retained_flow_frames:$flow_frames,retained_frames_without_flow,
                 trigger_frame_status:.trigger_frame.status,
                 trigger_transport_header_observed:.trigger_frame.transport_header_observed,
@@ -217,7 +244,7 @@ check_flow_context() {
                 udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}
                 + timing_context + tcp_flag_context + syn_fanout + dns_timing_context
                 + (if $selected | has("trigger_frame_number") then trigger_connection($flow_frames)
-                   else {trigger_connection_status:"snapshot_unverified"} end)}
+                   else {trigger_connection_status:"snapshot_unverified"} end)} end
           end
     ' <<< "$raw"
 }
@@ -322,7 +349,18 @@ while IFS= read -r candidate; do
                                 and (.value | numbers | . >= 1 and . <= 131 and floor == .))
                             and ([.[]] | add) == $selected.evidence_frame_count)
                     else .evidence_availability == null end;
+                def frame_receipt($receipt; $counts):
+                    $receipt | objects
+                    | select(.status == "checked" and .alert_id == $selected.alert_id)
+                    | .frames | select(type == "array" and length == $selected.evidence_frame_count and length > 0
+                        and all(.[]; type == "object"
+                            and (.frame_number | type == "number" and . >= 1 and . <= 9007199254740991 and floor == .)
+                            and (.status | IN("complete","truncated","length_unknown","missing","unreadable")))
+                        and (map(.frame_number) | . == unique))
+                    | map({frame_number,status})
+                    | select((group_by(.status) | map({key:.[0].status,value:length}) | from_entries) == $counts);
                 select(length == 1) | .[0] | select(.record_type == "capture_triage" and .mode == "saved")
+                | .evidence_status as $receipt
                 | if .status == "saved_alert_not_observed" then
                     {packet_evidence_status:"changed_during_review",next_evidence_step:"refresh_saved_index"}
                   elif .status == "saved" and (.alerts | type == "array" and length == 1) then .alerts[0]
@@ -334,6 +372,7 @@ while IFS= read -r candidate; do
                       elif valid_counts and (.packet_evidence_status | strings | test("\\A[a-z_]{1,48}\\z")) and
                            (.next_evidence_step | strings | test("\\A[a-z_]{1,64}\\z")) then
                         {packet_evidence_status,next_evidence_step,evidence_availability} + reader_revision
+                        + (({frame_receipt:frame_receipt($receipt;.evidence_availability)}) // {})
                         + (if .socket_evidence | IN("latest","earlier","latest_and_earlier") then {socket_evidence} else {} end)
                       else null end
                   else null end' <<< "$raw") || verdict='null'
@@ -343,17 +382,21 @@ while IFS= read -r candidate; do
     if "$flow_context"; then
         flow='{"flow_context_status":"not_checked"}'
         if jq -e '.packet_evidence_status | IN("complete","partial")' <<<"$verdict" >/dev/null; then
-            remaining=$((deadline - SECONDS))
-            flow='{"flow_context_status":"check_deferred"}'
-            if (( remaining > 0 )); then
-                flow=$(check_flow_context "$remaining" "$candidate" "$verdict" "$session" "$capture" "$alert" "$@") ||
-                    flow='{"flow_context_status":"check_failed"}'
+            if jq -e 'has("frame_receipt")' <<<"$verdict" >/dev/null; then
+                remaining=$((deadline - SECONDS))
+                flow='{"flow_context_status":"check_deferred"}'
+                if (( remaining > 0 )); then
+                    flow=$(check_flow_context "$remaining" "$candidate" "$verdict" "$session" "$capture" "$alert" "$@") ||
+                        flow='{"flow_context_status":"check_failed"}'
+                fi
+            else
+                flow='{"flow_context_status":"frame_receipt_unverified"}'
             fi
         fi
     fi
     results=$(jq -c --argjson candidate "$candidate" --argjson verdict "$verdict" --argjson flow "$flow" --arg status "$status" '
         . + [($candidate | del(.evidence_frame_set_sha256,.trigger_frame_number,.recorded_trigger_flow_sha256))
-             + ($verdict // {packet_evidence_status:$status,next_evidence_step:"retry_evidence_check"}) + $flow]
+             + (($verdict | del(.frame_receipt)) // {packet_evidence_status:$status,next_evidence_step:"retry_evidence_check"}) + $flow]
     ' <<< "$results")
 done < <(jq -c '.review_shortlist[]' <<< "$index")
 
