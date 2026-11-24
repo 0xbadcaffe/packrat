@@ -159,7 +159,7 @@ impl SecurityEngine {
         let tcp_payload = self.check_tcp_integrity(pkt, archive_rules);
         self.check_scan_activity(pkt, archive_rules);
         self.check_ipv6_control_plane(pkt, archive_rules);
-        self.check_layer2_control_plane(pkt);
+        self.check_layer2_control_plane(pkt, archive_rules);
         self.check_beacon_and_exfiltration(pkt, tcp_payload, archive_rules);
         self.check_ntlm_fanout(pkt, archive_rules);
         self.check_dhcp_integrity(pkt, archive_rules);

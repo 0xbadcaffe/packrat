@@ -14,7 +14,7 @@ fn burst_cache_bounds_candidates_and_links_only_matching_scope_and_frames() {
     assert_eq!(values, [3]);
 
     let mut oversized = crate::net::parser::parse_ethernet(&[0; 14], 999, 3.0);
-    oversized.bytes.resize(MAX_ROUTER_EVIDENCE_BYTES + 1, 0);
+    oversized.bytes.resize(MAX_CONTROL_PLANE_EVIDENCE_BYTES + 1, 0);
     cache.remember(source, &oversized);
     assert!(cache.0.is_empty());
 }

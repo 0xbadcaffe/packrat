@@ -2,7 +2,7 @@ use super::*;
 use std::net::Ipv6Addr;
 
 const NDP_BINDING_WINDOW_SECS: f64 = 300.0;
-const MAX_ROUTER_EVIDENCE_BYTES: usize = 2_048;
+const MAX_CONTROL_PLANE_EVIDENCE_BYTES: usize = 2_048;
 const MAX_ROUTER_RATE_EVIDENCE: usize = 256;
 
 pub(super) type RouterSource = (ServiceScope, [u8; 6]);
@@ -15,7 +15,7 @@ impl RouterRateEvidence {
         while self.0.front().is_some_and(|(_, prior)| packet.timestamp - prior.timestamp > 1.0) {
             self.0.pop_front();
         }
-        if crate::model::project::pinned_packet_cost(packet) > MAX_ROUTER_EVIDENCE_BYTES {
+        if crate::model::project::pinned_packet_cost(packet) > MAX_CONTROL_PLANE_EVIDENCE_BYTES {
             return;
         }
         if self.0.len() == MAX_ROUTER_RATE_EVIDENCE {
@@ -264,7 +264,7 @@ impl SecurityEngine {
             .and_then(|prior| prior.advance_episode(mac, pkt.timestamp, expires_at));
         let previous = self.default_router_links.insert(key, RouterLink {
             mac, order, expires_at, episode,
-            evidence: (retain && crate::model::project::pinned_packet_cost(pkt) <= MAX_ROUTER_EVIDENCE_BYTES)
+            evidence: (retain && crate::model::project::pinned_packet_cost(pkt) <= MAX_CONTROL_PLANE_EVIDENCE_BYTES)
                 .then(|| Box::new(pkt.clone())),
         });
         if let (Some(prior), Some(episode)) = (previous, episode) && prior.mac != mac {
@@ -320,7 +320,7 @@ impl SecurityEngine {
             mac,
             timestamp: pkt.timestamp,
             frame: pkt.no,
-            evidence: (retain && crate::model::project::pinned_packet_cost(pkt) <= MAX_ROUTER_EVIDENCE_BYTES)
+            evidence: (retain && crate::model::project::pinned_packet_cost(pkt) <= MAX_CONTROL_PLANE_EVIDENCE_BYTES)
                 .then(|| Box::new(pkt.clone())),
         });
         if let Some(previous) = previous
@@ -346,7 +346,7 @@ impl SecurityEngine {
         }
     }
 
-    pub(super) fn check_layer2_control_plane(&mut self, pkt: &Packet) {
+    pub(super) fn check_layer2_control_plane(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
         let raw = &pkt.bytes;
         if let Some(indication) = stp_topology_indication(raw)
             && let Some(mac) = ethernet_source_mac(raw)
@@ -387,6 +387,7 @@ impl SecurityEngine {
                 previous.seen_at = now;
                 previous.frame = pkt.no;
                 previous.expires_at = now;
+                previous.evidence = None;
             }
             return;
         }
@@ -394,13 +395,19 @@ impl SecurityEngine {
             self.lldp_chassis.retain(|_, previous| previous.expires_at > now);
             if self.lldp_chassis.len() >= MAX_CONTROL_PLANE_IDENTITIES { return; }
         }
+        let retain = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "lldp.chassis_identity_change"));
         let previous = self.lldp_chassis.insert(key, LldpObservation {
             chassis: advertisement.chassis.to_vec(), frame: pkt.no,
             seen_at: now, expires_at: now + f64::from(advertisement.ttl),
+            evidence: (retain && crate::model::project::pinned_packet_cost(pkt) <= MAX_CONTROL_PLANE_EVIDENCE_BYTES)
+                .then(|| Box::new(pkt.clone())),
         });
         if let Some(previous) = previous
             && now < previous.expires_at && previous.chassis != advertisement.chassis
         {
+            if retain && let Some(packet) = previous.evidence {
+                self.findings.retained_evidence.push(*packet);
+            }
             let source = format_mac(advertisement.source);
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {

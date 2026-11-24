@@ -351,6 +351,7 @@ pub(super) struct LldpObservation {
     pub(super) frame: u64,
     pub(super) seen_at: f64,
     pub(super) expires_at: f64,
+    pub(super) evidence: Option<Box<Packet>>,
 }
 
 #[derive(Debug, Clone, Copy)]

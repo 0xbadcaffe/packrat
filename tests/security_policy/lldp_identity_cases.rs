@@ -107,3 +107,54 @@ fn withdrawn_lldp_identity_yields_capacity_to_a_new_neighbor() {
         .find(|alert| alert.title == "LLDP chassis identity changed").unwrap();
     assert_eq!(alert.packet_refs, [1026, 1027]);
 }
+
+#[cfg(feature = "terminal-ui")]
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn lldp_archive_preserves_only_the_live_same_scope_comparison(#[case] selected: bool) {
+    use super::archive_fixture::{finish, roll_history, start};
+    use packrat_tui::storage::packet_archive::PacketArchive;
+
+    const RULE: &str = "lldp.chassis_identity_change";
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("archive");
+    let mut app = start(&path, selected.then(|| RULE.to_owned()).into_iter().collect());
+    let make = |no, time, vlan: u16, chassis: &[u8], withdraw| {
+        let mut wire = lldp_packet(no, [2, 1, 2, 3, 4, 5], chassis).bytes;
+        if withdraw {
+            let ttl = wire.len() - 4;
+            wire[ttl..ttl + 2].fill(0);
+        }
+        let [high, low] = vlan.to_be_bytes();
+        wire.splice(12..12, [0x81, 0, high, low]);
+        parse_ethernet(&wire, no, time)
+    };
+    app.inject_packet(make(1, 1.0, 10, b"a", false));
+    app.inject_packet(make(2, 2.0, 20, b"b", false));
+    let prior = make(3, 3.0, 10, b"a", false);
+    app.inject_packet(prior.clone());
+    app.inject_packet(make(4, 4.0, 20, b"b", true));
+    let frame = roll_history(&mut app, 5);
+    app.inject_packet(make(frame, 7.0, 20, b"c", false));
+    let trigger = make(frame + 1, 8.0, 10, b"d", false);
+    app.inject_packet(trigger.clone());
+    app.inject_packet(make(frame + 2, 45.0, 10, b"e", false));
+    finish(&mut app);
+
+    let alert = app.query_core(|core| {
+        let mut alerts = core.alert_center.items.iter()
+            .filter(|item| item.provenance.as_ref().is_some_and(|rule| rule.rule_id == RULE));
+        let alert = alerts.next().unwrap().clone();
+        assert!(alerts.next().is_none());
+        alert
+    }).unwrap();
+    assert_eq!(alert.packet_refs, [prior.no, trigger.no]);
+    let scope = alert.capture_id.unwrap();
+    let mut archive = PacketArchive::open_readonly(&path).unwrap();
+    assert_eq!(archive.count().unwrap(), if selected { 2 } else { 0 });
+    for packet in [prior, trigger] {
+        let retained = archive.packet_for_capture(&scope, packet.no).unwrap();
+        assert_eq!(retained.map(|packet| packet.bytes), selected.then_some(packet.bytes));
+    }
+}
