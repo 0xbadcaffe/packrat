@@ -1,12 +1,13 @@
 //! Durable packet bytes and a transactional, rebuildable metadata index.
 
 use crate::net::packet::Packet;
+use lru::LruCache;
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 #[path = "packet_archive_policy.rs"]
 mod policy;
 #[path = "packet_archive_reader.rs"]
@@ -219,12 +220,20 @@ pub(crate) fn valid_capture_id(id: &str) -> bool {
         && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+const ARCHIVE_QUEUE_RECORDS: usize = 4096;
+type RecentFrames = LruCache<(Arc<str>, u64), ()>;
+
+fn recent_frames(capacity: usize) -> Mutex<RecentFrames> {
+    Mutex::new(LruCache::new(std::num::NonZeroUsize::new(capacity).expect("nonzero archive cache")))
+}
+
 pub struct ArchiveWorker {
     directory: PathBuf,
     sender: Option<std::sync::mpsc::SyncSender<ArchiveRecord>>,
     worker: Option<std::thread::JoinHandle<Result<(), String>>>,
     pause_reason: Arc<OnceLock<ArchivePause>>,
     usage: Arc<RwLock<ArchiveUsage>>,
+    recent_frames: Option<Mutex<RecentFrames>>,
     pause_reported: bool,
     alert_evidence_only: bool,
 }
@@ -258,7 +267,7 @@ impl ArchiveWorker {
         }));
         let worker_usage = Arc::clone(&usage);
         let worker_directory = directory.to_owned();
-        let (sender, receiver) = std::sync::mpsc::sync_channel::<ArchiveRecord>(4096);
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<ArchiveRecord>(ARCHIVE_QUEUE_RECORDS);
         let worker = std::thread::spawn(move || {
             while let Ok(first) = receiver.recv() {
                 let mut batch = vec![first];
@@ -334,6 +343,7 @@ impl ArchiveWorker {
             worker: Some(worker),
             pause_reason,
             usage,
+            recent_frames: alert_evidence_only.then(|| recent_frames(2 * ARCHIVE_QUEUE_RECORDS)),
             pause_reported: false,
             alert_evidence_only,
         })
@@ -388,13 +398,22 @@ impl ArchiveWorker {
         if self.pause_reason().is_some() {
             return Ok(());
         }
-        let result = self.sender
-            .as_ref()
-            .ok_or("Archive closed")?
-            .try_send(ArchiveRecord {
-                capture_id,
-                packet: packet.clone(),
-            });
+        let sender = self.sender.as_ref().ok_or("Archive closed")?;
+        let mut recent = match (&self.recent_frames, &capture_id) {
+            (Some(cache), Some(scope)) if !self.worker.as_ref().is_some_and(|worker| worker.is_finished()) => {
+                let mut cache = cache.lock().map_err(|_| "Archive deduplication state unavailable")?;
+                let key = (Arc::clone(scope), packet.no);
+                if cache.get(&key).is_some() {
+                    return Ok(());
+                }
+                Some((cache, key))
+            }
+            _ => None,
+        };
+        let result = sender.try_send(ArchiveRecord { capture_id, packet: packet.clone() });
+        if result.is_ok() && let Some((cache, key)) = recent.as_mut() {
+            cache.put(key.clone(), ());
+        }
         if self.pause_reason().is_some() {
             return Ok(());
         }

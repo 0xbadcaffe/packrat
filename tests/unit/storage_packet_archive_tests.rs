@@ -272,6 +272,43 @@ fn alert_archive_deduplicates_queued_and_committed_frames_without_crossing_captu
 }
 
 #[test]
+fn selective_archive_repeats_do_not_use_queue_slots_and_failed_sends_can_retry() {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let archive = ArchiveWorker {
+        directory: PathBuf::new(),
+        sender: Some(sender),
+        worker: None,
+        pause_reason: Arc::default(),
+        usage: Arc::new(RwLock::new(ArchiveUsage {
+            frames: 0, max_frames: 10, payload_bytes: 0, max_payload_bytes: 100,
+        })),
+        recent_frames: Some(recent_frames(2)),
+        pause_reported: false,
+        alert_evidence_only: true,
+    };
+    let scope_a: Arc<str> = "scope-a".into();
+    let scope_b: Arc<str> = "scope-b".into();
+    let first = parse_ethernet(&[1], 1, 1.0);
+    let second = parse_ethernet(&[2], 2, 2.0);
+    archive.record_scoped(&scope_a, &first).unwrap();
+    archive.record_scoped(&scope_a, &first).unwrap();
+    assert!(archive.record_scoped(&scope_b, &first).is_err());
+    assert!(archive.record_scoped(&scope_a, &second).is_err());
+    assert_eq!(receiver.try_recv().unwrap().capture_id, Some(Arc::clone(&scope_a)));
+
+    archive.record_scoped(&scope_b, &first).unwrap();
+    assert_eq!(receiver.try_recv().unwrap().capture_id, Some(scope_b));
+    archive.record_scoped(&scope_a, &second).unwrap();
+    assert_eq!(receiver.try_recv().unwrap().packet.no, 2);
+    archive.record_scoped(&scope_a, &second).unwrap();
+    assert!(receiver.try_recv().is_err());
+
+    // An evicted key can be queued again; the writer still does durable deduplication.
+    archive.record_scoped(&scope_a, &first).unwrap();
+    assert_eq!(receiver.try_recv().unwrap().packet.no, 1);
+}
+
+#[test]
 fn archive_worker_failure_sets_a_stable_pause_code() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("evidence");
