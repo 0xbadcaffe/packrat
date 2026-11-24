@@ -4,6 +4,7 @@
 //! Packets and flows are checked against these lists in real-time.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::net::IpAddr;
 use crate::analysis::dns_transactions::single_packet_query_name;
 use crate::net::packet::Packet;
 
@@ -54,7 +55,7 @@ const MAX_HITS: usize = 1000;
 
 #[derive(Debug, Default)]
 pub struct IocEngine {
-    ips:     HashSet<String>,
+    ips:     HashMap<IpAddr, usize>,
     domains: HashMap<String, usize>,
     hashes:  HashSet<String>,
     urls:    HashSet<String>,
@@ -67,7 +68,10 @@ pub struct IocEngine {
 impl IocEngine {
     pub fn load_ioc(&mut self, ioc: Ioc) {
         match ioc.kind {
-            IocKind::Ip     => { self.ips.insert(ioc.value.clone()); }
+            IocKind::Ip => {
+                let Ok(address) = ioc.value.trim().parse::<IpAddr>() else { return; };
+                self.ips.entry(address).or_insert(self.iocs.len());
+            }
             IocKind::Domain => {
                 let id = ioc.value.trim().to_ascii_lowercase();
                 let name = id.strip_suffix('.').unwrap_or(&id);
@@ -109,13 +113,15 @@ impl IocEngine {
     /// Return the number of new matches at the tail of the rolling history.
     pub fn check_packet(&mut self, pkt: &Packet) -> usize {
         let mut matched = 0;
-        if self.ips.contains(&pkt.src) {
-            self.record_hit(&pkt.src, IocKind::Ip, "src_ip", pkt.no, pkt.timestamp);
-            matched += 1;
-        }
-        if self.ips.contains(&pkt.dst) {
-            self.record_hit(&pkt.dst, IocKind::Ip, "dst_ip", pkt.no, pkt.timestamp);
-            matched += 1;
+        if !self.ips.is_empty() {
+            for (observed, context) in [(&pkt.src, "src_ip"), (&pkt.dst, "dst_ip")] {
+                if let Ok(address) = observed.parse::<IpAddr>()
+                    && let Some(&index) = self.ips.get(&address)
+                {
+                    self.record_hit(index, context, pkt);
+                    matched += 1;
+                }
+            }
         }
 
         if !self.domains.is_empty()
@@ -123,12 +129,7 @@ impl IocEngine {
             && valid_indicator_name(&name)
             && let Some((indicator, exact)) = self.domain_match(&name)
         {
-            self.remember_hit(IocHit {
-                ioc: self.iocs[indicator].clone(),
-                context: if exact { "dns_query" } else { "dns_subdomain" }.into(),
-                pkt_no: pkt.no,
-                ts: pkt.timestamp,
-            });
+            self.record_hit(indicator, if exact { "dns_query" } else { "dns_subdomain" }, pkt);
             matched += 1;
         }
         matched
@@ -145,21 +146,12 @@ impl IocEngine {
         }
     }
 
-    fn record_hit(&mut self, value: &str, kind: IocKind, context: &str, pkt_no: u64, ts: f64) {
-        let ioc = self.iocs.iter()
-            .find(|i| i.kind == kind && i.value.to_lowercase() == value.to_lowercase())
-            .cloned()
-            .unwrap_or_else(|| Ioc {
-                value:       value.to_string(),
-                kind,
-                description: String::new(),
-                source:      "auto".into(),
-            });
+    fn record_hit(&mut self, index: usize, context: &str, packet: &Packet) {
         self.remember_hit(IocHit {
-            ioc,
-            context: context.to_string(),
-            pkt_no,
-            ts,
+            ioc: self.iocs[index].clone(),
+            context: context.into(),
+            pkt_no: packet.no,
+            ts: packet.timestamp,
         });
     }
 
@@ -200,31 +192,29 @@ impl IocEngine {
                     if ext == "csv" {
                         self.load_csv(&text, &source);
                     } else {
-                        // Plain text: detect type per line
-                        for line in text.lines() {
-                            let line = line.trim();
-                            if line.starts_with('#') || line.is_empty() { continue; }
-                            // If line looks like an IP
-                            let kind = if line.parse::<std::net::Ipv4Addr>().is_ok() {
-                                IocKind::Ip
-                            } else if line.contains('.') && !line.contains('/') {
-                                IocKind::Domain
-                            } else {
-                                continue; // skip unrecognised
-                            };
-                            self.load_ioc(Ioc {
-                                value:       line.to_string(),
-                                kind,
-                                description: String::new(),
-                                source:      source.clone(),
-                            });
-                        }
+                        self.load_plain_text(&text, &source);
                     }
                 }
                 Err(e) => errors.push(format!("{source}: {e}")),
             }
         }
         errors
+    }
+
+    fn load_plain_text(&mut self, text: &str, source: &str) {
+        for line in text.lines().map(str::trim) {
+            if line.starts_with('#') || line.is_empty() { continue; }
+            let kind = if line.parse::<IpAddr>().is_ok() {
+                IocKind::Ip
+            } else if line.contains('.') {
+                IocKind::Domain
+            } else {
+                continue;
+            };
+            self.load_ioc(Ioc {
+                value: line.into(), kind, description: String::new(), source: source.into(),
+            });
+        }
     }
 
     pub fn ioc_count(&self) -> usize { self.iocs.len() }
@@ -252,3 +242,7 @@ fn valid_indicator_name(name: &str) -> bool {
             && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     })
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/ioc_feed_tests.rs"]
+mod feed_tests;

@@ -108,6 +108,29 @@ fn check_packet_dst_ip_match() {
 }
 
 #[test]
+fn equivalent_ipv6_spellings_match_once_and_keep_original_feed_metadata() {
+    let mut engine = IocEngine::default();
+    engine.load_csv(
+        "ip,2001:0DB8:0000:0000:0000:0000:0000:0042,verbose\nip,2001:db8::42,duplicate",
+        "ipv6-test",
+    );
+    let packet = make_pkt(17, "2001:db8::42", "2001:db8::1", "TCP", "");
+    assert_eq!(engine.check_packet(&packet), 1);
+    assert_eq!(engine.hits[0].ioc.value, "2001:0DB8:0000:0000:0000:0000:0000:0042");
+    assert_eq!(engine.hits[0].ioc.description, "verbose");
+    assert_eq!(engine.hits[0].ioc.source, "ipv6-test");
+    assert_eq!(engine.hits[0].context, "src_ip");
+}
+
+#[test]
+fn non_address_text_cannot_become_an_ip_indicator() {
+    let mut engine = IocEngine::default();
+    engine.load_ioc(make_ioc(IocKind::Ip, "not-an-address"));
+    assert_eq!(engine.check_packet(&make_pkt(18, "not-an-address", "203.0.113.7", "TCP", "")), 0);
+    assert!(engine.hits.is_empty());
+}
+
+#[test]
 fn check_packet_no_match() {
     let mut engine = IocEngine::default();
     engine.load_ioc(make_ioc(IocKind::Ip, "203.0.113.7"));
