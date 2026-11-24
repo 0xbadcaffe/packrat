@@ -202,8 +202,11 @@ impl App {
         if let Some(session) = &report.session_id {
             details.push(("Alert session".into(), session.clone()));
         }
+        if let Some(checked) = report.archive_checked {
+            details.push(("Archive at export".into(), if checked { "Checked" } else { "Not checked" }.into()));
+        }
         if report.frames.values().all(|outcome| outcome.included()) {
-            details.push(("Archive export".into(), "All cited frames included at export".into()));
+            details.push(("Case export".into(), "All cited frames included at export".into()));
         }
         if !report.local_fallback_frames.is_empty() {
             let frames = report.local_fallback_frames.iter().map(|frame| format!("#{frame}")).collect::<Vec<_>>();

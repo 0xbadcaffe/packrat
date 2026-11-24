@@ -32,6 +32,7 @@ fn project_status_keeps_recorded_provenance_separate_from_current_pins() {
         alert_id: 1,
         capture_id: "capture-a".into(),
         session_id: None,
+        archive_checked: None,
         frames: [
             (1, ArchivedFrameOutcome::LengthUnknown),
             (2, ArchivedFrameOutcome::Complete),
@@ -53,7 +54,9 @@ fn project_status_keeps_recorded_provenance_separate_from_current_pins() {
         assert!(!text.contains("Private") && !text.contains("\"bytes\""));
         serde_json::from_str::<Value>(&text).unwrap()
     };
-    assert_eq!(run()["frames"], json!([
+    let legacy_status = run();
+    assert!(legacy_status.get("archive_checked_at_project_export").is_none());
+    assert_eq!(legacy_status["frames"], json!([
         {"frame_number":1,"status":"length_unknown",
          "project_export":{"recorded_outcome":"length_unknown","recorded_source":"archive"}},
         {"frame_number":2,"status":"missing",
@@ -61,9 +64,17 @@ fn project_status_keeps_recorded_provenance_separate_from_current_pins() {
         {"frame_number":3,"status":"missing","project_export":{"recorded_outcome":"omitted_at_limit"}}
     ]));
 
+    let report = project.alert_archive_report.as_mut().unwrap();
+    report.archive_checked = Some(false);
+    report.local_fallback_frames.insert(1);
+    project_store::save(&project, &saved).unwrap();
+    assert_eq!(run()["archive_checked_at_project_export"], false);
+
     alert.packet_refs.push(4);
     save_log(&alert);
-    assert!(run()["frames"].as_array().unwrap().iter().all(|frame| frame.get("project_export").is_none()));
+    let changed = run();
+    assert!(changed.get("archive_checked_at_project_export").is_none());
+    assert!(changed["frames"].as_array().unwrap().iter().all(|frame| frame.get("project_export").is_none()));
 
     alert.packet_refs.pop();
     save_log(&alert);
@@ -98,6 +109,7 @@ fn project_bundle_export_refuses_to_relabel_a_recorded_alert_session() {
     project.pinned_packets.push(packet);
     project.alert_archive_report = Some(AlertArchiveReport {
         alert_id: 1, capture_id: "scope-a".into(), session_id: Some("original".into()),
+        archive_checked: None,
         frames: [(1, ArchivedFrameOutcome::Complete)].into_iter().collect(),
         retained_sha256: None, local_fallback_frames: Default::default(),
     });

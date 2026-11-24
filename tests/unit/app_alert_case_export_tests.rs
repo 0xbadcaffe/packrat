@@ -137,15 +137,21 @@ fn case_export_uses_only_scoped_local_frames_when_no_archive_is_attached() {
     app.start_alert_archive_case(output.clone()).unwrap();
     finish_export(&mut app);
     let project = project_store::load(&output).unwrap();
-    let report = project.alert_archive_report.unwrap();
+    let report = project.alert_archive_report.as_ref().unwrap();
     assert_eq!(report.capture_id, scope.as_ref());
     assert_eq!(report.session_id.as_deref(), Some(app.alert_session_id.as_ref()));
-    assert_eq!(report.local_fallback_frames.into_iter().collect::<Vec<_>>(), [1]);
+    assert_eq!(report.archive_checked, Some(false));
+    assert_eq!(report.local_fallback_frames.iter().copied().collect::<Vec<_>>(), [1]);
     assert_eq!(report.frames[&2], ArchivedFrameOutcome::Missing);
     assert_eq!(project.pinned_packets.len(), 1);
     assert_eq!(project.pinned_packets[0].bytes, app.packets[0].bytes);
-    assert!(project.metadata.description.unwrap().contains("No archive checked"));
+    assert!(project.metadata.description.as_deref().unwrap().contains("No archive checked"));
     assert!(app.status_msg.as_deref().unwrap().contains("1 retained, 1 missing"));
+    let mut review = App::new_for_test();
+    review.apply_project_state(project).unwrap();
+    review.worklist.active = Some(0);
+    assert!(review.active_investigation_context().unwrap().details.iter()
+        .any(|(label, value)| label == "Archive at export" && value == "Not checked"));
 }
 
 #[test]

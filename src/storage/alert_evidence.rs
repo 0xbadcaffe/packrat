@@ -46,6 +46,8 @@ pub struct EvidenceAvailability {
     pub capture_id: String,
     pub alert_id: u64,
     pub evidence_frame_set_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_checked_at_project_export: Option<bool>,
     pub frames: Vec<FrameAvailability>,
 }
 
@@ -196,6 +198,7 @@ pub fn alert_evidence_across_logs(
         capture_id: capture_id.to_owned(),
         alert_id,
         evidence_frame_set_sha256,
+        archive_checked_at_project_export: None,
         frames,
     })
 }
@@ -221,6 +224,7 @@ pub fn project_alert_evidence(
         capture_id: capture_id.to_owned(),
         alert_id,
         evidence_frame_set_sha256: evidence_frame_set_sha256(&frames),
+        archive_checked_at_project_export: report.and_then(|report| report.archive_checked),
         frames: frames.into_iter().zip(pins).map(|(frame_number, pin)| {
             let status = match pin {
                 ProjectPin::Missing => FrameStatus::Missing,

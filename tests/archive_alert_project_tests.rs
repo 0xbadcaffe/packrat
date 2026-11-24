@@ -80,6 +80,7 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
     let report = state.alert_archive_report.as_ref().unwrap();
     assert_eq!(serde_json::to_value(report).unwrap(), json!({
         "alert_id":alert.id, "capture_id":"previous", "session_id":"s",
+        "archive_checked":true,
         "frames":{"1":"truncated","2":"length_unknown","3":"missing","4":"unreadable"},
         "retained_sha256":{"1":format!("{:x}", Sha256::digest([1])),
             "2":format!("{:x}", Sha256::digest([2]))}
@@ -119,11 +120,19 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
     assert!(project_store::save(&serde_json::from_value(wrong_length).unwrap(), &output).is_err());
     assert_eq!(std::fs::read(&output).unwrap(), original);
 
+    let mut contradictory = exported.clone();
+    contradictory["alert_archive_report"]["archive_checked"] = json!(false);
+    std::fs::write(&altered_path, contradictory.to_string()).unwrap();
+    assert!(project_store::load(&altered_path).unwrap_err().to_string().contains("without an archive check"));
+
     let mut legacy = exported;
     legacy["metadata"]["schema_version"] = json!(8);
     legacy["alert_archive_report"].as_object_mut().unwrap().remove("retained_sha256");
+    legacy["alert_archive_report"].as_object_mut().unwrap().remove("archive_checked");
     std::fs::write(&altered_path, legacy.to_string()).unwrap();
-    assert!(project_store::load(&altered_path).unwrap().alert_archive_report.unwrap().retained_sha256.is_none());
+    let report = project_store::load(&altered_path).unwrap().alert_archive_report.unwrap();
+    assert_eq!(report.archive_checked, None);
+    assert!(report.retained_sha256.is_none());
 }
 
 #[test]

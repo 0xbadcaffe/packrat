@@ -76,6 +76,8 @@ pub struct AlertArchiveReport {
     pub alert_id: u64,
     pub capture_id: String,
     pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_checked: Option<bool>,
     pub frames: std::collections::BTreeMap<u64, ArchivedFrameOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_sha256: Option<std::collections::BTreeMap<u64, String>>,
@@ -108,6 +110,12 @@ impl AlertArchiveReport {
         }
         if !self.local_fallback_frames.iter().all(|frame| self.frames.get(frame).is_some_and(|outcome| outcome.included())) {
             return Err("Invalid saved alert local fallback references".into());
+        }
+        if self.archive_checked == Some(false) && self.frames.iter().any(|(frame, outcome)| {
+            *outcome == ArchivedFrameOutcome::Unreadable
+                || (outcome.included() && !self.local_fallback_frames.contains(frame))
+        }) {
+            return Err("Saved alert claims archive evidence without an archive check".into());
         }
         Ok(())
     }

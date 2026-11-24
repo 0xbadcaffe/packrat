@@ -63,6 +63,7 @@ pub(crate) fn save_alert_archive_project(
     let mut summary = AlertProjectSummary::default();
     let mut report = AlertArchiveReport {
         alert_id, capture_id: capture_id.to_owned(), session_id: session_id.map(str::to_owned),
+        archive_checked: Some(archive.is_some()),
         frames: Default::default(),
         retained_sha256: None,
         local_fallback_frames: Default::default(),
