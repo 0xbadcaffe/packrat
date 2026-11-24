@@ -1,10 +1,11 @@
 //! TLS intelligence — SNI extraction, cipher suite tracking, JA3 fingerprinting.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use crate::analysis::helper_process::JsonLineHelper;
-use crate::analysis::encrypted_insight::{parse_client_hello, parse_server_hello};
+use crate::analysis::encrypted_insight::{parse_anchored_server_hello, parse_client_hello};
 use crate::analysis::key_shelf::KeyShelf;
+use crate::analysis::stream::{StreamKey, tcp_complete_segment_payload};
 use crate::net::packet::Packet;
 
 // ─── TLS record types ─────────────────────────────────────────────────────────
@@ -30,6 +31,7 @@ pub struct TlsSession {
     pub sni:             Option<String>,
     pub cipher_suite:    Option<u16>,
     pub tls_version:     Option<String>,
+    pub offered_version: Option<String>,
     pub ja3:             Option<String>,
     pub ja3s:            Option<String>,
     pub ja4:             Option<String>,
@@ -47,6 +49,7 @@ pub struct TlsSession {
     pub alert_level:     Option<u8>,   // TLS alert level (1=warning, 2=fatal)
     pub alert_desc:      Option<u8>,   // TLS alert description
     pub decrypted_records: Vec<DecryptedTlsRecord>,
+    pub(crate) packet_numbers: VecDeque<u64>,
 }
 
 impl TlsSession {
@@ -76,6 +79,7 @@ static WEAK_CIPHERS: &[u16] = &[
 // ─── TLS tracker ──────────────────────────────────────────────────────────────
 
 const MAX_SESSIONS: usize = 1000;
+const MAX_PACKET_LINKS: usize = 128;
 
 #[derive(Debug)]
 pub struct TlsTracker {
@@ -109,54 +113,60 @@ struct TlsDecryptResponse {
 
 impl TlsTracker {
     pub fn ingest(&mut self, pkt: &Packet) {
-        if !is_tls_candidate(pkt) {
+        let Some(record) = tcp_complete_segment_payload(pkt).and_then(|(_, bytes)| first_tls_record(bytes)) else {
             return;
-        }
-        if let Some(profile) = parse_client_hello(&pkt.bytes, 't') {
-            let flow_id = make_flow_id(pkt);
-            let key_material = self.key_shelf.has_client_random(&profile.client_random);
-            let session = self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
-                flow_id: flow_id.clone(),
-                first_seen: pkt.timestamp,
-                ..Default::default()
-            });
-            session.tls_version = Some(tls_version_code(profile.negotiated_version));
-            session.sni = profile.sni;
-            session.alpn = profile.alpn;
-            session.client_random = Some(profile.client_random);
-            session.ja4 = Some(profile.ja4);
-            session.ech_offered = profile.ech_offered;
-            session.key_material = key_material;
-        } else if let Some((version, cipher)) = parse_server_hello(&pkt.bytes) {
-            let flow_id = make_flow_id(pkt);
-            let session = self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
-                flow_id: flow_id.clone(),
-                first_seen: pkt.timestamp,
-                ..Default::default()
-            });
-            if session.tls_version.is_none() { session.tls_version = Some(tls_version_code(version)); }
-            session.cipher_suite = Some(cipher);
-        } else if let Some(position) = pkt.bytes.windows(7).position(|window| window[0] == 0x15 && window[1] == 0x03) {
-            let flow_id = make_flow_id(pkt);
-            let session = self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
-                flow_id: flow_id.clone(),
-                first_seen: pkt.timestamp,
-                ..Default::default()
-            });
-            session.alert_level = pkt.bytes.get(position + 5).copied();
-            session.alert_desc = pkt.bytes.get(position + 6).copied();
-        } else if let Some(record) = find_tls_record(&pkt.bytes, TLS_APPLICATION_DATA) {
-            let flow_id = make_flow_id(pkt);
-            if let Some(decoded) = self.decrypt_record_with_helper(&flow_id, pkt.no, record) {
-                if let Some(session) = self.sessions.get_mut(&flow_id) {
-                    session.decrypted_records.push(decoded);
-                    if session.decrypted_records.len() > 100 {
-                        session.decrypted_records.remove(0);
-                    }
+        };
+        let Some(flow_id) = StreamKey::from_packet(pkt).map(|key| key.id()) else { return; };
+        let session = match (record[0], record.get(5).copied()) {
+            (TLS_HANDSHAKE, Some(TLS_CLIENT_HELLO)) if complete_hello(record) => {
+                let Some(profile) = parse_client_hello(record, 't') else { return; };
+                let key_material = self.key_shelf.has_client_random(&profile.client_random);
+                let session = self.session_for_observation(flow_id, pkt.timestamp);
+                if session.client_random.as_ref().is_some_and(|prior| *prior != profile.client_random) {
+                    *session = TlsSession {
+                        flow_id: std::mem::take(&mut session.flow_id),
+                        first_seen: pkt.timestamp,
+                        ..Default::default()
+                    };
                 }
+                session.offered_version = Some(tls_version_code(profile.negotiated_version));
+                session.sni = profile.sni;
+                session.alpn = profile.alpn;
+                session.client_random = Some(profile.client_random);
+                session.ja4 = Some(profile.ja4);
+                session.ech_offered = profile.ech_offered;
+                session.key_material = key_material;
+                session
             }
-        } else {
-            return;
+            (TLS_HANDSHAKE, Some(TLS_SERVER_HELLO)) => {
+                let Some((version, cipher)) = parse_anchored_server_hello(record) else { return; };
+                let session = self.session_for_observation(flow_id, pkt.timestamp);
+                session.tls_version = Some(tls_version_code(version));
+                session.cipher_suite = Some(cipher);
+                session
+            }
+            (0x15, Some(_)) if record.len() == 7 && matches!(record[5], 1 | 2) => {
+                let session = self.session_for_observation(flow_id, pkt.timestamp);
+                session.alert_level = Some(record[5]);
+                session.alert_desc = Some(record[6]);
+                session
+            }
+            (TLS_APPLICATION_DATA, Some(_)) => {
+                let Some(decoded) = self.decrypt_record_with_helper(&flow_id, pkt.no, record) else { return; };
+                let Some(session) = self.sessions.get_mut(&flow_id) else { return; };
+                session.decrypted_records.push(decoded);
+                if session.decrypted_records.len() > 100 {
+                    session.decrypted_records.remove(0);
+                }
+                session
+            }
+            _ => return,
+        };
+        if session.packet_numbers.back() != Some(&pkt.no) {
+            if session.packet_numbers.len() == MAX_PACKET_LINKS {
+                session.packet_numbers.pop_front();
+            }
+            session.packet_numbers.push_back(pkt.no);
         }
 
         // Evict if over cap
@@ -170,6 +180,12 @@ impl TlsTracker {
         }
     }
 
+    fn session_for_observation(&mut self, flow_id: String, timestamp: f64) -> &mut TlsSession {
+        self.sessions.entry(flow_id.clone()).or_insert_with(|| TlsSession {
+            flow_id, first_seen: timestamp, ..Default::default()
+        })
+    }
+
     /// Directly insert a pre-built session (used for scenario/demo seeding).
     pub fn insert(&mut self, session: TlsSession) {
         if self.sessions.len() < MAX_SESSIONS {
@@ -178,6 +194,11 @@ impl TlsTracker {
     }
 
     pub fn get(&self, flow_id: &str) -> Option<&TlsSession> { self.sessions.get(flow_id) }
+
+    pub fn for_packet(&self, packet: &Packet) -> Option<&TlsSession> {
+        let session = self.get(&StreamKey::from_packet(packet)?.id())?;
+        session.packet_numbers.contains(&packet.no).then_some(session)
+    }
 
     pub fn all(&self) -> Vec<&TlsSession> {
         let mut v: Vec<_> = self.sessions.values().collect();
@@ -244,25 +265,20 @@ impl TlsTracker {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-fn make_flow_id(pkt: &Packet) -> String {
-    let sp = pkt.src_port.unwrap_or(0);
-    let dp = pkt.dst_port.unwrap_or(0);
-    let a = format!("{}:{}", pkt.src, sp);
-    let b = format!("{}:{}", pkt.dst, dp);
-    if a < b { format!("{a}-{b}") } else { format!("{b}-{a}") }
+fn first_tls_record(payload: &[u8]) -> Option<&[u8]> {
+    let &[kind, 3, version, high, low] = payload.first_chunk::<5>()? else { return None; };
+    if !matches!(kind, TLS_HANDSHAKE | TLS_APPLICATION_DATA | 0x15) || version > 3 {
+        return None;
+    }
+    let length = usize::from(u16::from_be_bytes([high, low]));
+    let limit = if kind == TLS_APPLICATION_DATA { 18_432 } else { 16_384 };
+    (length <= limit).then(|| payload.get(..5 + length)).flatten()
 }
 
-fn is_tls_candidate(pkt: &Packet) -> bool {
-    matches!(pkt.protocol.as_str(), "TLS" | "HTTPS")
-        || pkt.bytes.windows(2).any(|window| {
-            matches!(window[0], TLS_HANDSHAKE | TLS_APPLICATION_DATA | 0x15)
-                && window[1] == 0x03
-        })
+fn complete_hello(record: &[u8]) -> bool {
+    let Some(&[_, a, b, c]) = record.get(5..).and_then(|body| body.first_chunk::<4>()) else { return false; };
+    record.len() - 9 >= u32::from_be_bytes([0, a, b, c]) as usize
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/analysis_tls_candidate_tests.rs"]
-mod candidate_tests;
 
 fn tls_version_str(major: u8, minor: u8) -> String {
     match (major, minor) {
@@ -276,12 +292,6 @@ fn tls_version_str(major: u8, minor: u8) -> String {
 
 fn tls_version_code(version: u16) -> String {
     tls_version_str((version >> 8) as u8, version as u8)
-}
-
-fn find_tls_record(raw: &[u8], record_type: u8) -> Option<&[u8]> {
-    let start = raw.windows(5).position(|window| window[0] == record_type && window[1] == 0x03)?;
-    let len = u16::from_be_bytes([*raw.get(start + 3)?, *raw.get(start + 4)?]) as usize;
-    raw.get(start..start + 5 + len)
 }
 
 fn decode_tls_response(response: TlsDecryptResponse, packet_no: u64) -> Result<DecryptedTlsRecord, String> {

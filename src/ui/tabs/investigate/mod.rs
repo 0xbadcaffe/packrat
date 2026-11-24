@@ -339,18 +339,6 @@ fn heading() -> Style {
     Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD)
 }
 
-fn packet_flow_id(packet: &Packet) -> String {
-    let sp = packet.src_port.unwrap_or(0);
-    let dp = packet.dst_port.unwrap_or(0);
-    let a = format!("{}:{}", packet.src, sp);
-    let b = format!("{}:{}", packet.dst, dp);
-    if a < b {
-        format!("{a}-{b}")
-    } else {
-        format!("{b}-{a}")
-    }
-}
-
 fn render_wrapped_panel(
     f: &mut Frame,
     app: &crate::app::App,

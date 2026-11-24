@@ -1,22 +1,93 @@
 use super::*;
 
 fn packet(bytes: Vec<u8>) -> Packet {
-    Packet { capture: None,
-        no: 9,
-        timestamp: 9.0,
-        src: "192.0.2.10".into(),
-        dst: "198.51.100.7".into(),
-        protocol: "TLS".into(),
-        length: bytes.len() as u16,
-        info: String::new(),
-        src_port: Some(50000),
-        dst_port: Some(443),
-        vlan_id: None,
-        vlan_pcp: None,
-        vlan_dei: None,
-        outer_vlan_id: None,
-        bytes,
-    }
+    let mut tagged = tagged_record(9, 0x8100, &bytes);
+    tagged.bytes.drain(12..16);
+    crate::net::parser::parse_ethernet(&tagged.bytes, 9, 9.0)
+}
+
+fn tagged_record(no: u64, tpid: u16, payload: &[u8]) -> Packet {
+    let mut frame = vec![0; 58];
+    frame[12..14].copy_from_slice(&tpid.to_be_bytes());
+    frame[14..16].copy_from_slice(&20_u16.to_be_bytes());
+    frame[16..18].copy_from_slice(&0x0800_u16.to_be_bytes());
+    frame[18] = 0x45;
+    frame[20..22].copy_from_slice(&(40 + payload.len() as u16).to_be_bytes());
+    frame[26] = 64;
+    frame[27] = 6;
+    frame[30..38].copy_from_slice(&[192, 0, 2, 10, 198, 51, 100, 7]);
+    frame[38..40].copy_from_slice(&50_000_u16.to_be_bytes());
+    frame[40..42].copy_from_slice(&443_u16.to_be_bytes());
+    frame[50] = 0x50;
+    frame[51] = 0x18;
+    frame.extend_from_slice(payload);
+    crate::net::parser::parse_ethernet(&frame, no, no as f64)
+}
+
+#[test]
+fn distinct_tls_tag_paths_keep_separate_records_and_link_only_observed_packets() {
+    let alert = [0x15, 3, 3, 0, 2, 2, 40];
+    let customer = tagged_record(1, 0x8100, &alert);
+    let provider = tagged_record(2, 0x88a8, &alert);
+    let mut tracker = TlsTracker::default();
+    tracker.ingest(&customer);
+    tracker.ingest(&provider);
+    assert_eq!(tracker.len(), 2);
+    assert_eq!(tracker.for_packet(&customer).unwrap().alert_desc, Some(40));
+    assert!(tracker.for_packet(&tagged_record(2, 0x8100, &alert)).is_none());
+    assert!(tracker.for_packet(&provider).is_some());
+}
+
+#[test]
+fn tls_record_shape_in_tcp_padding_or_inside_unrelated_payload_is_not_evidence() {
+    let record = [0x15, 3, 3, 0, 2, 2, 40];
+    let mut padding = tagged_record(1, 0x8100, &[]);
+    padding.bytes.extend(record);
+    let mut tracker = TlsTracker::default();
+    tracker.ingest(&padding);
+    let mut unrelated = vec![b'A'];
+    unrelated.extend(record);
+    tracker.ingest(&tagged_record(2, 0x8100, &unrelated));
+    assert!(tracker.is_empty());
+}
+
+fn hello_record(kind: u8, body: &[u8]) -> Vec<u8> {
+    let mut record = vec![0x16, 3, 3];
+    record.extend((4 + body.len() as u16).to_be_bytes());
+    record.extend([kind, 0, 0, body.len() as u8]);
+    record.extend(body);
+    record
+}
+
+#[test]
+fn tls_version_requires_a_server_selection_and_a_new_client_random_retires_old_links() {
+    let mut body = vec![3, 3];
+    body.extend([1; 32]);
+    body.extend([0, 0, 2, 0x13, 1, 1, 0, 0, 7, 0, 43, 0, 3, 2, 3, 4]);
+    let client = tagged_record(1, 0x8100, &hello_record(1, &body));
+    let mut tracker = TlsTracker::default();
+    tracker.ingest(&client);
+    let first = tracker.for_packet(&client).unwrap();
+    assert_eq!(first.offered_version.as_deref(), Some("TLS 1.3"));
+    assert_eq!(first.tls_version, None);
+
+    let mut server = vec![3, 3];
+    server.extend([2; 32]);
+    server.extend([0, 0xc0, 0x2f, 0]);
+    let selected = tagged_record(2, 0x8100, &hello_record(2, &server));
+    tracker.ingest(&selected);
+    assert_eq!(tracker.for_packet(&client).unwrap().version_str(), "TLS 1.2");
+    assert_eq!(tracker.for_packet(&selected).unwrap().cipher_suite, Some(0xc02f));
+    let protected = tagged_record(3, 0x8100, &[0x17, 3, 3, 0, 1, 1]);
+    tracker.ingest(&protected);
+    assert!(tracker.for_packet(&protected).is_none());
+
+    body[2] = 3;
+    let next = tagged_record(4, 0x8100, &hello_record(1, &body));
+    tracker.ingest(&next);
+    assert!(tracker.for_packet(&client).is_none());
+    assert!(tracker.for_packet(&selected).is_none());
+    assert_eq!(tracker.for_packet(&next).unwrap().tls_version, None);
 }
 
 #[cfg(unix)]

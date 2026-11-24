@@ -31,14 +31,17 @@ pub(super) fn draw_encrypted(f: &mut Frame, app: &App, packet: &Packet, area: Re
             app.core.quic_scope.connections.len()
         )),
     ];
-    if let Some(session) = app.core.tls_tracker.get(&packet_flow_id(packet)) {
+    if let Some(session) = app.core.tls_tracker.for_packet(packet) {
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![Span::styled("TLS session", heading())]));
         lines.push(Line::from(format!("Flow: {}", session.flow_id)));
         lines.push(Line::from(format!(
-            "Version: {}",
+            "Selected version: {}",
             session.tls_version.as_deref().unwrap_or("unknown")
         )));
+        if let Some(version) = &session.offered_version {
+            lines.push(Line::from(format!("Client offered up to: {version}")));
+        }
         lines.push(Line::from(format!(
             "SNI: {}",
             session.sni.as_deref().unwrap_or("none")
