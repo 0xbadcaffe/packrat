@@ -109,6 +109,8 @@ impl App {
             replay: ReplayState::default(),
             security_tab: SecuritySubTab::Alerts,
             security_scroll: 0,
+            alert_detail_scroll: std::cell::Cell::new(0),
+            alert_detail_page: std::cell::Cell::new(1),
             scanner_scroll: 0,
             replay_editing: false,
             pcap_import_editing: false,

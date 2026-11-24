@@ -74,9 +74,10 @@ fn draw_subtabs(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
+    let detail_height = area.height.saturating_sub(4).min(9);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(6), Constraint::Length(9)])
+        .constraints([Constraint::Min(0), Constraint::Length(detail_height)])
         .split(area);
     let visible_indices = app.core.alert_center.visible_indices();
     let visible_rows = chunks[0].height.saturating_sub(3) as usize;
@@ -187,10 +188,6 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
                     .unwrap_or("No automated recommendation; inspect and classify manually."),
                 Style::default().fg(C_YELLOW()),
             )),
-            Line::from(Span::styled(
-                "V inspect  E archive case  m pin  Enter review  C confirm  z benign  x close",
-                Style::default().fg(C_FG2()),
-            )),
         ]
     } else {
         vec![Line::from(Span::styled(
@@ -198,12 +195,26 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(C_FG3()),
         ))]
     };
-    f.render_widget(
-        Paragraph::new(detail)
-            .block(block_titled(" Selected Finding "))
-            .wrap(ratatui::widgets::Wrap { trim: true }),
-        chunks[1],
-    );
+    let panel = block_titled(" Selected Finding ");
+    let inner = panel.inner(chunks[1]);
+    f.render_widget(panel, chunks[1]);
+    if inner.is_empty() { return; }
+    let wrap = ratatui::widgets::Wrap { trim: true };
+    let mut body = inner;
+    if app.core.alert_center.selected_item().is_some() {
+        let footer = Paragraph::new("V inspect  E archive case  m pin  Enter review  C confirm  z benign  x close")
+            .style(Style::default().fg(C_FG2()))
+            .wrap(wrap);
+        let height = footer.line_count(inner.width).min(usize::from(inner.height)) as u16;
+        body.height -= height;
+        f.render_widget(footer, Rect::new(inner.x, inner.y + body.height, inner.width, height));
+    }
+    let paragraph = Paragraph::new(detail).wrap(wrap);
+    let max_scroll = paragraph.line_count(body.width).saturating_sub(usize::from(body.height));
+    let scroll = app.alert_detail_scroll.get().min(u16::try_from(max_scroll).unwrap_or(u16::MAX));
+    app.alert_detail_scroll.set(scroll);
+    app.alert_detail_page.set(body.height.saturating_sub(1).max(1));
+    f.render_widget(paragraph.scroll((scroll, 0)), body);
 }
 
 fn format_bytes(b: u64) -> String {

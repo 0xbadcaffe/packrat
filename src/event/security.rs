@@ -32,15 +32,28 @@ pub(super) fn handle_security(app: &mut App, key: KeyEvent) {
     if matches!(app.security_tab, SecuritySubTab::Alerts) {
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
+                app.alert_detail_scroll.set(0);
                 app.configure_core(|core| core.alert_center.next());
                 return;
             }
             KeyCode::Up | KeyCode::Char('k') => {
+                app.alert_detail_scroll.set(0);
                 app.configure_core(|core| core.alert_center.previous());
                 return;
             }
             KeyCode::Char('f') => {
+                app.alert_detail_scroll.set(0);
                 app.configure_core(|core| core.alert_center.cycle_severity_filter());
+                return;
+            }
+            KeyCode::PageUp | KeyCode::PageDown => {
+                let scroll = app.alert_detail_scroll.get();
+                let page = app.alert_detail_page.get();
+                app.alert_detail_scroll.set(if key.code == KeyCode::PageUp {
+                    scroll.saturating_sub(page)
+                } else {
+                    scroll.saturating_add(page)
+                });
                 return;
             }
             KeyCode::Char('m') => {

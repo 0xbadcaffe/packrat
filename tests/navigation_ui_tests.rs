@@ -86,3 +86,38 @@ fn selected_alert_shows_evidence_availability_and_keeps_the_action_visible() {
         assert!(text.contains("V inspect  E archive case"), "{text}");
     }
 }
+
+#[test]
+fn long_selected_alert_scrolls_without_hiding_evidence_actions() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Security;
+    app.configure_core(|core| {
+        let detail = format!("BeginMarker {} EndMarker", "extended observation ".repeat(45));
+        core.alert_center.record(7, "IDS", "HIGH", "Long observation", detail);
+        core.alert_center.record(8, "IDS", "HIGH", "Second finding", "SecondDetail");
+    });
+
+    let press = |app: &mut App, code| {
+        assert!(!event::handle(app, Event::Key(KeyEvent::new(code, KeyModifiers::NONE))));
+    };
+    for (width, height) in [(48, 18), (80, 24)] {
+        let initial = screen(&app, width, height);
+        assert!(initial.contains("IDS / Long observation") && !initial.contains("EndMarker"), "{initial}");
+        let mut found_end = false;
+        for _ in 0..40 {
+            press(&mut app, KeyCode::PageDown);
+            let page = screen(&app, width, height);
+            assert!(page.contains("V inspect  E archive case"), "{page}");
+            found_end |= page.contains("EndMarker");
+        }
+        let end = screen(&app, width, height);
+        assert!(!end.contains("IDS / Long observation"), "{end}");
+        assert!(found_end, "end of finding was not reachable at {width}x{height}");
+        press(&mut app, KeyCode::PageUp);
+        assert_ne!(screen(&app, width, height), end);
+        press(&mut app, KeyCode::Down);
+        assert!(screen(&app, width, height).contains("IDS / Second finding"));
+        press(&mut app, KeyCode::Up);
+        assert!(screen(&app, width, height).contains("IDS / Long observation"));
+    }
+}

@@ -150,6 +150,8 @@ pub struct App {
     pub replay: ReplayState,
     pub security_tab: SecuritySubTab,
     pub security_scroll: usize,
+    pub(crate) alert_detail_scroll: std::cell::Cell<u16>,
+    pub(crate) alert_detail_page: std::cell::Cell<u16>,
     pub scanner_scroll: usize,
     pub replay_editing: bool,
     /// Whether the PCAP instant-import path input is active.
