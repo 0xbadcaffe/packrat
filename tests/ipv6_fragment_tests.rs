@@ -1,6 +1,6 @@
 use packrat_tui::analysis::ipv6_fragments::{Ipv6FragmentOutcome, Ipv6FragmentReassembler};
 use packrat_tui::engine::AnalysisCore;
-use packrat_tui::net::packet::{CaptureMetadata, Packet};
+use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, Packet, TimestampResolution};
 use packrat_tui::net::security::SecurityEngine;
 
 #[cfg(feature = "terminal-ui")]
@@ -40,6 +40,73 @@ fn fragment_packet(no: u64, identification: u32, offset: u16, more: bool, payloa
         outer_vlan_id: None,
         bytes,
     }
+}
+
+fn on_clock(mut packet: Packet, seconds: u64, (section_id, interface_id): (u32, u32)) -> Packet {
+    packet.timestamp = seconds as f64;
+    let length = packet.bytes.len() as u32;
+    packet.capture = Some(CaptureMetadata {
+        timestamp: Some(CaptureTimestamp {
+            ticks: seconds, resolution: TimestampResolution::Decimal(0), offset_seconds: 0,
+        }),
+        captured_length: length,
+        wire_length: length,
+        link_type: 1,
+        section_id,
+        interface_id,
+        interface_name: None,
+        comments: Vec::new(),
+    });
+    packet
+}
+
+#[test]
+fn ipv6_reassembly_expiry_follows_only_its_capture_clock() {
+    let origin = (0, 0);
+    for path in [origin, (0, 1), (1, 0)] {
+        let mut reassembler = Ipv6FragmentReassembler::default();
+        reassembler.ingest(&on_clock(fragment_packet(1, 7, 0, true, b"abcdefgh"), 10, origin));
+        reassembler.ingest(&on_clock(fragment_packet(2, 8, 0, true, b"ordinary"), 100, path));
+        let last = on_clock(fragment_packet(3, 7, 8, false, b"ijklmnop"), 20, origin);
+        match reassembler.ingest(&last) {
+            Ipv6FragmentOutcome::Pending { fragment_count: 1 } if path == origin => {}
+            Ipv6FragmentOutcome::Complete { datagram } if path != origin => {
+                assert_eq!(datagram.frame_numbers, [1, 3]);
+                assert_eq!(datagram.payload, b"abcdefghijklmnop");
+            }
+            outcome => panic!("unexpected outcome for clock marker on {path:?}: {outcome:?}"),
+        }
+    }
+}
+
+#[test]
+fn ipv6_reassembly_timeout_stays_anchored_to_the_first_observation() {
+    let mut reassembler = Ipv6FragmentReassembler::default();
+    let path = (0, 0);
+    reassembler.ingest(&on_clock(fragment_packet(1, 7, 0, true, b"abcdefgh"), 1, path));
+    reassembler.ingest(&on_clock(fragment_packet(2, 7, 8, true, b"ijklmnop"), 55, path));
+    let last = on_clock(fragment_packet(3, 7, 16, false, b"qrstuvwx"), 62, path);
+    assert!(matches!(reassembler.ingest(&last), Ipv6FragmentOutcome::Pending { fragment_count: 1 }));
+}
+
+#[test]
+fn ipv6_reassembly_capacity_preserves_the_newer_admission_on_a_slower_clock() {
+    let mut reassembler = Ipv6FragmentReassembler::default();
+    let ahead = (0, 1);
+    let behind = (0, 0);
+    for id in 1..512 {
+        let fragment = fragment_packet(u64::from(id), id, 0, true, b"abcdefgh");
+        reassembler.ingest(&on_clock(fragment, 400, ahead));
+    }
+    reassembler.ingest(&on_clock(fragment_packet(512, 10, 0, true, b"abcdefgh"), 10, behind));
+    reassembler.ingest(&on_clock(fragment_packet(513, 900, 0, true, b"ordinary"), 400, ahead));
+    let recent_tail = on_clock(fragment_packet(514, 10, 8, false, b"ijklmnop"), 20, behind);
+    let Ipv6FragmentOutcome::Complete { datagram } = reassembler.ingest(&recent_tail) else {
+        panic!("the recently admitted datagram should still be pending");
+    };
+    assert_eq!(datagram.frame_numbers, [512, 514]);
+    let old_tail = on_clock(fragment_packet(515, 1, 8, false, b"ijklmnop"), 410, ahead);
+    assert!(matches!(reassembler.ingest(&old_tail), Ipv6FragmentOutcome::Pending { fragment_count: 1 }));
 }
 
 #[test]

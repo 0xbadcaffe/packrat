@@ -1,4 +1,4 @@
-use super::fragment_packet;
+use super::{fragment_packet, on_clock};
 use packrat_tui::app::App;
 use packrat_tui::engine::worker::WorkerLimits;
 use packrat_tui::net::parser::parse_ethernet;
@@ -39,7 +39,8 @@ fn overlap_archive_recovers_the_cited_fragment_after_rollover_without_other_fram
         app.inject_packet(original.clone());
         app.inject_packet(fragment_packet(2, 7, 0, true, b"abcdefghijklmnop"));
         app.inject_packet(fragment_packet(3, 8, 0, true, b"abcdefghijklmnop"));
-        let trigger = roll_history(&mut app, 4);
+        app.inject_packet(on_clock(fragment_packet(4, 19, 0, true, b"ordinary"), 400, (0, 1)));
+        let trigger = roll_history(&mut app, 5);
         let payload = if conflict { b"XXXXXXXXqrstuvwx" } else { b"ijklmnopqrstuvwx" };
         let mut incoming = fragment_packet(trigger, 7, 8, true, payload);
         incoming.timestamp = 0.5;
@@ -51,6 +52,7 @@ fn overlap_archive_recovers_the_cited_fragment_after_rollover_without_other_fram
         let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
             alert.provenance.as_ref().is_some_and(|p| p.rule_id == rule)).cloned()).unwrap().unwrap();
         assert_eq!(alert.packet_refs, [1, trigger]);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, if conflict { 4 } else { 3 });
         let scope = alert.capture_id.unwrap();
         let mut archive = PacketArchive::open_readonly(&path).unwrap();
         let expected = conflict || opt_in;
@@ -76,7 +78,8 @@ fn investigation_reopens_opted_in_reassembled_alert_with_original_frames() {
         app.inject_packet(tail.clone());
         app.inject_packet(fragment_packet(2, 7, 24, false, b"ript>"));
         app.inject_packet(fragment_packet(3, 8, 24, false, b"text."));
-        let trigger = roll_history(&mut app, 4);
+        app.inject_packet(on_clock(fragment_packet(4, 19, 0, true, b"ordinary"), 400, (0, 1)));
+        let trigger = roll_history(&mut app, 5);
         let mut head = fragment_packet(trigger, 7, 0, true, b"abcdefghijklmnopqrstu<sc");
         head.timestamp = 6.0;
         app.inject_packet(head.clone());
@@ -88,6 +91,7 @@ fn investigation_reopens_opted_in_reassembled_alert_with_original_frames() {
         let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
             alert.provenance.as_ref().is_some_and(|p| p.rule_id == rule)).cloned()).unwrap().unwrap();
         assert_eq!(alert.packet_refs, [1, trigger]);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 3);
         assert!(app.investigate_selected_alert());
         if opt_in {
             assert_eq!(app.worklist.packet_nos(), [1, trigger]);

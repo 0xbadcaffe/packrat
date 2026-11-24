@@ -40,6 +40,7 @@ struct DatagramState {
     fragments: Vec<Fragment>,
     final_len: Option<usize>,
     first_seen: f64,
+    admitted_order: u64,
     first_header: Option<u8>,
     discarded: bool,
 }
@@ -73,6 +74,7 @@ struct ScopedDatagram {
 #[derive(Debug, Default)]
 pub struct Ipv6FragmentReassembler {
     datagrams: HashMap<ScopedDatagram, DatagramState>,
+    last_admission: u64,
 }
 
 impl Ipv6FragmentReassembler {
@@ -114,21 +116,24 @@ impl Ipv6FragmentReassembler {
             destination: fragment.key.destination,
             identification: fragment.key.identification,
         };
-        self.datagrams.retain(|_, state| {
-            packet.timestamp - state.first_seen <= STATE_TTL_SECS
+        self.datagrams.retain(|observed, state| {
+            observed.interface != scope.interface || packet.timestamp - state.first_seen <= STATE_TTL_SECS
         });
         if !self.datagrams.contains_key(&scope) && self.datagrams.len() >= MAX_DATAGRAMS {
             if let Some(oldest) = self.datagrams.iter()
-                .min_by(|(key_a, a), (key_b, b)| a.first_seen.total_cmp(&b.first_seen).then(key_a.cmp(key_b)))
+                .min_by(|(key_a, a), (key_b, b)| a.admitted_order.cmp(&b.admitted_order).then(key_a.cmp(key_b)))
                 .map(|(key, _)| key.clone())
             {
                 self.datagrams.remove(&oldest);
             }
         }
 
-        let state = self.datagrams.entry(scope.clone()).or_insert_with(|| DatagramState {
-            fragments: Vec::new(), final_len: None, first_seen: packet.timestamp,
-            first_header: None, discarded: false,
+        let state = self.datagrams.entry(scope.clone()).or_insert_with(|| {
+            self.last_admission = self.last_admission.saturating_add(1);
+            DatagramState {
+                fragments: Vec::new(), final_len: None, first_seen: packet.timestamp,
+                admitted_order: self.last_admission, first_header: None, discarded: false,
+            }
         });
         if state.discarded || state.first_seen - packet.timestamp > STATE_TTL_SECS {
             return Ipv6FragmentOutcome::Ignored;
@@ -193,6 +198,7 @@ impl Ipv6FragmentReassembler {
 
     pub fn clear(&mut self) {
         self.datagrams.clear();
+        self.last_admission = 0;
     }
 }
 

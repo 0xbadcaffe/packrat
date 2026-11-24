@@ -73,7 +73,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the extension chain, capture length, and local link policy. A long chain does not establish forwarding impact.",
         ),
         (
-            "IDS", "IPv6 fragment reassembly rejected", "ipv6.reassembly_rejected", 2, DirectObservation,
+            "IDS", "IPv6 fragment reassembly rejected", "ipv6.reassembly_rejected", 3, DirectObservation,
             "Check the stated local reassembly rejection and related fragments. Confirm endpoint handling separately.",
         ),
         (
@@ -81,23 +81,23 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare retained headers with the full stream and with proxy and server logs. The finding does not establish divergent parsing or compromise.",
         ),
         (
-            "IDS", "Directory Traversal", "payload.path_traversal_marker", 2, Heuristic,
+            "IDS", "Directory Traversal", "payload.path_traversal_marker", 3, Heuristic,
             "Locate the byte pattern in the reconstructed application message and check server access logs before inferring a traversal attempt.",
         ),
         (
-            "IDS", "SQL Injection Probe", "payload.sql_like_marker", 2, Heuristic,
+            "IDS", "SQL Injection Probe", "payload.sql_like_marker", 3, Heuristic,
             "Verify the match in application context and compare with server logs. Text alone does not establish a database query or execution.",
         ),
         (
-            "IDS", "XSS Probe", "payload.script_like_marker", 2, Heuristic,
+            "IDS", "XSS Probe", "payload.script_like_marker", 3, Heuristic,
             "Verify whether the matched text was user input and how the application handled it. The match does not establish browser execution.",
         ),
         (
-            "IDS", "Heartbleed (CVE-2014-0160)", "tls.legacy_heartbeat_pattern", 2, Heuristic,
+            "IDS", "Heartbleed (CVE-2014-0160)", "tls.legacy_heartbeat_pattern", 3, Heuristic,
             "Verify message framing and the endpoint's patch status. The byte pattern does not establish a TLS heartbeat or information disclosure.",
         ),
         (
-            "IDS", "Repeated NOP-like byte pattern", "payload.nop_like_byte_run", 2, Heuristic,
+            "IDS", "Repeated NOP-like byte pattern", "payload.nop_like_byte_run", 3, Heuristic,
             "Inspect the retained transport payload and expected application format; a repeated byte alone does not identify executable content.",
         ),
         (
@@ -209,7 +209,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both frames and their capture scope; check receiver logs for reassembly outcome.",
         ),
         (
-            "IDS", "Conflicting IPv6 fragments", "ipv6.conflicting_fragments", 3, DirectObservation,
+            "IDS", "Conflicting IPv6 fragments", "ipv6.conflicting_fragments", 4, DirectObservation,
             "Compare the overlapping bytes in both frames. Verify the receiver's handling independently; this alert does not show that the datagram was accepted.",
         ),
         (
@@ -329,7 +329,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check the queried name against approved domains or threat intelligence. Identify the originating process before escalating.",
         ),
         (
-            "IDS", "Log4Shell (CVE-2021-44228)", "log4j.literal_lookup_marker", 3, Heuristic,
+            "IDS", "Log4Shell (CVE-2021-44228)", "log4j.literal_lookup_marker", 4, Heuristic,
             "Check whether the receiving application uses an affected library. Corroborate with application and outbound connection logs before escalating.",
         ),
         (
