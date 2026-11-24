@@ -92,13 +92,22 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
     {record_type:"alert_flow_summary",session_id:$session,capture_id:$capture,alert_id:$alert,
      evidence_frame_set_sha256:("0"*64),referenced_frames:2,missing_frames:0,unreadable_frames:0,
      truncated_frames:0,length_unknown_frames:0,
-     directional_flows:[{endpoint:"private endpoint"}],
+     retained_frames_without_flow:0,trigger_tuple_status:"matches_wire",
+     trigger_frame:{frame_number:4,status:"complete",transport_header_observed:true},
+     directional_flows:[{evidence_frames:2,endpoint:"private endpoint"}],
      tcp_syn_ack_matches:[{syn_ack_frame:2,sequence:123}],
      udp_dns_reply_candidates:[{reply_frame:4,query_candidate_frames:[3],name:"private name"}]}
     | if $mode == "digest" then .evidence_frame_set_sha256=("1"*64)
       elif $mode == "availability" then .missing_frames=1
       elif $mode == "scope" then .session_id="wrong-session"
       elif $mode == "malformed" then .udp_dns_reply_candidates[0].query_candidate_frames=[4]
+      elif $mode == "frame_count" then .retained_frames_without_flow=1
+      elif $mode == "trigger_status" then .trigger_frame.transport_header_observed=false
+      elif $mode == "trigger_private" then .trigger_frame.status="private payload"
+      elif $mode == "no_flow" then
+          .directional_flows=[] | .tcp_syn_ack_matches=[] | .udp_dns_reply_candidates=[]
+          | .retained_frames_without_flow=2 | .trigger_tuple_status="trigger_header_unavailable"
+          | .trigger_frame.transport_header_observed=false
       elif $mode == "old_reader" then del(.udp_dns_reply_candidates)
       else . end'
 STUB
@@ -129,10 +138,17 @@ run_review | jq -e '
 run_review --flow-context | jq -e '
     [.findings[].flow_context_status] == ["checked","not_checked","not_checked","not_checked","not_checked"]
     and .findings[0].flow_context == {directional_flows:1,tcp_syn_ack_matches:1,udp_dns_replies:1,
+        retained_flow_frames:2,retained_frames_without_flow:0,
+        trigger_frame_status:"complete",trigger_transport_header_observed:true,trigger_tuple_status:"matches_wire",
         udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0}
     and (tostring | contains("private") | not)' >/dev/null
 [[ $(cat "$dir/flow-checks") == 1 ]]
-for mode in digest availability scope malformed old_reader; do
+FLOW_MODE=no_flow run_review --flow-context | jq -e '
+    .findings[0] | .packet_evidence_status=="complete" and .flow_context_status=="checked"
+    and .flow_context.retained_flow_frames==0 and .flow_context.retained_frames_without_flow==2
+    and .flow_context.trigger_tuple_status=="trigger_header_unavailable"
+    and .flow_context.trigger_transport_header_observed==false' >/dev/null
+for mode in digest availability scope malformed frame_count trigger_status trigger_private old_reader; do
     wanted=check_failed
     if [[ $mode == digest || $mode == availability ]]; then wanted=changed_during_review; fi
     FLOW_MODE=$mode run_review --flow-context | jq -e --arg wanted "$wanted" '

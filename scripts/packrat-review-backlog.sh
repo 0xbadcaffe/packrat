@@ -7,7 +7,7 @@ usage() {
     printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--socket-context FILE] [--flow-context] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
-        'With --flow-context, count candidate TCP and UDP DNS links in the cited evidence without disclosing endpoints.' \
+        'With --flow-context, report cited transport-header coverage and candidate TCP and UDP DNS links without disclosing endpoints.' \
         'Reader rule revisions are compared with saved revisions without reclassifying findings.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
@@ -76,7 +76,19 @@ check_flow_context() {
     (( rc == 0 && ${#raw} <= 1048576 )) || return 1
     jq -ces --argjson selected "$selected" --argjson verified "$reply" '
         def frame: type == "number" and . >= 1 and . <= 9007199254740991 and floor == .;
+        def count: type == "number" and . >= 0 and . <= $selected.evidence_frame_count and floor == .;
         def frames: type == "array" and length <= $selected.evidence_frame_count;
+        def valid_trigger:
+            (.trigger_tuple_status | IN("not_recorded","trigger_header_unavailable","matches_wire","differs_from_wire"))
+            and (.trigger_frame | . == null or
+                ((.frame_number | frame) and (.status | IN("complete","truncated","length_unknown","missing","unreadable"))
+                    and (.transport_header_observed | type == "boolean")
+                    and (if .status | IN("missing","unreadable") then .transport_header_observed == false else true end)))
+            and (if .trigger_tuple_status | IN("matches_wire","differs_from_wire") then
+                    .trigger_frame.transport_header_observed == true
+                 elif .trigger_tuple_status == "trigger_header_unavailable" then
+                    .trigger_frame.transport_header_observed != true
+                 else true end);
         select(length == 1) | .[0] | objects
         | select(.record_type == "alert_flow_summary" and
             {session_id,capture_id,alert_id} == ($selected | {session_id,capture_id,alert_id}))
@@ -87,11 +99,18 @@ check_flow_context() {
              or .truncated_frames != ($verified.evidence_availability.truncated // 0)
              or .length_unknown_frames != ($verified.evidence_availability.length_unknown // 0)
           then {flow_context_status:"changed_during_review"}
-          else select((.directional_flows | frames and all(.[]; type == "object"))
+          else select((.directional_flows | frames and all(.[]; .evidence_frames | count and . > 0))
+                and (.retained_frames_without_flow | count) and valid_trigger
                 and (.tcp_syn_ack_matches | frames and all(.[]; .syn_ack_frame | frame))
                 and (.udp_dns_reply_candidates | frames and all(.[]; .reply_frame as $reply
                   | ($reply | frame) and (.query_candidate_frames | frames and all(.[]; frame and . < $reply) and . == unique))))
+            | ([.directional_flows[].evidence_frames] | add // 0) as $flow_frames
+            | select($flow_frames + .retained_frames_without_flow + .missing_frames + .unreadable_frames == .referenced_frames)
             | {flow_context_status:"checked",flow_context:{
+                retained_flow_frames:$flow_frames,retained_frames_without_flow,
+                trigger_frame_status:.trigger_frame.status,
+                trigger_transport_header_observed:.trigger_frame.transport_header_observed,
+                trigger_tuple_status,
                 directional_flows:(.directional_flows|length),tcp_syn_ack_matches:(.tcp_syn_ack_matches|length),
                 udp_dns_replies:(.udp_dns_reply_candidates|length),
                 udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),

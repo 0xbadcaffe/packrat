@@ -27,7 +27,11 @@ fn dns_frame(no: u64, id: u16, label: &[u8], reply: bool, vlan: u8, qtype: u16) 
     wire[40..42].copy_from_slice(&dst_port.to_be_bytes());
     wire[42..44].copy_from_slice(&udp_len.to_be_bytes());
     wire.extend(message);
-    let mut packet = parse_ethernet(&wire, no, no as f64);
+    captured_frame(no, &wire)
+}
+
+fn captured_frame(no: u64, wire: &[u8]) -> Packet {
+    let mut packet = parse_ethernet(wire, no, no as f64);
     packet.capture = Some(CaptureMetadata {
         timestamp: None, captured_length: wire.len() as u32, wire_length: wire.len() as u32,
         link_type: 1, section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
@@ -95,7 +99,7 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     alerts.record(4, "IDS", "HIGH", "Private title", "Private detail");
     let mut alert = alerts.items.remove(0);
     alert.capture_id = Some(SCOPE.into());
-    alert.packet_refs = vec![1, 2, 3, 4];
+    alert.packet_refs = vec![1, 2, 3, 4, 5];
     fs::write(&active, "").unwrap();
     fs::write(
         &previous,
@@ -107,6 +111,8 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     .unwrap();
 
     let mut archive = PacketArchive::open(&archive_path).unwrap();
+    let mut non_ip_frame = [0; 60];
+    non_ip_frame[12..14].copy_from_slice(&[0x88, 0xb5]);
     archive
         .append_scoped(
             SCOPE,
@@ -114,6 +120,7 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
                 dns_frame(1, 42, b"PrivateName", false, 10, 1),
                 dns_frame(2, 42, b"PrivateName", false, 10, 1),
                 dns_frame(3, 42, b"PrivateName", true, 10, 1),
+                captured_frame(4, &non_ip_frame),
             ],
         )
         .unwrap();
@@ -147,13 +154,16 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     assert_eq!(finding["packet_evidence_status"], "partial");
     assert_eq!(
         finding["evidence_availability"],
-        json!({"complete":3,"missing":1}),
+        json!({"complete":4,"missing":1}),
         "{finding}"
     );
     assert_eq!(finding["flow_context_status"], "checked");
     assert_eq!(
         finding["flow_context"],
         json!({"directional_flows":2,"tcp_syn_ack_matches":0,"udp_dns_replies":1,
+               "retained_flow_frames":3,"retained_frames_without_flow":1,
+               "trigger_frame_status":"complete","trigger_transport_header_observed":false,
+               "trigger_tuple_status":"not_recorded",
                "udp_dns_replies_with_query_candidates":1,"udp_dns_ambiguous_replies":1})
     );
 }
