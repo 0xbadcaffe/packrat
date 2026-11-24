@@ -112,6 +112,58 @@ fn early_alternate_resolver_does_not_mask_later_answer_changes() {
     assert_eq!(report["passed"], 2);
 }
 
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn delayed_dns_replay_requires_a_retained_preceding_retry() {
+    use serde_json::{Value, json};
+
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let competing = "dns.competing_responders";
+    let unmatched = "dns.unmatched_response";
+    let mut cases = Vec::new();
+    for (name, future_retries, extra_reply) in [("preceding-retry", 7, true), ("evicted-retry", 8, false)] {
+        let file = format!("{name}.pcapng");
+        let mut capture = PcapNgWriter::create(&root.join(&file)).unwrap();
+        let mut frame = 0;
+        let mut write = |timestamp, response, resolver| {
+            frame += 1;
+            let mut dns = vec![0, 49, if response { 0x81 } else { 1 }, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+            dns.extend_from_slice(b"\x04safe\x07example\0\0\x01\0\x01");
+            let mut packet = udp_frame(frame, &dns, response, resolver, 40_000);
+            packet.timestamp = timestamp;
+            capture.write_packet(&packet).unwrap();
+        };
+        write(1.0, false, 53);
+        write(29.0, false, 53);
+        for offset in 0..future_retries {
+            write(38.0 + f64::from(offset), false, 53);
+        }
+        write(34.0, true, 53);
+        if extra_reply {
+            write(35.0, true, 54);
+        }
+        capture.flush().unwrap();
+        let (rule, frames) = if extra_reply {
+            (competing, vec![1, 2, frame - 1, frame])
+        } else {
+            (unmatched, vec![frame])
+        };
+        cases.push(json!({
+            "name":name,"capture":file,"expect_snapshots":1,
+            "expect_counts":{(competing):usize::from(extra_reply),(unmatched):usize::from(!extra_reply)},
+            "opening_frames":{(rule):[frame]},
+            "opening_evidence":[{"rule_id":rule,"opening_frame":frame,"frames":frames}]
+        }));
+    }
+    let manifest = root.join("delayed-retries.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let result = super::run_suite(&manifest);
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["passed"], 2);
+}
+
 pub fn write_parallel_transactions(path: &Path, alternate_replies: bool) {
     let mut capture = PcapNgWriter::create(path).unwrap();
     let frames = [
