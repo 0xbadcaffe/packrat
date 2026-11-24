@@ -16,7 +16,7 @@ use super::{
 };
 use crate::analysis::{
     alert_center::{AlertDisposition, AlertFlow, AlertItem, AlertTransport},
-    packet_fields::captured_transport_header,
+    packet_fields::{CapturedVlanTag, captured_transport_header},
 };
 
 #[path = "related_cited_flows.rs"]
@@ -63,18 +63,37 @@ struct RelatedAlert {
     direction: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     trigger_evidence: Option<TriggerEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    captured_path_comparison: Option<CapturedPathComparison>,
 }
 
 #[derive(Serialize)]
 struct TriggerEvidence {
     frame_number: Option<u64>,
     status: &'static str,
+    #[serde(skip)]
+    path: Option<CapturePath>,
+}
+
+#[derive(PartialEq, Eq)]
+struct CapturePath {
+    section_id: u32,
+    interface_id: u32,
+    vlan_stack: Vec<CapturedVlanTag>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CapturedPathComparison {
+    SameObservedPath,
+    DifferentObservedPath,
+    Unavailable,
 }
 
 enum TriggerFrame {
     Missing,
     HeaderUnavailable,
-    Transport { flow: AlertFlow, time: Option<f64> },
+    Transport { flow: AlertFlow, time: Option<f64>, path: CapturePath },
 }
 
 #[derive(Serialize)]
@@ -125,6 +144,7 @@ fn classify(snapshot: TriggerSnapshot, anchor: AlertFlow, trigger: f64) -> Optio
         matched_cited_frame: None,
         direction,
         trigger_evidence: None,
+        captured_path_comparison: None,
     })
 }
 
@@ -252,7 +272,7 @@ pub fn related_alerts_query(
     if !options.verify_triggers && !options.match_cited_flows && anchor_header.as_ref().is_some_and(Result::is_err) {
         anchor_header.take().unwrap()?;
     }
-    if let Some(Ok(TriggerFrame::Transport { flow, time: Some(time) })) = anchor_header.as_ref() {
+    if let Some(Ok(TriggerFrame::Transport { flow, time: Some(time), .. })) = anchor_header.as_ref() {
         anchor_flow = Some(*flow);
         trigger = Some(*time);
         anchor_source = Some("retained_trigger_frame");
@@ -287,10 +307,20 @@ pub fn related_alerts_query(
         let expected = anchor_flow.zip(trigger);
         anchor_trigger_evidence = Some(check_trigger(archive, capture, packet_no, expected,
             anchor_header.take(), anchor_source == Some("retained_trigger_frame")));
+        let anchor_path = anchor_trigger_evidence.as_ref().and_then(|evidence| evidence.path.as_ref());
         for alert in &mut matches {
             let snapshot = &alert.snapshot;
-            alert.trigger_evidence = Some(check_trigger(archive, capture, snapshot.frame,
-                Some((snapshot.flow, snapshot.time)), None, false));
+            let trigger_evidence = check_trigger(archive, capture, snapshot.frame,
+                Some((snapshot.flow, snapshot.time)), None, false);
+            let reference_path = if let Some(frame) = &alert.matched_cited_frame {
+                cited.as_ref().and_then(|search| search.path_for(frame.frame_number))
+            } else { anchor_path };
+            alert.captured_path_comparison = Some(match reference_path.zip(trigger_evidence.path.as_ref()) {
+                Some((reference, observed)) if reference == observed => CapturedPathComparison::SameObservedPath,
+                Some(_) => CapturedPathComparison::DifferentObservedPath,
+                None => CapturedPathComparison::Unavailable,
+            });
+            alert.trigger_evidence = Some(trigger_evidence);
         }
     }
     Ok(RelatedAlertReport {
@@ -311,7 +341,7 @@ pub fn related_alerts_query(
         integrity,
         matching_alerts_in_sample,
         matches,
-        limitation: "Tuple matches use only sampled alerts and do not establish the same connection, VLAN, interface, process, or incident.",
+        limitation: "Tuple matches use only sampled alerts. A matching observed path is not proof of the same connection, process, or incident.",
     })
 }
 
@@ -324,6 +354,7 @@ fn read_trigger(archive: &mut PacketArchive, capture: &str, frame: u64) -> Resul
             return None;
         }
         let wire = captured_transport_header(&packet)?;
+        let capture = packet.capture.as_ref()?;
         let transport = match wire.protocol {
             6 => AlertTransport::Tcp,
             17 => AlertTransport::Udp,
@@ -333,6 +364,7 @@ fn read_trigger(archive: &mut PacketArchive, capture: &str, frame: u64) -> Resul
         let time = packet.timestamp;
         usable_flow(flow).then_some(TriggerFrame::Transport {
             flow, time: (time.is_finite() && time > 0.0).then_some(time),
+            path: CapturePath { section_id: capture.section_id, interface_id: capture.interface_id, vlan_stack: wire.vlan_stack },
         })
     })();
     Ok(header.unwrap_or(TriggerFrame::HeaderUnavailable))
@@ -342,20 +374,23 @@ fn check_trigger(
     archive: &mut PacketArchive, capture: &str, frame: u64, expected: Option<(AlertFlow, f64)>,
     cached: Option<Result<TriggerFrame>>, derived: bool,
 ) -> TriggerEvidence {
+    let mut verified_path = None;
     let status = if frame == 0 { "not_referenced" } else {
         match cached.unwrap_or_else(|| read_trigger(archive, capture, frame)) {
             Err(_) => "read_failed",
             Ok(TriggerFrame::Missing) => "missing_frame",
             Ok(TriggerFrame::HeaderUnavailable) => "header_unavailable",
-            Ok(TriggerFrame::Transport { flow, time }) => match (expected, time) {
+            Ok(TriggerFrame::Transport { flow, time, path }) => match (expected, time) {
                 (Some((saved, _)), _) if saved != flow => "tuple_differs_from_wire",
                 (_, None) => "timestamp_unavailable",
                 (Some((_, saved_time)), Some(time)) if (saved_time - time).abs() > TRIGGER_TIMESTAMP_TOLERANCE_SECONDS => "timestamp_differs_from_wire",
-                (Some(_), Some(_)) if derived => "derived_from_wire",
-                (Some(_), Some(_)) => "matches_wire",
+                (Some(_), Some(_)) => {
+                    verified_path = Some(path);
+                    if derived { "derived_from_wire" } else { "matches_wire" }
+                }
                 (None, Some(_)) => "recorded_tuple_or_time_unavailable",
             },
         }
     };
-    TriggerEvidence { frame_number: (frame > 0).then_some(frame), status }
+    TriggerEvidence { frame_number: (frame > 0).then_some(frame), status, path: verified_path }
 }

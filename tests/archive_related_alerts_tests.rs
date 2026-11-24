@@ -218,6 +218,7 @@ fn related_search_distinguishes_log_only_matches_from_checked_trigger_headers() 
     let mut archive = PacketArchive::open(&archive_path).unwrap();
     let packet = |frame, time| {
         let mut packet = packets::tcp(frame, 100, 0x02, b"Private payload");
+        packet.bytes.splice(12..12, [0x88, 0xa8, 0, 20, 0x81, 0, 0, 10]);
         let size = packet.bytes.len() as u32;
         packet.timestamp = time;
         packet.capture = Some(CaptureMetadata {
@@ -227,18 +228,25 @@ fn related_search_distinguishes_log_only_matches_from_checked_trigger_headers() 
         packet
     };
     let mut other_tuple = packet(4, 804.);
-    other_tuple.bytes[34..36].copy_from_slice(&42_000_u16.to_be_bytes());
+    other_tuple.bytes[42..44].copy_from_slice(&42_000_u16.to_be_bytes());
     let mut unreadable = packet(6, 806.);
     unreadable.capture.as_mut().unwrap().captured_length = 1;
+    let mut other_vlan = packet(8, 808.);
+    other_vlan.bytes[15] = 21;
+    let mut other_interface = packet(9, 809.);
+    other_interface.capture.as_mut().unwrap().interface_id = 1;
+    let mut other_section = packet(10, 810.);
+    other_section.capture.as_mut().unwrap().section_id = 1;
     archive.append_scoped("capture-a", &[
         packet(1, 800.), packet(2, 802.), other_tuple, packet(5, 805.5), unreadable,
+        other_vlan, other_interface, other_section,
     ]).unwrap();
     archive.append_scoped("capture-b", &[packet(3, 803.)]).unwrap();
     drop(archive);
     let matching = AlertFlow { source: "10.0.0.1:40000".parse().unwrap(),
         destination: "10.0.0.2:80".parse().unwrap(), ..flow() };
     for (id, frame, time) in [(1, 1, 800.), (2, 2, 802.), (3, 3, 803.), (4, 4, 804.),
-        (5, 5, 805.), (6, 6, 806.), (7, 0, 807.)] {
+        (5, 5, 805.), (6, 6, 806.), (7, 0, 807.), (8, 8, 808.), (9, 9, 809.), (10, 10, 810.)] {
         let mut row = record(id, time, (id > 1).then_some(matching), "session-a", "capture-a");
         row["alert"]["packet_no"] = json!(frame);
         writeln!(log, "{row}").unwrap();
@@ -250,10 +258,14 @@ fn related_search_distinguishes_log_only_matches_from_checked_trigger_headers() 
     let args = ["--evidence-archive", archive, "--verify-trigger-frames"];
     let report = run(log.path(), "1", &args);
     assert_eq!(report["anchor_trigger_evidence"], json!({"frame_number":1,"status":"derived_from_wire"}));
-    assert_eq!(report["matching_alerts_in_sample"], 6);
+    assert_eq!(report["matching_alerts_in_sample"], 9);
     let statuses: Vec<_> = report["matches"].as_array().unwrap().iter()
         .map(|record| record["trigger_evidence"]["status"].as_str().unwrap()).collect();
-    assert_eq!(statuses, ["matches_wire", "missing_frame", "tuple_differs_from_wire", "timestamp_differs_from_wire", "header_unavailable", "not_referenced"]);
+    assert_eq!(statuses, ["matches_wire", "missing_frame", "tuple_differs_from_wire", "timestamp_differs_from_wire", "header_unavailable", "not_referenced", "matches_wire", "matches_wire", "matches_wire"]);
+    let paths: Vec<_> = report["matches"].as_array().unwrap().iter()
+        .map(|record| record["captured_path_comparison"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["same_observed_path", "unavailable", "unavailable", "unavailable", "unavailable", "unavailable",
+        "different_observed_path", "different_observed_path", "different_observed_path"]);
     assert_eq!(run(log.path(), "2", &args)["anchor_trigger_evidence"]["status"], "matches_wire");
     assert!(!command(log.path(), "2").args(SCOPE).arg("--verify-trigger-frames").output().unwrap().status.success());
 }
@@ -278,8 +290,14 @@ fn cited_flow_search_pivots_beyond_the_trigger_and_reports_incomplete_evidence()
     };
     let mut unreadable = packet(4, 1130., 81);
     unreadable.capture.as_mut().unwrap().captured_length = 1;
+    let mut second_path = packet(3, 1120., 81);
+    second_path.capture.as_mut().unwrap().interface_id = 1;
+    let mut reply = packet(6, 1119., 81);
+    reply.capture.as_mut().unwrap().interface_id = 1;
+    for index in 0..4 { reply.bytes.swap(26 + index, 30 + index); }
+    for index in 0..2 { reply.bytes.swap(34 + index, 36 + index); }
     archive.append_scoped("capture-a", &[
-        packet(1, 1000., 80), packet(2, 1100., 81), packet(3, 1120., 81), unreadable,
+        packet(1, 1000., 80), packet(2, 1100., 81), second_path, unreadable, reply,
     ]).unwrap();
     archive.append_scoped("capture-b", &[packet(5, 1140., 81)]).unwrap();
     drop(archive);
@@ -292,7 +310,9 @@ fn cited_flow_search_pivots_beyond_the_trigger_and_reports_incomplete_evidence()
     writeln!(log, "{anchor}").unwrap();
     for (id, time, tuple, scope) in [(2, 1119., reverse, "capture-a"), (3, 1110., second, "capture-a"),
         (4, 1500., second, "capture-a"), (5, 1004., first, "capture-a"), (6, 1120., second, "capture-b")] {
-        writeln!(log, "{}", record(id, time, Some(tuple), "session-a", scope)).unwrap();
+        let mut alert = record(id, time, Some(tuple), "session-a", scope);
+        if id == 2 { alert["alert"]["packet_no"] = json!(6); }
+        writeln!(log, "{alert}").unwrap();
     }
     let mut no_frames = record(7, 1000., Some(first), "session-a", "capture-a");
     for key in ["packet_no", "first_packet", "last_packet"] { no_frames["alert"][key] = json!(10); }
@@ -314,6 +334,9 @@ fn cited_flow_search_pivots_beyond_the_trigger_and_reports_incomplete_evidence()
     assert_eq!(matches[1]["matched_cited_frame"], json!({"frame_number":3,"seconds_from_frame":-1.0}));
     assert_eq!(matches[3]["matched_cited_frame"], json!({"frame_number":2,"seconds_from_frame":10.0}));
     assert!(matches[1].get("seconds_from_anchor_trigger").is_none());
+    let verified = run(log.path(), "1", &[args[0], args[1], args[2], "--verify-trigger-frames"]);
+    assert_eq!(verified["matches"][1]["trigger_evidence"]["status"], "matches_wire");
+    assert_eq!(verified["matches"][1]["captured_path_comparison"], "same_observed_path");
     let unavailable = run(log.path(), "7", &args);
     assert_eq!(unavailable["status"], "cited_flow_evidence_unavailable");
     assert_eq!(unavailable["matching_alerts_in_sample"], 0);
