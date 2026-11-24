@@ -292,6 +292,8 @@ read_health() {
                                       and floor == . then . else null end) as $truncated |
         ($h.capture_queue_full_packets | if type == "number" and . >= 0 and . <= 9007199254740991
                                       and floor == . then . else null end) as $queue_full |
+        ($h.alert_save_backlog_dropped | if type == "number" and . >= 0 and . <= 9007199254740991
+                                      and floor == . then . else null end) as $backlog_dropped |
         ($h.packets_total | if type == "number" and . >= 0 and . <= 9007199254740991 and floor == .
                             then . else null end) as $packets |
         ($h.capture_queue | if type == "object" and (.depth | type == "number")
@@ -356,7 +358,7 @@ read_health() {
                 | select(all(.[]; type == "number" and . >= 0 and . <= 9007199254740991 and floor == .)) else empty end) // null,
             alert_saving: ($h.alert_saving // false),
             alert_save_failures: (if $usable then $h.alert_save_failures | numbers | select(. >= 0 and . <= 9007199254740991 and floor == .) else empty end) // null,
-            alert_save_backlog_dropped: (if $usable then $h.alert_save_backlog_dropped | numbers | select(. >= 0 and . <= 9007199254740991 and floor == .) else empty end) // null,
+            alert_save_backlog_dropped: (if $usable then $backlog_dropped else null end),
             alert_watcher_alive: (if $pipeline == false or $source == false or $context == false then false else $watcher end),
             alert_watcher_pipeline_alive: $pipeline,
             alert_watcher_source_matches: $source,
@@ -395,6 +397,7 @@ read_health() {
                      else empty end),
                     (if $h.alert_save_failed == true then "alert_save_failed"
                      elif $h.alert_saving != true then "alert_saving_disabled" else empty end),
+                    (if $usable and $backlog_dropped > 0 then "alert_backlog_snapshots_dropped" else empty end),
                     (if $drops != null then
                          if $drops > 0 then "pcap_buffer_drops" else empty end
                      else "pcap_stats_unavailable" end),

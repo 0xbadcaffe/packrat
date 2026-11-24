@@ -47,11 +47,11 @@ live() {
 }
 queue='[{"alert_id":7,"severity":"HIGH","rule_id":"test.rule","revision":10,"confidence":"correlated","packet_evidence_status":"partial","next_evidence_step":"inspect_retained_and_recover_missing_frames"}]'
 medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","revision":65536,"disposition":"New","hit_count":1,"packet_evidence_status":"partial","evidence_frame_count":2,"evidence_frame_set_sha256":"invalid"}]'
-live current 12 "$queue" "$medium" | jq '.socket_context_status="available" | .health += {alert_save_failures:2,alert_save_backlog_dropped:1}' >"$report"
+live current 12 "$queue" "$medium" | jq '.socket_context_status="available" | .health += {alert_save_failures:2,alert_save_backlog_dropped:0}' >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
 bash "$watch" --check "$state" | jq -e '.status=="current" and .socket_context_status=="available" and .alert_save_failures==2
-    and .alert_save_backlog_dropped==1
+    and .alert_save_backlog_dropped==0
     and (.healthy_capture_seconds | type=="number" and .>=0) and .flow_cache=={retained_summaries:8192,summary_evictions:4}' >/dev/null
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
@@ -71,6 +71,12 @@ jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .healthy_capture_since==.poll_started_at and .poll_started_at > 0 and .poll_started_at <= (.updated_at | fromdateiso8601)
     and (tostring | contains("private") | not)' "$state" >/dev/null
 failed_state="$scratch/failed.json"
+jq '.alert_save_backlog_dropped=1' "$state" >"$failed_state"
+check_status "$failed_state" triage_unhealthy 1
+jq '.health.alert_save_backlog_dropped=1' "$report" >"$scratch/backlog-loss.json"
+bash "$watch" --once "$failed_state" -- cat "$scratch/backlog-loss.json" >/dev/null
+check_status "$failed_state" triage_unhealthy 1
+jq -e '.status=="degraded" and .issues==["alert_backlog_snapshots_dropped"] and .alert_save_backlog_dropped==1' "$failed_state" >/dev/null
 for marker in unavailable not_recorded not_checked not_configured 'private malformed value'; do
     jq --arg marker "$marker" '.socket_context_status=$marker' "$report" >"$scratch/socket-report.json"
     bash "$watch" --once "$failed_state" -- cat "$scratch/socket-report.json" >/dev/null

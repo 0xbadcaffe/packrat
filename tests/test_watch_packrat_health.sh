@@ -111,6 +111,13 @@ bash "$watch" --once | jq -e '
     and .expect_traffic_seconds == 0 and .packets_without_progress_seconds == null
 ' >/dev/null
 
+backlog_sample=$(jq '. + {alert_save_failures:2,alert_save_backlog_dropped:1}' <<<"$PACKRAT_FAKE_HEALTH")
+backlog_status=0
+backlog_output=$(PACKRAT_FAKE_HEALTH="$backlog_sample" bash "$watch" --once) || backlog_status=$?
+[[ $backlog_status == 1 ]]
+jq -e '.alert_saving and .alert_save_failures==2 and .alert_save_backlog_dropped==1
+    and .issues==["alert_backlog_snapshots_dropped"]' <<<"$backlog_output" >/dev/null
+
 for cache in '{"retained_summaries":8192,"summary_evictions":4,"extra":"private"}' '{"retained_summaries":-1,"summary_evictions":4}'; do
     sample=$(jq -c --argjson cache "$cache" '.flow_cache = $cache' <<< "$PACKRAT_FAKE_HEALTH")
     PACKRAT_FAKE_HEALTH="$sample" bash "$watch" --once | jq -e --argjson cache "$cache" '
@@ -397,7 +404,8 @@ save_samples=$(jq -cn --argjson health "$PACKRAT_FAKE_HEALTH" '
      ($health + {alert_save_failures:"invalid",alert_save_backlog_dropped:-1})]')
 PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$save_samples" bash "$watch" | jq -se '
     map(.alert_save_failures) == [null,0,1,1,null]
-    and map(.alert_save_backlog_dropped) == [null,0,0,1,null] and all(.[]; .issues == [])' >/dev/null
+    and map(.alert_save_backlog_dropped) == [null,0,0,1,null]
+    and map(.issues) == [[],[],[],["alert_backlog_snapshots_dropped"],[]]' >/dev/null
 
 truncation_samples=$(jq -cn --argjson health "$PACKRAT_FAKE_HEALTH" '
     ($health + {capture_run_id:"000000000000000a"}) as $a

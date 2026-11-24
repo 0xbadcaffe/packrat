@@ -26,6 +26,11 @@ snapshot_validation='
         (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null);
     def valid_current:
         .status != "current" or (valid_scope_and_log and .issues == []);
+    def mark_backlog_loss:
+        if ((.alert_save_backlog_dropped | counter) // 0) > 0 and (.status | IN("current","degraded"))
+        then .status = "degraded"
+             | .issues = ((.issues // []) + ["alert_backlog_snapshots_dropped"] | unique)
+        else . end;
 '
 usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh [--once|--supervise] STATE.json -- TRIAGE_COMMAND [ARG ...]' \
@@ -126,7 +131,7 @@ check_snapshot() {
         | select(.record_type == "capture_triage_watch" and
             (.status | type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z")) and
             (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .) and valid_current)
-        | . as $snapshot | (.updated_at | fromdateiso8601) as $observed_at | (now - $observed_at | floor) as $age
+        | mark_backlog_loss | . as $snapshot | (.updated_at | fromdateiso8601) as $observed_at | (now - $observed_at | floor) as $age
         | {status:(if $age < -5 then "snapshot_future"
                    elif $age > .max_age_seconds then "snapshot_stale"
                    elif .packet_counter_regressed == true then "packet_counter_regressed"
@@ -335,7 +340,7 @@ sanitize() {
                     (.archive_rule == true and (.severity == "MEDIUM" or .severity == "LOW"))))) else null end)
           } + $sample | .archive_near_limit = (.archive_usage | if . == null then null else
                 (.frames / .max_frames >= 0.9 or .payload_bytes / .max_payload_bytes >= 0.9) end)
-            | select(valid_current)'
+            | select(valid_current) | mark_backlog_loss'
 }
 read_status() {
     local raw result status=0
@@ -372,7 +377,7 @@ if [[ -f $state && -O $state ]]; then
             | select(.record_type == "capture_triage_watch"
                 and (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .)
                 and valid_current)
-            | (now - (.updated_at | fromdateiso8601) | floor) as $age
+            | mark_backlog_loss | (now - (.updated_at | fromdateiso8601) | floor) as $age
             | select($age >= -5)
             | {fresh:($age <= .max_age_seconds), snapshot:.}
         ' 2>/dev/null) || saved=null
