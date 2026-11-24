@@ -188,7 +188,7 @@ fn draw_alert_center(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(C_YELLOW()),
             )),
             Line::from(Span::styled(
-                "V inspect packet set  m pin alert  Enter review  C confirm  z benign  x close",
+                "V inspect  E archive case  m pin  Enter review  C confirm  z benign  x close",
                 Style::default().fg(C_FG2()),
             )),
         ]

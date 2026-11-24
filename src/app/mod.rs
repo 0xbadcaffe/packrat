@@ -54,6 +54,7 @@ pub const INCIDENT_ANALYSIS_SECTION: usize = 11;
 pub const SETTINGS_COUNT: usize = 11;
 
 mod alert_evidence;
+mod alert_case_export;
 mod analysis_results;
 mod background;
 mod capture_control;
@@ -160,6 +161,7 @@ pub struct App {
     pub notebook: Notebook,
     pub packet_archive: Option<crate::storage::packet_archive::ArchiveWorker>,
     last_alert_archive_check: Option<alert_evidence::AlertArchiveCheck>,
+    alert_case_export: Option<alert_case_export::PendingAlertCase>,
     capture_id: Option<std::sync::Arc<str>>,
     capture_frame_high_water: u64,
     restored_project_max_frame: u64,

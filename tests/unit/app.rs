@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "app_saved_case_evidence_tests.rs"]
 mod saved_case_evidence;
+#[path = "app_alert_case_export_tests.rs"]
+mod alert_case_export;
 #[path = "app_automatic_evidence_tests.rs"]
 mod automatic_evidence;
 

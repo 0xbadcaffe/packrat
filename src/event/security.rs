@@ -51,6 +51,10 @@ pub(super) fn handle_security(app: &mut App, key: KeyEvent) {
                 app.investigate_selected_alert();
                 return;
             }
+            KeyCode::Char('E') => {
+                app.export_selected_alert_archive_case();
+                return;
+            }
             KeyCode::Char('r') => {
                 app.simulate_guard_response();
                 return;

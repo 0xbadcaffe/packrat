@@ -23,6 +23,7 @@ impl App {
     pub fn tick(&mut self) {
         self.poll_analysis();
         self.poll_alert_saving(Instant::now());
+        self.poll_alert_case_export();
         let mut archive_failed = false;
         if let Some(archive) = self.packet_archive.as_mut()
             && let Some(error) = archive.poll_error()

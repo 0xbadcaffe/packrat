@@ -274,6 +274,19 @@ async fn alert_center_m_pins_selected_alert_to_investigation_tray() {
 }
 
 #[tokio::test]
+async fn alert_center_shift_e_routes_to_the_archive_case_action() {
+    let mut app = sec_app();
+    app.security_tab = packrat_tui::app::SecuritySubTab::Alerts;
+    app.configure_core(|core| {
+        core.alert_center.record(9, "IDS", "HIGH", "Probe", "fixture");
+        core.alert_center.items[0].capture_id = Some("historical".into());
+    });
+    event::handle(&mut app, shift('E'));
+    assert_eq!(app.active_tab, Tab::Security);
+    assert!(app.status_msg.as_deref().unwrap().contains("no packet archive is attached"));
+}
+
+#[tokio::test]
 async fn global_shift_m_pins_host_and_note_contexts() {
     let mut app = App::new_for_test();
     app.inject_packet(packet(1));

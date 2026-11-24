@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::{Result, ensure};
 use serde::Serialize;
 
+use crate::analysis::alert_center::AlertItem;
 use crate::model::project::{
     INVESTIGATE_TAB_INDEX, MAX_PINNED_BYTES, MAX_PINNED_PACKETS, ProjectSaveMode, ProjectState,
     SavedInvestigationItem, pinned_packet_cost,
@@ -40,7 +41,14 @@ pub fn create_alert_project(
     ensure!(!session_id.is_empty() && session_id.len() <= 128 && session_id.bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')), "Invalid session ID");
     let alert = latest_alert_in_logs(logs, session_id, alert_id, Some(capture_id))?;
-    let (capture_id, frames) = scoped_frames(&alert)?;
+    save_alert_archive_project(archive, &alert, Some(session_id), output)
+}
+
+pub(crate) fn save_alert_archive_project(
+    archive: &mut PacketArchive, alert: &AlertItem, session_id: Option<&str>, output: &Path,
+) -> Result<AlertProjectSummary> {
+    let (capture_id, frames) = scoped_frames(alert)?;
+    let alert_id = alert.id;
     let trigger = alert.packet_no;
     let mut state = ProjectState::new(format!("Alert #{alert_id} evidence"), ProjectSaveMode::Lightweight);
     state.investigation_items.push(SavedInvestigationItem::AlertRef {
@@ -90,14 +98,16 @@ pub fn create_alert_project(
     state.investigation_tray_open = true;
     state.active_tab = INVESTIGATE_TAB_INDEX;
     summary.retained_frames = state.pinned_packets.len();
+    let identity = session_id.map_or_else(|| format!("Capture {capture_id}"),
+        |session| format!("Session {session}, capture {capture_id}"));
     state.metadata.description = Some(format!(
-        "Session {session_id}, capture {capture_id}. {} retained ({} truncated, {} length unknown), {} missing, {} unreadable, {} over the tray limit.{}",
+        "{identity}. {} retained ({} truncated, {} length unknown), {} missing, {} unreadable, {} over the tray limit.{}",
         summary.retained_frames, summary.truncated_frames, summary.length_unknown_frames, summary.missing_frames,
         summary.unreadable_frames, summary.omitted_at_limit,
         summary.trigger_frame.as_ref().filter(|trigger| !trigger.included)
             .map_or_else(String::new, |trigger| format!(" Trigger #{} not included.", trigger.frame_number)),
     ));
-    state.alert_items.push(alert);
+    state.alert_items.push(alert.clone());
     project_store::create(&state, output)?;
     Ok(summary)
 }

@@ -19,6 +19,8 @@ mod verify;
 mod case;
 mod metadata;
 pub use case::create_alert_project;
+#[cfg(feature = "terminal-ui")]
+pub(crate) use case::{AlertProjectSummary, save_alert_archive_project};
 pub use metadata::{AlertFlowSummary, AlertPacketMetadata, alert_flow_summary, alert_packet_metadata};
 pub use verify::{VerifiedEvidence, verify_alert_evidence, verify_archived_alert_evidence, verify_logged_alert_evidence};
 
