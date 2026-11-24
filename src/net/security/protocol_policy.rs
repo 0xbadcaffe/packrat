@@ -110,7 +110,7 @@ impl SecurityEngine {
                         detail: format!("IPv6 fragment overlap in datagram {identification} from {} to {}; Packrat discarded reassembly, endpoint outcome unknown", pkt.src, pkt.dst),
                     },
                     related_packets: vec![previous_frame],
-                    correlation_key: Some(format!("{:?}:{}>{}:{identification}", service_scope(pkt), pkt.src, pkt.dst)),
+                    correlation_key: Some(format!("{:?}:{}>{}:{identification}", super::scans::scan_scope(pkt), pkt.src, pkt.dst)),
                 });
             }
             Ipv6FragmentOutcome::Rejected { reason } => {
@@ -119,12 +119,16 @@ impl SecurityEngine {
                         candidates.cited_packet(pkt, frame).cloned()
                     }));
                 }
-                self.push_ids_with_evidence(IdsAlert {
-                    pkt_no: pkt.no,
-                    signature: "IPv6 fragment reassembly rejected",
-                    severity: Severity::High,
-                    detail: format!("{reason} from {}", pkt.src),
-                }, rejected_frames);
+                self.push_ids_finding(IdsFinding {
+                    alert: IdsAlert {
+                        pkt_no: pkt.no,
+                        signature: "IPv6 fragment reassembly rejected",
+                        severity: Severity::High,
+                        detail: format!("{reason} from {}", pkt.src),
+                    },
+                    related_packets: rejected_frames,
+                    correlation_key: Some(format!("{:?}:{}>{}:{reason}", super::scans::scan_scope(pkt), pkt.src, pkt.dst)),
+                });
             }
             Ipv6FragmentOutcome::Complete { datagram } => {
                 self.ipv6_reassembled = self.ipv6_reassembled.saturating_add(1);

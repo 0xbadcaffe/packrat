@@ -179,7 +179,7 @@ pub struct SecurityEngine {
     bf_windows: HashMap<BfKey, BfWindow>,
     auth_sample_evidence: crate::net::recent_evidence::RecentEvidence<2048, 60>,
     dns_tunnel: dns::DnsTunnelTracker,
-    fragment_states: HashMap<(ServiceScope, FragmentKey), FragmentState>,
+    fragment_states: HashMap<(ScanScope, FragmentKey), FragmentState>,
     ipv4_fragment_evidence: crate::net::recent_evidence::RecentEvidence<1024, 120>,
     tcp_integrity: HashMap<(ScanScope, TcpFlowKey), TcpIntegrityState>,
     tcp_overlap_evidence: crate::net::recent_evidence::RecentEvidence<1024, 300>,

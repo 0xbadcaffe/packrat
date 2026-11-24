@@ -53,7 +53,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the fragment flags, offset, payload length, and other frames for the datagram; size alone does not establish intent.",
         ),
         (
-            "IDS", "IPv4 fragment flood", "ipv4.fragment_observation_burst", 2, Correlated,
+            "IDS", "IPv4 fragment flood", "ipv4.fragment_observation_burst", 3, Correlated,
             "Inspect the retained fragment offsets and compare with link MTU, source behavior, and endpoint resource pressure. Volume alone does not establish denial of service.",
         ),
         (
@@ -73,7 +73,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Inspect the extension chain, capture length, and local link policy. A long chain does not establish forwarding impact.",
         ),
         (
-            "IDS", "IPv6 fragment reassembly rejected", "ipv6.reassembly_rejected", 1, DirectObservation,
+            "IDS", "IPv6 fragment reassembly rejected", "ipv6.reassembly_rejected", 2, DirectObservation,
             "Check the stated local reassembly rejection and related fragments. Confirm endpoint handling separately.",
         ),
         (
@@ -205,11 +205,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare both frames and their TCP sequence ranges. Check capture duplication or offload and verify what the receiver processed independently.",
         ),
         (
-            "IDS", "Conflicting IPv4 fragments", "ipv4.conflicting_fragments", 2, DirectObservation,
+            "IDS", "Conflicting IPv4 fragments", "ipv4.conflicting_fragments", 3, DirectObservation,
             "Compare both frames and their capture scope; check receiver logs for reassembly outcome.",
         ),
         (
-            "IDS", "Conflicting IPv6 fragments", "ipv6.conflicting_fragments", 2, DirectObservation,
+            "IDS", "Conflicting IPv6 fragments", "ipv6.conflicting_fragments", 3, DirectObservation,
             "Compare the overlapping bytes in both frames. Verify the receiver's handling independently; this alert does not show that the datagram was accepted.",
         ),
         (

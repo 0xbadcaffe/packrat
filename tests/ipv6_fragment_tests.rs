@@ -165,6 +165,45 @@ fn ipv6_fragment_reassembly_keeps_interface_and_vlan_scopes_separate() {
 }
 
 #[test]
+fn ipv6_reassembly_does_not_join_fragments_across_distinct_tag_orders() {
+    let packet = |no, offset, more, swapped, payload: &[u8]| {
+        let mut raw = fragment_packet(no, 9, offset, more, payload).bytes;
+        let tags = if swapped { [0x8100_u16, 20, 0x88a8, 20] } else { [0x88a8_u16, 20, 0x8100, 20] };
+        raw.splice(12..12, tags.into_iter().flat_map(u16::to_be_bytes));
+        packrat_tui::net::parser::parse_ethernet(&raw, no, no as f64)
+    };
+    let fragments = [
+        packet(1, 0, true, false, b"abcdefgh"),
+        packet(2, 8, false, true, b"bbbbbbbb"),
+        packet(3, 8, false, false, b"ijklmnop"),
+        packet(4, 0, true, true, b"aaaaaaaa"),
+    ];
+    let mut reassembler = Ipv6FragmentReassembler::default();
+    for fragment in &fragments[..2] {
+        assert!(matches!(reassembler.ingest(fragment), Ipv6FragmentOutcome::Pending { fragment_count: 1 }));
+    }
+    for (fragment, names, bytes) in [
+        (&fragments[2], [1, 3], &b"abcdefghijklmnop"[..]),
+        (&fragments[3], [2, 4], &b"aaaaaaaabbbbbbbb"[..]),
+    ] {
+        let Ipv6FragmentOutcome::Complete { datagram } = reassembler.ingest(fragment) else {
+            panic!("expected a complete same-path datagram");
+        };
+        assert_eq!(datagram.frame_numbers, names);
+        assert_eq!(datagram.payload, bytes);
+    }
+
+    let mut core = AnalysisCore::default();
+    core.analyze(&packet(1, 0, true, false, b"short"));
+    core.analyze(&packet(2, 0, true, true, b"short"));
+    let rejections: Vec<_> = core.alert_center.items.iter()
+        .filter(|alert| alert.title == "IPv6 fragment reassembly rejected").collect();
+    assert_eq!(rejections.len(), 2);
+    assert_eq!(rejections[0].packet_refs, [1]);
+    assert_eq!(rejections[1].packet_refs, [2]);
+}
+
+#[test]
 fn ipv6_fragment_equal_partial_overlap_is_not_an_exact_duplicate() {
     let mut reassembler = Ipv6FragmentReassembler::default();
     reassembler.ingest(&fragment_packet(1, 13, 0, true, b"abcdefghijklmnop"));

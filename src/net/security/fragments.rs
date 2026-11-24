@@ -17,7 +17,7 @@ impl SecurityEngine {
             None => return,
         };
 
-        let key = (service_scope(pkt), fragment.key.clone());
+        let key = (scan_scope(pkt), fragment.key.clone());
         self.fragment_states.retain(|_, state| {
             pkt.timestamp < state.last_seen
                 || pkt.timestamp - state.last_seen <= FRAGMENT_STATE_TTL_SECS
