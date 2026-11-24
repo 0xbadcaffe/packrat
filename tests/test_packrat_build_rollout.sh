@@ -23,6 +23,13 @@ cargo() {
         printf '%s\n' archive >"$CARGO_TARGET_DIR/release/packrat-archive"
         return
     fi
+    if [[ ${TEST_ANALYZER_ONLY:-0} == 1 ]]; then
+        [[ $* == "$options --bin packrat-analyze" ]]
+        printf '%s\n' build-analyzer >>"$TEST_TRACE"
+        mkdir -p -- "$CARGO_TARGET_DIR/release"
+        printf '%s\n' analyzer >"$CARGO_TARGET_DIR/release/packrat-analyze"
+        return
+    fi
     [[ $* == "$options --bin packrat --bin packrat-analyze --bin packrat-archive" ]]
     printf '%s\n' build >>"$TEST_TRACE"
     [[ ${TEST_BUILD_FAIL:-0} != 1 ]] || return 37
@@ -54,6 +61,14 @@ printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
     '  [[ $PACKRAT_ROLLOUT_ARCHIVE == "$HOME/.cache/packrat-native-source."*/packrat-archive && -x $PACKRAT_ROLLOUT_ARCHIVE ]]' \
     '  [[ ! -e ${PACKRAT_ROLLOUT_ARCHIVE%/*}/packrat && ! -e ${PACKRAT_ROLLOUT_ARCHIVE%/*}/packrat-analyze ]]' \
     '  [[ $(<"$PACKRAT_ROLLOUT_ARCHIVE") == archive ]]' \
+    '  printf "%s\n" "$1 $3 $4" >>"$TEST_TRACE"' \
+    '  exit "${TEST_ROLLOUT_STATUS:-0}"' \
+    'fi' \
+    'if [[ ${TEST_ANALYZER_ONLY:-0} == 1 ]]; then' \
+    '  [[ $# == 4 && $2 == /usr/local/bin/packrat && $4 == --companions-only && -z $PACKRAT_ROLLOUT_ARCHIVE ]]' \
+    '  [[ $PACKRAT_ROLLOUT_ANALYZER == "$HOME/.cache/packrat-native-source."*/packrat-analyze && -x $PACKRAT_ROLLOUT_ANALYZER ]]' \
+    '  [[ ! -e ${PACKRAT_ROLLOUT_ANALYZER%/*}/packrat && ! -e ${PACKRAT_ROLLOUT_ANALYZER%/*}/packrat-archive ]]' \
+    '  [[ $(<"$PACKRAT_ROLLOUT_ANALYZER") == analyzer ]]' \
     '  printf "%s\n" "$1 $3 $4" >>"$TEST_TRACE"' \
     '  exit "${TEST_ROLLOUT_STATUS:-0}"' \
     'fi' \
@@ -99,8 +114,12 @@ for mode in --check --deploy; do
     TEST_ARCHIVE_ONLY=1 PACKRAT_ROLLOUT_ANALYZER=/not-a-candidate \
         bash "$wrapper" "$mode" wlan1 --archive-only <"$scratch/source.tar"
     assert_clean
+    TEST_ANALYZER_ONLY=1 PACKRAT_ROLLOUT_ARCHIVE=/not-a-candidate \
+        bash "$wrapper" "$mode" wlan1 --analyzer-only <"$scratch/source.tar"
+    assert_clean
 done
 if bash "$wrapper" --deploy wlan1 --archive-only --enable-alert-evidence <"$scratch/source.tar" 2>/dev/null; then exit 1; fi
+if bash "$wrapper" --deploy wlan1 --analyzer-only --archive-only <"$scratch/source.tar" 2>/dev/null; then exit 1; fi
 status=0
 TEST_BUILD_FAIL=1 bash "$wrapper" --deploy wlan1 <"$scratch/source.tar" || status=$?
 [[ $status == 37 ]]
@@ -124,7 +143,8 @@ assert_clean
 ) 8>"$HOME/.cache/packrat-native-build.lock"
 assert_clean
 diff -u <(printf '%s\n' build '--check wlan1 ' build '--check wlan1 ' build '--deploy wlan1 --enable-alert-evidence' \
-    build-archive '--check wlan1 --companions-only' build-archive '--deploy wlan1 --companions-only' \
+    build-archive '--check wlan1 --companions-only' build-analyzer '--check wlan1 --companions-only' \
+    build-archive '--deploy wlan1 --companions-only' build-analyzer '--deploy wlan1 --companions-only' \
     build build '--deploy wlan1 ') "$TEST_TRACE"
 # shellcheck source=tests/support/build_rollout_io_pressure.bash
 source "$root/tests/support/build_rollout_io_pressure.bash"

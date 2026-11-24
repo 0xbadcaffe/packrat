@@ -3,8 +3,8 @@
 set -euo pipefail
 
 if (( $# < 2 || $# > 3 )) || [[ $1 != --check && $1 != --deploy ]] ||
-   [[ ! $2 =~ ^[A-Za-z0-9_.-]+$ || ( $# == 3 && $3 != --enable-alert-evidence && $3 != --archive-only ) ]]; then
-    printf '%s\n' 'Usage: git archive REV | bash packrat-build-rollout.sh --check|--deploy INTERFACE [--enable-alert-evidence|--archive-only]' >&2
+   [[ ! $2 =~ ^[A-Za-z0-9_.-]+$ || ( $# == 3 && $3 != --enable-alert-evidence && $3 != --archive-only && $3 != --analyzer-only ) ]]; then
+    printf '%s\n' 'Usage: git archive REV | bash packrat-build-rollout.sh --check|--deploy INTERFACE [--enable-alert-evidence|--archive-only|--analyzer-only]' >&2
     printf '%s\n' 'Set PACKRAT_BUILD_EXPECT_SHA256 to verify the trusted archive before extraction (64 MiB maximum).' >&2
     printf '%s\n' 'Set PACKRAT_BUILD_MAX_IO_FULL_PERCENT (1-100) to defer when Linux I/O pressure is high; default 0 disables the check.' >&2
     exit 2
@@ -106,7 +106,11 @@ tar --extract --file="$archive" --directory="$stage" --no-same-owner --no-same-p
 if [[ -n $upload ]]; then rm -f -- "$upload"; upload=''; fi
 [[ -f $stage/Cargo.toml && -f $stage/Cargo.lock ]]
 binaries=(packrat packrat-analyze packrat-archive)
-if [[ ${3-} == --archive-only ]]; then binaries=(packrat-archive); fi
+analyzer="$stage/packrat-analyze" archive_binary="$stage/packrat-archive"
+case ${3-} in
+    --archive-only) binaries=(packrat-archive); analyzer='' ;;
+    --analyzer-only) binaries=(packrat-analyze); archive_binary='' ;;
+esac
 build_args=()
 for binary in "${binaries[@]}"; do build_args+=(--bin "$binary"); done
 (
@@ -120,10 +124,10 @@ io_pressure_ready 'after build'
 for binary in "${binaries[@]}"; do
     install -m 0755 -- "$CARGO_TARGET_DIR/release/$binary" "$stage/$binary"
 done
-if [[ ${3-} == --archive-only ]]; then
-    PACKRAT_ROLLOUT_ANALYZER='' PACKRAT_ROLLOUT_ARCHIVE="$stage/packrat-archive" \
+if [[ -z $analyzer || -z $archive_binary ]]; then
+    PACKRAT_ROLLOUT_ANALYZER="$analyzer" PACKRAT_ROLLOUT_ARCHIVE="$archive_binary" \
         "$rollout" "$1" /usr/local/bin/packrat "$2" --companions-only </dev/null 8>&-
 else
-    PACKRAT_ROLLOUT_ANALYZER="$stage/packrat-analyze" PACKRAT_ROLLOUT_ARCHIVE="$stage/packrat-archive" \
+    PACKRAT_ROLLOUT_ANALYZER="$analyzer" PACKRAT_ROLLOUT_ARCHIVE="$archive_binary" \
         "$rollout" "$1" "$stage/packrat" "${@:2}" </dev/null 8>&-
 fi
