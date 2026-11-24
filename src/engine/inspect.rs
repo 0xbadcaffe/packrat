@@ -230,9 +230,9 @@ impl AnalysisCore {
         }
 
         // IOC matching
-        let ioc_before = self.ioc_engine.hits.len();
-        self.ioc_engine.check_packet(pkt);
-        for hit in &self.ioc_engine.hits[ioc_before..] {
+        let matched = self.ioc_engine.check_packet(pkt);
+        let prior_hits = self.ioc_engine.hits.len().saturating_sub(matched);
+        for hit in self.ioc_engine.hits.iter().skip(prior_hits) {
             self.operator_graph.on_ioc_hit(
                 &hit.ioc.value,
                 &hit.ioc.kind.to_string(),

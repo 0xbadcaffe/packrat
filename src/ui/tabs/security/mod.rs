@@ -317,8 +317,9 @@ fn draw_ioc_hits(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let title = format!(
-        " IOC Hits — {} hits  {} indicators loaded ",
+        " IOC Hits — {} recent  {} older evicted  {} indicators loaded ",
         hits.len(),
+        app.core.ioc_engine.evicted_hit_count(),
         app.core.ioc_engine.ioc_count()
     );
     let table = Table::new(

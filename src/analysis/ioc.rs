@@ -3,7 +3,7 @@
 //! Maintains lists of known-bad IPs, domains, hashes, and URLs.
 //! Packets and flows are checked against these lists in real-time.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use crate::analysis::dns_transactions::single_packet_query_name;
 use crate::net::packet::Packet;
 
@@ -60,7 +60,8 @@ pub struct IocEngine {
     urls:    HashSet<String>,
     /// Full IOC records for reference
     iocs:    Vec<Ioc>,
-    pub hits: Vec<IocHit>,
+    pub hits: VecDeque<IocHit>,
+    evicted_hits: u64,
 }
 
 impl IocEngine {
@@ -105,26 +106,32 @@ impl IocEngine {
         }
     }
 
-    pub fn check_packet(&mut self, pkt: &Packet) {
+    /// Return the number of new matches at the tail of the rolling history.
+    pub fn check_packet(&mut self, pkt: &Packet) -> usize {
+        let mut matched = 0;
         if self.ips.contains(&pkt.src) {
             self.record_hit(&pkt.src, IocKind::Ip, "src_ip", pkt.no, pkt.timestamp);
+            matched += 1;
         }
         if self.ips.contains(&pkt.dst) {
             self.record_hit(&pkt.dst, IocKind::Ip, "dst_ip", pkt.no, pkt.timestamp);
+            matched += 1;
         }
 
-        if !self.domains.is_empty() && self.hits.len() < MAX_HITS
+        if !self.domains.is_empty()
             && let Some(name) = single_packet_query_name(pkt)
             && valid_indicator_name(&name)
             && let Some((indicator, exact)) = self.domain_match(&name)
         {
-            self.hits.push(IocHit {
+            self.remember_hit(IocHit {
                 ioc: self.iocs[indicator].clone(),
                 context: if exact { "dns_query" } else { "dns_subdomain" }.into(),
                 pkt_no: pkt.no,
                 ts: pkt.timestamp,
             });
+            matched += 1;
         }
+        matched
     }
 
     fn domain_match(&self, mut name: &str) -> Option<(usize, bool)> {
@@ -139,7 +146,6 @@ impl IocEngine {
     }
 
     fn record_hit(&mut self, value: &str, kind: IocKind, context: &str, pkt_no: u64, ts: f64) {
-        if self.hits.len() >= MAX_HITS { return; }
         let ioc = self.iocs.iter()
             .find(|i| i.kind == kind && i.value.to_lowercase() == value.to_lowercase())
             .cloned()
@@ -149,12 +155,20 @@ impl IocEngine {
                 description: String::new(),
                 source:      "auto".into(),
             });
-        self.hits.push(IocHit {
+        self.remember_hit(IocHit {
             ioc,
             context: context.to_string(),
             pkt_no,
             ts,
         });
+    }
+
+    fn remember_hit(&mut self, hit: IocHit) {
+        if self.hits.len() == MAX_HITS {
+            self.hits.pop_front();
+            self.evicted_hits = self.evicted_hits.saturating_add(1);
+        }
+        self.hits.push_back(hit);
     }
 
     /// Load IOC feeds from all `.csv`, `.txt`, `.ioc` files in `~/.config/packrat/ioc/`.
@@ -215,15 +229,19 @@ impl IocEngine {
 
     pub fn ioc_count(&self) -> usize { self.iocs.len() }
     pub fn hit_count(&self) -> usize { self.hits.len() }
+    pub fn evicted_hit_count(&self) -> u64 { self.evicted_hits }
 
-    pub fn clear_hits(&mut self) { self.hits.clear(); }
+    pub fn clear_hits(&mut self) {
+        self.hits.clear();
+        self.evicted_hits = 0;
+    }
     pub fn clear_all(&mut self) {
         self.ips.clear();
         self.domains.clear();
         self.hashes.clear();
         self.urls.clear();
         self.iocs.clear();
-        self.hits.clear();
+        self.clear_hits();
     }
 }
 

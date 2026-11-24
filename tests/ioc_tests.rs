@@ -176,6 +176,36 @@ fn domain_indicator_alert_points_to_the_wire_question_frame() {
     assert_eq!(alerts[0].packet_refs, [2]);
 }
 
+#[test]
+fn full_indicator_history_does_not_drop_new_ip_or_domain_alerts() {
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    core.ioc_engine.load_ioc(make_ioc(IocKind::Ip, "203.0.113.7"));
+    core.ioc_engine.load_ioc(make_ioc(IocKind::Ip, "192.0.2.20"));
+    core.ioc_engine.load_ioc(make_ioc(IocKind::Domain, "indicator.test"));
+    for no in 1..=1000 {
+        core.analyze(&make_pkt(no, "203.0.113.7", "192.0.2.30", "TCP", ""));
+    }
+    assert_eq!(core.ioc_engine.hit_count(), 1000);
+    core.analyze(&dns_packet(1001, &["indicator", "test"], false, false));
+
+    let new: Vec<_> = core.alert_center.items.iter()
+        .filter(|alert| alert.source == "IOC" && alert.packet_no == 1001)
+        .collect();
+    assert_eq!(new.len(), 2);
+    assert!(new.iter().any(|alert| alert.title == "IP match"));
+    assert!(new.iter().any(|alert| alert.title == "Domain match"));
+    assert!(new.iter().all(|alert| alert.packet_refs == [1001]));
+    assert_eq!(core.ioc_engine.hit_count(), 1000);
+    assert_eq!(core.ioc_engine.hits[0].pkt_no, 3);
+    assert_eq!(core.ioc_engine.hits[998].pkt_no, 1001);
+    assert_eq!(core.ioc_engine.hits[999].pkt_no, 1001);
+    assert_eq!(core.ioc_engine.evicted_hit_count(), 2);
+    core.clear();
+    assert_eq!(core.ioc_engine.hit_count(), 0);
+    assert_eq!(core.ioc_engine.evicted_hit_count(), 0);
+    assert_eq!(core.ioc_engine.ioc_count(), 3);
+}
+
 // ── Multiple IOCs ─────────────────────────────────────────────────────────────
 
 #[test]
