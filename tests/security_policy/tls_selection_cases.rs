@@ -162,3 +162,30 @@ fn segmented_tls_checks_overlap_starting_before_the_stream_prefix() {
         assert!(alerts.iter().all(|alert| alert.packet_refs == [2, 4]));
     }
 }
+#[test]
+fn legacy_tls_selection_does_not_share_review_state_across_tag_paths() {
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+    let hello = server_hello(0x0302, 0xc011, &[]);
+    let mut core = AnalysisCore::default();
+    for (frame, tpid, tci) in [(1, 0x8100_u16, 20_u16), (2, 0x88a8, 20), (3, 0x8100, 0xb014)] {
+        let mut raw = tls_segment(frame, 100 + frame as u32 * 1024, 0x18, &hello).bytes;
+        raw.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+        core.analyze(&parse_ethernet(&raw, frame, frame as f64));
+        if frame == 1 {
+            let first: Vec<_> = core.alert_center.items.iter().filter(|item| item.source == "TLS")
+                .map(|item| (item.id, item.capture_id.clone())).collect();
+            assert_eq!(first.len(), 2);
+            for (id, capture) in first {
+                assert!(core.alert_center.set_disposition(id, capture.as_deref(), AlertDisposition::Benign));
+            }
+        }
+    }
+    for title in ["TLS 1.1 selected", "RC4 selected"] {
+        let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == title).collect();
+        assert_eq!(alerts.len(), 2);
+        assert_eq!(alerts[0].packet_refs, [1, 3]);
+        assert_eq!(alerts[0].disposition, AlertDisposition::Benign);
+        assert_eq!(alerts[1].packet_refs, [2]);
+        assert_eq!(alerts[1].disposition, AlertDisposition::New);
+    }
+}

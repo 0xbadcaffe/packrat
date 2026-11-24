@@ -2,6 +2,31 @@ use super::*;
 use packrat_tui::{engine::AnalysisCore, net::parser::parse_ethernet};
 
 #[test]
+fn telnet_prompt_reviews_stay_separate_on_different_tag_paths() {
+    use packrat_tui::analysis::alert_center::AlertDisposition;
+
+    let mut core = AnalysisCore::default();
+    for (no, tpid) in [(1, 0x8100_u16), (2, 0x88a8), (3, 0x8100)] {
+        let mut raw = ipv4_tcp_packet(no, 1000 * no as u32, 0x18, b"Password: ").bytes;
+        raw[34..36].copy_from_slice(&23_u16.to_be_bytes());
+        raw[36..38].copy_from_slice(&50_000_u16.to_be_bytes());
+        raw.splice(12..12, [tpid, 20].into_iter().flat_map(u16::to_be_bytes));
+        core.analyze(&parse_ethernet(&raw, no, no as f64));
+        if no == 1 {
+            let alert = &core.alert_center.items[0];
+            let (id, capture) = (alert.id, alert.capture_id.clone());
+            assert!(core.alert_center.set_disposition(id, capture.as_deref(), AlertDisposition::Benign));
+        }
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.title == "Telnet authentication prompt").collect();
+    assert_eq!(alerts.len(), 2);
+    assert_eq!(alerts[0].packet_refs, [1, 3]);
+    assert_eq!(alerts[0].disposition, AlertDisposition::Benign);
+    assert_eq!(alerts[1].packet_refs, [2]);
+    assert_eq!(alerts[1].disposition, AlertDisposition::New);
+}
+
+#[test]
 fn telnet_prompt_is_directional_and_does_not_imply_credentials() {
     const TITLE: &str = "Telnet authentication prompt";
     let make = |no, server, payload: &[u8]| {

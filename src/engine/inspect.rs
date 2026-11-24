@@ -110,12 +110,16 @@ impl AnalysisCore {
                 &finding.correlation_key,
             );
         }
-        for hit in &findings.vulnerabilities {
-            let scope = (
+        let service_alert_scope = || {
+            (
                 pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
                 pkt.outer_vlan_id,
                 pkt.vlan_id,
-            );
+                crate::net::parser::ethernet_vlan_tag_types(&pkt.bytes),
+            )
+        };
+        for hit in &findings.vulnerabilities {
+            let scope = service_alert_scope();
             self.alert_center.record_with_context(
                 (hit.pkt_no, &[], AlertFlow::from_packet(pkt)),
                 pkt.timestamp,
@@ -138,12 +142,7 @@ impl AnalysisCore {
                 "SMB" => ("MEDIUM", "SMB2 logon failure burst".into(), "SMB2 SESSION_SETUP logon failures"),
                 service => ("HIGH", format!("{service} authentication burst"), "attempts"),
             };
-            let scope = (
-                pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
-                pkt.outer_vlan_id,
-                pkt.vlan_id,
-                crate::net::parser::ethernet_vlan_tag_types(&pkt.bytes),
-            );
+            let scope = service_alert_scope();
             let mut packet_refs = alert.packet_refs.clone();
             let exchange = if alert.service == "HTTP" {
                 let linked = self.attach_http_401_exchanges(&alert.http_streams, &mut packet_refs);
@@ -171,11 +170,7 @@ impl AnalysisCore {
         }
         for weakness in &findings.tls {
             let frames = segmented_tls.as_ref().map_or(&[][..], |(_, frames)| frames.as_slice());
-            let scope = (
-                pkt.capture.as_ref().map(|c| (c.section_id, c.interface_id)),
-                pkt.outer_vlan_id,
-                pkt.vlan_id,
-            );
+            let scope = service_alert_scope();
             self.alert_center.record_with_context(
                 (weakness.pkt_no, frames, AlertFlow::from_packet(pkt)),
                 pkt.timestamp,
