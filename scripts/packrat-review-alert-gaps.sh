@@ -69,18 +69,28 @@ printf '%s\n' "$requested" "$history" | jq -ces --arg session "$session" --arg c
         type == "object" and .capture_id == $capture and .session_id == $session
         and (.alert_id | counter and . > 0);
     def safe_rule: if type == "string" and test("\\A[a-z0-9_.-]{1,128}\\z") then . else null end;
+    def severity: if . == "WARN" then "MEDIUM" elif . == "CRIT" then "CRITICAL"
+        elif IN("INFO","LOW","MEDIUM","HIGH","CRITICAL") then . else null end;
+    def in_ranges($ranges): .alert_id as $id | any($ranges[]; $id >= .first_id and $id <= .last_id);
     select(length == 2) | .[0] as $input | .[1] as $history
-    | select($history.alerts | type == "array" and length <= 512 and all(.[]; valid_alert)
+    | select($history.alerts | type == "array" and length <= 512 and all(.[]; valid_alert and in_ranges($input.ranges))
         and (map(.alert_id) | length == (unique | length)))
     | $history.integrity as $integrity
     | select($integrity | type == "object" and (.invalid_records | counter) and (.oversized_records | counter)
         and (.stopped_at_limit | type == "boolean") and (.stopped_at_scan_budget | . == null or type == "boolean"))
     | select($integrity.stopped_at_limit == (($history.alerts | length) == 512))
     | ($integrity | clean_log) as $complete
-    | [$history.alerts[] | . as $alert | select(any($input.ranges[]; $alert.alert_id >= .first_id and $alert.alert_id <= .last_id))
+    | [$history.alerts[]
+        | (.evidence_frame_count | if counter and . <= 131 then . else null end) as $refs
         | {alert_id,rule_id:(.rule_id | safe_rule),
            revision:(.revision | if counter and . >= 1 and . <= 65535 then . else null end),
-           severity:(.severity | if IN("LOW","MEDIUM","HIGH","CRITICAL") then . else null end),
+           severity:(.severity | severity),
+           confidence:(.confidence | if IN("heuristic","correlated","direct_observation") then . else null end),
+           evidence_frame_count:$refs,
+           evidence_frame_set_sha256:((if $refs != null then .evidence_frame_set_sha256 | strings
+               | select(test("\\A[0-9a-f]{64}\\z")) else empty end) // null),
+           next_evidence_step:(if $refs == 0 then "corroborate_with_host_or_service_logs"
+               elif $refs != null then "verify_frame_availability" else "inspect_saved_alert" end),
            disposition:(.disposition | if IN("New","Reviewing","Confirmed","Benign","Contained","Closed") then . else null end)}]
         | sort_by(.alert_id) as $recovered
     | $input + {

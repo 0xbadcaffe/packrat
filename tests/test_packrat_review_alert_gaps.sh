@@ -19,12 +19,16 @@ case ${TEST_MODE:-normal} in
     raced) printf 'late record\n' >> "$TEST_DIR/current.jsonl" ;;
     failed) exit 2 ;;
 esac
-jq -nc --arg mode "${TEST_MODE:-normal}" '
+jq -nc --arg mode "${TEST_MODE:-normal}" --arg ranges "$*" '
     {capture_id:"00000000000000000000000000000001",session_id:"session-a",rule_id:"scan.horizontal",
-     revision:13,severity:"HIGH",disposition:"New",detail:"private text",packet_refs:[1,2]} as $sample
-    | {alerts:([$sample + {alert_id:6}, $sample + {alert_id:8}, $sample + {alert_id:90}]
+     revision:13,severity:"WARN",disposition:"New",detail:"private text",packet_refs:[1,2],
+     confidence:"correlated",evidence_frame_count:2,evidence_frame_set_sha256:("b"*64)} as $sample
+    | {alerts:([$sample + {alert_id:6},
+                $sample + {alert_id:8,severity:"CRIT",evidence_frame_count:0,evidence_frame_set_sha256:"private invalid hash"}]
+        | if $mode == "out-of-range" or ($ranges | startswith("--alert-range 1..")) then . + [$sample + {alert_id:90}] else . end
         | if $mode == "wrong-scope" then .[0].session_id = "another-session"
-          elif $mode == "duplicate" then . + [.[0]] else . end),
+          elif $mode == "duplicate" then . + [.[0]]
+          elif $mode == "unknown-evidence" then .[1] += {evidence_frame_count:132,confidence:"private label"} else . end),
        integrity:{invalid_records:0,oversized_records:0,stopped_at_limit:false,
                  stopped_at_scan_budget:($mode == "bounded")}}'
 STUB
@@ -41,16 +45,22 @@ run_gap() {
 run_gap | jq -e '
     .record_type == "alert_gap_reconciliation" and .saved_log_scan_complete
     and [.recovered_alerts[].alert_id] == [6,8] and .recovered_alerts[0].revision == 13
+    and [.recovered_alerts[] | [.severity, .confidence, .evidence_frame_count, .evidence_frame_set_sha256, .next_evidence_step]] ==
+        [["MEDIUM","correlated",2,("b"*64),"verify_frame_availability"],
+         ["CRITICAL","correlated",0,null,"corroborate_with_host_or_service_logs"]]
     and [.ranges[] | [.first_id,.last_id,.found,.not_found_in_scan,.remaining_status]] ==
         [[5,8,2,2,"not_in_supplied_logs"],[20,20,0,1,"not_in_supplied_logs"]]
     and (tostring | contains("private") | not) and (tostring | contains("packet_refs") | not)' >/dev/null
 TEST_MODE=bounded run_gap | jq -e '
     (.saved_log_scan_complete | not) and [.recovered_alerts[].alert_id] == [6,8]
     and all(.ranges[]; .remaining_status == "unverified")' >/dev/null
+TEST_MODE=unknown-evidence run_gap | jq -e '
+    .recovered_alerts[1] | .confidence==null and .evidence_frame_count==null
+        and .evidence_frame_set_sha256==null and .next_evidence_step=="inspect_saved_alert"' >/dev/null
 jq '.unobserved_alert_id_ranges = [{first_id:1,last_id:9007199254740991}]' "$scratch/report" > "$scratch/wide"
 run_gap "$scratch/wide" | jq -e '.ranges[0].not_found_in_scan == 9007199254740988' >/dev/null
 
-for mode in wrong-scope duplicate raced failed; do
+for mode in wrong-scope out-of-range duplicate raced failed; do
     if TEST_MODE=$mode run_gap >"$scratch/result" 2>/dev/null; then exit 1; fi
     [[ ! -s $scratch/result ]]
 done
