@@ -21,7 +21,7 @@ sample=$(jq -cn '
     | to_entries[] | .value + {journal_writer:"writer-a",journal_sequence:(.key+1)}')
 
 bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
-    .status=="sampled" and .coverage_policy=="continuous_journal_v7" and .scope=={capture_id:"a",session_id:"a-1"}
+    .status=="sampled" and .coverage_policy=="continuous_journal_v8" and .scope=={capture_id:"a",session_id:"a-1"}
     and .scoped_records==6 and .healthy_intervals==3 and .excluded_intervals==2
     and .journal_discontinuities==0 and .journal_tail_unconfirmed_events==0 and .alert_journal_counter_unverified_intervals==0
     and .alert_log_snapshot_unverified_intervals==0
@@ -44,6 +44,24 @@ jq -sc '.[0:2][] | del(.journal_unconfirmed_events)' <<< "$sample" |
     bash "$coverage" | jq -e '.journal_tail_unconfirmed_events==null and .healthy_intervals==1
         and .alert_journal_counter_unverified_intervals==1 and .alert_comparable_intervals==0
         and .observed_openings_per_10000_packets==null' >/dev/null
+
+reverified=$(jq -sc '
+    def complete($ids): . + {recent_alerts:($ids | map({alert_id:.,rule_id:"dns.changed_answers",revision:15})),
+        review_queue:[],recent_alerts_at_limit:false,has_older_alerts:false,invalid_alert_rows:0,duplicate_alert_ids:0}
+        | .alert_log_integrity.stopped_at_limit=false;
+    (.[0] | complete([3,4])),
+    (.[1] | complete([4]) | .alert_sample_gap=true),
+    (.[2] | complete([4,5]) | .alert_sample_gap=true | .highest_observed_alert_id=5 | .alert_changes.newly_observed=[5])
+' <<< "$sample")
+bash "$coverage" <<< "$reverified" | jq -e '
+    .alert_sample_gap_reported and .missing_previously_observed_alert_ids==[3]
+    and .alert_comparable_intervals==1 and .alert_reverified_intervals==1 and .alert_comparable_packets==35
+    and .observed_openings==1 and .opening_rule_breakdown.rules==[{rule_id:"dns.changed_answers",revision:15,openings:1}]' >/dev/null
+for patch in '.has_older_alerts=true' '.invalid_alert_rows=1' '.highest_observed_alert_id=6' \
+    'del(.alert_sample_gap)' '.review_queue=[{alert_id:3}]' '.recent_alerts += [{alert_id:3}]' '.journal_sequence+=1'; do
+    jq -sc ".[0],.[1],(.[2] | $patch)" <<< "$reverified" | bash "$coverage" | jq -e '
+        .alert_comparable_intervals==0 and .alert_reverified_intervals==0 and .observed_openings==null' >/dev/null
+done
 
 jq -sc '
     {alert_id:5,rule_id:"dns.competing_responders",revision:7} as $dns |

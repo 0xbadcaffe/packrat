@@ -38,6 +38,19 @@ PACKRAT_BASELINE_MIN_SECONDS=60 PACKRAT_BASELINE_MIN_PACKETS=2000 bash "$tool" "
     and .before.openings_per_10000_packets == 5 and .after.openings_per_10000_packets == 0
     and .before.comparable_seconds == 60 and .after.comparable_seconds == 60
     and .observed_rate_delta_per_10000_packets == -5' >/dev/null
+jq '.coverage |= (.coverage_policy="continuous_journal_v8" | .alert_reverified_intervals=1 | .alert_sample_gap_reported=true)' \
+    "$before" >"$tmp/v8-before"
+jq '.coverage |= (.coverage_policy="continuous_journal_v8" | .alert_reverified_intervals=0)' "$after" >"$tmp/v8-after"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/v8-before" "$tmp/v8-after" | jq -e '
+    .status=="separate_capture_windows" and .before.alert_reverified_intervals==1 and .after.alert_reverified_intervals==0
+    and .observed_rate_delta_per_10000_packets==-5' >/dev/null
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$before" "$tmp/v8-after" | jq -e '
+    .status=="coverage_policy_unverified" and .observed_rate_delta_per_10000_packets==null' >/dev/null
+for patch in 'del(.coverage.alert_reverified_intervals)' '.coverage.alert_reverified_intervals=2' \
+    '.coverage.alert_sample_gap_reported=false'; do
+    jq "$patch" "$tmp/v8-before" >"$fixture"
+    if bash "$tool" "$fixture" "$tmp/v8-after" >/dev/null 2>&1; then exit 1; fi
+done
 jq '.coverage.opening_rule_breakdown = {rules:[{rule_id:"dns.changed_answers",revision:9,openings:1}],unattributed_openings:0,omitted_rule_openings:0}' \
     "$before" > "$tmp/rule-before.json"
 jq '.coverage.observed_openings = 2 | .coverage.opening_rule_breakdown =
@@ -188,7 +201,7 @@ record() {
 record "$tmp/recorded"
 [[ $(stat -c %a -- "$tmp/recorded") == 600 ]]
 jq -e '.build.packets == 2515 and .coverage.observed_openings == 1
-    and .coverage.coverage_policy == "continuous_journal_v7"
+    and .coverage.coverage_policy == "continuous_journal_v8" and .coverage.alert_reverified_intervals == 0
     and .coverage.alert_comparable_packets == 2000 and .coverage.alert_comparable_seconds == 60' "$tmp/recorded" >/dev/null
 bash "$tool" "$before" "$tmp/recorded" | jq -e '.status == "same_capture"' >/dev/null
 
@@ -217,7 +230,7 @@ jq '.coverage.coverage_policy = "capture_loss_counters_v1"' "$before" > "$tmp/be
 bash "$tool" "$tmp/before-v1.json" "$tmp/after-v1.json" | jq -e '
     .status == "coverage_policy_unverified" and .before.openings_per_10000_packets == null
     and .after.openings_per_10000_packets == null' >/dev/null
-bash "$tool" "$tmp/insufficient" "$after" | jq -e '
+bash "$tool" "$tmp/insufficient" "$tmp/v8-after" | jq -e '
     .status == "insufficient_alert_coverage" and .before.openings == null
     and .observed_rate_delta_per_10000_packets == null' >/dev/null
 jq -c '.status = "stale"' "$tmp/journal-original" > "$tmp/journal"

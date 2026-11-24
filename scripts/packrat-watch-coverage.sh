@@ -11,6 +11,7 @@ usage() {
         'Alert rates exclude intervals whose endpoint alert log grew during the review or was not checked for growth.' \
         'Alert rates require known, unchanged save-failure and retry-buffer drop counters.' \
         'Alert rates also require a known, unchanged unconfirmed journal event count.' \
+        'After a historical gap, only complete, consistent alert samples can reestablish comparable intervals.' \
         'Intervals spanning watcher restarts, missing journal records, or older unsequenced records are excluded.' \
         'The tail unconfirmed count is watcher-wide, not attributed to the selected capture.' \
         'Alert-ID gaps and IDs that disappeared between samples are not proof of deletion from the saved log.'
@@ -53,12 +54,6 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         | if ($low | counter) and ($high | counter) and $high >= $low
              and ($ids | type == "array" and length <= 55 and all(.[]; counter and . > $low and . <= $high) and . == unique)
           then $ids else null end;
-    def verified_opening_ids($earlier; $later):
-        opening_delta($earlier; $later) as $ids
-        | if ($earlier | alert_log_usable) and ($later | alert_log_usable)
-             and $earlier.alert_sample_gap == false and $later.alert_sample_gap == false and $ids != null
-             and $later.highest_observed_alert_id - $earlier.highest_observed_alert_id == ($ids | length)
-          then $ids else null end;
     def alert_samples:
         ((.recent_alerts | arrays | .[:50][]), (.review_queue | arrays | .[:5][])) | objects;
     def attribute_openings($later; $ids):
@@ -77,6 +72,22 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
     def comparable_alert_sample:
         (.status | IN("current","degraded")) and alert_log_usable and .alert_log_advanced_during_review == false
         and (.recent_alerts | valid_sample_rows(50)) and (.review_queue | valid_sample_rows(5));
+    def complete_alert_sample:
+        comparable_alert_sample and .recent_alerts_at_limit == false and .has_older_alerts == false
+        and .alert_log_integrity.stopped_at_limit == false and .invalid_alert_rows == 0 and .duplicate_alert_ids == 0
+        and ((sampled_ids | last // 0) == .highest_observed_alert_id)
+        and (([.review_queue[].alert_id] - [.recent_alerts[].alert_id]) == []);
+    def reverified($earlier; $later; $ids):
+        $earlier.alert_sample_gap == true and $later.alert_sample_gap == true
+        and ($earlier | complete_alert_sample) and ($later | complete_alert_sample)
+        and (($earlier | sampled_ids) as $before | ($later | sampled_ids) as $after
+             | ($before - $after) == [] and ($after - $before) == $ids);
+    def verified_opening_ids($earlier; $later):
+        opening_delta($earlier; $later) as $ids
+        | if ($earlier | alert_log_usable) and ($later | alert_log_usable) and $ids != null
+             and $later.highest_observed_alert_id - $earlier.highest_observed_alert_id == ($ids | length)
+             and (($earlier.alert_sample_gap == false and $later.alert_sample_gap == false) or reverified($earlier; $later; $ids))
+          then $ids else null end;
     def missing_observed_ids($samples):
         [range(1; $samples | length) as $i
         | $samples[$i - 1] as $before | $samples[$i] as $after
@@ -143,7 +154,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
           | {seconds:($later.tick - $earlier.tick), packets:($later.packets - $earlier.packets),
              save_counter_status:$saving,
              backlog_counter_status:$backlog,
-             journal_counter_status:$journal, stable_alert_log:$stable_log,
+             journal_counter_status:$journal, stable_alert_log:$stable_log, historical_alert_gap:($later.alert_sample_gap == true),
              opening_rules:(if $ids == null then null else attribute_openings($later; $ids) end)} else null end;
     if utf8bytelength > 2097152 then error("Journal exceeds the 2 MiB input limit") else . end
     | split("\n") | map(select(length > 0) | fromjson
@@ -163,7 +174,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         | map(.[0] + {openings:length}) | sort_by([-.openings,.rule_id,.revision])) as $by_rule
     | [limit(65; alert_gaps($sample))] as $alert_gaps
     | missing_observed_ids($sample) as $missing_ids
-    | {record_type:"capture_coverage_report",coverage_policy:"continuous_journal_v7",
+    | {record_type:"capture_coverage_report",coverage_policy:"continuous_journal_v8",
        status:(if ($sample | length) == 0 then "no_capture_records"
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
        scope:$key, journal_tail_status:$all[-1].status,
@@ -175,6 +186,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        healthy_seconds:([$healthy[].seconds] | add // 0), healthy_packets:([$healthy[].packets] | add // 0),
        alert_comparable_intervals:($comparable | length), alert_comparable_packets:$measured_packets,
        alert_comparable_seconds:([$comparable[].seconds] | add // 0),
+       alert_reverified_intervals:([$comparable[] | select(.historical_alert_gap)] | length),
        alert_save_failure_intervals:([$healthy[] | select(.save_counter_status == "increased")] | length),
        alert_save_counter_unverified_intervals:([$healthy[] | select(.save_counter_status == "unverified")] | length),
        alert_save_backlog_drop_intervals:([$healthy[] | select(.backlog_counter_status == "increased")] | length),
