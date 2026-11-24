@@ -360,6 +360,8 @@ read_health() {
             capture_queue: $queue,
             flow_cache: (if $usable then $h.flow_cache | objects | {retained_summaries,summary_evictions}
                 | select(all(.[]; type == "number" and . >= 0 and . <= 9007199254740991 and floor == .)) else empty end) // null,
+            tcp_stream_cache: (if $usable then $h.tcp_stream_cache | objects | {retained_streams,evicted_streams}
+                | select(all(.[]; archive_count)) else empty end) // null,
             dns_capacity: (if $usable then $h.dns_capacity | objects |
                 {query_key_declines,query_candidate_declines,nxdomain_client_declines,external_resolver_pair_declines}
                 | select(all(.[]; archive_count)) else empty end) // null,

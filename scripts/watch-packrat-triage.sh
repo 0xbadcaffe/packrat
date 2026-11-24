@@ -9,6 +9,8 @@ snapshot_validation='
     def socket_status: if IN("not_configured","not_checked","not_recorded","available","unavailable") then . else null end;
     def flow_cache: if type == "object" then {retained_summaries:(.retained_summaries | counter),summary_evictions:(.summary_evictions | counter)}
         | if any(.[]; . == null) then null else . end else null end;
+    def tcp_stream_cache: if type == "object" then {retained_streams,evicted_streams} | map_values(counter)
+        | if any(.[]; . == null) then null else . end else null end;
     def dns_capacity: if type == "object" then
         {query_key_declines,query_candidate_declines,nxdomain_client_declines,external_resolver_pair_declines}
         | map_values(counter) | if any(.[]; . == null) then null else . end else null end;
@@ -89,6 +91,7 @@ usage() {
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Check reports validated alert sample counts separately from capture health. A highest observed ID is not a total.' \
         'DNS capacity counters describe analysis limits, not packet loss. Deltas require comparable fresh readings.' \
+        'TCP stream evictions describe lost reconstruction context, not packet loss.' \
         'Check includes current disk space and archive capacity without exposing storage paths.' \
         'socket_context_status describes the optional snapshot store, not capture health or per-alert attribution.' \
         'healthy_capture_seconds restarts after a packet counter regression; packet_counter_gap marks the affected capture.' \
@@ -190,6 +193,9 @@ check_snapshot() {
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
            triage_status:.status, age_seconds:$age, max_age_seconds, packets:(.packets | counter), flow_cache:(if $age >= -5 and $age <= .max_age_seconds then .flow_cache | flow_cache else null end),
+           tcp_stream_cache:(if $age >= -5 and $age <= .max_age_seconds then .tcp_stream_cache | tcp_stream_cache else null end),
+           tcp_stream_eviction_delta:(if $age >= -5 and $age <= .max_age_seconds and (.tcp_stream_cache | tcp_stream_cache) != null
+               then .tcp_stream_eviction_delta | counter else null end),
            dns_capacity:(if $age >= -5 and $age <= .max_age_seconds then .dns_capacity | dns_capacity else null end),
            dns_capacity_delta:(if $age >= -5 and $age <= .max_age_seconds and (.dns_capacity | dns_capacity) != null
                then .dns_capacity_delta | dns_capacity else null end),
@@ -370,6 +376,8 @@ sanitize() {
             link_decodable:(.health.capture_link_decodable | flag),
             issues:(.health.issues | if type == "array" then .[:64] | map(token | select(. != null)) | unique else null end),
             packets:(.health.packets_total | counter), buffer_drops:(.health.pcap_buffer_drops | counter), flow_cache:(.health.flow_cache | flow_cache),
+            tcp_stream_cache:(if (.status | IN("current","degraded")) and .health.telemetry_fresh == true and .health.capture_active == true
+                then .health.tcp_stream_cache | tcp_stream_cache else null end),
             dns_capacity:(if (.status | IN("current","degraded")) and .health.telemetry_fresh == true and .health.capture_active == true
                 then .health.dns_capacity | dns_capacity else null end),
             capture_queue_full_packets:(.health.capture_queue_full_packets | counter),
@@ -466,6 +474,7 @@ if [[ -f $state && -O $state ]]; then
                     and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
             | {status,capture_id,session_id,recent_alerts,alert_sample_gap:(.alert_sample_gap == true),
                 packets:(.packets | counter),packet_counter_gap:(.packet_counter_gap == true),
+                tcp_stream_cache:(if $fresh then .tcp_stream_cache | tcp_stream_cache else null end),
                 dns_capacity:(if $fresh then .dns_capacity | dns_capacity else null end),
                 capture_queue_full_packets:(.capture_queue_full_packets | counter),
                 buffer_drops:(.buffer_drops | if $fresh and type == "number" and . >= 0 and . <= 4294967295
@@ -526,6 +535,8 @@ while :; do
             | if $queue_issue != null then .status = "degraded" | .issues = ((.issues // []) + [$queue_issue] | unique) else . end
             | . as $now
             | ($comparable and .packets != null and $prior.packets != null and .packets < $prior.packets) as $regressed
+            | ($comparable and ($regressed | not) and ($prior.poll_started_at | type == "number"
+                  and . <= $started and $started - . <= $max_age)) as $fresh_counters
             | alert_ids as $ids | ($ids[-1] // 0) as $seen
             | ([$prior.highest_observed_alert_id, ($prior | alert_ids | last)] | max // 0) as $high
             | (.recent_alerts_at_limit == true or .has_older_alerts == true) as $truncated
@@ -543,8 +554,10 @@ while :; do
                     then $prior.healthy_capture_since else $started end),
                 buffer_drops_delta:(if $comparable and .buffer_drops != null and $prior.buffer_drops != null
                     and .buffer_drops >= $prior.buffer_drops then .buffer_drops - $prior.buffer_drops else null end),
-                dns_capacity_delta:(if $comparable and ($regressed | not) and ($prior.poll_started_at | type == "number"
-                    and . <= $started and $started - . <= $max_age) then .dns_capacity | dns_capacity_delta($prior.dns_capacity) else null end),
+                dns_capacity_delta:(if $fresh_counters then .dns_capacity | dns_capacity_delta($prior.dns_capacity) else null end),
+                tcp_stream_eviction_delta:(if $fresh_counters and .tcp_stream_cache != null and $prior.tcp_stream_cache != null
+                    and .tcp_stream_cache.evicted_streams >= $prior.tcp_stream_cache.evicted_streams
+                    then .tcp_stream_cache.evicted_streams - $prior.tcp_stream_cache.evicted_streams else null end),
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
                 alert_sample_gap: if observed | not then null elif $invalid_sample then true elif $comparable and $high > 0 then
                     $prior.alert_sample_gap == true or $seen < $high or $lost_from_complete_sample or ($seen - $high > ($new_ids | length))
@@ -576,7 +589,8 @@ while :; do
     snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")
     if "$once"; then publish_snapshot not_checked; printf '%s\n' "$snapshot"; break; fi
     key=$(jq -c 'del(.updated_at, .poll_started_at, .packets, .disk_free_mib, .archive_usage, .flow_cache, .highest_observed_alert_id,
-        .last_observed, .buffer_drops_delta, .capture_queue_full_packets_delta, .dns_capacity_delta)' <<< "$snapshot")
+        .last_observed, .buffer_drops_delta, .capture_queue_full_packets_delta, .dns_capacity_delta,
+        .tcp_stream_cache.retained_streams, .tcp_stream_eviction_delta)' <<< "$snapshot")
     checkpoint=false
     if [[ $key == "$previous" && $journal_enabled == 1 ]] && (( SECONDS >= next_checkpoint )); then
         checkpoint=$(jq -c '(.status == "current" or .status == "degraded") and .capture_id != null and .session_id != null and .packets != null' <<< "$snapshot")
