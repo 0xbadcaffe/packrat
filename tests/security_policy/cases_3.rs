@@ -160,11 +160,16 @@ fn administrative_fanout_requires_scoped_syn_ack_pairs(#[case] ipv6: bool) {
     core.analyze(&make(34, 1, true, 0, 10));
     assert!(core.alert_center.items.iter().all(|alert| alert.title != TITLE));
 
-    core.analyze(&make(35, 8, true, 0, 10));
+    let trigger = make(35, 8, true, 0, 10);
+    core.analyze(&trigger);
     let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
     assert_eq!(alert.packet_refs, [1, 13, 2, 16, 3, 19, 4, 22, 5, 25, 6, 28, 7, 31, 8, 35]);
     assert_eq!(alert.severity, "MEDIUM");
     assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "tcp.admin_service_response_fanout");
+    let flow = alert.flow.expect("fan-out records the trigger reply, not an arbitrary contributing pair");
+    assert_eq!(flow.transport, packrat_tui::analysis::alert_center::AlertTransport::Tcp);
+    assert_eq!(flow.source, std::net::SocketAddr::new(trigger.src.parse().unwrap(), 445));
+    assert_eq!(flow.destination, std::net::SocketAddr::new(trigger.dst.parse().unwrap(), 50_000));
     assert!(alert.detail.contains("login outcomes unverified"));
 
     let mut frame = 36;

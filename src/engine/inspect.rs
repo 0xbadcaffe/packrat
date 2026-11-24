@@ -54,7 +54,7 @@ impl AnalysisCore {
                 alert.pkt_no,
                 pkt.timestamp,
             );
-            let flow = if matches!(alert.signature,
+            let flow = if alert.pkt_no == pkt.no && matches!(alert.signature,
                 "Periodic fixed-size traffic" | "TCP payload after reset" | "Conflicting TCP retransmission"
                 | "Industrial state-changing command" | "Critical industrial control command"
                 | "Cleartext HTTP Basic authorization"
@@ -65,6 +65,7 @@ impl AnalysisCore {
                 | "DNS reply without observed query" | "DNS invalid question count" | "DNS NXDOMAIN burst"
                 | "Oversized DNS TXT traffic" | "Direct external DNS resolver use" | "JNDI label in DNS query"
                 | "Horizontal host scan" | "Vertical port scan" | "SYN arrival spike"
+                | "Administrative service response fan-out"
                 | "Large asymmetric outbound transfer" | "High-entropy outbound transfer"
             ) {
                 AlertFlow::from_packet(pkt)
