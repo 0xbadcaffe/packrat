@@ -18,6 +18,7 @@ fn review_latency_uses_only_usable_timings_in_the_requested_latest_sample() {
         (3, Some("capture-a"), None, Some(1600)),
         (4, Some("capture-b"), Some(1500), Some(1400)),
         (5, None, Some(1000), Some(1090)),
+        (6, Some("capture-b"), Some(1000), None),
     ] {
         let mut alert = item.clone();
         alert.id = id;
@@ -34,13 +35,15 @@ fn review_latency_uses_only_usable_timings_in_the_requested_latest_sample() {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     assert_eq!(run(&[])["review_latency"], json!({
-        "sampled_alerts":5,"measured_alerts":2,"unmeasured_alerts":3,"min_ms":100,"median_ms":250,"max_ms":401
+        "sampled_alerts":6,"measured_alerts":2,"unmeasured_alerts":4,"min_ms":100,"median_ms":250,"max_ms":401,
+        "unmeasured_reasons":{"missing_capture_scope":1,"missing_first_save":1,"missing_first_review":1,"review_before_save":1}
     }));
     assert_eq!(run(&["--capture-id", "capture-a"])["review_latency"]["sampled_alerts"], 3);
     let limited = run(&["--limit", "2"]);
     assert_eq!(limited["integrity"]["stopped_at_limit"], true);
     assert_eq!(limited["review_latency"], json!({
-        "sampled_alerts":2,"measured_alerts":0,"unmeasured_alerts":2,"min_ms":null,"median_ms":null,"max_ms":null
+        "sampled_alerts":2,"measured_alerts":0,"unmeasured_alerts":2,"min_ms":null,"median_ms":null,"max_ms":null,
+        "unmeasured_reasons":{"missing_capture_scope":1,"missing_first_save":0,"missing_first_review":1,"review_before_save":0}
     }));
 }
 
@@ -258,7 +261,8 @@ fn integrity_reports_oversized_first_record_and_invalid_tail_with_no_alerts() {
     assert!(output.status.success());
     assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), json!({
         "alerts": [],
-        "review_latency": {"sampled_alerts":0,"measured_alerts":0,"unmeasured_alerts":0,"min_ms":null,"median_ms":null,"max_ms":null},
+        "review_latency": {"sampled_alerts":0,"measured_alerts":0,"unmeasured_alerts":0,"min_ms":null,"median_ms":null,"max_ms":null,
+            "unmeasured_reasons":{"missing_capture_scope":0,"missing_first_save":0,"missing_first_review":0,"review_before_save":0}},
         "integrity": {
             "invalid_records": 1, "oversized_records": 1, "stopped_at_limit": false
         }

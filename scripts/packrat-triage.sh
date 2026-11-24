@@ -197,6 +197,13 @@ report_saved_index() {
         def valid_alert_id: .alert_id | type == "number" and . >= 1 and . <= 999999999999999 and floor == .;
         def selected: if $rule == "" then priority else .rule_id == $rule and (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW")) end;
         def review_rank: [({LOW:0,MEDIUM:1,HIGH:2,CRITICAL:3}[.severity]), ((.last_seen | seen) // 0), .session_id, .capture_id, .alert_id];
+        def review_latency:
+            objects | .unmeasured_alerts as $total
+            | {sampled_alerts,measured_alerts,unmeasured_alerts,min_ms,median_ms,max_ms}
+               + ((.unmeasured_reasons | objects
+                    | {missing_capture_scope,missing_first_save,missing_first_review,review_before_save}
+                    | select(all(.[]; type == "number" and . >= 0 and . <= 512 and floor == .)
+                        and ([.[]] | add) == $total) | {unmeasured_reasons:.}) // {});
         .integrity as $integrity
         | (.alerts | map(select(scoped))) as $scoped | [.alerts[] | select((scoped | not) and priority and unresolved)] as $unscoped
         | ($scoped | map(select(selected and unresolved and valid_alert_id)) | sort_by(review_rank) | reverse) as $review
@@ -220,7 +227,7 @@ report_saved_index() {
             review_shortlist_truncated:($review | length > $offset + 5),
             next_review_offset:(if ($review | length) > $offset + 5 then $offset + 5 else null end),
             review_shortlist:($review[$offset:$offset + 5] | map({session_id,capture_id,alert_id,severity,disposition,rule_id,revision,confidence,evidence_frame_count,evidence_frame_set_sha256,last_seen})),
-            alert_log_integrity:$integrity, review_latency:((.review_latency | objects | {sampled_alerts,measured_alerts,unmeasured_alerts,min_ms,median_ms,max_ms}) // null),
+            alert_log_integrity:$integrity, review_latency:((.review_latency | review_latency) // null),
             captures:($scoped | group_by([.session_id, .capture_id]) | map(
               map(select(priority)) as $priority
               | ($priority | map(select(unresolved))) as $open | {

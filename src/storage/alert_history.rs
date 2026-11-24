@@ -104,17 +104,37 @@ pub struct ReviewLatency {
     pub sampled_alerts: usize,
     pub measured_alerts: usize,
     pub unmeasured_alerts: usize,
+    pub unmeasured_reasons: UnmeasuredReviewLatency,
     pub min_ms: Option<u64>,
     pub median_ms: Option<u64>,
     pub max_ms: Option<u64>,
 }
 
+#[derive(Default, Serialize)]
+pub struct UnmeasuredReviewLatency {
+    pub missing_capture_scope: usize,
+    pub missing_first_save: usize,
+    pub missing_first_review: usize,
+    pub review_before_save: usize,
+}
+
 impl AlertHistoryReport {
     fn new(alerts: Vec<AlertHistoryEntry>, integrity: AlertHistoryIntegrity) -> Self {
-        let mut delays: Vec<_> = alerts.iter()
-            .filter(|entry| entry.capture_id.as_deref().is_some_and(valid_capture_id))
-            .filter_map(|entry| entry.first_review_delay_ms)
-            .collect();
+        let mut delays = Vec::with_capacity(alerts.len());
+        let mut unmeasured_reasons = UnmeasuredReviewLatency::default();
+        for entry in &alerts {
+            if !entry.capture_id.as_deref().is_some_and(valid_capture_id) {
+                unmeasured_reasons.missing_capture_scope += 1;
+            } else if entry.first_saved_unix_ms.is_none() {
+                unmeasured_reasons.missing_first_save += 1;
+            } else if entry.first_reviewed_unix_ms.is_none() {
+                unmeasured_reasons.missing_first_review += 1;
+            } else if let Some(delay) = entry.first_review_delay_ms {
+                delays.push(delay);
+            } else {
+                unmeasured_reasons.review_before_save += 1;
+            }
+        }
         delays.sort_unstable();
         let measured_alerts = delays.len();
         let median_ms = if measured_alerts == 0 { None } else {
@@ -123,6 +143,7 @@ impl AlertHistoryReport {
         };
         let review_latency = ReviewLatency {
             sampled_alerts: alerts.len(), measured_alerts, unmeasured_alerts: alerts.len() - measured_alerts,
+            unmeasured_reasons,
             min_ms: delays.first().copied(), median_ms, max_ms: delays.last().copied(),
         };
         Self { alerts, integrity, review_latency }

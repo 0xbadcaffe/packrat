@@ -40,6 +40,12 @@ jq -e '.unscoped_review_queue[0] | .evidence_frame_count==0
 timing='{"sampled_alerts":6,"measured_alerts":2,"unmeasured_alerts":4,"min_ms":300,"median_ms":400,"max_ms":500}'
 result=$(PACKRAT_TEST_REVIEW_LATENCY=$(jq -c '. + {extra:"not in index"}' <<<"$timing") list_saved "$PACKRAT_TEST_LOG")
 jq -e --argjson expected "$timing" '.review_latency == $expected' <<< "$result" >/dev/null
+breakdown='{"missing_capture_scope":1,"missing_first_save":1,"missing_first_review":2,"review_before_save":0}'
+with_breakdown=$(jq -c --argjson reasons "$breakdown" '.unmeasured_reasons=$reasons' <<<"$timing")
+result=$(PACKRAT_TEST_REVIEW_LATENCY=$(jq -c '.unmeasured_reasons.extra="private"' <<<"$with_breakdown") list_saved "$PACKRAT_TEST_LOG")
+jq -e --argjson expected "$with_breakdown" '.review_latency == $expected' <<< "$result" >/dev/null
+result=$(PACKRAT_TEST_REVIEW_LATENCY=$(jq -c '.unmeasured_reasons.review_before_save=1' <<<"$with_breakdown") list_saved "$PACKRAT_TEST_LOG")
+jq -e --argjson expected "$timing" '.review_latency == $expected' <<< "$result" >/dev/null
 result=$(PACKRAT_TEST_ALERT_COUNT=512 list_saved "$PACKRAT_TEST_LOG")
 jq -e '.status == "saved" and .sampled_alerts == 512 and .alert_log_integrity.stopped_at_limit and (.sample_scan_complete | not)
     and .captures[0].last_seen == null' <<< "$result" >/dev/null
