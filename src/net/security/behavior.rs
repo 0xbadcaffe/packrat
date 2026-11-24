@@ -81,16 +81,18 @@ pub(super) struct VolumeEpisode {
 pub(super) struct TransferSample {
     minute: i64,
     frame: u64,
+    client_port: Option<u16>,
     evidence: Option<Box<Packet>>,
 }
 
-fn sample_transfer_frame(frames: &mut VecDeque<TransferSample>, minute: i64, packet: &Packet, retain: bool) {
+fn sample_transfer_frame(frames: &mut VecDeque<TransferSample>, minute: i64, packet: &Packet, client_port: Option<u16>, retain: bool) {
     if frames.len() == MAX_TRANSFER_SAMPLE_FRAMES {
         frames.pop_front();
     }
     frames.push_back(TransferSample {
         minute,
         frame: packet.no,
+        client_port,
         evidence: (retain && crate::model::project::pinned_packet_cost(packet) <= MAX_CANDIDATE_FRAME_COST)
             .then(|| Box::new(packet.clone())),
     });
@@ -119,9 +121,14 @@ fn transfer_transport(packet: &Packet) -> TransferTransport {
 }
 
 impl ExfilState {
+    fn paired_samples(&self) -> bool {
+        self.inbound_frames.iter().any(|reverse| reverse.client_port.is_some()
+            && self.outbound_frames.iter().any(|forward| forward.client_port == reverse.client_port))
+    }
+
     fn observe(
         &mut self, packet: &Packet, outbound: bool, tcp: &TcpPayloadObservation,
-        retain_volume: bool, retain_entropy: bool,
+        client_port: Option<u16>, retain_volume: bool, retain_entropy: bool,
     ) -> Option<bool> {
         if !packet.timestamp.is_finite() {
             return None;
@@ -177,7 +184,7 @@ impl ExfilState {
         if outbound {
             bucket.outbound = bucket.outbound.saturating_add(length);
             self.outbound_bytes = self.outbound_bytes.saturating_add(length);
-            sample_transfer_frame(&mut self.outbound_frames, minute, packet, retain_volume);
+            sample_transfer_frame(&mut self.outbound_frames, minute, packet, client_port, retain_volume);
             if !matches!(tcp, TcpPayloadObservation::Empty | TcpPayloadObservation::Repeat)
                 && let Some(payload) = observed_transport_payload(packet)
             {
@@ -195,13 +202,13 @@ impl ExfilState {
                     high_entropy_payload = true;
                     bucket.entropy = bucket.entropy.saturating_add(payload_bytes);
                     self.high_entropy_bytes = self.high_entropy_bytes.saturating_add(payload_bytes);
-                    sample_transfer_frame(&mut self.entropy_frames, minute, packet, retain_entropy);
+                    sample_transfer_frame(&mut self.entropy_frames, minute, packet, client_port, retain_entropy);
                 }
             }
         } else {
             bucket.inbound = bucket.inbound.saturating_add(length);
             self.inbound_bytes = self.inbound_bytes.saturating_add(length);
-            sample_transfer_frame(&mut self.inbound_frames, minute, packet, retain_volume);
+            sample_transfer_frame(&mut self.inbound_frames, minute, packet, client_port, retain_volume);
         }
         Some(high_entropy_payload)
     }
@@ -269,26 +276,33 @@ impl SecurityEngine {
             let selected = |id| archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == id));
             let retain_volume = selected("traffic.asymmetric_outbound");
             let retain_entropy = selected("traffic.high_entropy_outbound");
-            let Some(high_entropy_payload) = state.observe(pkt, outbound, &tcp_payload, retain_volume, retain_entropy) else { return };
-
-            let volume = match state.inbound_bytes {
-                0 => Some(VolumeEvidence::OneWay),
-                received if u128::from(state.outbound_bytes) >= u128::from(received) * 10 => Some(VolumeEvidence::BothDirections),
+            let client_port = match transport {
+                TransferTransport::Tcp | TransferTransport::Udp =>
+                    (if outbound { pkt.src_port } else { pkt.dst_port }).filter(|&port| port != 0),
                 _ => None,
             };
-            if outbound && state.outbound_bytes >= EXFIL_VOLUME_THRESHOLD
-                && let Some(evidence) = volume
+            let Some(high_entropy_payload) = state.observe(pkt, outbound, &tcp_payload, client_port, retain_volume, retain_entropy) else { return };
+
+            let volume = if outbound && state.outbound_bytes >= EXFIL_VOLUME_THRESHOLD
+                && state.volume_episode.is_none_or(|episode| episode.evidence != VolumeEvidence::BothDirections)
+                && u128::from(state.outbound_bytes) >= u128::from(state.inbound_bytes) * 10
+            {
+                Some(if state.paired_samples() { VolumeEvidence::BothDirections } else { VolumeEvidence::OneWay })
+            } else {
+                None
+            };
+            if let Some(evidence) = volume
                 && state.volume_episode.is_none_or(|episode| evidence > episode.evidence)
             {
                 let opening_frame = state.volume_episode.map_or(pkt.no, |episode| episode.opening_frame);
                 state.volume_episode = Some(VolumeEpisode { opening_frame, evidence });
                 let (severity, comparison) = match evidence {
                     VolumeEvidence::OneWay => (
-                        Severity::Medium, "no reverse data baseline observed; asymmetry unverified".into(),
+                        Severity::Medium, "no paired reverse data baseline observed in the samples; asymmetry unverified".into(),
                     ),
                     VolumeEvidence::BothDirections => (
                         Severity::High,
-                        format!("{:.1}:1 observed ratio across {} captured reverse bytes",
+                        format!("{:.1}:1 service-wide observed ratio across {} captured reverse bytes; at least one cited outbound/reverse pair shares a client port",
                             state.outbound_bytes as f64 / state.inbound_bytes as f64, state.inbound_bytes),
                     ),
                 };

@@ -203,7 +203,7 @@ fn detects_large_high_entropy_outbound_transfer() {
             .any(|alert| alert.signature == "High-entropy outbound transfer")
     );
     for (rule, severity, revision, frames) in [
-        ("traffic.asymmetric_outbound", "MEDIUM", 12, (10..=17).collect::<Vec<_>>()),
+        ("traffic.asymmetric_outbound", "MEDIUM", 13, (10..=17).collect::<Vec<_>>()),
         ("traffic.high_entropy_outbound", "MEDIUM", 11, (1..=5).collect()),
     ] {
         let alert = core
@@ -275,7 +275,7 @@ fn volume_rule_requires_a_reverse_baseline_to_report_an_observed_ratio() {
     let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
     let id = alert.id;
     assert_eq!(alert.severity, "MEDIUM");
-    assert!(alert.detail.contains("no reverse data baseline observed; asymmetry unverified"));
+    assert!(alert.detail.contains("no paired reverse data baseline observed in the samples; asymmetry unverified"));
     assert!(!alert.detail.contains(":1"));
 
     let mut ack = outbound_tcp(18, &[]).bytes;
@@ -288,19 +288,30 @@ fn volume_rule_requires_a_reverse_baseline_to_report_an_observed_ratio() {
     assert_eq!(alert.severity, "MEDIUM");
     assert_eq!(alert.hit_count, 1);
 
-    let mut reverse = outbound_tcp(20, b"return traffic").bytes;
+    let mut unrelated = outbound_tcp(20, b"unrelated response").bytes;
+    for offset in 0..4 { unrelated.swap(26 + offset, 30 + offset); }
+    for offset in 0..2 { unrelated.swap(34 + offset, 36 + offset); }
+    unrelated[36..38].copy_from_slice(&42_042_u16.to_be_bytes());
+    core.analyze(&packrat_tui::net::parser::parse_ethernet(&unrelated, 20, 2.0));
+    core.analyze(&outbound_tcp(21, &payload));
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(alert.severity, "MEDIUM");
+    assert_eq!(alert.hit_count, 1);
+
+    let mut reverse = outbound_tcp(22, b"return traffic").bytes;
     for offset in 0..4 { reverse.swap(26 + offset, 30 + offset); }
     for offset in 0..2 { reverse.swap(34 + offset, 36 + offset); }
-    core.analyze(&packrat_tui::net::parser::parse_ethernet(&reverse, 20, 2.0));
-    core.analyze(&outbound_tcp(21, &payload));
-    core.analyze(&outbound_tcp(22, &payload));
+    core.analyze(&packrat_tui::net::parser::parse_ethernet(&reverse, 22, 2.2));
+    core.analyze(&outbound_tcp(23, &payload));
+    core.analyze(&outbound_tcp(24, &payload));
     let mut matching = core.alert_center.items.iter().filter(|alert| alert.title == TITLE);
     let alert = matching.next().unwrap();
     assert_eq!(alert.id, id);
     assert_eq!(alert.severity, "HIGH");
     assert_eq!(alert.hit_count, 2);
-    assert_eq!(alert.packet_refs, (10..=17).chain([19, 20, 21]).collect::<Vec<_>>());
-    assert!(alert.detail.contains("observed ratio across 68 captured reverse bytes"));
+    assert_eq!(alert.packet_refs, (10..=17).chain([19, 20, 21, 22, 23]).collect::<Vec<_>>());
+    assert!(alert.detail.contains("service-wide observed ratio across 140 captured reverse bytes"));
+    assert!(alert.detail.contains("at least one cited outbound/reverse pair shares a client port"));
     assert!(matching.next().is_none());
 }
 
