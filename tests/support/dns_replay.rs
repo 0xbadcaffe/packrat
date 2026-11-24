@@ -24,6 +24,8 @@ pub enum Scenario {
     ChangedWire,
     EquivalentSoa,
     ChangedSoa,
+    EquivalentHttps,
+    ChangedHttps,
 }
 
 #[test]
@@ -87,12 +89,13 @@ fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool)
     let rr_type = match scenario {
         Scenario::ChangedWire => 65_280_u16,
         Scenario::EquivalentSoa | Scenario::ChangedSoa => 6,
+        Scenario::EquivalentHttps | Scenario::ChangedHttps => 65,
         _ => 1,
     };
     let mut capture = PcapNgWriter::create(path).unwrap();
     for frame in 1..=5 {
         let response = frame != 1;
-        let equivalent_variation = matches!(frame, 3 | 5) && matches!(rr_type, 1 | 6);
+        let equivalent_variation = matches!(frame, 3 | 5) && matches!(rr_type, 1 | 6 | 65);
         let mut dns = vec![
             0,
             49,
@@ -112,19 +115,25 @@ fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool)
         } else {
             b"\x04safe\x07example\0"
         });
-        let qtype = if rr_type == 6 { 6 } else { 1 };
-        dns.extend_from_slice(&[0, qtype, 0, 1]);
+        let qtype = if matches!(rr_type, 6 | 65) { rr_type } else { 1 };
+        dns.extend_from_slice(&qtype.to_be_bytes());
+        dns.extend_from_slice(&[0, 1]);
         if response {
-            let changed = frame >= 4 && !matches!(scenario, Scenario::Equivalent | Scenario::EquivalentSoa);
+            let changed = frame >= 4 && !matches!(scenario,
+                Scenario::Equivalent | Scenario::EquivalentSoa | Scenario::EquivalentHttps);
             let value = if changed { 2 } else { 1 };
             let address = [192, 0, 2, value];
             let opaque = [value];
-            let soa;
+            let typed_data;
             let rdata: &[u8] = match rr_type {
                 1 => &address,
                 6 => {
-                    soa = soa_rdata(equivalent_variation, u32::from(value));
-                    &soa
+                    typed_data = soa_rdata(equivalent_variation, u32::from(value));
+                    &typed_data
+                }
+                65 => {
+                    typed_data = https_rdata(equivalent_variation, changed);
+                    &typed_data
                 }
                 _ => &opaque,
             };
@@ -157,6 +166,20 @@ fn soa_rdata(uncompressed: bool, serial: u32) -> Vec<u8> {
     };
     for value in [serial, 3_600, 600, 86_400, 60] {
         data.extend(value.to_be_bytes());
+    }
+    data
+}
+
+fn https_rdata(reorder: bool, changed: bool) -> Vec<u8> {
+    let mut data = if reorder {
+        b"\0\x01\x03CDN\x04TEST\0".to_vec()
+    } else {
+        b"\0\x01\x03cdn\x04test\0".to_vec()
+    };
+    data.extend([0, 3, 0, 2, 1, if changed { 0xbc } else { 0xbb }]);
+    data.extend([0, 4, 0, 8]);
+    for last in if reorder { [2, 1] } else { [1, 2] } {
+        data.extend([192, 0, 2, last]);
     }
     data
 }

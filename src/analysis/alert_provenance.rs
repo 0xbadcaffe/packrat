@@ -285,11 +285,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the query and both replies; verify which resolvers were authorized.",
         ),
         (
-            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 11, Correlated,
+            "IDS", "DNS answer set changed at the same resolver", "dns.changed_answers", 12, Correlated,
             "Compare answer records and response codes; check expected resolver behavior.",
         ),
         (
-            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 11, Heuristic,
+            "IDS", "DNS reply changed at the same resolver", "dns.changed_wire_reply", 12, Heuristic,
             "Decode both replies before concluding that their answers differ.",
         ),
         (

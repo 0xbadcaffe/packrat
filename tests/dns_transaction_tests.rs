@@ -20,6 +20,8 @@ mod wire_bounds_tests;
 mod repeated_answer_tests;
 #[path = "dns_transaction/soa_answer_tests.rs"]
 mod soa_answer_tests;
+#[path = "dns_transaction/service_binding_tests.rs"]
+mod service_binding_tests;
 #[cfg(feature = "terminal-ui")]
 #[path = "dns_transaction/archive_evidence_tests.rs"]
 mod archive_evidence_tests;

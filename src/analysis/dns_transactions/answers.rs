@@ -2,6 +2,9 @@ use sha2::{Digest, Sha256};
 
 use super::{DnsMessage, parse_name, record_wire};
 
+#[path = "service_binding.rs"]
+mod service_binding;
+
 const MAX_ANSWERS: usize = 64;
 #[derive(Debug)]
 pub(super) struct AnswerFingerprint {
@@ -46,6 +49,7 @@ fn answer_digest(message: &DnsMessage<'_>) -> Option<[u8; 32]> {
             15 => name_rdata(bytes, start, end, 2)?, // MX
             33 => name_rdata(bytes, start, end, 6)?, // SRV
             16 if record_wire::txt_character_bytes(data).is_some() => data.to_vec(),
+            64 | 65 => service_binding::canonical(data)?,
             _ => return None,
         };
         answers.push((owner, rr_type, class, canonical));

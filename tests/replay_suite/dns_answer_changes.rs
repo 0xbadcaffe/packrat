@@ -14,6 +14,11 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
     dns_replay::write_fixture(&root.join("wire.pcapng"), Scenario::ChangedWire);
     dns_replay::write_fixture(&root.join("soa-equivalent.pcapng"), Scenario::EquivalentSoa);
     dns_replay::write_fixture(&root.join("soa-changed.pcapng"), Scenario::ChangedSoa);
+    dns_replay::write_fixture(
+        &root.join("https-equivalent.pcapng"),
+        Scenario::EquivalentHttps,
+    );
+    dns_replay::write_fixture(&root.join("https-changed.pcapng"), Scenario::ChangedHttps);
     let manifest = root.join("dns.json");
     let labels = json!({
         "version": 1, "strict": true,
@@ -35,6 +40,13 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
             {"name": "SOA serial changed", "capture": "soa-changed.pcapng",
              "expect_snapshots": 1,
              "expect_counts": {"dns.changed_answers": 1, "dns.changed_wire_reply": 0},
+             "opening_frames": {"dns.changed_answers": [4]}},
+            {"name": "same HTTPS answer, reordered hints", "capture": "https-equivalent.pcapng",
+             "expect_snapshots": 0,
+             "expect_counts": {"dns.changed_answers": 0, "dns.changed_wire_reply": 0}},
+            {"name": "HTTPS service port changed", "capture": "https-changed.pcapng",
+             "expect_snapshots": 1,
+             "expect_counts": {"dns.changed_answers": 1, "dns.changed_wire_reply": 0},
              "opening_frames": {"dns.changed_answers": [4]}}
         ]
     });
@@ -46,7 +58,7 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         String::from_utf8_lossy(&output.stdout)
     );
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 5);
+    assert_eq!(report["passed"], 7);
     assert_eq!(report["cases"][0]["summary"]["alerts_opened"], 0);
     assert_eq!(report["cases"][1]["summary"]["packets"], 5);
     assert_eq!(
@@ -65,7 +77,7 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         String::from_utf8_lossy(&comparison.stdout)
     );
     let report: Value = serde_json::from_slice(&comparison.stdout).unwrap();
-    assert_eq!(report["comparable"], 5);
+    assert_eq!(report["comparable"], 7);
     assert_eq!(
         report["cases"][1]["delta"],
         json!({
@@ -77,6 +89,12 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
     for (capture, rule, severity, confidence) in [
         (
             "answer.pcapng",
+            "dns.changed_answers",
+            "MEDIUM",
+            "correlated",
+        ),
+        (
+            "https-changed.pcapng",
             "dns.changed_answers",
             "MEDIUM",
             "correlated",
@@ -108,7 +126,7 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         assert_eq!(alerts.len(), 1);
         let alert = &alerts[0]["alert"];
         assert_eq!(alert["provenance"]["rule_id"], rule);
-        assert_eq!(alert["provenance"]["revision"], 11);
+        assert_eq!(alert["provenance"]["revision"], 12);
         assert_eq!(alert["provenance"]["confidence"], confidence);
         assert_eq!(alert["severity"], severity);
         assert_eq!(alert["packet_refs"], json!([1, 2, 4]));
