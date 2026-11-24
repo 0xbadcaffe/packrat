@@ -80,11 +80,34 @@ jq '.coverage.observed_openings = 2 | .coverage.opening_rule_breakdown =
     {rules:[{rule_id:"dns.changed_answers",revision:10,openings:2}],unattributed_openings:0,omitted_rule_openings:0}' \
     "$after" > "$tmp/rule-after.json"
 PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/rule-before.json" "$tmp/rule-after.json" | jq -e '
-    .rule_rate_status == "comparable" and .rule_rate_deltas == [
-       {rule_id:"dns.changed_answers",revision:9,before_openings:1,after_openings:0,delta_per_10000_packets:-5},
-       {rule_id:"dns.changed_answers",revision:10,before_openings:0,after_openings:2,delta_per_10000_packets:10}]' >/dev/null
+    .rule_rate_status == "rule_revisions_unverified" and .rule_rate_deltas == []
+    and .rule_rate_unpaired == [{rule_id:"dns.changed_answers",reason:"different_revisions",
+        before:[{revision:9,openings:1}],after:[{revision:10,openings:2}]}]
+    and .observed_rate_delta_per_10000_packets == 5' >/dev/null
+jq '.coverage.opening_rule_breakdown.rules[0].revision=9' "$tmp/rule-after.json" > "$tmp/rule-same.json"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/rule-before.json" "$tmp/rule-same.json" | jq -e '
+    .rule_rate_status == "comparable" and .rule_rate_unpaired == []
+    and .rule_rate_deltas == [{rule_id:"dns.changed_answers",revision:9,before_openings:1,
+        after_openings:2,delta_per_10000_packets:5}]' >/dev/null
+jq '.coverage.observed_openings=5 | .coverage.opening_rule_breakdown.rules +=
+    [{rule_id:"scan.horizontal",revision:5,openings:1},{rule_id:"scan.horizontal",revision:6,openings:1},
+     {rule_id:"dns.unmatched_response",revision:1,openings:1}]' "$tmp/rule-same.json" > "$tmp/rule-mixed.json"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/rule-before.json" "$tmp/rule-mixed.json" | jq -e '
+    .rule_rate_status == "partially_comparable" and [.rule_rate_deltas[].rule_id] == ["dns.changed_answers"]
+    and .rule_rate_unpaired == [
+        {rule_id:"dns.unmatched_response",reason:"not_observed_in_both_windows",before:[],after:[{revision:1,openings:1}]},
+        {rule_id:"scan.horizontal",reason:"mixed_revisions",before:[],after:[{revision:5,openings:1},{revision:6,openings:1}]}]
+    and .observed_rate_delta_per_10000_packets == 20' >/dev/null
+jq '.coverage.observed_openings=0 | .coverage.opening_rule_breakdown=
+    {rules:[],unattributed_openings:0,omitted_rule_openings:0}' "$before" > "$tmp/quiet-before"
+jq '.coverage.observed_openings=0 | .coverage.opening_rule_breakdown=
+    {rules:[],unattributed_openings:0,omitted_rule_openings:0}' "$after" > "$tmp/quiet-after"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/quiet-before" "$tmp/quiet-after" | jq -e '
+    .rule_rate_status == "no_rule_openings" and .rule_rate_deltas == [] and .rule_rate_unpaired == []
+    and .observed_rate_delta_per_10000_packets == 0' >/dev/null
 PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/rule-before.json" "$after" | jq -e '
-    .rule_rate_status == "attribution_incomplete" and .rule_rate_deltas == null and .observed_rate_delta_per_10000_packets == -5' >/dev/null
+    .rule_rate_status == "attribution_incomplete" and .rule_rate_deltas == null and .rule_rate_unpaired == null
+    and .observed_rate_delta_per_10000_packets == -5' >/dev/null
 jq '.coverage.opening_rule_breakdown = {rules:[],unattributed_openings:2,omitted_rule_openings:0}' \
     "$tmp/rule-after.json" > "$fixture"
 PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/rule-before.json" "$fixture" | jq -e '

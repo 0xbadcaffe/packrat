@@ -9,6 +9,7 @@ usage() {
         'Recording requires a healthy live capture and publishes a private file without overwriting.' \
         'Rate deltas require 300 comparable seconds and 1000 comparable packets in each capture by default.' \
         'Override with PACKRAT_BASELINE_MIN_SECONDS and PACKRAT_BASELINE_MIN_PACKETS.' \
+        'Per-rule deltas require the same single revision to be observed in both windows.' \
         'Observed alert openings do not measure detector accuracy or total network activity.'
 }
 
@@ -194,6 +195,20 @@ before=$(read_baseline "$1")
 after=$(read_baseline "$2")
 printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --argjson packets "$min_packets" '
     def fully_attributed: .opening_rule_breakdown | . != null and .unattributed_openings == 0 and .omitted_rule_openings == 0;
+    def observed_revisions($id):
+        [.opening_rule_breakdown.rules[] | select(.rule_id == $id) | {revision,openings}] | sort_by(.revision);
+    def compare_rules($before; $after):
+        [$before.opening_rule_breakdown.rules[].rule_id, $after.opening_rule_breakdown.rules[].rule_id] | unique
+        | map(. as $id | ($before | observed_revisions($id)) as $prior | ($after | observed_revisions($id)) as $next
+            | (if ($prior | length) > 1 or ($next | length) > 1 then "mixed_revisions"
+               elif $prior == [] or $next == [] then "not_observed_in_both_windows"
+               elif $prior[0].revision != $next[0].revision then "different_revisions"
+               else null end) as $reason
+            | if $reason != null then {rule_id:$id,reason:$reason,before:$prior,after:$next}
+              else {rule_id:$id,revision:$prior[0].revision,before_openings:$prior[0].openings,after_openings:$next[0].openings,
+                    delta_per_10000_packets:($next[0].openings * 10000 / $after.comparable_packets
+                        - $prior[0].openings * 10000 / $before.comparable_packets)} end)
+        | {deltas:map(select(has("reason") | not)),unpaired:map(select(has("reason")))};
     .[0] as $before | .[1] as $after
     | ($before.scope.capture_id == $after.scope.capture_id
         or $before.scope.session_id == $after.scope.session_id
@@ -215,22 +230,18 @@ printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --arg
          elif ($before.comparable_seconds < $seconds or $after.comparable_seconds < $seconds
                or $before.comparable_packets < $packets or $after.comparable_packets < $packets) then "thin_alert_coverage"
          else "separate_capture_windows" end) as $status
+        | (if $status == "separate_capture_windows" and ($before | fully_attributed) and ($after | fully_attributed)
+           then compare_rules($before; $after) else null end) as $rules
         | (if $status != "separate_capture_windows" then "comparison_unavailable"
-           elif ($before | fully_attributed) and ($after | fully_attributed) then "comparable"
-           else "attribution_incomplete" end) as $rule_status
+           elif $rules == null then "attribution_incomplete"
+           elif $rules.unpaired == [] then
+               if $rules.deltas == [] then "no_rule_openings" else "comparable" end
+           elif $rules.deltas == [] then "rule_revisions_unverified"
+           else "partially_comparable" end) as $rule_status
         | {record_type:"capture_build_comparison",status:$status,same_build:$same_build,
            before:$before,after:$after,comparison_minimums:{seconds:$seconds,packets:$packets},
            rule_rate_status:$rule_status,
-           rule_rate_deltas:(if $rule_status == "comparable" then
-               [$before.opening_rule_breakdown.rules[], $after.opening_rule_breakdown.rules[]]
-               | unique_by([.rule_id,.revision]) | map(
-                   . as $rule
-                   | def matches: .rule_id == $rule.rule_id and .revision == $rule.revision;
-                   (first($before.opening_rule_breakdown.rules[] | select(matches) | .openings) // 0) as $prior
-                   | (first($after.opening_rule_breakdown.rules[] | select(matches) | .openings) // 0) as $next
-                   | {rule_id,revision,before_openings:$prior,after_openings:$next,
-                      delta_per_10000_packets:($next * 10000 / $after.comparable_packets - $prior * 10000 / $before.comparable_packets)})
-               else null end),
+           rule_rate_deltas:$rules.deltas,rule_rate_unpaired:$rules.unpaired,
            observed_rate_delta_per_10000_packets:(if $status == "separate_capture_windows"
                then $after.openings_per_10000_packets - $before.openings_per_10000_packets else null end)}
       end
