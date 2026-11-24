@@ -47,6 +47,9 @@ cat() {
 df() {
     [[ $* == "-Pk -- ${PACKRAT_FAKE_DISK_PATH:-/}" ]] || return 1
     [[ ${PACKRAT_TEST_DISK_PROTECTED:-0} == 0 ]] || return 1
+    if [[ ${PACKRAT_TEST_DISK_STALL:-0} == 1 ]]; then
+        command sleep 20
+    fi
     printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
     printf '/dev/fake 2000000 100000 %s 5%% /\n' "$PACKRAT_FAKE_DISK"
 }
@@ -55,7 +58,7 @@ sudo() {
     [[ $1 == -n && $2 == -- ]] || return 1
     shift 2
     case $1 in
-        df) shift; PACKRAT_TEST_DISK_PROTECTED=0 df "$@" ;;
+        df) shift; PACKRAT_TEST_DISK_PROTECTED=0 PACKRAT_TEST_DISK_STALL=0 df "$@" ;;
         stat|find|readlink) PACKRAT_FAKE_FD_PROTECTED=0 "$@" ;;
         *) return 1 ;;
     esac
@@ -257,6 +260,11 @@ jq -e '.issues == ["disk_space_unknown"] and .disk_free_mib == null' <<< "$outpu
 PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
     PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_TEST_DISK_PROTECTED=1 PACKRAT_DISK_SUDO=1 \
     bash "$watch" --once | jq -e '.issues == [] and .disk_free_mib == 1024' >/dev/null
+status=0
+output=$(PACKRAT_FAKE_DISK_PATH=/ PACKRAT_TEST_DISK_STALL=1 PACKRAT_DISK_SUDO=1 \
+    timeout --kill-after=1s 8s bash "$watch" --once) || status=$?
+[[ $status == 1 ]]
+jq -e '.issues == ["disk_space_unknown"] and .disk_free_mib == null' <<< "$output" >/dev/null
 PACKRAT_ALERT_PIPELINE=1 PACKRAT_ALERT_LOG="$log" PACKRAT_FAKE_TAIL_FOLLOW=-F \
     PACKRAT_FAKE_TAIL_SOURCE="$log" PACKRAT_DISK_PATH=/mount PACKRAT_FAKE_DISK_PATH=/mount \
     bash "$watch" --once | jq -e '.issues == [] and .disk_path == "/mount"' >/dev/null

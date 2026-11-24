@@ -62,7 +62,7 @@ if [[ ! $expect_traffic =~ ^(0|[1-9][0-9]{0,5})$ ]]; then
     printf '%s\n' 'PACKRAT_EXPECT_TRAFFIC_SECS must be between 0 and 999999.' >&2
     exit 2
 fi
-for dependency in curl jq df; do
+for dependency in curl jq df timeout; do
     if ! command -v "$dependency" >/dev/null; then
         printf 'Missing dependency: %s\n' "$dependency" >&2
         exit 2
@@ -114,11 +114,15 @@ if [[ $disk_path != /* || $disk_path == *[[:cntrl:]]* || ( $disk_sudo != 0 && $d
 fi
 
 disk_free_kib() {
-    local output
-    if ! output=$(LC_ALL=C df -Pk -- "$disk_path" 2>/dev/null); then
-        [[ $disk_sudo == 1 ]] || return 1
-        output=$(LC_ALL=C sudo -n -- df -Pk -- "$disk_path" 2>/dev/null) || return 1
-    fi
+    local output status=0
+    local -a bounded=(timeout --kill-after=1s 3s bash -c 'LC_ALL=C "$@"' packrat-disk)
+    output=$("${bounded[@]}" df -Pk -- "$disk_path" 2>/dev/null) || status=$?
+    case $status in
+        0) ;;
+        124|137) return 1 ;;
+        *) [[ $disk_sudo == 1 ]] &&
+           output=$("${bounded[@]}" sudo -n -- df -Pk -- "$disk_path" 2>/dev/null) || return 1 ;;
+    esac
     awk 'NR == 2 { print $4 }' <<< "$output"
 }
 
