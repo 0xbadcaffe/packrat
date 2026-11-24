@@ -35,11 +35,16 @@ read_baseline() {
             strings | select(test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z"))
             | . as $stamp | fromdateiso8601 | select(todateiso8601 == $stamp);
         def valid_persistence_counts:
-            .coverage_policy != "continuous_journal_v5" or
+            (.coverage_policy | IN("continuous_journal_v5","continuous_journal_v6") | not) or
             (all([.alert_save_failure_intervals,.alert_save_counter_unverified_intervals,
                   .alert_save_backlog_drop_intervals,.alert_save_backlog_unverified_intervals][]; count)
                 and .alert_comparable_intervals + .alert_save_failure_intervals + .alert_save_counter_unverified_intervals <= .healthy_intervals
                 and .alert_comparable_intervals + .alert_save_backlog_drop_intervals + .alert_save_backlog_unverified_intervals <= .healthy_intervals);
+        def valid_journal_counts:
+            .coverage_policy != "continuous_journal_v6" or
+            ((.alert_journal_counter_unverified_intervals | count) and
+             (.journal_tail_unconfirmed_events | . == null or count) and
+             .alert_comparable_intervals + .alert_journal_counter_unverified_intervals <= .healthy_intervals);
         def valid_counts:
             ([.scoped_records,.healthy_seconds,.healthy_intervals,.healthy_packets,
               .excluded_intervals,.alert_comparable_intervals,.alert_comparable_packets] | all(.[]; count))
@@ -66,13 +71,16 @@ read_baseline() {
             and ($b | .record_type == "verified_capture_build" and (.interface | token)
                 and (.scope | scope) and (.capture_run_id | token) and (.packets | count)
                 and (.sha256 | strings | test("\\A[0-9a-f]{64}\\z")))
-            and ($c | .record_type == "capture_coverage_report" and (.scope | scope) and valid_counts and valid_breakdown and valid_persistence_counts)
+            and ($c | .record_type == "capture_coverage_report" and (.scope | scope) and valid_counts
+                and valid_breakdown and valid_persistence_counts and valid_journal_counts)
             and $c.scope == $b.scope and $c.healthy_packets <= $b.packets
           then [($c.first_record_at | tick),($c.last_record_at | tick),($b.observed_at | tick)] as $times
             | if ($times | length) == 3 and $times[0] <= $times[1] and $times[1] <= $times[2]
                 and $c.healthy_seconds <= $times[1] - $times[0] then
                   {interface:$b.interface,scope:$b.scope,capture_run_id:$b.capture_run_id,sha256:$b.sha256,
-                   coverage_policy:(if $c.coverage_policy | IN("capture_loss_counters_v1","continuous_journal_v2","continuous_journal_v3","continuous_journal_v4","continuous_journal_v5") then $c.coverage_policy else null end),
+                   coverage_policy:(if $c.coverage_policy | IN("capture_loss_counters_v1","continuous_journal_v2","continuous_journal_v3","continuous_journal_v4","continuous_journal_v5","continuous_journal_v6") then $c.coverage_policy else null end),
+                   journal_tail_unconfirmed_events:($c.journal_tail_unconfirmed_events | if count then . else null end),
+                   alert_journal_counter_unverified_intervals:($c.alert_journal_counter_unverified_intervals | if count then . else null end),
                    first_record_at:$c.first_record_at,last_record_at:$c.last_record_at,
                    healthy_seconds:$c.healthy_seconds,excluded_intervals:$c.excluded_intervals,
                    comparable_seconds:(if $c | has("alert_comparable_seconds") then $c.alert_comparable_seconds
@@ -80,7 +88,7 @@ read_baseline() {
                    comparable_packets:$c.alert_comparable_packets,openings:$c.observed_openings,
                    opening_rule_breakdown:($c.opening_rule_breakdown | if . == null then null else
                        {rules:[.rules[] | {rule_id,revision,openings}],unattributed_openings,omitted_rule_openings} end),
-                   openings_per_10000_packets:(if $c.coverage_policy == "continuous_journal_v5" and $c.alert_comparable_packets > 0
+                   openings_per_10000_packets:(if $c.coverage_policy == "continuous_journal_v6" and $c.alert_comparable_packets > 0
                        then $c.observed_openings * 10000 / $c.alert_comparable_packets else null end)}
               else error("Inconsistent baseline observation window") end
           else error("Invalid or mismatched build and coverage baseline") end
@@ -152,7 +160,7 @@ printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --arg
         (if $shared then "same_capture"
          elif $before.interface != $after.interface then "different_interfaces"
          elif $before.last_record_at > $after.first_record_at then "overlapping_or_reversed_windows"
-         elif $before.coverage_policy != "continuous_journal_v5" or $before.coverage_policy != $after.coverage_policy then
+         elif $before.coverage_policy != "continuous_journal_v6" or $before.coverage_policy != $after.coverage_policy then
            "coverage_policy_unverified"
          elif $before.openings_per_10000_packets == null or $after.openings_per_10000_packets == null then
            "insufficient_alert_coverage"

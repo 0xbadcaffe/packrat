@@ -8,7 +8,7 @@ sample=$(jq -cn '
      updated_at:"2023-11-14T22:13:20Z",healthy_capture_since:1700000000,buffer_drops:0,
      capture_queue_full_packets:0,truncated_frames:0,link_decodable:true,alert_saving:true,alert_save_failures:0,alert_save_backlog_dropped:0,
      alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_scan_budget:null},
-     packet_counter_gap:false,alert_sample_gap:false,highest_observed_alert_id:4} as $base
+     packet_counter_gap:false,alert_sample_gap:false,highest_observed_alert_id:4,journal_unconfirmed_events:0} as $base
     | [$base,
       ($base + {updated_at:"2023-11-14T22:14:20Z",packets:35,checkpoint:true}),
       ($base + {updated_at:"2023-11-14T22:15:20Z",packets:70,highest_observed_alert_id:6,alert_changes:{newly_observed:[5,6]}}),
@@ -20,9 +20,9 @@ sample=$(jq -cn '
     | to_entries[] | .value + {journal_writer:"writer-a",journal_sequence:(.key+1)}')
 
 bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
-    .status=="sampled" and .coverage_policy=="continuous_journal_v5" and .scope=={capture_id:"a",session_id:"a-1"}
+    .status=="sampled" and .coverage_policy=="continuous_journal_v6" and .scope=={capture_id:"a",session_id:"a-1"}
     and .scoped_records==6 and .healthy_intervals==3 and .excluded_intervals==2
-    and .journal_discontinuities==0 and .journal_tail_unconfirmed_events==null
+    and .journal_discontinuities==0 and .journal_tail_unconfirmed_events==0 and .alert_journal_counter_unverified_intervals==0
     and .healthy_seconds==180 and .healthy_packets==80 and .alert_comparable_intervals==2
     and .alert_comparable_packets==60 and .alert_comparable_seconds==120 and .observed_openings==2
     and .opening_rule_breakdown=={rules:[],unattributed_openings:2,omitted_rule_openings:0}
@@ -38,6 +38,10 @@ jq -sc '.[0:3] | to_entries[] | .value + {journal_unconfirmed_events:(if .key==0
         and .excluded_intervals==1 and .healthy_intervals==1 and .alert_comparable_packets==35' >/dev/null
 jq -sc '.[0:2][], (.[-1] + {journal_unconfirmed_events:7})' <<< "$sample" |
     bash "$coverage" --capture-id a --session a-1 | jq -e '.journal_tail_unconfirmed_events==7 and .scope.session_id=="a-1"' >/dev/null
+jq -sc '.[0:2][] | del(.journal_unconfirmed_events)' <<< "$sample" |
+    bash "$coverage" | jq -e '.journal_tail_unconfirmed_events==null and .healthy_intervals==1
+        and .alert_journal_counter_unverified_intervals==1 and .alert_comparable_intervals==0
+        and .observed_openings_per_10000_packets==null' >/dev/null
 
 jq -sc '
     {alert_id:5,rule_id:"dns.competing_responders",revision:7} as $dns |
