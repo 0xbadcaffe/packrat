@@ -54,6 +54,8 @@ struct TransportHeader {
     source_port: u16,
     destination_port: u16,
     tcp_flags: Option<u8>,
+    declared_payload_length: usize,
+    captured_payload_length: usize,
     #[serde(skip)]
     tcp_sequence_pair: Option<(u32, u32)>,
 }
@@ -167,6 +169,8 @@ impl PacketMetadata {
             source_port: wire.source.port(),
             destination_port: wire.destination.port(),
             tcp_flags: wire.tcp_flags,
+            declared_payload_length: wire.declared_payload_length,
+            captured_payload_length: wire.captured_payload_length,
             tcp_sequence_pair: wire.tcp_sequence_pair,
         });
         let flow = capture.zip(wire).zip(transport.as_ref()).map(|((capture, wire), transport)| {

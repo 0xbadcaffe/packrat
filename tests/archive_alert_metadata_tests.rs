@@ -149,6 +149,15 @@ fn truncated_payloads_corroborate_complete_headers_without_claiming_complete_evi
     assert_eq!(flows.len(), 2);
     assert!(flows.iter().any(|flow| flow["protocol"] == "udp" && flow["frames"] ==
         json!([{"frame_number":3,"status":"truncated"}])));
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg(&path).arg("--alert-packet-metadata").arg(&log).args(["session-a", "1", "--capture-id", "scope-a"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["frames"][2]["packet"]["transport"], json!({
+        "protocol":"udp","source_port":40000,"destination_port":443,"tcp_flags":null,
+        "declared_payload_length":32,"captured_payload_length":0
+    }));
 }
 
 #[test]
@@ -160,7 +169,7 @@ fn alert_packet_metadata_is_scoped_and_has_no_packet_payload_or_comments() {
     center.record(1, "IDS", "HIGH", "Saved alert", "private alert detail");
     let mut alert = center.items[0].clone();
     alert.capture_id = Some("scope-a".into());
-    alert.packet_refs = vec![1, 2, 3, 4, 5];
+    alert.packet_refs = vec![1, 2, 3, 4, 5, 6, 7];
     std::fs::write(
         &log,
         json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert}).to_string(),
@@ -190,7 +199,14 @@ fn alert_packet_metadata_is_scoped_and_has_no_packet_payload_or_comments() {
     writer.append_scoped("scope-b", &[packet(4, 0x12, 1)]).unwrap();
     let mut malformed = packet(5, 0x12, 1);
     malformed.bytes[46] = 0x10;
-    writer.append_scoped("scope-a", &[malformed]).unwrap();
+    let mut partial_payload = packet(6, 0x18, 1);
+    partial_payload.bytes.truncate(58);
+    partial_payload.capture.as_mut().unwrap().captured_length = 58;
+    let mut ack_with_padding = packet(7, 0x10, 1);
+    ack_with_padding.bytes[16..18].copy_from_slice(&44_u16.to_be_bytes());
+    ack_with_padding.bytes[46] = 0x60;
+    ack_with_padding.bytes[54..58].fill(1);
+    writer.append_scoped("scope-a", &[malformed, partial_payload, ack_with_padding]).unwrap();
     drop(writer);
 
     let run = |scope: Option<&str>| {
@@ -213,17 +229,23 @@ fn alert_packet_metadata_is_scoped_and_has_no_packet_payload_or_comments() {
     assert_eq!(report["evidence_frame_set_sha256"].as_str().unwrap().len(), 64);
     assert!(report.get("trigger_frame_number").is_none());
     let frames = report["frames"].as_array().unwrap();
-    assert_eq!(frames.len(), 5);
+    assert_eq!(frames.len(), 7);
     assert_eq!(frames[0]["packet"]["recorded_source"], "10.0.0.1");
     assert_eq!(frames[0]["packet"]["interface_id"], 3);
     assert_eq!(frames[0]["packet"]["transport"], json!({
-        "protocol":"tcp","source_port":40000,"destination_port":80,"tcp_flags":2
+        "protocol":"tcp","source_port":40000,"destination_port":80,"tcp_flags":2,
+        "declared_payload_length":19,"captured_payload_length":19
     }));
     assert_eq!(frames[1]["status"], "truncated");
     assert!(frames[1]["packet"]["transport"].is_null());
     assert!(frames[2]["packet"]["transport"].is_null());
     assert_eq!(frames[3], json!({"frame_number":4,"status":"missing","packet":null}));
     assert!(frames[4]["packet"]["transport"].is_null());
+    assert_eq!(frames[5]["status"], "truncated");
+    assert_eq!(frames[5]["packet"]["transport"]["declared_payload_length"], 19);
+    assert_eq!(frames[5]["packet"]["transport"]["captured_payload_length"], 4);
+    assert_eq!(frames[6]["packet"]["transport"]["declared_payload_length"], 0);
+    assert_eq!(frames[6]["packet"]["transport"]["captured_payload_length"], 0);
     assert!(!text.contains("\"bytes\""));
 }
 

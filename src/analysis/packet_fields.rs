@@ -62,6 +62,7 @@ struct TransportLayout {
     offset: usize,
     payload_offset: usize,
     end: usize,
+    declared_end: usize,
     fragmented: bool,
 }
 
@@ -77,6 +78,8 @@ pub(crate) struct CapturedTransportHeader {
     pub destination: SocketAddr,
     pub tcp_flags: Option<u8>,
     pub tcp_sequence_pair: Option<(u32, u32)>,
+    pub declared_payload_length: usize,
+    pub captured_payload_length: usize,
     pub vlan_stack: Vec<CapturedVlanTag>,
 }
 
@@ -117,6 +120,8 @@ pub(crate) fn captured_transport_header(packet: &Packet) -> Option<CapturedTrans
         destination: SocketAddr::new(dst, destination),
         tcp_flags,
         tcp_sequence_pair,
+        declared_payload_length: transport.declared_end - transport.payload_offset,
+        captured_payload_length: transport.end - transport.payload_offset,
         vlan_stack,
     })
 }
@@ -370,11 +375,14 @@ fn transport_layout(bytes: &[u8], eth: EtherLayout, wire_end: Option<usize>) -> 
         17 if offset + 8 <= end => {
             let length = read_u16(bytes, offset + 4)? as usize;
             if length < 8 || offset + length > ip_end { return None; }
-            return Some(TransportLayout { protocol, offset, payload_offset: offset + 8, end: end.min(offset + length), fragmented });
+            let declared_end = offset + length;
+            return Some(TransportLayout {
+                protocol, offset, payload_offset: offset + 8, end: end.min(declared_end), declared_end, fragmented,
+            });
         }
         _ => return None,
     };
-    Some(TransportLayout { protocol, offset, payload_offset, end, fragmented })
+    Some(TransportLayout { protocol, offset, payload_offset, end, declared_end: ip_end, fragmented })
 }
 
 fn add_tcp_fields(bytes: &[u8], tcp: usize, fields: &mut Vec<PacketField>) {
