@@ -10,6 +10,7 @@ usage() {
         'Alert rates require decodable capture and a valid saved-alert log at both endpoints.' \
         'Alert rates require known, unchanged save-failure and retry-buffer drop counters.' \
         'Intervals spanning watcher restarts, missing journal records, or older unsequenced records are excluded.' \
+        'The tail unconfirmed count is watcher-wide, not attributed to the selected capture.' \
         'Alert-ID gaps identify records not observed in the retained sample, not proven missing from the saved log.'
 }
 
@@ -103,7 +104,9 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         ($earlier.journal_writer | id) and $earlier.journal_writer == $later.journal_writer
         and ($earlier.journal_sequence | counter and . > 0)
         and ($later.journal_sequence | counter and . > 0)
-        and $later.journal_sequence - $earlier.journal_sequence == 1;
+        and $later.journal_sequence - $earlier.journal_sequence == 1
+        and (if ($earlier.journal_unconfirmed_events | counter) and ($later.journal_unconfirmed_events | counter)
+             then $earlier.journal_unconfirmed_events == $later.journal_unconfirmed_events else true end);
     def pair($earlier; $later):
         if ($earlier | healthy) and ($later | healthy)
             and $earlier.healthy_capture_since == $later.healthy_capture_since
@@ -138,6 +141,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        status:(if ($sample | length) == 0 then "no_capture_records"
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
        scope:$key, journal_tail_status:$all[-1].status,
+       journal_tail_unconfirmed_events:($all[-1].journal_unconfirmed_events | if counter then . else null end),
        first_record_at:$sample[0].updated_at,last_record_at:$sample[-1].updated_at,
        scoped_records:($sample | length),
        healthy_intervals:($healthy | length), excluded_intervals:([($sample | length) - 1,0] | max) - ($healthy | length),

@@ -527,6 +527,7 @@ watch_pid=''
 grep -Fq 'Triage event journal write failed' "$scratch/unsafe-errors"
 cmp -s "$scratch/rotation-output" "$journal"
 cmp -s "$scratch/unsafe-output" "$state.events.jsonl"
+jq -se 'length==2 and all(.[]; .journal_unconfirmed_events==0)' "$state.events.jsonl" >/dev/null
 jq -e '.journal_status=="current" and .journal_pending_events==0' "$state" >/dev/null
 
 state="$scratch/journal-loss.json"
@@ -557,6 +558,7 @@ bash "$watch" --check "$state" | jq -e '.journal_status=="current" and .journal_
 kill "$watch_pid"
 wait "$watch_pid"
 watch_pid=''
+jq -se 'length==1 and .[0].packets==117 and .[0].journal_unconfirmed_events==17' "$state.events.jsonl" >/dev/null
 bash "$watch" --once "$state" -- cat -- "$report" | jq -e '.journal_unconfirmed_events==17' >/dev/null
 history="$scratch/history.json"
 install -m 0600 "$scratch/rotation-output" "$history.events.jsonl.1"

@@ -22,7 +22,7 @@ sample=$(jq -cn '
 bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
     .status=="sampled" and .coverage_policy=="continuous_journal_v5" and .scope=={capture_id:"a",session_id:"a-1"}
     and .scoped_records==6 and .healthy_intervals==3 and .excluded_intervals==2
-    and .journal_discontinuities==0
+    and .journal_discontinuities==0 and .journal_tail_unconfirmed_events==null
     and .healthy_seconds==180 and .healthy_packets==80 and .alert_comparable_intervals==2
     and .alert_comparable_packets==60 and .alert_comparable_seconds==120 and .observed_openings==2
     and .opening_rule_breakdown=={rules:[],unattributed_openings:2,omitted_rule_openings:0}
@@ -33,6 +33,11 @@ bash "$coverage" <<< "$sample" | jq -e '.status=="insufficient_coverage" and .sc
 bash "$coverage" </dev/null | jq -e '.status=="no_capture_records" and .scope==null' >/dev/null
 bash "$coverage" --capture-id missing --session a-1 <<< "$sample" |
     jq -e '.status=="no_capture_records" and .scope.capture_id=="missing"' >/dev/null
+jq -sc '.[0:3] | to_entries[] | .value + {journal_unconfirmed_events:(if .key==0 then 0 else 2 end)}' <<< "$sample" |
+    bash "$coverage" | jq -e '.journal_tail_unconfirmed_events==2 and .journal_discontinuities==1
+        and .excluded_intervals==1 and .healthy_intervals==1 and .alert_comparable_packets==35' >/dev/null
+jq -sc '.[0:2][], (.[-1] + {journal_unconfirmed_events:7})' <<< "$sample" |
+    bash "$coverage" --capture-id a --session a-1 | jq -e '.journal_tail_unconfirmed_events==7 and .scope.session_id=="a-1"' >/dev/null
 
 jq -sc '
     {alert_id:5,rule_id:"dns.competing_responders",revision:7} as $dns |

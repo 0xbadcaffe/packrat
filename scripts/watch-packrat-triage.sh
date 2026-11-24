@@ -522,25 +522,25 @@ while :; do
     fi
     if [[ $key != "$previous" ]] || "$checkpoint"; then
         journal_sequence=$((journal_sequence + 1))
-        event=$(jq -c --argjson checkpoint "$checkpoint" --arg writer "$journal_writer" --argjson sequence "$journal_sequence" '
-            del(.last_observed) | if $checkpoint then . + {checkpoint:true,alert_changes:null} else . end
-            | if $writer == "" then . else . + {journal_writer:$writer,journal_sequence:$sequence} end' <<< "$event")
-        if [[ $journal_enabled == 1 ]]; then
+        if [[ $journal_enabled == 1 ]] && (( ${#pending_journal[@]} >= 16 )); then
+            flush_journal
             if (( ${#pending_journal[@]} >= 16 )); then
-                flush_journal
-                if (( ${#pending_journal[@]} >= 16 )); then
-                    pending_journal=("${pending_journal[@]:1}")
-                    if (( journal_unconfirmed < 9007199254740991 )); then
-                        journal_unconfirmed=$((journal_unconfirmed + 1))
-                    fi
-                    if ! "$journal_overflow"; then
-                        printf '%s\n' 'Triage event journal backlog full; oldest pending event discarded.' >&2
-                        journal_overflow=true
-                    fi
+                pending_journal=("${pending_journal[@]:1}")
+                if (( journal_unconfirmed < 9007199254740991 )); then
+                    journal_unconfirmed=$((journal_unconfirmed + 1))
+                fi
+                if ! "$journal_overflow"; then
+                    printf '%s\n' 'Triage event journal backlog full; oldest pending event discarded.' >&2
+                    journal_overflow=true
                 fi
             fi
-            pending_journal+=("$event")
         fi
+        event=$(jq -c --argjson checkpoint "$checkpoint" --arg writer "$journal_writer" --argjson sequence "$journal_sequence" \
+            --argjson unconfirmed "$journal_unconfirmed" '
+            del(.last_observed) | if $checkpoint then . + {checkpoint:true,alert_changes:null} else . end
+            | if $writer == "" then . else . + {journal_writer:$writer,journal_sequence:$sequence,
+                journal_unconfirmed_events:$unconfirmed} end' <<< "$event")
+        if [[ $journal_enabled == 1 ]]; then pending_journal+=("$event"); fi
         if ! "$checkpoint"; then printf '%s\n' "$event"; fi
         previous=$key next_checkpoint=$((SECONDS + checkpoint_interval))
     fi
