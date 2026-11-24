@@ -14,6 +14,7 @@ usage() {
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
         'Reports score openings, snapshots, strict-policy violations, cited evidence, and classification separately.' \
         'Cases without verified scoring inputs are not scored.' \
+        'Known DNS capacity declines make affected DNS labels and strict cases inconclusive; older analyzers may not report counters.' \
         'A capture that changes during replay is marked inconclusive, even without a baseline.' \
         'Set PACKRAT_REPLAY_BASELINE_ANALYZER to compare analyzers; deltas require matching packet coverage.' \
         'Partial coverage requires frame fingerprints from both analyzers.'
@@ -84,6 +85,9 @@ replay_case() {
             jq -cn --argjson label "$label" '
                 def key($rule; $frame): $rule + ":" + ($frame | tostring);
                 def ordinal: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+                def dns_capacity: objects |
+                    {query_key_declines,query_candidate_declines,nxdomain_client_declines,external_resolver_pair_declines}
+                    | select(all(.[]; ordinal));
                 def frames:
                     if (.packet_refs | type == "array" and length <= 128 and all(.[]; ordinal)) and
                        all([.first_packet,.packet_no,.last_packet][]; ordinal)
@@ -97,7 +101,8 @@ replay_case() {
                 reduce inputs as $row ({summary:null, summaries:0, evidence:{}};
                 if $row.type == "summary" then
                     .summaries += 1 | .summary = ($row | {packets,analyzed,skipped,truncated_frames,allow_truncated,
-                        frame_coverage_sha256_v1,alerts_opened,alert_snapshots,rule_counts,alert_expectations})
+                        frame_coverage_sha256_v1,alerts_opened,alert_snapshots,rule_counts,alert_expectations}
+                        + if has("dns_capacity") then {dns_capacity:(.dns_capacity | dns_capacity // null)} else {} end)
                 elif ($keys | length) > 0 and $row.type == "alert" and $row.schema_version == 1
                     and (if $row | has("opening") then $row.opening == true else $row.alert.hit_count == 1 end)
                     and ($row.alert.provenance.rule_id | type == "string")
@@ -120,6 +125,17 @@ replay_case() {
         (if $rules != null and ($result.alerts_opened | count) and $result.alerts_opened >= $registered
             then $result.alerts_opened - $registered else null end) as $unregistered |
         ($result.alert_expectations.verdict) as $evaluation |
+        (if ($result | has("dns_capacity") | not) then "not_reported"
+         elif $result.dns_capacity == null then "unverified"
+         elif any($result.dns_capacity[]; . > 0) then "declines" else "clear" end) as $dns_capacity_status |
+        (any($labeled[]; startswith("dns."))) as $dns_labeled |
+        ($result.alert_expectations.dns_capacity_limited_rules
+            | if type == "array" and length <= 64 and all(.[]; . as $id | $labeled | index($id) != null)
+              then . else null end) as $limited_rules |
+        (if $dns_capacity_status == "unverified" then $strict or $dns_labeled
+         elif $dns_capacity_status == "declines" then $strict or
+            (if $limited_rules == null then $dns_labeled else ($limited_rules | length) > 0 end)
+         else false end) as $dns_gate |
         (if $label | has("expect_snapshots") then
             {expected:$label.expect_snapshots, observed:$result.alert_snapshots}
          else null end) as $snapshot_check |
@@ -140,7 +156,7 @@ replay_case() {
                 | .passed = (.passed and .classification.passed)
               else . end
         )) as $evidence_checks |
-        (if $status > 1 or $replay.summaries != 1 then "inconclusive"
+        (if $status > 1 or $replay.summaries != 1 or $dns_gate then "inconclusive"
          elif $evaluation == "failed" then "failed"
          elif $evaluation != "passed" or $status != 0 or ($score_verified | not) then "inconclusive"
          elif $snapshot_delta != 0 then "failed"
@@ -151,6 +167,7 @@ replay_case() {
         ($result.alert_expectations.checks // [] |
             map(select(.rule_id as $id | all($frames[]; .rule_id != $id)))) as $counts |
         {name:$name, verdict:$verdict,
+         dns_capacity_status:$dns_capacity_status,
          unlisted_rule_counts:$unlisted, unregistered_alerts:$unregistered, summary:$result,
          snapshot_check:$snapshot_check,
          score:(if $verdict == "inconclusive" or ($score_verified | not) then null else {

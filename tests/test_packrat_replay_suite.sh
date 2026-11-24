@@ -11,6 +11,7 @@ touch -- "$scratch/benign fixture.pcap" "$scratch/changed.pcap" "$scratch/partia
 touch -- "$scratch/unlisted.pcap" "$scratch/unregistered.pcap"
 touch -- "$scratch/counts.pcap"
 touch -- "$scratch/evidence.pcap"
+touch -- "$scratch/dns.pcap"
 
 packrat-analyze() {
     local verdict opened=0 rules='{}' summary
@@ -49,6 +50,10 @@ packrat-analyze() {
             jq -c '.alert.hit_count = 2 | .alert.packet_refs = [1,2,5]' <<< "$evidence"
             ;;
         "$PACKRAT_TEST_DIRECTORY/partial.pcap") verdict=inconclusive ;;
+        "$PACKRAT_TEST_DIRECTORY/dns.pcap")
+            [[ $# == 4 && $1 == --expect-alert && $2 == dns.unmatched_response=0 && $3 == -- ]] || return 2
+            verdict=passed
+            ;;
         "$PACKRAT_TEST_DIRECTORY/unlisted.pcap") verdict=passed; opened=1; rules='{"scan.vertical":1}' ;;
         "$PACKRAT_TEST_DIRECTORY/unregistered.pcap") verdict=passed; opened=1 ;;
         *) return 2 ;;
@@ -65,6 +70,9 @@ packrat-analyze() {
     ')
     if [[ ${PACKRAT_TEST_CANDIDATE:-} == partial_coverage ]]; then
         summary=$(jq -c '.truncated_frames = 1 | .frame_coverage_sha256_v1 = ("a" * 64)' <<< "$summary")
+    fi
+    if [[ -v PACKRAT_TEST_DNS_CAPACITY ]]; then
+        summary=$(jq -c --argjson capacity "$PACKRAT_TEST_DNS_CAPACITY" '.dns_capacity=$capacity' <<< "$summary")
     fi
     printf '%s\n' "$summary"
     case ${PACKRAT_TEST_CANDIDATE:-} in
@@ -126,7 +134,23 @@ jq -e '
 ' <<< "$result" >/dev/null
 
 jq -c '.cases = [.cases[0]]' <<< "$sample" >"$manifest"
-bash "$suite" "$manifest" | jq -e '.total == 1 and .passed == 1' >/dev/null
+bash "$suite" "$manifest" | jq -e '.total == 1 and .passed == 1 and .cases[0].dns_capacity_status=="not_reported"' >/dev/null
+dns_capacity='{"query_key_declines":1,"query_candidate_declines":0,"nxdomain_client_declines":0,"external_resolver_pair_declines":0,"other":"private"}'
+PACKRAT_TEST_DNS_CAPACITY="$dns_capacity" bash "$suite" "$manifest" | jq -e '
+    .passed==1 and .cases[0].dns_capacity_status=="declines" and .cases[0].summary.dns_capacity.query_key_declines==1
+    and (.cases[0].summary.dns_capacity | has("other") | not)' >/dev/null
+jq '.strict=true' "$manifest" > "$scratch/dns-strict.json"
+jq '.cases[0] |= (.capture="dns.pcap" | .expect_counts={"dns.unmatched_response":0})' "$manifest" > "$scratch/dns-labeled.json"
+for case_manifest in "$scratch/dns-strict.json" "$scratch/dns-labeled.json"; do
+    status=0
+    result=$(PACKRAT_TEST_DNS_CAPACITY="$dns_capacity" bash "$suite" "$case_manifest") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.inconclusive==1 and .cases[0].dns_capacity_status=="declines" and .cases[0].score==null' <<< "$result" >/dev/null
+done
+status=0
+result=$(PACKRAT_TEST_DNS_CAPACITY='{"query_key_declines":"private"}' bash "$suite" "$scratch/dns-strict.json") || status=$?
+[[ $status == 1 ]]
+jq -e '.inconclusive==1 and .cases[0].dns_capacity_status=="unverified" and .cases[0].summary.dns_capacity==null' <<< "$result" >/dev/null
 for mode in duplicate_summary interrupted; do
     status=0
     result=$(PACKRAT_TEST_CANDIDATE="$mode" bash "$suite" "$manifest") || status=$?

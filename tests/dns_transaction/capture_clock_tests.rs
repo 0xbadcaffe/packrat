@@ -126,4 +126,16 @@ fn dns_replay_reports_candidate_declines_separately_from_retries_and_packet_loss
             "nxdomain_client_declines":0, "external_resolver_pair_declines":0,
         }));
     }
+    for (flag, expected, verdict, limited) in [
+        ("--expect-alert", "dns.unmatched_response=0", "inconclusive", vec!["dns.unmatched_response"]),
+        ("--expect-alert-frame", "dns.changed_answers=5", "inconclusive", vec!["dns.changed_answers"]),
+        ("--expect-alert", "dns.jndi_question_label=0", "passed", vec![]),
+        ("--expect-alert", "scan.horizontal=0", "passed", vec![]),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze")).args([flag, expected]).arg(&path).output().unwrap();
+        let row: serde_json::Value = serde_json::from_str(String::from_utf8(output.stdout).unwrap().lines().last().unwrap()).unwrap();
+        assert_eq!(row["alert_expectations"]["verdict"], verdict, "{expected}");
+        assert_eq!(row["alert_expectations"]["dns_capacity_limited_rules"], serde_json::json!(limited));
+        assert_eq!(output.status.success(), verdict == "passed");
+    }
 }

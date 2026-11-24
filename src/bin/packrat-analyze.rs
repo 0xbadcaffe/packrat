@@ -78,14 +78,15 @@ fn analyze(
         Ok(())
     })?;
     let frame_coverage_sha256_v1 = format!("{:x}", coverage.finalize());
-    let evaluation = replay.evaluate(analyzed > 0 && skipped == 0 && (truncated_frames == 0 || allow_truncated));
+    let dns_capacity = core.security.dns_capacity_stats();
+    let evaluation = replay.evaluate(analyzed > 0 && skipped == 0 && (truncated_frames == 0 || allow_truncated), dns_capacity);
     if alerts_only {
         event(
             output,
             &json!({
                 "type": "summary", "packets": packets, "analyzed": analyzed, "skipped": skipped,
                 "truncated_frames": truncated_frames, "allow_truncated": allow_truncated,
-                "dns_capacity": core.security.dns_capacity_stats(),
+                "dns_capacity": dns_capacity,
                 "frame_coverage_sha256_v1": frame_coverage_sha256_v1,
                 "alert_scope": "grouped_alerts", "alerts_opened": replay.opened,
                 "alert_snapshots": replay.snapshots, "rule_counts": replay.rule_counts,
@@ -152,7 +153,7 @@ fn analyze(
         output,
         &json!({"type": "summary", "packets": packets,
         "analyzed": analyzed, "skipped": skipped, "truncated_frames": truncated_frames,
-        "dns_capacity": core.security.dns_capacity_stats(),
+        "dns_capacity": dns_capacity,
         "frame_coverage_sha256_v1": frame_coverage_sha256_v1,
         "http_exchanges": exchanges + http2_exchanges + http3_exchanges,
         "http1_exchanges": exchanges, "http2_exchanges": http2_exchanges,
