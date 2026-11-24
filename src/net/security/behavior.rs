@@ -243,9 +243,10 @@ impl SecurityEngine {
         if source_internal != destination_internal {
             let outbound = source_internal;
             transport = transfer_transport(pkt);
-            // Keep observed reverse bytes; omit verified empty segments and recognized outbound retries.
-            if outbound && matches!(transport, TransferTransport::Tcp)
-                && matches!(tcp_payload, TcpPayloadObservation::Repeat | TcpPayloadObservation::Empty)
+            // TCP control traffic does not provide a data baseline in either direction.
+            if matches!(transport, TransferTransport::Tcp)
+                && (matches!(tcp_payload, TcpPayloadObservation::Empty)
+                    || (outbound && matches!(tcp_payload, TcpPayloadObservation::Repeat)))
             {
                 return;
             }
@@ -283,7 +284,7 @@ impl SecurityEngine {
                 state.volume_episode = Some(VolumeEpisode { opening_frame, evidence });
                 let (severity, comparison) = match evidence {
                     VolumeEvidence::OneWay => (
-                        Severity::Medium, "no reverse bytes observed; asymmetry unverified".into(),
+                        Severity::Medium, "no reverse data baseline observed; asymmetry unverified".into(),
                     ),
                     VolumeEvidence::BothDirections => (
                         Severity::High,
@@ -300,7 +301,7 @@ impl SecurityEngine {
                     "Large asymmetric outbound transfer",
                     severity,
                     format!(
-                        "{} to {}: {} captured outbound bytes in the rolling hour, excluding recognized outbound TCP payload retries and payload-free TCP frames; {comparison}; transfer intent unverified",
+                        "{} to {}: {} captured outbound bytes in the rolling hour, excluding recognized outbound TCP payload retries and payload-free TCP frames in either direction; {comparison}; transfer intent unverified",
                         pkt.src, pkt.dst, state.outbound_bytes
                     ),
                     samples.map(|sample| sample.frame).collect::<Vec<_>>(),

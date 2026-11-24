@@ -177,7 +177,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
         (
-            "IDS", "Large asymmetric outbound transfer", "traffic.asymmetric_outbound", 11, Heuristic,
+            "IDS", "Large asymmetric outbound transfer", "traffic.asymmetric_outbound", 12, Heuristic,
             "Identify the owning process and destination. Check for an expected upload, backup, or sync job.",
         ),
         (

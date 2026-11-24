@@ -14,7 +14,7 @@ const PAYLOAD: [u8; 1200] = [0; 1200];
 
 fn transfer_frame(no: u64, reverse: bool) -> Packet {
     let mut packet = if reverse {
-        packets::tcp(no, 100, 0x10, &[])
+        packets::tcp(no, 100, 0x18, b"fixture response")
     } else {
         packets::tcp(no, no as u32 * 2000, 0x18, &PAYLOAD)
     };
