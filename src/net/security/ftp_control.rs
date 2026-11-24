@@ -1,4 +1,5 @@
 use super::*;
+use super::scans::scan_scope;
 
 const MAX_ATTEMPTS: usize = 1024;
 const WINDOW_SECS: f64 = 30.0;
@@ -20,7 +21,7 @@ struct Attempt {
 
 #[derive(Default)]
 pub(super) struct FtpControl {
-    attempts: HashMap<(ServiceScope, TcpFlowKey), Attempt>,
+    attempts: HashMap<(ScanScope, TcpFlowKey), Attempt>,
 }
 
 impl FtpControl {
@@ -39,7 +40,7 @@ impl FtpControl {
         {
             return None;
         }
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let key = (scope, segment.key);
         if segment.flags & 0x07 != 0 { // FIN, SYN, or RST ends the prior observation.
             self.attempts.remove(&key);

@@ -241,7 +241,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify where TLS terminates, review who could read the captured traffic, and rotate exposed credentials as appropriate.",
         ),
         (
-            "IDS", "Anonymous FTP login accepted", "ftp.anonymous_login_accepted", 1, Correlated,
+            "IDS", "Anonymous FTP login accepted", "ftp.anonymous_login_accepted", 2, Correlated,
             "Verify the anonymous FTP policy and review server logs for file listings, reads, or writes.",
         ),
         (

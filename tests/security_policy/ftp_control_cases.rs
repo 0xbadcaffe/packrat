@@ -1,8 +1,10 @@
 use super::*;
 use packrat_tui::{engine::AnalysisCore, net::parser::parse_ethernet};
 
-#[test]
-fn ftp_anonymous_login_requires_scoped_success() {
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn ftp_anonymous_login_requires_scoped_success(#[case] distinguish_by_tpid: bool) {
     const TITLE: &str = "Anonymous FTP login accepted";
     let user = b"UsEr anonymous\r\n";
     let pass = b"PASS fixture-only\r\n";
@@ -23,6 +25,12 @@ fn ftp_anonymous_login_requires_scoped_success() {
         raw[34..36].copy_from_slice(&sport.to_be_bytes());
         raw[36..38].copy_from_slice(&dport.to_be_bytes());
         raw[42..46].copy_from_slice(&ack.to_be_bytes());
+        if distinguish_by_tpid {
+            let tpid = if vlan == 20 { 0x88a8_u16 } else { 0x8100_u16 };
+            let tci = if no % 2 == 0 { 0xb00a_u16 } else { 10_u16 };
+            raw.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+            return parse_ethernet(&raw, no, no as f64);
+        }
         let mut packet = parse_ethernet(&raw, no, no as f64);
         packet.vlan_id = Some(vlan);
         packet
@@ -70,6 +78,7 @@ fn ftp_anonymous_login_requires_scoped_success() {
         assert_eq!(alert.severity, "MEDIUM");
         assert_eq!(alert.flow.unwrap().source.port(), 21);
         assert_eq!(alert.provenance.as_ref().unwrap().rule_id, "ftp.anonymous_login_accepted");
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 2);
         assert!(alert.detail.contains("file access not observed"));
         assert!(!serde_json::to_string(alert).unwrap().contains("fixture-only"));
     }
