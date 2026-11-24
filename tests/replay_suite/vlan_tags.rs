@@ -41,7 +41,8 @@ fn stacked_vlan_replay_distinguishes_wire_observation_from_inferred_hopping() {
         if !openings.is_empty() {
             case["opening_frames"] = json!({(rule):openings});
             case["opening_evidence"] = json!(openings.iter().map(|&frame| {
-                json!({"rule_id":rule,"opening_frame":frame,"frames":[frame]})
+                json!({"rule_id":rule,"opening_frame":frame,"frames":[frame],
+                    "classification":{"severity":"INFO","confidence":"direct_observation","revision":1}})
             }).collect::<Vec<_>>());
         }
         cases.push(case);

@@ -40,7 +40,7 @@ if ! validated=$(head -c 65537 -- "$1" | jq -Rces '
         and all(.[]; frame) and (unique | length) == length;
     def classification:
         type == "object" and length > 0 and all(keys[]; IN("severity","confidence","revision"))
-        and ((has("severity") | not) or (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW")))
+        and ((has("severity") | not) or (.severity | IN("CRITICAL","HIGH","MEDIUM","LOW","INFO")))
         and ((has("confidence") | not) or (.confidence | IN("heuristic","correlated","direct_observation")))
         and ((has("revision") | not) or (.revision | frame and . <= 65535));
     def valid_case:
@@ -88,7 +88,7 @@ replay_case() {
                     then [.first_packet,.packet_no,.last_packet,.packet_refs[]] | map(select(. > 0)) | unique
                     else null end;
                 def classification:
-                    {severity:(.severity | if IN("CRITICAL","HIGH","MEDIUM","LOW") then . else null end),
+                    {severity:(.severity | if IN("CRITICAL","HIGH","MEDIUM","LOW","INFO") then . else null end),
                      confidence:(.provenance.confidence | if IN("heuristic","correlated","direct_observation") then . else null end),
                      revision:(.provenance.revision | if ordinal and . >= 1 and . <= 65535 then . else null end)};
                 ($label.opening_evidence // [] | map(key(.rule_id; .opening_frame))) as $keys |

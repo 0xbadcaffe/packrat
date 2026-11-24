@@ -191,7 +191,7 @@ printf '%s\n' "$classified" >"$manifest"
 bash "$suite" "$manifest" | jq -e '
     .passed == 1 and (.cases[0].evidence_checks[0].classification |
     .passed and .observed == {severity:"MEDIUM",confidence:"heuristic",revision:14} and .expected == .observed)' >/dev/null
-for mismatch in '.severity="HIGH"' '.confidence="correlated"' '.revision=15'; do
+for mismatch in '.severity="HIGH"' '.severity="INFO"' '.confidence="correlated"' '.revision=15'; do
     jq -c ".cases[0].opening_evidence[0].classification |= ($mismatch)" <<< "$classified" > "$manifest"
     status=0
     result=$(bash "$suite" "$manifest") || status=$?
