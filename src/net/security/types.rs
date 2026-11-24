@@ -255,13 +255,6 @@ pub(super) struct TransferBucket {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct NtlmFanoutState {
-    pub(super) targets: std::collections::BTreeMap<String, (f64, u64)>,
-    pub(super) last_seen: f64,
-    pub(super) alerted: bool,
-}
-
-#[derive(Debug, Default)]
 pub(super) struct DhcpScopeState {
     pub(super) servers: std::collections::BTreeMap<std::net::Ipv4Addr, (f64, u64)>,
     pub(super) server_high_water: f64,

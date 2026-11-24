@@ -51,7 +51,6 @@ const BEACON_WINDOW_SECS: f64 = 3600.0;
 const EXFIL_VOLUME_THRESHOLD: u64 = 1_000_000;
 const EXFIL_ENTROPY_THRESHOLD: u64 = 256_000;
 const LATERAL_TARGET_THRESHOLD: usize = 8;
-const NTLM_TARGET_THRESHOLD: usize = 3;
 const DHCP_STARVATION_THRESHOLD: usize = 64;
 
 /// Stable names emitted by Packrat's built-in passive detectors. Tests require
@@ -140,6 +139,7 @@ mod identities;
 mod ipv4_wire;
 mod ipv6_wire;
 mod nbns_wire;
+mod ntlm_fanout;
 mod protocol_policy;
 mod scans;
 mod signatures;
@@ -195,7 +195,7 @@ pub struct SecurityEngine {
     exfil_flows: HashMap<ExfilKey, ExfilState>,
     admin_fanout: admin_fanout::AdminFanout,
     ftp_control: ftp_control::FtpControl,
-    ntlm_fanout: HashMap<(String, ServiceScope), NtlmFanoutState>,
+    ntlm_fanout: ntlm_fanout::NtlmFanout,
     dhcp_scopes: HashMap<(ServiceScope, Option<Ipv4Addr>), DhcpScopeState>,
     dhcp_server_evidence: crate::net::recent_evidence::RecentEvidence<1024, 3600>,
     dhcp_client_evidence: crate::net::recent_evidence::RecentEvidence<1024, 10>,

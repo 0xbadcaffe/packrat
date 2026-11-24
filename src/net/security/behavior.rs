@@ -442,55 +442,6 @@ impl SecurityEngine {
         });
     }
 
-    pub(super) fn check_ntlm_fanout(&mut self, pkt: &Packet) {
-        let (Some(source_port), Some(445)) = (pkt.src_port, pkt.dst_port) else { return };
-        if !pkt.timestamp.is_finite()
-            || !is_internal_address(&pkt.src)
-            || !is_internal_address(&pkt.dst)
-            || !crate::analysis::stream::tcp_payload_with_ack(pkt, (source_port, 445))
-                .is_some_and(|(_, payload)| smb_wire::has_ntlm_authenticate(payload))
-        {
-            return;
-        }
-        self.ntlm_fanout.retain(|_, state| pkt.timestamp - state.last_seen <= 300.0);
-        let key = (pkt.src.clone(), service_scope(pkt));
-        if self.ntlm_fanout.len() >= MAX_SCAN_STATES && !self.ntlm_fanout.contains_key(&key) {
-            return;
-        }
-        let state = self.ntlm_fanout.entry(key).or_default();
-        state.last_seen = if state.targets.is_empty() { pkt.timestamp } else { state.last_seen.max(pkt.timestamp) };
-        if state.last_seen - pkt.timestamp > 300.0 {
-            return;
-        }
-        state.targets.retain(|_, (seen, _)| state.last_seen - *seen <= 300.0);
-        if state.targets.len() <= NTLM_TARGET_THRESHOLD / 2 {
-            state.alerted = false;
-        }
-        if let Some(prior) = state.targets.get_mut(&pkt.dst) {
-            if pkt.timestamp > prior.0 {
-                *prior = (pkt.timestamp, pkt.no);
-            }
-        } else if state.targets.len() < 256 {
-            state.targets.insert(pkt.dst.clone(), (pkt.timestamp, pkt.no));
-        }
-        let count = state.targets.len();
-        if count < NTLM_TARGET_THRESHOLD || state.alerted {
-            return;
-        }
-        state.alerted = true;
-        let related_packets = state.targets.values().map(|&(_, frame)| frame)
-            .filter(|&frame| frame != pkt.no).collect();
-        self.push_ids_finding(IdsFinding {
-            alert: IdsAlert {
-                pkt_no: pkt.no,
-                signature: "NTLM authentication fan-out",
-                severity: Severity::Medium,
-                detail: format!("{} sent SMB2 NTLM authentication to {count} internal hosts within 5 minutes; outcomes unverified", pkt.src),
-            },
-            related_packets,
-            correlation_key: Some(format!("{:?}:{}:episode:{}", service_scope(pkt), pkt.src, pkt.no)),
-        });
-    }
 }
 
 #[cfg(test)]

@@ -47,7 +47,7 @@ impl SecurityEngine {
             exfil_flows: HashMap::new(),
             admin_fanout: Default::default(),
             ftp_control: Default::default(),
-            ntlm_fanout: HashMap::new(),
+            ntlm_fanout: Default::default(),
             dhcp_scopes: HashMap::new(),
             dhcp_server_evidence: Default::default(),
             dhcp_client_evidence: Default::default(),
@@ -93,7 +93,7 @@ impl SecurityEngine {
         self.exfil_flows.clear();
         self.admin_fanout.clear();
         self.ftp_control.clear();
-        self.ntlm_fanout.clear();
+        self.ntlm_fanout = Default::default();
         self.dhcp_scopes.clear();
         self.dhcp_server_evidence = Default::default();
         self.dhcp_client_evidence = Default::default();
@@ -159,7 +159,7 @@ impl SecurityEngine {
         self.check_ipv6_control_plane(pkt, archive_rules);
         self.check_layer2_control_plane(pkt);
         self.check_beacon_and_exfiltration(pkt, tcp_payload, archive_rules);
-        self.check_ntlm_fanout(pkt);
+        self.check_ntlm_fanout(pkt, archive_rules);
         self.check_dhcp_integrity(pkt, archive_rules);
         self.check_ipv6_fragment_reassembly(pkt, archive_rules);
         self.check_http_request_smuggling(pkt);

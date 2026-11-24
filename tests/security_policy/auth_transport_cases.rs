@@ -127,3 +127,47 @@ fn ntlm_fanout_rearms_after_diversity_declines_without_reusing_a_reviewed_alert(
     assert_eq!(alerts[1].provenance.as_ref().unwrap().revision, 3);
     assert!(alerts[1].detail.contains("outcomes unverified"));
 }
+
+#[cfg(feature = "terminal-ui")]
+#[test]
+fn opted_in_ntlm_fanout_archives_only_cited_requests_after_history_rollover() {
+    use super::archive_fixture::{finish, roll_history, start};
+    use packrat_tui::net::parser::parse_ethernet;
+    use packrat_tui::storage::packet_archive::PacketArchive;
+
+    let rule = "smb2.ntlm_authentication_fanout";
+    let payload = cases_3::smb2_ntlm_request(3);
+    let request = |no, timestamp, target, vlan| {
+        let mut bytes = ipv4_tcp_packet(no, no as u32 * 1024, 0x18, &payload).bytes;
+        bytes[26..34].copy_from_slice(&[10, 0, 0, 9, 10, 0, 2, target]);
+        bytes[36..38].copy_from_slice(&445_u16.to_be_bytes());
+        bytes.splice(12..12, [0x81, 0, 0, vlan]);
+        parse_ethernet(&bytes, no, timestamp)
+    };
+    for selected in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("archive");
+        let rules = vec![if selected { rule } else { "smb2.logon_failure_burst" }.into()];
+        let mut app = start(&path, rules);
+        let first = request(2, 2.0, 1, 10);
+        let second = request(4, 5.0, 2, 10);
+        for packet in [request(1, 1.0, 1, 10), first.clone(), request(3, 4.0, 3, 20), second.clone()] {
+            app.inject_packet(packet);
+        }
+        let trigger = roll_history(&mut app, 5);
+        let last = request(trigger, 4.5, 3, 10);
+        app.inject_packet(last.clone());
+        finish(&mut app);
+        let alert = app.query_core(|core| core.alert_center.items.iter()
+            .find(|item| item.provenance.as_ref().is_some_and(|p| p.rule_id == rule)).cloned())
+            .unwrap().unwrap();
+        assert_eq!(alert.packet_refs, [2, 4, trigger]);
+        let scope = alert.capture_id.unwrap();
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { 3 } else { 0 });
+        for packet in [first, second, last] {
+            let recovered = archive.packet_for_capture(&scope, packet.no).unwrap();
+            assert_eq!(recovered.map(|frame| frame.bytes), selected.then_some(packet.bytes));
+        }
+    }
+}
