@@ -116,7 +116,8 @@ fn archive_project_opens_on_the_alert_when_its_trigger_is_missing() {
     let report: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(report["trigger_frame"], json!({"frame_number":2,"status":"missing","included":false}));
     let state = project_store::load(&output).unwrap();
-    assert_eq!(state.investigation_items[state.active_investigation.unwrap()], SavedInvestigationItem::Alert(1));
+    assert_eq!(state.investigation_items[state.active_investigation.unwrap()],
+        SavedInvestigationItem::AlertRef { id: 1, capture_id: Some("scope-a".into()) });
     assert_eq!(state.pinned_packets.iter().map(|packet| packet.no).collect::<Vec<_>>(), [1]);
     assert!(state.metadata.description.as_deref().unwrap().contains("Trigger #2 not included"));
 }

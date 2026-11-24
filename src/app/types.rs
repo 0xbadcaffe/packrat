@@ -126,18 +126,28 @@ pub enum InvestigationItem {
     Stream(String),
     Host(String),
     Alert(u64),
+    AlertRef { id: u64, capture_id: Option<String> },
     Object(u64),
     GraphNode(String),
     Note(u64),
 }
 
 impl InvestigationItem {
+    pub(super) fn for_alert(alert: &crate::analysis::alert_center::AlertItem) -> Self {
+        Self::AlertRef { id: alert.id, capture_id: alert.capture_id.clone() }
+    }
+
     pub fn label(&self) -> String {
         match self {
             Self::Packet(no) => format!("Packet #{no}"),
             Self::Stream(id) => format!("Stream {id}"),
             Self::Host(address) => format!("Host {address}"),
             Self::Alert(id) => format!("Alert #{id}"),
+            Self::AlertRef { id, capture_id: Some(scope) } => {
+                let prefix: String = scope.chars().take(8).collect();
+                format!("Alert #{id} [{prefix}]")
+            }
+            Self::AlertRef { id, capture_id: None } => format!("Alert #{id}"),
             Self::Object(id) => format!("Object #{id}"),
             Self::GraphNode(id) => format!("Graph {id}"),
             Self::Note(id) => format!("Note #{id}"),

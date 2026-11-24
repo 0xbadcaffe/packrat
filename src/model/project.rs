@@ -13,7 +13,7 @@ use crate::model::tags::TagStore;
 use crate::storage::case_bundle::ObjectEntry;
 use crate::net::packet::Packet;
 
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 // Stable project-format index, shared by headless export and the terminal UI.
 pub(crate) const INVESTIGATE_TAB_INDEX: usize = 1;
 pub(crate) const MAX_PINNED_PACKETS: usize = 1024;
@@ -34,6 +34,8 @@ pub enum SavedInvestigationItem {
     Stream(String),
     Host(String),
     Alert(u64),
+    UnresolvedAlert(u64),
+    AlertRef { id: u64, capture_id: Option<String> },
     Object(u64),
     GraphNode(String),
     Note(u64),

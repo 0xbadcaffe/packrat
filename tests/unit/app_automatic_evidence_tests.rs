@@ -396,7 +396,7 @@ fn watch_preserves_trigger_and_prior_evidence_without_stealing_selection() {
     app.packets.clear();
 
     assert_eq!(app.worklist.active_packet_no(), Some(9));
-    assert!(app.worklist.items.contains(&InvestigationItem::Alert(1)));
+    assert!(app.worklist.items.contains(&InvestigationItem::AlertRef { id: 1, capture_id: None }));
     assert!(app.worklist.retained_packet(10).is_some());
     assert!(app.worklist.retained_packet(11).is_none());
     assert_eq!(

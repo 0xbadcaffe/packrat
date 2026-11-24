@@ -132,7 +132,7 @@ fn investigating_alert_pins_matching_packets_and_opens_workspace() {
     assert_eq!(app.active_tab, Tab::Investigate);
     assert_eq!(app.worklist.packet_nos(), vec![10, 30]);
     assert_eq!(app.worklist.active_packet_no(), Some(30));
-    assert!(app.worklist.items.contains(&InvestigationItem::Alert(1)));
+    assert!(app.worklist.items.contains(&InvestigationItem::AlertRef { id: 1, capture_id: None }));
     assert!(app.worklist.retained_packet(10).is_some());
     assert!(app.worklist.retained_packet(30).is_some());
 }

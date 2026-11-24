@@ -191,11 +191,11 @@ impl App {
         let Ok(Some(core)) = core_handle.try_read() else {
             return false;
         };
-        let Some(id) = core.alert_center.selected_item().map(|item| item.id) else {
+        let Some(item) = core.alert_center.selected_item().map(InvestigationItem::for_alert) else {
             self.set_status("No alert selected to pin");
             return false;
         };
-        self.pin_investigation_item(InvestigationItem::Alert(id))
+        self.pin_investigation_item(item)
     }
 
     pub fn investigate_selected_alert(&mut self) -> bool {
@@ -215,9 +215,9 @@ impl App {
             return false;
         };
         let alert = match target {
-            Some(target) => core.alert_center.items.iter().find(|alert| {
+            Some(target) => unique_alert(core.alert_center.items.iter().filter(|alert| {
                 alert.id == target.id && alert.capture_id == target.capture_id
-            }),
+            })),
             None => core.alert_center.selected_item(),
         };
         let Some(alert) = alert.cloned() else {
@@ -232,7 +232,7 @@ impl App {
 
         let packet_refs = alert.evidence_frame_numbers();
 
-        let alert_item = InvestigationItem::Alert(alert.id);
+        let alert_item = InvestigationItem::for_alert(&alert);
         self.project_dirty |= self.worklist.add(alert_item.clone());
         let evidence_scope = self.alert_evidence_scope(&alert);
         let scope_mismatch = evidence_scope.local_mismatch();
@@ -369,7 +369,7 @@ impl App {
             Tab::Security => core
                 .alert_center
                 .selected_item()
-                .map(|alert| InvestigationItem::Alert(alert.id)),
+                .map(InvestigationItem::for_alert),
             Tab::Objects if self.objects_subtab == ObjectsSubTab::Objects => core
                 .carved_objects
                 .get(self.objects_scroll)

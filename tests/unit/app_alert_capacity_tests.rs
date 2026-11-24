@@ -57,7 +57,7 @@ fn opening_an_alert_does_not_select_another_packet_when_the_trigger_is_missing()
         (20, &[10]), 2.0, "IDS", "HIGH", "Finding", "Missing trigger", "flow",
     );
     assert!(app.investigate_selected_alert());
-    assert!(matches!(app.active_investigation_item(), Some(InvestigationItem::Alert(1))));
+    assert!(matches!(app.active_investigation_item(), Some(InvestigationItem::AlertRef { id: 1, .. })));
     assert!(app.active_investigation_context().unwrap().details.iter().any(|(label, value)|
         label == "Trigger frame" && value == "#20: not retained here"));
     assert!(app.status_msg.as_deref().unwrap().contains("trigger #20 not opened"));

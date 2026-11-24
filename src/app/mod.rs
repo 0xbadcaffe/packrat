@@ -267,7 +267,10 @@ fn saved_investigation_item(item: &InvestigationItem) -> SavedInvestigationItem 
         InvestigationItem::Packet(value) => SavedInvestigationItem::Packet(*value),
         InvestigationItem::Stream(value) => SavedInvestigationItem::Stream(value.clone()),
         InvestigationItem::Host(value) => SavedInvestigationItem::Host(value.clone()),
-        InvestigationItem::Alert(value) => SavedInvestigationItem::Alert(*value),
+        InvestigationItem::Alert(value) => SavedInvestigationItem::UnresolvedAlert(*value),
+        InvestigationItem::AlertRef { id, capture_id } => SavedInvestigationItem::AlertRef {
+            id: *id, capture_id: capture_id.clone(),
+        },
         InvestigationItem::Object(value) => SavedInvestigationItem::Object(*value),
         InvestigationItem::GraphNode(value) => SavedInvestigationItem::GraphNode(value.clone()),
         InvestigationItem::Note(value) => SavedInvestigationItem::Note(*value),
@@ -282,7 +285,7 @@ fn restore_investigation_tray(
         .investigation_items
         .iter()
         .cloned()
-        .map(restored_investigation_item)
+        .map(|item| restored_investigation_item(item, &state.alert_items))
         .collect();
     let packet_nos: std::collections::HashSet<u64> = tray.packet_nos().into_iter().collect();
     for packet in state.pinned_packets.iter().chain(&state.embedded_packets) {
@@ -313,12 +316,24 @@ fn restore_investigation_tray(
     Ok(tray)
 }
 
-fn restored_investigation_item(item: SavedInvestigationItem) -> InvestigationItem {
+fn unique_alert<'a>(
+    mut alerts: impl Iterator<Item = &'a crate::analysis::alert_center::AlertItem>,
+) -> Option<&'a crate::analysis::alert_center::AlertItem> {
+    let alert = alerts.next()?;
+    alerts.next().is_none().then_some(alert)
+}
+
+fn restored_investigation_item(
+    item: SavedInvestigationItem, alerts: &[crate::analysis::alert_center::AlertItem],
+) -> InvestigationItem {
     match item {
         SavedInvestigationItem::Packet(value) => InvestigationItem::Packet(value),
         SavedInvestigationItem::Stream(value) => InvestigationItem::Stream(value),
         SavedInvestigationItem::Host(value) => InvestigationItem::Host(value),
-        SavedInvestigationItem::Alert(value) => InvestigationItem::Alert(value),
+        SavedInvestigationItem::Alert(id) => unique_alert(alerts.iter().filter(|alert| alert.id == id))
+            .map_or(InvestigationItem::Alert(id), InvestigationItem::for_alert),
+        SavedInvestigationItem::UnresolvedAlert(id) => InvestigationItem::Alert(id),
+        SavedInvestigationItem::AlertRef { id, capture_id } => InvestigationItem::AlertRef { id, capture_id },
         SavedInvestigationItem::Object(value) => InvestigationItem::Object(value),
         SavedInvestigationItem::GraphNode(value) => InvestigationItem::GraphNode(value),
         SavedInvestigationItem::Note(value) => InvestigationItem::Note(value),

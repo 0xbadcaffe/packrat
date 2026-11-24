@@ -2,6 +2,75 @@ use super::*;
 use crate::model::project::ProjectState;
 
 #[test]
+fn scoped_alert_pins_survive_number_collisions_and_project_roundtrip() {
+    use crate::model::project::SavedInvestigationItem;
+    use crate::storage::project_store;
+
+    let mut app = App::new_for_test();
+    let (left, right) = {
+        let mut core = app.core.edit();
+        core.alert_center.record(0, "IDS", "HIGH", "First capture finding", "test");
+        let mut left = core.alert_center.items[0].clone();
+        left.capture_id = Some("scope-a".into());
+        let mut right = left.clone();
+        right.capture_id = Some("scope-b".into());
+        right.title = "Second capture finding".into();
+        core.alert_center.restore(vec![left.clone(), right.clone()], AutomationMode::Off);
+        (left, right)
+    };
+    let target = |alert: &crate::analysis::alert_center::AlertItem| AlertSearchRef {
+        id: alert.id, capture_id: alert.capture_id.clone(),
+    };
+    for alert in [&left, &right] {
+        assert!(app.investigate_alert(Some(&target(alert))));
+        assert_eq!(app.active_investigation_context().unwrap().title, alert.title);
+    }
+    let mut state = app.snapshot_project("collision", ProjectSaveMode::Lightweight).unwrap();
+    assert_eq!(state.investigation_items, [&left, &right].map(|alert| SavedInvestigationItem::AlertRef {
+        id: alert.id, capture_id: alert.capture_id.clone(),
+    }));
+    state.alert_items.retain(|alert| alert.capture_id == left.capture_id);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("collision.json");
+    project_store::save(&state, &path).unwrap();
+    let mut restored = App::new_for_test();
+    restored.apply_project_state(project_store::load(&path).unwrap()).unwrap();
+    assert!(!restored.active_investigation_context().unwrap().available);
+    restored.worklist.active = Some(0);
+    assert_eq!(restored.active_investigation_context().unwrap().title, left.title);
+}
+
+#[test]
+fn legacy_alert_pins_upgrade_only_when_the_saved_identity_is_unique() {
+    use crate::model::project::SavedInvestigationItem;
+
+    let (_, mut state) = scoped_case();
+    let unique = state.alert_items[0].clone();
+    let mut other = unique.clone();
+    other.capture_id = Some("other-scope".into());
+    let legacy = |duplicate| {
+        let mut project = ProjectState::new("legacy", ProjectSaveMode::Lightweight);
+        project.investigation_items = vec![SavedInvestigationItem::Alert(unique.id)];
+        project.active_investigation = Some(0);
+        project.alert_items.push(unique.clone());
+        if duplicate { project.alert_items.push(other.clone()); }
+        project
+    };
+    let mut app = App::new_for_test();
+    app.apply_project_state(legacy(false)).unwrap();
+    assert_eq!(app.active_investigation_item(), Some(&InvestigationItem::for_alert(&unique)));
+    assert!(app.active_investigation_context().unwrap().available);
+
+    app.apply_project_state(legacy(true)).unwrap();
+    assert!(!app.active_investigation_context().unwrap().available);
+    state = app.snapshot_project("ambiguous", ProjectSaveMode::Lightweight).unwrap();
+    assert_eq!(state.investigation_items, [SavedInvestigationItem::UnresolvedAlert(unique.id)]);
+    state.alert_items.truncate(1);
+    app.apply_project_state(state).unwrap();
+    assert!(!app.active_investigation_context().unwrap().available);
+}
+
+#[test]
 fn alert_investigation_recovers_archived_frames_without_crossing_captures() {
     use crate::net::packet::CaptureMetadata;
     use crate::storage::packet_archive::{ArchiveWorker, PacketArchive};
@@ -229,7 +298,7 @@ fn alert_investigation_skips_invalid_capture_lengths_without_hiding_other_frames
     );
     assert!(app.investigate_selected_alert());
     assert_eq!(app.worklist.packet_nos(), [20]);
-    assert!(matches!(app.active_investigation_item(), Some(InvestigationItem::Alert(1))));
+    assert!(matches!(app.active_investigation_item(), Some(InvestigationItem::AlertRef { id: 1, .. })));
     assert!(app.active_investigation_context().unwrap().details.iter().any(|(label, value)|
         label == "Trigger frame" && value == "#10: invalid capture lengths"));
     assert!(app.status_msg.as_deref().unwrap().contains("1 unavailable (1 invalid capture lengths); trigger #10 not opened"));

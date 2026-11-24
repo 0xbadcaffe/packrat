@@ -137,12 +137,14 @@ impl AppView<'_> {
                     available: true,
                 })
                 .unwrap_or_else(|| missing("Host", address.clone())),
-            InvestigationItem::Alert(id) => self
-                .core
-                .alert_center
-                .items
-                .iter()
-                .find(|alert| alert.id == *id)
+            InvestigationItem::Alert(id) => InvestigationContext {
+                kind: "Alert",
+                title: format!("Alert #{id}"),
+                details: vec![("Status".into(), "Legacy pin has no unique capture identity".into())],
+                available: false,
+            },
+            InvestigationItem::AlertRef { id, capture_id } => unique_alert(self.core.alert_center
+                .items.iter().filter(|alert| alert.id == *id && alert.capture_id == *capture_id))
                 .map(|alert| {
                     let (trigger_frame, trigger_flow) = self.alert_trigger_context(alert);
                     let (evidence, payload) = self.alert_evidence_context(alert);

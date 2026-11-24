@@ -141,7 +141,7 @@ impl App {
         if scope.local_mismatch().is_some() {
             return;
         }
-        self.project_dirty |= self.worklist.add(InvestigationItem::Alert(alert.id));
+        self.project_dirty |= self.worklist.add(InvestigationItem::for_alert(alert));
         let mut frames = alert.evidence_frame_numbers();
         frames.retain(|&frame| {
             self.frame_may_be_local(scope, frame) && self.worklist.retained_packet(frame).is_none()

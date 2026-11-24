@@ -269,7 +269,7 @@ async fn alert_center_m_pins_selected_alert_to_investigation_tray() {
     event::handle(&mut app, key(KeyCode::Char('m')));
     assert_eq!(
         app.worklist.items,
-        vec![packrat_tui::app::InvestigationItem::Alert(1)]
+        vec![packrat_tui::app::InvestigationItem::AlertRef { id: 1, capture_id: None }]
     );
 }
 
@@ -302,7 +302,7 @@ fn investigation_context_resolves_alert_and_handles_expired_source() {
         core.alert_center
             .record(9, "IDS", "HIGH", "Probe", "detector reason");
     });
-    app.worklist.add(InvestigationItem::Alert(1));
+    app.worklist.add(InvestigationItem::AlertRef { id: 1, capture_id: None });
     let context = app.active_investigation_context().unwrap();
     assert!(context.available);
     assert_eq!(context.kind, "Alert");

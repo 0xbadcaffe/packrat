@@ -43,7 +43,9 @@ pub fn create_alert_project(
     let (capture_id, frames) = scoped_frames(&alert)?;
     let trigger = alert.packet_no;
     let mut state = ProjectState::new(format!("Alert #{alert_id} evidence"), ProjectSaveMode::Lightweight);
-    state.investigation_items.push(SavedInvestigationItem::Alert(alert_id));
+    state.investigation_items.push(SavedInvestigationItem::AlertRef {
+        id: alert_id, capture_id: Some(capture_id.to_owned()),
+    });
     let mut summary = AlertProjectSummary::default();
     let mut bytes_left = MAX_PINNED_BYTES;
     let ordered = frames.iter().find(|&&frame| frame == trigger).into_iter()
