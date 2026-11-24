@@ -43,7 +43,7 @@ fn ntlm_fanout_replay_distinguishes_rearmed_bursts_from_sustained_and_single_hos
             case["opening_frames"] = json!({(rule):openings});
             let evidence: Vec<_> = openings.iter().map(|&frame| json!({
                 "rule_id":rule, "opening_frame":frame, "frames":[frame - 2, frame - 1, frame],
-                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":4},
+                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":5},
             })).collect();
             case["opening_evidence"] = json!(evidence);
         }

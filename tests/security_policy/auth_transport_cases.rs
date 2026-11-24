@@ -124,7 +124,7 @@ fn opted_in_transport_auth_samples_survive_history_rollover(
 }
 
 #[test]
-fn ntlm_fanout_uses_only_tcp_data_with_ack_and_matching_ports() {
+fn ntlm_fanout_requires_tcp_data_with_ack_and_matching_wire_endpoints() {
     const TITLE: &str = "NTLM authentication fan-out";
     let payload = cases_3::smb2_ntlm_request(3);
     let make = |no: u64, target: u8, flags: u8, wire_port: u16| {
@@ -143,6 +143,12 @@ fn ntlm_fanout_uses_only_tcp_data_with_ack_and_matching_ports() {
     let mut invalid_clock = make(5, 5, 0x18, 445);
     invalid_clock.timestamp = f64::NAN;
     engine.update(&invalid_clock);
+    let mut other_wire_source = make(5, 20, 0x18, 445);
+    other_wire_source.bytes[29] = 8;
+    engine.update(&other_wire_source);
+    let mut other_wire_destination = make(5, 21, 0x18, 445);
+    other_wire_destination.bytes[33] = 22;
+    engine.update(&other_wire_destination);
     assert!(engine.ids_alerts.iter().all(|alert| alert.signature != TITLE));
     engine.update(&make(6, 6, 0x18, 445));
     engine.update(&make(7, 7, 0x18, 445));
@@ -150,6 +156,35 @@ fn ntlm_fanout_uses_only_tcp_data_with_ack_and_matching_ports() {
     let batch = engine.inspect(&make(8, 8, 0x19, 445));
     let finding = batch.ids.iter().find(|finding| finding.alert.signature == TITLE).unwrap();
     assert_eq!(finding.related_packets, [6, 7]);
+}
+
+#[test]
+fn ntlm_fanout_counts_an_ipv6_destination_once_across_address_spellings() {
+    use packrat_tui::net::parser::parse_ethernet;
+
+    let mut tcp = vec![0u8; 20];
+    tcp[0..2].copy_from_slice(&50_000_u16.to_be_bytes());
+    tcp[2..4].copy_from_slice(&445_u16.to_be_bytes());
+    tcp[12] = 0x50;
+    tcp[13] = 0x18;
+    tcp.extend_from_slice(&cases_3::smb2_ntlm_request(3));
+    let make = |frame, host| {
+        let mut raw = cases_3::ipv6_frame(host, 6, &tcp);
+        raw[22..26].copy_from_slice(&[0xfd, 0, 0, 0]);
+        raw[38..42].copy_from_slice(&[0xfd, 0, 0, 0]);
+        parse_ethernet(&raw, frame, frame as f64)
+    };
+    const TITLE: &str = "NTLM authentication fan-out";
+    let mut spelled_out = make(2, 1);
+    spelled_out.dst = "FD00:0:1:0:0:0:0:1".into();
+    let mut engine = SecurityEngine::default();
+    for packet in [make(1, 1), spelled_out, make(3, 2)] {
+        let findings = engine.inspect(&packet);
+        assert!(findings.ids.iter().all(|finding| finding.alert.signature != TITLE));
+    }
+    let batch = engine.inspect(&make(4, 3));
+    let finding = batch.ids.iter().find(|finding| finding.alert.signature == TITLE).unwrap();
+    assert_eq!(finding.related_packets, [2, 3]);
 }
 
 #[test]
@@ -213,7 +248,7 @@ fn ntlm_fanout_rearms_after_diversity_declines_without_reusing_a_reviewed_alert(
     assert_ne!(alerts[0].id, alerts[1].id);
     assert_eq!(alerts[1].disposition, AlertDisposition::New);
     assert_eq!(alerts[1].packet_refs, [5, 7, 8]);
-    assert_eq!(alerts[1].provenance.as_ref().unwrap().revision, 4);
+    assert_eq!(alerts[1].provenance.as_ref().unwrap().revision, 5);
     assert!(alerts[1].detail.contains("outcomes unverified"));
 }
 

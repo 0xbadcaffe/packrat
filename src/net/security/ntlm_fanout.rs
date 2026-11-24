@@ -1,5 +1,6 @@
 use super::*;
 use super::scans::scan_scope;
+use crate::analysis::alert_center::AlertFlow;
 use crate::net::recent_evidence::RecentEvidence;
 use std::collections::BTreeMap;
 
@@ -10,14 +11,14 @@ const SIGNATURE: &str = "NTLM authentication fan-out";
 
 #[derive(Default)]
 struct SourceState {
-    targets: BTreeMap<String, (f64, u64)>,
+    targets: BTreeMap<IpAddr, (f64, u64)>,
     last_seen: f64,
     alerted: bool,
 }
 
 #[derive(Default)]
 pub(super) struct NtlmFanout {
-    sources: HashMap<(String, ScanScope), SourceState>,
+    sources: HashMap<(IpAddr, ScanScope), SourceState>,
     evidence: RecentEvidence<512, WINDOW_SECS>,
 }
 
@@ -32,11 +33,13 @@ impl SecurityEngine {
         {
             return;
         }
+        let Some(flow) = AlertFlow::from_packet(pkt) else { return };
+        let (source, destination) = (flow.source.ip(), flow.destination.ip());
         let window = WINDOW_SECS as f64;
         let scope = scan_scope(pkt);
         let tracker = &mut self.ntlm_fanout;
         tracker.sources.retain(|_, state| pkt.timestamp - state.last_seen <= window);
-        let key = (pkt.src.clone(), scope);
+        let key = (source, scope);
         if tracker.sources.len() >= MAX_SCAN_STATES && !tracker.sources.contains_key(&key) {
             return;
         }
@@ -50,11 +53,11 @@ impl SecurityEngine {
             state.alerted = false;
         }
         let sample = (pkt.timestamp, pkt.no);
-        if let Some(prior) = state.targets.get_mut(&pkt.dst) {
+        if let Some(prior) = state.targets.get_mut(&destination) {
             if pkt.timestamp <= prior.0 { return; }
             *prior = sample;
         } else if state.targets.len() < MAX_TARGETS {
-            state.targets.insert(pkt.dst.clone(), sample);
+            state.targets.insert(destination, sample);
         } else {
             return;
         }
@@ -81,10 +84,10 @@ impl SecurityEngine {
                 pkt_no: pkt.no,
                 signature: SIGNATURE,
                 severity: Severity::Medium,
-                detail: format!("{} sent SMB2 NTLM authentication to {count} internal hosts within 5 minutes; outcomes unverified", pkt.src),
+                detail: format!("{source} sent SMB2 NTLM authentication to {count} internal hosts within 5 minutes; outcomes unverified"),
             },
             related_packets,
-            correlation_key: Some(format!("{scope:?}:{}:episode:{}", pkt.src, pkt.no)),
+            correlation_key: Some(format!("{scope:?}:{source}:episode:{}", pkt.no)),
         });
     }
 }
