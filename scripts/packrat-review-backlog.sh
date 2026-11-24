@@ -9,6 +9,7 @@ usage() {
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
         'With --flow-context, report cited transport-header coverage, initial SYN fan-out, and candidate TCP and UDP DNS links without disclosing endpoints.' \
         'Timing counts describe adjacent cited frames, not full-flow cadence.' \
+        'UDP DNS timing counts distinguish capture-clock, legacy, unavailable, and unreported reply times.' \
         'Reader rule revisions are compared with saved revisions without reclassifying findings.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
@@ -87,6 +88,21 @@ check_flow_context() {
               and .prior_syn_candidates + .later_ack_candidates < $selected.evidence_frame_count
               and (if .later_ack_candidates == 0 then .earliest_candidate_ack_frame == null
                    else (.earliest_candidate_ack_frame | frame and . > $response) end);
+        def valid_dns_reply:
+            .reply_frame as $reply
+            | ($reply | frame) and (.query_candidate_frames | frames and all(.[]; frame and . < $reply) and . == unique)
+              and (if has("timestamp_basis") then
+                    (.timestamp_basis | IN("capture_clock","legacy_packet_time","unavailable"))
+                    and (.timestamp_basis != "unavailable" or .query_candidate_frames == [])
+                   else true end);
+        def dns_timing_context:
+            .udp_dns_reply_candidates
+            | if length == 0 then {udp_dns_timing_status:"no_dns_replies"}
+              else reduce .[] as $reply ({capture_clock:0,legacy_packet_time:0,unavailable:0,not_reported:0};
+                    .[$reply.timestamp_basis // "not_reported"] += 1) as $counts
+              | {udp_dns_timing_status:(if $counts.not_reported == length then "not_reported"
+                                        elif $counts.not_reported > 0 then "partial" else "reported" end),
+                 udp_dns_reply_timestamps:$counts} end;
         def valid_timing:
             .evidence_frames as $frames
             | .cited_timing | type == "object"
@@ -159,8 +175,8 @@ check_flow_context() {
                 and (.retained_frames_without_flow | count) and valid_trigger
                 and (.tcp_syn_ack_matches | frames and all(.[]; valid_syn_ack_match)
                      and length == (unique_by(.syn_ack_frame)|length))
-                and (.udp_dns_reply_candidates | frames and all(.[]; .reply_frame as $reply
-                  | ($reply | frame) and (.query_candidate_frames | frames and all(.[]; frame and . < $reply) and . == unique))))
+                and (.udp_dns_reply_candidates | frames and all(.[]; valid_dns_reply)
+                     and length == (unique_by(.reply_frame)|length)))
             | ([.directional_flows[].evidence_frames] | add // 0) as $flow_frames
             | select($flow_frames + .retained_frames_without_flow + .missing_frames + .unreadable_frames == .referenced_frames)
             | {flow_context_status:"checked",flow_context:{
@@ -176,7 +192,7 @@ check_flow_context() {
                 udp_dns_replies:(.udp_dns_reply_candidates|length),
                 udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),
                 udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}
-                + timing_context + tcp_flag_context + syn_fanout}
+                + timing_context + tcp_flag_context + syn_fanout + dns_timing_context}
           end
     ' <<< "$raw"
 }

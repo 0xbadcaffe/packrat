@@ -105,6 +105,13 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "availability" then .missing_frames=1
       elif $mode == "scope" then .session_id="wrong-session"
       elif $mode == "malformed" then .udp_dns_reply_candidates[0].query_candidate_frames=[4]
+      elif $mode == "dns_unavailable" then
+          .udp_dns_reply_candidates[0] += {timestamp_basis:"unavailable",query_candidate_frames:[]}
+      elif $mode == "dns_partial_timing" then
+          .udp_dns_reply_candidates += [{reply_frame:5,query_candidate_frames:[],timestamp_basis:"legacy_packet_time"}]
+      elif $mode == "dns_impossible_timing" then .udp_dns_reply_candidates[0].timestamp_basis="unavailable"
+      elif $mode == "dns_unknown_basis" then .udp_dns_reply_candidates[0].timestamp_basis="private time"
+      elif $mode == "dns_duplicate_reply" then .udp_dns_reply_candidates += .udp_dns_reply_candidates
       elif $mode == "frame_count" then .retained_frames_without_flow=1
       elif $mode == "trigger_status" then .trigger_frame.transport_header_observed=false
       elif $mode == "trigger_private" then .trigger_frame.status="private payload"
@@ -167,9 +174,17 @@ run_review --flow-context | jq -e '
         trigger_frame_status:"complete",trigger_transport_header_observed:true,trigger_tuple_status:"matches_wire",
         timing_status:"reported",cited_timing:{timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,
             tied_timestamps:0,backwards_timestamps:0,directions_with_forward_gaps:1},
-        udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0,tcp_flag_status:"not_reported"}
+        udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0,tcp_flag_status:"not_reported",
+        udp_dns_timing_status:"not_reported",
+        udp_dns_reply_timestamps:{capture_clock:0,legacy_packet_time:0,unavailable:0,not_reported:1}}
     and (tostring | contains("private") | not)' >/dev/null
 [[ $(cat "$dir/flow-checks") == 1 ]]
+FLOW_MODE=dns_unavailable run_review --flow-context | jq -e '
+    .findings[0].flow_context | .udp_dns_replies_with_query_candidates==0
+    and .udp_dns_timing_status=="reported" and .udp_dns_reply_timestamps.unavailable==1' >/dev/null
+FLOW_MODE=dns_partial_timing run_review --flow-context | jq -e '
+    .findings[0].flow_context | .udp_dns_timing_status=="partial"
+    and .udp_dns_reply_timestamps=={capture_clock:0,legacy_packet_time:1,unavailable:0,not_reported:1}' >/dev/null
 FLOW_MODE=tcp_pair run_review --flow-context | jq -e '
     .findings[0].flow_context | .tcp_syn_ack_matches==1
     and .tcp_syn_ack_without_later_ack_candidates==1 and .tcp_syn_ack_with_later_ack_candidates==0
@@ -188,6 +203,7 @@ FLOW_MODE=no_flow run_review --flow-context | jq -e '
     and .flow_context.trigger_tuple_status=="trigger_header_unavailable"
     and .flow_context.trigger_transport_header_observed==false
     and .flow_context.timing_status=="no_flow_headers" and .flow_context.tcp_flag_status=="no_flow_headers"
+    and .flow_context.udp_dns_timing_status=="no_dns_replies"
     and (.flow_context|has("cited_timing")|not)' >/dev/null
 for mode in legacy_timing invalid_timing malformed_timing; do
     wanted=invalid
@@ -197,7 +213,7 @@ for mode in legacy_timing invalid_timing malformed_timing; do
         and (.flow_context|has("cited_timing")|not) and (tostring|contains("private")|not)' >/dev/null
 done
 for mode in digest availability scope malformed frame_count trigger_status trigger_private old_reader \
-    tcp_impossible_ack tcp_duplicate tcp_wrong_order; do
+    tcp_impossible_ack tcp_duplicate tcp_wrong_order dns_impossible_timing dns_unknown_basis dns_duplicate_reply; do
     wanted=check_failed
     if [[ $mode == digest || $mode == availability ]]; then wanted=changed_during_review; fi
     FLOW_MODE=$mode run_review --flow-context | jq -e --arg wanted "$wanted" '

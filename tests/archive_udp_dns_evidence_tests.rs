@@ -209,7 +209,7 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     alerts.record(4, "IDS", "HIGH", "Private title", "Private detail");
     let mut alert = alerts.items.remove(0);
     alert.capture_id = Some(SCOPE.into());
-    alert.packet_refs = vec![1, 2, 3, 4, 5];
+    alert.packet_refs = (1..=7).collect();
     fs::write(&active, "").unwrap();
     fs::write(
         &previous,
@@ -228,6 +228,11 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
         attach_capture_time(&mut packet, frame);
         packet
     };
+    let undated_dns = |frame, reply| {
+        let mut packet = dns_frame(frame, 42, b"PrivateName", reply, 20, 1);
+        packet.timestamp = 0.0;
+        packet
+    };
     archive
         .append_scoped(
             SCOPE,
@@ -236,6 +241,8 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
                 timed_dns(2, false),
                 timed_dns(3, true),
                 captured_frame(4, &non_ip_frame),
+                undated_dns(6, false),
+                undated_dns(7, true),
             ],
         )
         .unwrap();
@@ -269,20 +276,22 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
     assert_eq!(finding["packet_evidence_status"], "partial");
     assert_eq!(
         finding["evidence_availability"],
-        json!({"complete":4,"missing":1}),
+        json!({"complete":6,"missing":1}),
         "{finding}"
     );
     assert_eq!(finding["flow_context_status"], "checked");
     assert_eq!(
         finding["flow_context"],
-        json!({"directional_flows":2,"tcp_syn_ack_matches":0,"udp_dns_replies":1,
+        json!({"directional_flows":4,"tcp_syn_ack_matches":0,"udp_dns_replies":2,
                "tcp_syn_ack_with_later_ack_candidates":0,"tcp_syn_ack_without_later_ack_candidates":0,
                "tcp_syn_ack_ambiguous_candidates":0,"tcp_flag_status":"no_tcp_headers",
-               "retained_flow_frames":3,"retained_frames_without_flow":1,
+               "retained_flow_frames":5,"retained_frames_without_flow":1,
                "trigger_frame_status":"complete","trigger_transport_header_observed":false,
                "trigger_tuple_status":"not_recorded",
-               "timing_status":"reported","cited_timing":{"timestamped_frames":3,"missing_timestamp_frames":0,
+               "timing_status":"reported","cited_timing":{"timestamped_frames":3,"missing_timestamp_frames":2,
                     "forward_gaps":1,"tied_timestamps":0,"backwards_timestamps":0,"directions_with_forward_gaps":1},
-               "udp_dns_replies_with_query_candidates":1,"udp_dns_ambiguous_replies":1})
+               "udp_dns_replies_with_query_candidates":1,"udp_dns_ambiguous_replies":1,
+               "udp_dns_timing_status":"reported",
+               "udp_dns_reply_timestamps":{"capture_clock":1,"legacy_packet_time":0,"unavailable":1,"not_reported":0}})
     );
 }
