@@ -6,6 +6,7 @@ snapshot_validation='
     def scope_id: if type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z") then . else null end;
     def counter: if type == "number" and . >= 0 and . <= 9007199254740991 and floor == . then . else null end;
     def sample_count: counter | if . != null and . <= 50 then . else null end;
+    def socket_status: if IN("not_configured","not_checked","not_recorded","available","unavailable") then . else null end;
     def flow_cache: if type == "object" then {retained_summaries:(.retained_summaries | counter),summary_evictions:(.summary_evictions | counter)}
         | if any(.[]; . == null) then null else . end else null end;
     def evidence_check_failures:
@@ -32,6 +33,7 @@ usage() {
         '       watch-packrat-triage.sh --history STATE.json' \
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
+        'socket_context_status describes the optional snapshot store, not capture health or per-alert attribution.' \
         'healthy_capture_seconds restarts after a packet counter regression; packet_counter_gap marks the affected capture.' \
         'Refreshes the sanitized state every poll; changes include alert observations for the same capture session.' \
         'review_queue_entries and review_queue_exits report bounded queue changes, not incident openings or inferred resolutions.' \
@@ -133,6 +135,8 @@ check_snapshot() {
            triage_status:.status, age_seconds:$age, max_age_seconds, packets:(.packets | counter), flow_cache:(if $age >= -5 and $age <= .max_age_seconds then .flow_cache | flow_cache else null end),
            evidence_check_failures:(if $age >= -5 and $age <= .max_age_seconds
                then .evidence_checks | evidence_check_failures else null end),
+           socket_context_status:(if $age >= -5 and $age <= .max_age_seconds
+               then .socket_context_status | socket_status else null end),
            invalid_alert_rows:(if $age >= -5 and $age <= .max_age_seconds
                then .invalid_alert_rows | sample_count else null end),
            duplicate_alert_ids:(if $age >= -5 and $age <= .max_age_seconds
@@ -311,6 +315,7 @@ sanitize() {
             open_archive_rule_alerts:(.open_archive_rule_alerts_in_sample | counter),
             review_queue_truncated:(.review_queue_truncated | flag),
             priority_sample_at_limit:(.priority_sample_at_limit | flag),
+            socket_context_status:(.socket_context_status | socket_status),
             evidence_check:(.evidence_status | if type == "object" then
                 {alert_id:(.alert_id | counter), status:(.status | token)} else null end),
             evidence_checks:(.evidence_checks | if type == "array" then .[:5] | map(objects

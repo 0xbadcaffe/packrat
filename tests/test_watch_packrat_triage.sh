@@ -47,10 +47,11 @@ live() {
 }
 queue='[{"alert_id":7,"severity":"HIGH","rule_id":"test.rule","revision":10,"confidence":"correlated","packet_evidence_status":"partial","next_evidence_step":"inspect_retained_and_recover_missing_frames"}]'
 medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","revision":65536,"disposition":"New","hit_count":1,"packet_evidence_status":"partial","evidence_frame_count":2,"evidence_frame_set_sha256":"invalid"}]'
-live current 12 "$queue" "$medium" >"$report"
+live current 12 "$queue" "$medium" | jq '.socket_context_status="available"' >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
-bash "$watch" --check "$state" | jq -e '.status=="current" and (.healthy_capture_seconds | type=="number" and .>=0) and .flow_cache=={retained_summaries:8192,summary_evictions:4}' >/dev/null
+bash "$watch" --check "$state" | jq -e '.status=="current" and .socket_context_status=="available"
+    and (.healthy_capture_seconds | type=="number" and .>=0) and .flow_cache=={retained_summaries:8192,summary_evictions:4}' >/dev/null
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .journal_status=="not_checked" and .journal_pending_events==0
@@ -60,6 +61,7 @@ jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .archive_mode=="alert_evidence" and .archive_rule_ids==["traffic.periodic_fixed_size"]
     and .archive_usage=={frames:1,max_frames:100,payload_bytes:1024,max_payload_bytes:65536}
     and .archive_near_limit==false
+    and .socket_context_status=="available"
     and .evidence_check=={alert_id:9,status:"checked"}
     and .evidence_checks==[{alert_id:9,status:"checked"}]
     and .recent_alerts==[{alert_id:9,severity:"MEDIUM",rule_id:"test.medium",disposition:"New",hit_count:1,packet_evidence_status:"partial"}]
@@ -68,6 +70,13 @@ jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
     and .healthy_capture_since==.poll_started_at and .poll_started_at > 0 and .poll_started_at <= (.updated_at | fromdateiso8601)
     and (tostring | contains("private") | not)' "$state" >/dev/null
 failed_state="$scratch/failed.json"
+for marker in unavailable not_recorded not_checked not_configured 'private malformed value'; do
+    jq --arg marker "$marker" '.socket_context_status=$marker' "$report" >"$scratch/socket-report.json"
+    bash "$watch" --once "$failed_state" -- cat "$scratch/socket-report.json" >/dev/null
+    bash "$watch" --check "$failed_state" | jq -e --arg marker "$marker" '
+        .status=="current" and .socket_context_status==(if $marker | contains("private") then null else $marker end)' >/dev/null
+    if grep -Fq 'private' "$failed_state"; then exit 1; fi
+done
 for code in 70 126 127 143; do
     bash "$watch" --once "$failed_state" -- bash -c 'cat -- "$1"; exit "$2"' mock "$report" "$code" >/dev/null
     jq -e '.status=="triage_unavailable" and .capture_id==null' "$failed_state" >/dev/null
@@ -78,7 +87,7 @@ bash "$watch" --once "$failed_state" -- bash -c 'cat -- "$1"; exit 2' mock "$scr
 bash "$watch" --check "$failed_state" | jq -e '.status=="current" and .evidence_check_failures==1' >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$failed_state" >"$scratch/old-evidence-error.json"
 { bash "$watch" --check "$scratch/old-evidence-error.json" || [[ $? == 1 ]]; } |
-    jq -e '.status=="snapshot_stale" and .evidence_check_failures==null' >/dev/null
+    jq -e '.status=="snapshot_stale" and .evidence_check_failures==null and .socket_context_status==null' >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$state" >"$scratch/stale.json"
 check_status "$scratch/stale.json" snapshot_stale 1
 jq '.updated_at=(now + 120 | todateiso8601)' "$state" >"$scratch/future.json"
