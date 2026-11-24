@@ -12,7 +12,8 @@ usage() {
         'Set "allow_truncated":true only for a case intentionally replaying partial frames.' \
         'Use "single_tag_interfaces":["access1"] to apply an exact interface-name VLAN policy during a case.' \
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
-        'Reports score openings, cited evidence, and classification separately. Inconclusive cases are not scored.' \
+        'Reports score openings, snapshots, strict-policy violations, cited evidence, and classification separately.' \
+        'Cases without verified scoring inputs are not scored.' \
         'A capture that changes during replay is marked inconclusive, even without a baseline.' \
         'Set PACKRAT_REPLAY_BASELINE_ANALYZER to compare analyzers; deltas require matching packet coverage.' \
         'Partial coverage requires frame fingerprints from both analyzers.'
@@ -110,17 +111,22 @@ replay_case() {
     fi
     jq -cn --arg name "$name" --argjson replay "${replay:-null}" --argjson status "$status" \
         --argjson strict "$strict" --argjson label "$label" '
+        def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
         $replay.summary as $result |
         (($label.expect_counts // {}) + ($label.opening_frames // {}) | keys) as $labeled |
-        ($result.rule_counts | if type == "object" then . else {} end) as $rules |
-        ($rules | with_entries(select(.key as $key | .value > 0 and ($labeled | index($key) == null)))) as $unlisted |
-        ([$rules[]] | add // 0) as $registered |
-        (if ($result.rule_counts | type) == "object" and ($result.alerts_opened | type) == "number"
-            and $result.alerts_opened >= $registered then $result.alerts_opened - $registered else null end) as $unregistered |
+        ($result.rule_counts | if type == "object" and all(.[]; count) then . else null end) as $rules |
+        (($rules // {}) | with_entries(select(.key as $key | .value > 0 and ($labeled | index($key) == null)))) as $unlisted |
+        ([$rules[]?] | add // 0) as $registered |
+        (if $rules != null and ($result.alerts_opened | count) and $result.alerts_opened >= $registered
+            then $result.alerts_opened - $registered else null end) as $unregistered |
         ($result.alert_expectations.verdict) as $evaluation |
         (if $label | has("expect_snapshots") then
             {expected:$label.expect_snapshots, observed:$result.alert_snapshots}
          else null end) as $snapshot_check |
+        ($snapshot_check == null or ($snapshot_check.observed | count)) as $snapshots_verified |
+        ($snapshots_verified and ($strict | not or $unregistered != null)) as $score_verified |
+        (if $snapshot_check != null and $snapshots_verified
+            then $snapshot_check.observed - $snapshot_check.expected else 0 end) as $snapshot_delta |
         ($label.opening_evidence // [] | map(
             . as $spec | ($replay.evidence[$spec.rule_id + ":" + ($spec.opening_frame | tostring)]) as $match
             | ($spec.frames | sort) as $expected
@@ -136,9 +142,8 @@ replay_case() {
         )) as $evidence_checks |
         (if $status > 1 or $replay.summaries != 1 then "inconclusive"
          elif $evaluation == "failed" then "failed"
-         elif $evaluation != "passed" or $status != 0 or ($strict and $unregistered == null) then "inconclusive"
-         elif $snapshot_check != null and ($snapshot_check.observed | type) != "number" then "inconclusive"
-         elif $snapshot_check != null and $snapshot_check.expected != $snapshot_check.observed then "failed"
+         elif $evaluation != "passed" or $status != 0 or ($score_verified | not) then "inconclusive"
+         elif $snapshot_delta != 0 then "failed"
          elif any($evidence_checks[]; .passed | not) then "failed"
          elif $strict and (($unlisted | length) > 0 or $unregistered > 0) then "failed"
          else "passed" end) as $verdict |
@@ -148,11 +153,15 @@ replay_case() {
         {name:$name, verdict:$verdict,
          unlisted_rule_counts:$unlisted, unregistered_alerts:$unregistered, summary:$result,
          snapshot_check:$snapshot_check,
-         score:(if $verdict == "inconclusive" then null else {
+         score:(if $verdict == "inconclusive" or ($score_verified | not) then null else {
              missed_opening_frames: ([$frames[].missing_frames | length] | add // 0),
              unexpected_openings: ([$frames[].unexpected_openings] | add // 0),
              count_deficit: ([$counts[] | [.expected - .observed, 0] | max] | add // 0),
              count_surplus: ([$counts[] | [.observed - .expected, 0] | max] | add // 0),
+             snapshot_deficit: ([-$snapshot_delta, 0] | max),
+             snapshot_surplus: ([$snapshot_delta, 0] | max),
+             strict_unlisted_openings: (if $strict then ([$unlisted[]] | add // 0) else 0 end),
+             strict_unregistered_openings: (if $strict then $unregistered else 0 end),
              evidence_opening_mismatches: ([$evidence_checks[] | select(.matching_openings != 1)] | length),
              evidence_frame_mismatches: ([$evidence_checks[] | select(.matching_openings == 1 and .observed_frames != .expected_frames)] | length),
              classification_mismatches: ([$evidence_checks[] | select(.matching_openings == 1 and .classification.passed == false)] | length)
@@ -204,8 +213,8 @@ while IFS= read -r label; do
         reference=$(replay_case "$baseline")
         after=$(capture_stamp) || after=
         candidate=$(jq -c --argjson reference "$reference" --arg before "$stamp" --arg after "$after" '
+            def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
             def packet_coverage:
-                def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
                 .summary | {packets,analyzed,skipped,truncated_frames} | if all(.[]; count)
                     and .packets > 0 and .analyzed + .skipped == .packets and .truncated_frames <= .packets
                 then . else null end;
@@ -214,10 +223,11 @@ while IFS= read -r label; do
             def valid_fingerprint:
                 type == "string" and test("\\A[0-9a-f]{64}\\z");
             def difference($candidate; $baseline):
-                if ($candidate | type) == "number" and ($baseline | type) == "number"
+                if ($candidate | count) and ($baseline | count)
                 then $candidate - $baseline else null end;
             def rule_differences($candidate; $baseline):
-                if ($candidate | type) == "object" and ($baseline | type) == "object" then
+                def valid_rules: type == "object" and all(.[]; count);
+                if ($candidate | valid_rules) and ($baseline | valid_rules) then
                     ($candidate + $baseline | keys) as $rules
                     | reduce $rules[] as $rule ({};
                         (($candidate[$rule] // 0) - ($baseline[$rule] // 0)) as $delta
@@ -268,6 +278,10 @@ report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" --arg
         unexpected_openings: ([$scores[].unexpected_openings] | add // 0),
         count_deficit: ([$scores[].count_deficit] | add // 0),
         count_surplus: ([$scores[].count_surplus] | add // 0),
+        snapshot_deficit: ([$scores[].snapshot_deficit] | add // 0),
+        snapshot_surplus: ([$scores[].snapshot_surplus] | add // 0),
+        strict_unlisted_openings: ([$scores[].strict_unlisted_openings] | add // 0),
+        strict_unregistered_openings: ([$scores[].strict_unregistered_openings] | add // 0),
         evidence_opening_mismatches: ([$scores[].evidence_opening_mismatches] | add // 0),
         evidence_frame_mismatches: ([$scores[].evidence_frame_mismatches] | add // 0),
         classification_mismatches: ([$scores[].classification_mismatches] | add // 0)

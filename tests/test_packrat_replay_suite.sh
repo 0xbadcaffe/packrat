@@ -53,6 +53,9 @@ packrat-analyze() {
         "$PACKRAT_TEST_DIRECTORY/unregistered.pcap") verdict=passed; opened=1 ;;
         *) return 2 ;;
     esac
+    if [[ ${PACKRAT_TEST_CANDIDATE:-} == invalid_rule_counts ]]; then
+        rules='{"scan.horizontal":"bad"}'
+    fi
     printf '%s\n' '{"type":"alert","payload":"not in the suite report"}'
     summary=$(jq -cn --arg verdict "$verdict" --argjson opened "$opened" --argjson rules "$rules" \
         --argjson snapshots "${PACKRAT_TEST_SNAPSHOTS:-null}" \
@@ -89,8 +92,9 @@ packrat-baseline() {
     esac
     printf '%s\n' '{"type":"summary","packets":20,"analyzed":20,"skipped":0,"truncated_frames":0,"alerts_opened":1,"rule_counts":{"scan.horizontal":1},
         "alert_expectations":{"verdict":"failed","checks":[{"rule_id":"scan.horizontal","expected":0,"observed":1}]}}' |
-        jq -c --arg mode "${PACKRAT_TEST_BASELINE:-}" '
-            if $mode == "different_coverage" then .analyzed -= 1 | .skipped += 1
+        jq -c --arg mode "${PACKRAT_TEST_BASELINE:-}" --argjson snapshots "${PACKRAT_TEST_BASELINE_SNAPSHOTS:-null}" '
+            .alert_snapshots = $snapshots
+            | if $mode == "different_coverage" then .analyzed -= 1 | .skipped += 1
             elif $mode == "unverified_coverage" then del(.truncated_frames)
             elif $mode == "invalid_coverage" then .analyzed = 19
             elif $mode == "same_frames" then .truncated_frames = 1 | .frame_coverage_sha256_v1 = ("a" * 64)
@@ -115,7 +119,8 @@ jq -e '
     .total == 4 and .passed == 1 and .failed == 1 and .inconclusive == 2
     and ([.cases[].verdict] == ["passed","failed","inconclusive","inconclusive"])
     and .score == {scored_cases:2,missed_opening_frames:1,unexpected_openings:1,count_deficit:0,count_surplus:0,
-        evidence_opening_mismatches:0,evidence_frame_mismatches:0,classification_mismatches:0}
+        evidence_opening_mismatches:0,evidence_frame_mismatches:0,classification_mismatches:0,
+        snapshot_deficit:0,snapshot_surplus:0,strict_unlisted_openings:0,strict_unregistered_openings:0}
     and .cases[2].score == null and .cases[3].score == null
     and .cases[3].summary == null and (tostring | contains("not in the suite report") | not)
 ' <<< "$result" >/dev/null
@@ -263,15 +268,24 @@ PACKRAT_REPLAY_BASELINE_ANALYZER=/missing/baseline bash "$suite" "$manifest" >/d
 
 jq -c '.cases = [(.cases[0] | .expect_snapshots = 0)]' <<< "$sample" >"$manifest"
 PACKRAT_TEST_SNAPSHOTS=0 bash "$suite" "$manifest" | jq -e '.passed == 1' >/dev/null
-for snapshots in 1 null; do
+for snapshots in 1 null -1 0.5; do
     status=0
     result=$(PACKRAT_TEST_SNAPSHOTS="$snapshots" bash "$suite" "$manifest") || status=$?
     [[ $status == 1 ]]
     jq -e --argjson observed "$snapshots" '
         .cases[0].snapshot_check == {expected:0,observed:$observed}
-        and (if $observed == null then .inconclusive == 1 else .failed == 1 end)
+        and (if $observed == 1 then .failed == 1 and .score.snapshot_surplus == 1 and .score.snapshot_deficit == 0
+             else .inconclusive == 1 and .cases[0].score == null end)
     ' <<< "$result" >/dev/null
 done
+
+jq -c '.cases[0].expect_snapshots = 2' "$manifest" >"$scratch/snapshots.json"
+status=0
+result=$(PACKRAT_TEST_SNAPSHOTS=1 PACKRAT_TEST_BASELINE_SNAPSHOTS=4 \
+    PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline bash "$suite" "$scratch/snapshots.json") || status=$?
+[[ $status == 1 ]]
+jq -e '.failed == 1 and .comparable == 1 and .score.snapshot_deficit == 1 and .score.snapshot_surplus == 0
+    and (.cases[0].delta | .snapshot_deficit == 1 and .snapshot_surplus == -2)' <<< "$result" >/dev/null
 
 jq -c '.cases = [{name:"counts",capture:"counts.pcap",
                    expect_counts:{"scan.horizontal":0,"scan.vertical":2}}]' <<< "$sample" >"$manifest"
@@ -280,7 +294,8 @@ result=$(bash "$suite" "$manifest") || status=$?
 [[ $status == 1 ]]
 jq -e '.score == {scored_cases:1,missed_opening_frames:0,unexpected_openings:0,
                   count_deficit:1,count_surplus:2,evidence_opening_mismatches:0,
-                  evidence_frame_mismatches:0,classification_mismatches:0}' <<< "$result" >/dev/null
+                  evidence_frame_mismatches:0,classification_mismatches:0,
+                  snapshot_deficit:0,snapshot_surplus:0,strict_unlisted_openings:0,strict_unregistered_openings:0}' <<< "$result" >/dev/null
 
 strict_sample=$(jq -c '.cases = [
     .cases[0],
@@ -291,12 +306,28 @@ bash "$suite" "$manifest" | jq -e '
     .strict == false and .passed == 3
     and .cases[1].unlisted_rule_counts == {"scan.vertical":1}
     and .cases[2].unregistered_alerts == 1
+    and .score.strict_unlisted_openings == 0 and .score.strict_unregistered_openings == 0
 ' >/dev/null
 jq -c '.strict = true' <<< "$strict_sample" >"$manifest"
 status=0
 result=$(bash "$suite" "$manifest") || status=$?
 [[ $status == 1 ]]
-jq -e '.strict == true and .passed == 1 and .failed == 2 and .inconclusive == 0' <<< "$result" >/dev/null
+jq -e '.strict == true and .passed == 1 and .failed == 2 and .inconclusive == 0
+    and .score.strict_unlisted_openings == 1 and .score.strict_unregistered_openings == 1
+    and .cases[1].score.strict_unlisted_openings == 1 and .cases[2].score.strict_unregistered_openings == 1' <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_CANDIDATE=invalid_rule_counts bash "$suite" "$manifest") || status=$?
+[[ $status == 1 ]]
+jq -e '.inconclusive == 3 and .score.scored_cases == 0
+    and all(.cases[]; .score == null and .unregistered_alerts == null)' <<< "$result" >/dev/null
+jq -c '.strict = true' "$shifted" >"$scratch/strict-baseline.json"
+status=0
+result=$(PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline bash "$suite" "$scratch/strict-baseline.json") || status=$?
+[[ $status == 1 ]]
+jq -e '.failed == 1 and .comparable == 1 and .cases[0].delta.strict_unlisted_openings == 1
+    and .cases[0].delta.strict_unregistered_openings == 0' <<< "$result" >/dev/null
+PACKRAT_TEST_CANDIDATE=invalid_rule_counts PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline \
+    bash "$suite" "$shifted" | jq -e '.passed == 1 and .comparable == 1 and .cases[0].delta.rule_openings == null' >/dev/null
 
 for invalid in '.version = 2' 'del(.cases[0].expect_counts)' '.strict = "true"' \
     '.cases[0].expect_snapshots = false' '.cases[0].expect_snapshots = -1' \

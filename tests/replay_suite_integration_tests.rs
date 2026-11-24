@@ -126,10 +126,13 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
     assert_eq!(report["score"], json!({
         "scored_cases": 2, "missed_opening_frames": 1, "unexpected_openings": 1,
         "count_deficit": 0, "count_surplus": 0, "evidence_opening_mismatches": 0,
-        "evidence_frame_mismatches": 0, "classification_mismatches": 0
+        "evidence_frame_mismatches": 0, "classification_mismatches": 0,
+        "snapshot_deficit": 0, "snapshot_surplus": 0,
+        "strict_unlisted_openings": 0, "strict_unregistered_openings": 0
     }));
     labels["cases"][1]["expect_counts"] = json!({"scan.horizontal": 0});
     labels["cases"][1]["opening_frames"] = json!({});
+    labels["cases"][0]["expect_snapshots"] = json!(1);
     std::fs::write(&manifest, serde_json::to_vec(&labels).unwrap()).unwrap();
     let unlisted = run();
     assert_eq!(unlisted.status.code(), Some(1));
@@ -143,6 +146,11 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
         json!({"http.unauthorized_burst": 1})
     );
     assert_eq!(report["cases"][1]["verdict"], "failed");
+    assert_eq!(report["failed"], 2);
+    assert_eq!(report["cases"][0]["score"]["snapshot_deficit"], 1);
+    assert_eq!(report["cases"][1]["score"]["strict_unlisted_openings"], 1);
+    assert_eq!(report["score"]["snapshot_deficit"], 1);
+    assert_eq!(report["score"]["strict_unlisted_openings"], 1);
 }
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
