@@ -112,6 +112,13 @@ fn archive_cli_creates_a_scoped_project_from_an_older_log_without_overwriting() 
     std::fs::write(&altered_path, wrong_scope.to_string()).unwrap();
     assert!(project_store::load(&altered_path).unwrap_err().to_string().contains("frame #1"));
 
+    let mut wrong_length = exported.clone();
+    wrong_length["pinned_packets"][0]["capture"]["wire_length"] = json!(1);
+    std::fs::write(&altered_path, wrong_length.to_string()).unwrap();
+    assert!(project_store::load(&altered_path).unwrap_err().to_string().contains("frame #1"));
+    assert!(project_store::save(&serde_json::from_value(wrong_length).unwrap(), &output).is_err());
+    assert_eq!(std::fs::read(&output).unwrap(), original);
+
     let mut legacy = exported;
     legacy["metadata"]["schema_version"] = json!(8);
     legacy["alert_archive_report"].as_object_mut().unwrap().remove("retained_sha256");

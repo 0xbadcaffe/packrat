@@ -22,6 +22,10 @@ fn selected_alert_archive_export_keeps_the_exact_historical_capture_separate() {
     let past_scope: std::sync::Arc<str> = "historical-capture".into();
     let mut historical = packet(1);
     historical.info = "historical packet".into();
+    historical.capture = Some(crate::net::packet::CaptureMetadata {
+        timestamp: None, captured_length: 4, wire_length: 60, link_type: 1,
+        section_id: 0, interface_id: 0, interface_name: None, comments: Vec::new(),
+    });
     app.packet_archive.as_ref().unwrap().record_scoped(&past_scope, &historical).unwrap();
     let mut live = packet(1);
     live.info = "live packet".into();
@@ -66,18 +70,29 @@ fn selected_alert_archive_export_keeps_the_exact_historical_capture_separate() {
     let report = project.alert_archive_report.clone().unwrap();
     assert_eq!(report.capture_id, past_scope.as_ref());
     assert_eq!(report.session_id, None);
+    assert_eq!(report.frames.get(&1), Some(&ArchivedFrameOutcome::Truncated));
     assert_eq!(report.frames.get(&2), Some(&ArchivedFrameOutcome::Missing));
     let mut review = App::new_for_test();
     review.apply_project_state(project).unwrap();
     review.worklist.active = Some(0);
     let details = review.active_investigation_context().unwrap().details;
     assert!(details.iter().any(|(label, value)| label == "Missing at export" && value == "#2"));
+    assert!(details.iter().any(|(label, value)| label == "Truncated at export" && value == "#1"));
+    assert!(!details.iter().any(|(label, _)| label == "Not pinned now"));
     let mut saved = review.snapshot_project("reviewed", ProjectSaveMode::Lightweight).unwrap();
     assert_eq!(saved.alert_archive_report.as_ref(), Some(&report));
     saved.alert_archive_report.as_mut().unwrap().frames.insert(2, ArchivedFrameOutcome::OmittedAtLimit);
     review.apply_project_state(saved).unwrap();
     assert!(review.active_investigation_context().unwrap().details.iter().any(|(label, value)|
         label == "Omitted at export (limit)" && value == "#2"));
+    review.worklist.active = Some(1);
+    assert_eq!(review.worklist.remove_active(), Some(InvestigationItem::Packet(1)));
+    let after_unpin = review.snapshot_project("reviewed", ProjectSaveMode::Lightweight).unwrap();
+    assert!(after_unpin.pinned_packets.is_empty());
+    review.apply_project_state(after_unpin).unwrap();
+    let details = review.active_investigation_context().unwrap().details;
+    assert!(details.iter().any(|(label, value)| label == "Not pinned now" && value == "#1"));
+    assert!(details.iter().any(|(label, value)| label == "Truncated at export" && value == "#1"));
     review.core.edit().alert_center.items[0].packet_refs.push(3);
     assert!(!review.active_investigation_context().unwrap().details.iter().any(|(label, _)| label.contains("at export")));
 

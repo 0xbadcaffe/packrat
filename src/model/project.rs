@@ -53,8 +53,21 @@ pub enum ArchivedFrameOutcome {
 }
 
 impl ArchivedFrameOutcome {
-    fn included(self) -> bool {
+    pub(crate) fn included(self) -> bool {
         matches!(self, Self::Complete | Self::Truncated | Self::LengthUnknown)
+    }
+}
+
+impl From<crate::storage::alert_evidence::FrameStatus> for ArchivedFrameOutcome {
+    fn from(status: crate::storage::alert_evidence::FrameStatus) -> Self {
+        use crate::storage::alert_evidence::FrameStatus;
+        match status {
+            FrameStatus::Complete => Self::Complete,
+            FrameStatus::Truncated => Self::Truncated,
+            FrameStatus::LengthUnknown => Self::LengthUnknown,
+            FrameStatus::Missing => Self::Missing,
+            FrameStatus::Unreadable => Self::Unreadable,
+        }
     }
 }
 
@@ -192,8 +205,10 @@ impl ProjectState {
         let mut verified = std::collections::HashSet::new();
         for packet in &self.pinned_packets {
             let Some(expected) = digests.get(&packet.no) else { continue };
+            let outcome = ArchivedFrameOutcome::from(crate::storage::alert_evidence::frame_status(packet));
             if self.pinned_packet_scopes.get(&packet.no) != Some(&report.capture_id)
                 || !verified.insert(packet.no) || packet_bytes_sha256(packet) != *expected
+                || report.frames.get(&packet.no) != Some(&outcome)
             {
                 return Err(format!("Saved archive evidence does not match its export record for frame #{}", packet.no));
             }

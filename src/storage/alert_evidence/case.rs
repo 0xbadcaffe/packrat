@@ -97,13 +97,11 @@ pub(crate) fn save_alert_archive_project(
         if frame == trigger {
             summary.trigger_frame = Some(CaseTrigger { frame_number: frame, status, included });
         }
-        let outcome = match (status, included) {
-            (FrameStatus::Missing, _) => ArchivedFrameOutcome::Missing,
-            (FrameStatus::Unreadable, _) => ArchivedFrameOutcome::Unreadable,
-            (_, false) => ArchivedFrameOutcome::OmittedAtLimit,
-            (FrameStatus::Complete, true) => ArchivedFrameOutcome::Complete,
-            (FrameStatus::Truncated, true) => ArchivedFrameOutcome::Truncated,
-            (FrameStatus::LengthUnknown, true) => ArchivedFrameOutcome::LengthUnknown,
+        let observed = ArchivedFrameOutcome::from(status);
+        let outcome = if !included && observed.included() {
+            ArchivedFrameOutcome::OmittedAtLimit
+        } else {
+            observed
         };
         report.frames.insert(frame, outcome);
     }

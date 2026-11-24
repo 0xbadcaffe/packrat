@@ -188,13 +188,21 @@ impl App {
             (ArchivedFrameOutcome::Missing, "Missing at export"),
             (ArchivedFrameOutcome::Unreadable, "Unreadable at export"),
             (ArchivedFrameOutcome::OmittedAtLimit, "Omitted at export (limit)"),
+            (ArchivedFrameOutcome::Truncated, "Truncated at export"),
+            (ArchivedFrameOutcome::LengthUnknown, "Length unknown at export"),
         ].into_iter().filter_map(|(kind, label)| {
             let numbers: Vec<_> = report.frames.iter().filter(|(_, status)| **status == kind)
                 .map(|(frame, _)| format!("#{frame}")).collect();
             (!numbers.is_empty()).then(|| (label.into(), numbers.join(", ")))
         }).collect();
-        if details.is_empty() {
+        if report.frames.values().all(|outcome| outcome.included()) {
             details.push(("Archive export".into(), "All cited frames included at export".into()));
+        }
+        let unpinned: Vec<_> = report.frames.iter().filter(|(frame, outcome)| {
+            outcome.included() && self.saved_alert_pin(alert, **frame).is_none()
+        }).map(|(frame, _)| format!("#{frame}")).collect();
+        if !unpinned.is_empty() {
+            details.push(("Not pinned now".into(), unpinned.join(", ")));
         }
         details
     }
