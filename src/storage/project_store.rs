@@ -1,6 +1,5 @@
 //! Project persistence — save, load, and recent-project tracking.
 
-use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::io::{BufWriter, Read, Write};
 use anyhow::{Context, Result};
@@ -59,28 +58,12 @@ pub fn create(state: &ProjectState, path: &Path) -> Result<()> {
     atomic_json_write(state, path, MAX_PROJECT_BYTES, false, state.pinned_packets.is_empty())
 }
 
-fn open_project(path: &Path) -> Result<(File, u64)> {
-    anyhow::ensure!(path.metadata()?.is_file(), "Project is not a regular file");
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // The path could become a named pipe between the metadata check and open.
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    let metadata = file.metadata()?;
-    anyhow::ensure!(metadata.is_file(), "Project is not a regular file");
-    Ok((file, metadata.len()))
-}
-
 /// Load a project from `path`.  Performs lightweight schema migration.
 pub fn load(path: impl AsRef<Path>) -> Result<ProjectState> {
     let path = path.as_ref();
-    let (file, size) = open_project(path)
+    let (file, metadata) = super::regular_file::open(path, "Project is not a regular file")
         .with_context(|| format!("cannot open project: {}", path.display()))?;
-    anyhow::ensure!(size <= MAX_PROJECT_BYTES, "Project exceeds size limit");
+    anyhow::ensure!(metadata.len() <= MAX_PROJECT_BYTES, "Project exceeds size limit");
     let mut data = String::new();
     file.take(MAX_PROJECT_BYTES + 1).read_to_string(&mut data)?;
     anyhow::ensure!(data.len() as u64 <= MAX_PROJECT_BYTES, "Project exceeds size limit");

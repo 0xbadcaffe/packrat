@@ -110,21 +110,33 @@ pub fn correlate(incident: &Incident, events: &[EndpointEvidence]) -> ImpactRepo
 
 pub fn read_endpoint_evidence(path: &std::path::Path) -> Result<Vec<EndpointEvidence>, String> {
     use std::io::{BufRead, BufReader, Read};
-    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let (file, metadata) = crate::storage::regular_file::open(path, "Endpoint evidence is not a regular file")
+        .map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_ENDPOINT_EVIDENCE_BYTES as u64 {
+        return Err("Endpoint evidence exceeds import limits".into());
+    }
     let mut events = Vec::new();
-    let reader = BufReader::new(file.take(MAX_ENDPOINT_EVIDENCE_BYTES as u64 + 1));
+    let mut reader = BufReader::new(file.take(MAX_ENDPOINT_EVIDENCE_BYTES as u64 + 1));
     let mut total = 0usize;
-    for (index, line) in reader.lines().enumerate() {
-        let line = line.map_err(|error| error.to_string())?;
-        total += line.len() + 1;
-        if total > MAX_ENDPOINT_EVIDENCE_BYTES || events.len() >= MAX_ENDPOINT_EVIDENCE_EVENTS {
+    let mut line = String::new();
+    let mut line_number = 0;
+    loop {
+        line.clear();
+        let read = reader.read_line(&mut line).map_err(|error| error.to_string())?;
+        if read == 0 { break; }
+        line_number += 1;
+        total += read;
+        if total > MAX_ENDPOINT_EVIDENCE_BYTES {
             return Err("Endpoint evidence exceeds import limits".into());
         }
         if line.trim().is_empty() {
             continue;
         }
+        if events.len() >= MAX_ENDPOINT_EVIDENCE_EVENTS {
+            return Err("Endpoint evidence exceeds import limits".into());
+        }
         let event = serde_json::from_str(&line)
-            .map_err(|error| format!("Endpoint evidence line {}: {error}", index + 1))?;
+            .map_err(|error| format!("Endpoint evidence line {line_number}: {error}"))?;
         events.push(event);
     }
     Ok(events)
