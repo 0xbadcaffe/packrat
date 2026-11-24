@@ -156,7 +156,9 @@ report() {
                      timed_out:"check_timed_out",deferred:"check_deferred"}[.] // "not_checked") end) as $availability
             | . + {packet_evidence_status:$availability,evidence_availability:$counts,
                  next_evidence_step:(if $counts.unreadable then "check_archive_integrity"
-                   else $availability | evidence_step end)};
+                   else $availability | evidence_step end)}
+            | if .socket_context != null then .socket_evidence = (if .earlier_socket_context != null then "latest_and_earlier" else "latest" end)
+              elif .earlier_socket_context != null then .socket_evidence = "earlier" else . end;
         .[1] as $alerts
         | (.[2] // []) as $evidence
         | (if $alerts == null then null else $alerts[:$limit] |
@@ -170,6 +172,7 @@ report() {
             | with_evidence($evidence)
             | {alert_id,title,rule_id,revision,severity,disposition,hit_count,confidence,verify,packet_evidence_status,evidence_frame_count,evidence_frame_set_sha256,
                archive_rule:$opt_in,in_recent_alerts:$recent,evidence_availability,next_evidence_step}
+              + (if has("socket_evidence") then {socket_evidence} else {} end)
           ] end) as $review
         | .[0] + {record_type:"capture_triage", status:$status, alert_limit:$limit, previous_logs:$previous,
              live_packet_archive:(.[0] | live_archive),

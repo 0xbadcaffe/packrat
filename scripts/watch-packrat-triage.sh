@@ -253,6 +253,7 @@ sanitize() {
             {alert_id:(.alert_id | counter), severity:(.severity | severity), rule_id:(.rule_id | token),
              disposition:(.disposition | disposition), hit_count:(.hit_count | counter),
              packet_evidence_status:(.packet_evidence_status | token), revision} + evidence
+             + (if .socket_evidence | IN("latest","earlier","latest_and_earlier") then {socket_evidence} else {} end)
             | if .rule_id != null and (.revision | type == "number" and . >= 1 and . <= 65535 and floor == .) then . else del(.revision) end;
         def recent_sample:
             if type != "array" then {recent_alerts:null,invalid_alert_rows:null,duplicate_alert_ids:null}
@@ -405,7 +406,8 @@ while :; do
             def alert_ids: [((.review_queue // []) + (.recent_alerts // []))[] | .alert_id] | unique;
             def queue_index: .review_queue | INDEX(.alert_id | tostring);
             def queue_comparable($prior): (.review_queue | type) == "array" and ($prior.review_queue | type) == "array";
-            def compact_alert: {alert_id,hit_count,severity,disposition,packet_evidence_status,revision,evidence_frame_count,evidence_frame_set_sha256} + packet_evidence_counts;
+            def compact_alert: {alert_id,hit_count,severity,disposition,packet_evidence_status,revision,evidence_frame_count,evidence_frame_set_sha256}
+                + packet_evidence_counts + (if .socket_evidence | IN("latest","earlier","latest_and_earlier") then {socket_evidence} else {} end);
             def queue_entries($prior):
                 if queue_comparable($prior) | not then []
                 else ($prior | queue_index) as $queued
@@ -461,7 +463,7 @@ while :; do
                             ($now | alert_index | [.[]] | sort_by(.alert_id))[] as $item
                             | $before[$item.alert_id | tostring] as $old | select($old != null)
                             | {alert_id:$item.alert_id, fields:[
-                                ("hit_count", "severity", "disposition", "packet_evidence_status", "revision", "evidence_frame_set_sha256","evidence_availability") as $field
+                                ("hit_count", "severity", "disposition", "packet_evidence_status", "revision", "evidence_frame_set_sha256","evidence_availability","socket_evidence") as $field
                                 | select($old[$field] != $item[$field] and
                                     (($field | IN("revision","evidence_frame_set_sha256","evidence_availability") | not) or ($old[$field] != null and $item[$field] != null)))
                                 | if $field == "evidence_frame_set_sha256" then "evidence" else $field end]} | select(.fields | length > 0)

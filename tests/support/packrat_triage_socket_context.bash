@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 (
     export PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE="$scratch/socket context.jsonl"
+    export PACKRAT_TEST_AUTO_QUEUE=socket
     context=$PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE
     result=$(bash "$triage" "$health" "$PACKRAT_TEST_LOG")
     jq -e '.socket_context_status == "not_recorded" and (.alerts[0] | has("socket_context") | not)' <<< "$result" >/dev/null
@@ -16,7 +17,9 @@
     jq -e '.socket_context_status=="available" and (.alerts[0] | has("socket_context") | not)
         and .alerts[0].earlier_socket_context.process=="old process"
         and .alerts[0].earlier_socket_context.alert_last_seen==1699999999.5
-        and (.alerts[0].earlier_socket_context | has("private") | not)' <<< "$result" >/dev/null
+        and (.alerts[0].earlier_socket_context | has("private") | not)
+        and .alerts[0].socket_evidence=="earlier" and .review_queue[0].socket_evidence=="earlier"
+        and (.review_queue[0] | has("earlier_socket_context") | not)' <<< "$result" >/dev/null
     jq -c '.,
         (.capture_id="00000000000000000000000000000002" | .socket_context.process="wrong capture"),
         (.session_id="1700000000-567" | .socket_context.process="wrong session"),
@@ -29,10 +32,12 @@
         and .alerts[0].socket_context.alert_last_seen==1700000000 and .alerts[0].socket_context.tcp_state=="SYN-SENT"
         and (.alerts[0].socket_context | has("private") | not)' <<<"$result" >/dev/null
     result=$(PACKRAT_TEST_FIRST_SEEN=1699999999.5 bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
-    jq -e '.alerts[0].socket_context.process=="client" and .alerts[0].earlier_socket_context.process=="old process"' <<< "$result" >/dev/null
+    jq -e '.alerts[0].socket_context.process=="client" and .alerts[0].earlier_socket_context.process=="old process"
+        and .alerts[0].socket_evidence=="latest_and_earlier" and .review_queue[0].socket_evidence=="latest_and_earlier"' <<< "$result" >/dev/null
     jq -c '.alert_last_seen=1699999999.5 | .socket_context.process="conflicting owner"' <<<"$valid" >>"$context"
     result=$(PACKRAT_TEST_FIRST_SEEN=1699999999.5 bash "$triage" "$health" "$PACKRAT_TEST_LOG")
-    jq -e '.alerts[0].socket_context.process=="client" and (.alerts[0] | has("earlier_socket_context") | not)' <<< "$result" >/dev/null
+    jq -e '.alerts[0].socket_context.process=="client" and (.alerts[0] | has("earlier_socket_context") | not)
+        and .alerts[0].socket_evidence=="latest" and .review_queue[0].socket_evidence=="latest"' <<< "$result" >/dev/null
     result=$(bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
     jq -e '.mode=="saved" and .status=="saved" and .health==null
         and .scope=={session_id:"1700000000-432",capture_id:"00000000000000000000000000000001"}

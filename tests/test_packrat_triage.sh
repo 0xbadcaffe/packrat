@@ -104,7 +104,8 @@ mock_archive() {
                   ($valid + {alert_id:44,severity:"HIGH",disposition:"New"}),
                   ($valid + {severity:"CRITICAL",disposition:"Confirmed",rule_id:"test.rule",revision:10}),
                   ($valid + {alert_id:41,severity:"CRITICAL",disposition:"New"})
-              ] elif $queue == "many" then [range(60;53;-1) | $valid + {alert_id:.,severity:"HIGH",disposition:"New"}]
+              ] elif $queue == "socket" then [$valid + {severity:"HIGH",disposition:"New"}]
+                elif $queue == "many" then [range(60;53;-1) | $valid + {alert_id:.,severity:"HIGH",disposition:"New"}]
                 elif $queue == "configured" then [
                   ($valid + {alert_id:43,severity:"MEDIUM",disposition:"New",rule_id:"traffic.periodic_fixed_size"}),
                   ($valid + {severity:"MEDIUM",disposition:"Reviewing",rule_id:"tcp.payload_after_observed_reset"})

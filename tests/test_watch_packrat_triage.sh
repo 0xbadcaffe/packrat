@@ -232,10 +232,12 @@ mv -- "$report.next" "$report"; await_packets 38
 jq '.health.packets_total=39 | .health.archive_pause_reason="disk_reserve" | .live_packet_archive="paused"' "$report" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 39
-jq '.health.packets_total=40 | .alerts[0].disposition="Reviewing" | .alerts[0].packet_evidence_status="complete"' "$report" >"$report.next"
+jq '.health.packets_total=40 | .alerts[0] += {disposition:"Reviewing",packet_evidence_status:"complete",
+    socket_evidence:"latest",socket_context:{process:"private process",local:"private endpoint",pid:12345}}
+    | .review_queue[0].socket_evidence = "private invalid marker"' "$report" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 40
-jq '.health.packets_total=41 | .alerts[0].alert_id=2' "$report" >"$report.next"
+jq '.health.packets_total=41 | .alerts[0].alert_id=2 | del(.alerts[0].socket_evidence,.alerts[0].socket_context)' "$report" >"$report.next"
 mv -- "$report.next" "$report"
 await_packets 41
 jq '.health.packets_total=42 | .alerts[0].alert_id=9' "$report" >"$report.next"
@@ -264,7 +266,10 @@ jq -se 'map(.packets)==[30,32,34,35,36,37,38,39,40,41,42,43] and .[1].recent_ale
     and .[2].alert_changes.updated==[{alert_id:9,fields:["hit_count","revision"]}]
     and .[6].recent_alerts[0].evidence_frame_count==.[5].recent_alerts[0].evidence_frame_count
     and .[6].alert_changes.updated==[{alert_id:9,fields:["evidence"]}] and .[6].alert_changes.newly_observed==[]
-    and .[8].alert_changes.updated==[{alert_id:9,fields:["disposition","packet_evidence_status"]}]
+    and .[8].alert_changes.updated==[{alert_id:9,fields:["disposition","packet_evidence_status","socket_evidence"]}]
+    and .[8].recent_alerts[0].socket_evidence=="latest"
+    and (.[8].review_queue[0] | has("socket_evidence") | not)
+    and (.[8] | tostring | contains("private") | not)
     and .[9].highest_observed_alert_id==9 and .[10].alert_changes.newly_observed==[]
     and .[11].highest_observed_alert_id==12 and .[11].alert_changes==null' "$scratch/events" >/dev/null
 cmp -s "$scratch/events" "$state.events.jsonl"
