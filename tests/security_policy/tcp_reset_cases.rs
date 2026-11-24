@@ -141,7 +141,7 @@ fn detects_tcp_payload_continuing_after_reset() {
     assert_eq!(alert.severity, "MEDIUM");
     let rule = alert.provenance.as_ref().unwrap();
     assert_eq!(rule.rule_id, "tcp.payload_after_observed_reset");
-    assert_eq!(rule.revision, 8);
+    assert_eq!(rule.revision, 9);
     assert_eq!(rule.confidence.to_string(), "Heuristic");
     assert!(alert.detail.contains("payload seq 101 followed reset frame #2 (same direction, seq 100)"));
     assert!(alert.detail.contains("reset acceptance and on-wire ordering unverified"));
@@ -197,6 +197,24 @@ fn tcp_reset_correlation_ignores_other_vlans_earlier_payload_and_new_connections
         let findings = security.inspect(&packet);
         assert!(findings.ids.iter().all(|finding| finding.alert.signature != TITLE));
     }
+}
+
+#[test]
+fn observed_reopen_with_reused_sequence_and_syn_payload_does_not_inherit_the_reset() {
+    let mut engine = SecurityEngine::default();
+    for frame in [
+        ipv4_tcp_packet(1, 100, 0x02, b""),
+        ipv4_tcp_packet(2, 110, 0x04, b""),
+        ipv4_tcp_packet(3, 100, 0x02, b"early data"),
+        ipv4_tcp_packet(4, 111, 0x18, b"new connection data"),
+    ] {
+        engine.update(&frame);
+        assert!(engine.ids_alerts.iter().all(|alert| alert.signature != TITLE));
+    }
+    let mut engine = SecurityEngine::default();
+    engine.update(&ipv4_tcp_packet(1, 110, 0x04, b""));
+    engine.update(&ipv4_tcp_packet(2, 200, 0x12, b"opening response data"));
+    assert!(engine.ids_alerts.iter().all(|alert| alert.signature != TITLE));
 }
 
 #[test]

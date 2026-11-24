@@ -25,6 +25,8 @@ mod dhcp;
 mod periodic_episodes;
 #[path = "replay_suite/auth_retries.rs"]
 mod auth_retries;
+#[path = "replay_suite/tcp_reset.rs"]
+mod tcp_reset;
 use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
 use serde_json::{Value, json};

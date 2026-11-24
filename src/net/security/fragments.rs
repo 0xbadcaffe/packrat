@@ -220,9 +220,10 @@ impl SecurityEngine {
         let direction = usize::from(!segment.from_a);
         if in_time_order && segment.flags & (SYN | ACK | FIN | RST) == SYN {
             let opening = state.opening_sequences[direction];
-            if opening != Some(segment.sequence) {
+            let follows_reset = state.reset.is_some();
+            if follows_reset || opening != Some(segment.sequence) {
                 // The other peer can send an opening SYN before either side acknowledges.
-                if state.started_at.is_none() || state.past_opening || opening.is_some() {
+                if follows_reset || state.started_at.is_none() || state.past_opening || opening.is_some() {
                     *state = TcpIntegrityState {
                         last_seen: pkt.timestamp,
                         last_seen_frame: pkt.no,
@@ -251,7 +252,7 @@ impl SecurityEngine {
                 tcp_payload_observation(&slices.slices, payload_sequence, segment.payload)
             };
             let already_seen = matches!(payload_observation, Repeat);
-            if segment.flags & RST == 0
+            if segment.flags & (RST | SYN) == 0
                 && let Some(reset) = state.reset
                 && !state.post_reset_alerted[usize::from(reset.from_a != segment.from_a)]
                 && reset.packet_no != pkt.no
