@@ -10,6 +10,7 @@ use packrat_tui::net::packet::CaptureMetadata;
 use packrat_tui::pcap_replay::stream_pcap;
 use serde::Serialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 #[path = "packrat-analyze/alerts.rs"]
 mod alerts;
@@ -38,10 +39,15 @@ fn analyze(
     let mut analyzed = 0u64;
     let mut skipped = 0u64;
     let mut truncated_frames = 0u64;
+    let mut coverage = Sha256::new();
     let packets = stream_pcap(path, |packet| {
-        truncated_frames += u64::from(packet.capture.as_ref().is_some_and(CaptureMetadata::truncated));
+        let truncated = packet.capture.as_ref().is_some_and(CaptureMetadata::truncated);
+        truncated_frames += u64::from(truncated);
         let outcome = core.analyze_with_history(&packet, history.iter().cloned());
-        if outcome.disposition != PacketDisposition::Analyzed {
+        let accepted = outcome.disposition == PacketDisposition::Analyzed;
+        // v1 hashes the flags in capture order: bit 0 analyzed, bit 1 truncated.
+        coverage.update([u8::from(accepted) | (u8::from(truncated) << 1)]);
+        if !accepted {
             skipped += 1;
             event(
                 output,
@@ -71,6 +77,7 @@ fn analyze(
         history.push_back(packet);
         Ok(())
     })?;
+    let frame_coverage_sha256_v1 = format!("{:x}", coverage.finalize());
     let evaluation = replay.evaluate(analyzed > 0 && skipped == 0 && (truncated_frames == 0 || allow_truncated));
     if alerts_only {
         event(
@@ -78,6 +85,7 @@ fn analyze(
             &json!({
                 "type": "summary", "packets": packets, "analyzed": analyzed, "skipped": skipped,
                 "truncated_frames": truncated_frames, "allow_truncated": allow_truncated,
+                "frame_coverage_sha256_v1": frame_coverage_sha256_v1,
                 "alert_scope": "grouped_alerts", "alerts_opened": replay.opened,
                 "alert_snapshots": replay.snapshots, "rule_counts": replay.rule_counts,
                 "alert_expectations": evaluation, "containment": "disabled"
@@ -143,6 +151,7 @@ fn analyze(
         output,
         &json!({"type": "summary", "packets": packets,
         "analyzed": analyzed, "skipped": skipped, "truncated_frames": truncated_frames,
+        "frame_coverage_sha256_v1": frame_coverage_sha256_v1,
         "http_exchanges": exchanges + http2_exchanges + http3_exchanges,
         "http1_exchanges": exchanges, "http2_exchanges": http2_exchanges,
         "http3_exchanges": http3_exchanges, "quic_decode_errors": core.quic_scope.decode_errors,

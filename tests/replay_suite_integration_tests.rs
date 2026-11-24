@@ -25,6 +25,8 @@ mod dhcp;
 mod periodic_episodes;
 #[path = "replay_suite/auth_retries.rs"]
 mod auth_retries;
+#[path = "replay_suite/coverage.rs"]
+mod coverage;
 #[path = "replay_suite/tcp_reset.rs"]
 mod tcp_reset;
 use packrat_tui::export::pcapng::PcapNgWriter;

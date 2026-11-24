@@ -60,6 +60,9 @@ packrat-analyze() {
         {type:"summary",packets:20,analyzed:20,skipped:0,truncated_frames:0,alerts_opened:$opened,alert_snapshots:$snapshots,rule_counts:$rules,
             alert_expectations:{verdict:$verdict,checks:$checks,frame_checks:$frames}}
     ')
+    if [[ ${PACKRAT_TEST_CANDIDATE:-} == partial_coverage ]]; then
+        summary=$(jq -c '.truncated_frames = 1 | .frame_coverage_sha256_v1 = ("a" * 64)' <<< "$summary")
+    fi
     printf '%s\n' "$summary"
     case ${PACKRAT_TEST_CANDIDATE:-} in
         duplicate_summary) printf '%s\n' "$summary" ;;
@@ -90,6 +93,10 @@ packrat-baseline() {
             if $mode == "different_coverage" then .analyzed -= 1 | .skipped += 1
             elif $mode == "unverified_coverage" then del(.truncated_frames)
             elif $mode == "invalid_coverage" then .analyzed = 19
+            elif $mode == "same_frames" then .truncated_frames = 1 | .frame_coverage_sha256_v1 = ("a" * 64)
+            elif $mode == "different_frames" then .truncated_frames = 1 | .frame_coverage_sha256_v1 = ("b" * 64)
+            elif $mode == "legacy_partial" then .truncated_frames = 1
+            elif $mode == "malformed_frames" then .truncated_frames = 1 | .frame_coverage_sha256_v1 = (("a" * 64) + "\n")
             else . end'
     return 1
 }
@@ -179,6 +186,20 @@ for mode in unstable unavailable different_coverage unverified_coverage invalid_
               elif $mode == "unavailable" then .comparison == "inconclusive" and .verdict == "passed"
               elif $mode == "different_coverage" then .comparison == "replay_coverage_mismatch" and .verdict == "passed"
               else .comparison == "replay_coverage_unverified" and .verdict == "passed" end)
+    ' <<< "$result" >/dev/null
+done
+
+for mode in same_frames different_frames legacy_partial malformed_frames; do
+    status=0
+    result=$(PACKRAT_TEST_CANDIDATE=partial_coverage PACKRAT_TEST_BASELINE="$mode" \
+        PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline bash "$suite" "$manifest") || status=$?
+    if [[ $mode == same_frames ]]; then [[ $status == 0 ]]; else [[ $status == 1 ]]; fi
+    jq -e --arg mode "$mode" '
+        .passed == 1 and (.cases[0] |
+            .summary.truncated_frames == .baseline.summary.truncated_frames
+            and if $mode == "same_frames" then .comparison == "comparable" and .delta.alerts_opened == -1
+                elif $mode == "different_frames" then .comparison == "replay_coverage_mismatch" and .delta == null
+                else .comparison == "replay_coverage_unverified" and .delta == null end)
     ' <<< "$result" >/dev/null
 done
 

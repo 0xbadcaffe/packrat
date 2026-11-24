@@ -14,7 +14,8 @@ usage() {
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
         'Reports score openings, cited evidence, and classification separately. Inconclusive cases are not scored.' \
         'A capture that changes during replay is marked inconclusive, even without a baseline.' \
-        'Set PACKRAT_REPLAY_BASELINE_ANALYZER to compare analyzers; deltas require matching packet coverage.'
+        'Set PACKRAT_REPLAY_BASELINE_ANALYZER to compare analyzers; deltas require matching packet coverage.' \
+        'Partial coverage requires frame fingerprints from both analyzers.'
 }
 
 if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
@@ -95,7 +96,7 @@ replay_case() {
                 reduce inputs as $row ({summary:null, summaries:0, evidence:{}};
                 if $row.type == "summary" then
                     .summaries += 1 | .summary = ($row | {packets,analyzed,skipped,truncated_frames,allow_truncated,
-                        alerts_opened,alert_snapshots,rule_counts,alert_expectations})
+                        frame_coverage_sha256_v1,alerts_opened,alert_snapshots,rule_counts,alert_expectations})
                 elif ($keys | length) > 0 and $row.type == "alert" and $row.schema_version == 1
                     and (if $row | has("opening") then $row.opening == true else $row.alert.hit_count == 1 end)
                     and ($row.alert.provenance.rule_id | type == "string")
@@ -208,6 +209,10 @@ while IFS= read -r label; do
                 .summary | {packets,analyzed,skipped,truncated_frames} | if all(.[]; count)
                     and .packets > 0 and .analyzed + .skipped == .packets and .truncated_frames <= .packets
                 then . else null end;
+            def frame_fingerprint:
+                .summary.frame_coverage_sha256_v1;
+            def valid_fingerprint:
+                type == "string" and test("\\A[0-9a-f]{64}\\z");
             def difference($candidate; $baseline):
                 if ($candidate | type) == "number" and ($baseline | type) == "number"
                 then $candidate - $baseline else null end;
@@ -219,6 +224,7 @@ while IFS= read -r label; do
                         | if $delta == 0 then . else .[$rule] = $delta end)
                 else null end;
             (packet_coverage) as $candidate_coverage | ($reference | packet_coverage) as $baseline_coverage
+            | frame_fingerprint as $candidate_frames | ($reference | frame_fingerprint) as $baseline_frames
             | .baseline = $reference
             | if $before == "" or $before != $after then
                 .verdict = "inconclusive" | .score = null | .comparison = "capture_unstable" | .capture_check = "unstable"
@@ -228,6 +234,13 @@ while IFS= read -r label; do
                 .comparison = "replay_coverage_unverified"
               elif $candidate_coverage != $baseline_coverage then
                 .comparison = "replay_coverage_mismatch"
+              elif ($candidate_frames | valid_fingerprint) and ($baseline_frames | valid_fingerprint) then
+                if $candidate_frames != $baseline_frames then .comparison = "replay_coverage_mismatch" else . end
+              elif $candidate_coverage.skipped != 0 or $candidate_coverage.truncated_frames != 0
+                   or any([$candidate_frames, $baseline_frames][]; . != null and (valid_fingerprint | not)) then
+                .comparison = "replay_coverage_unverified"
+              else . end
+            | if .comparison != null then .
               else
                 .comparison = "comparable"
                 | .delta = ({
