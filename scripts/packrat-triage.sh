@@ -209,7 +209,8 @@ report_saved_index() {
                 | sort_by([(.severity == "CRITICAL"), ((.last_seen | seen) // 0), .session_id, .alert_id]) | reverse | .[:5]
                 | map({session_id,alert_id,severity,disposition,last_seen:((.last_seen | seen) // null),
                        legacy_rule_hint:(.legacy_rule_hint | strings | select(test("\\A[a-z0-9_.-]{1,128}\\z"))) // null,
-                       next_evidence_step:"locate_original_capture_or_host_logs"})),
+                       evidence_frame_count:(.evidence_frame_count | numbers | select(. >= 0 and . <= 131 and floor == .)) // null,
+                       next_evidence_step:(if .evidence_frame_count == 0 then "corroborate_with_host_or_service_logs" else "locate_original_capture_or_host_logs" end)})),
             sample_scan_complete:($integrity.invalid_records == 0 and $integrity.oversized_records == 0
                 and $integrity.stopped_at_limit == false and $integrity.stopped_at_scan_budget != true),
             review_rule:(if $rule == "" then null else $rule end), review_offset:$offset, review_eligible_in_sample:($review | length),

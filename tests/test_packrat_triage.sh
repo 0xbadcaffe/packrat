@@ -87,7 +87,7 @@ mock_archive() {
             | [$base, ($base + {alert_id:2,first_seen:12,last_seen:22,severity:"HIGH",disposition:"Benign"}),
                ($base + {alert_id:3,first_seen:13,last_seen:19,severity:"CRITICAL",disposition:"Reviewing"}),
                ($base + {session_id:"1700000000-123",last_seen:30,severity:"CRITICAL",disposition:"Confirmed"}),
-               ($base + {capture_id:null,rule_id:null,revision:null,legacy_rule_hint:"dns.competing_responders"}),
+               ($base + {capture_id:null,rule_id:null,revision:null,legacy_rule_hint:"dns.competing_responders",evidence_frame_count:1}),
                ($base + {capture_id:"legacy",disposition:"Benign"})] + ($extra | map($base + .)) |
             if $scoped == "" or $mismatch == "1" then . else map(select(.session_id == $base.session_id and .capture_id == $base.capture_id)) end
         '

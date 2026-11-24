@@ -64,6 +64,7 @@ raw=$(triage_with_budget "$budget" --list-saved "${index_args[@]}" "$@") || rc=$
 if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --argjson offset "$offset" \
     --arg session "$session_scope" --arg capture "$capture_scope" '
     def count: type == "number" and . >= 0 and . <= 512 and floor == .;
+    def frame_count: count and . <= 131;
     def valid_reference:
         type == "object" and (.session_id | strings | test("\\A[A-Za-z0-9_-]{1,128}\\z"))
         and (.alert_id | numbers | . >= 1 and . <= 999999999999999 and floor == .)
@@ -74,12 +75,13 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --a
         and ($capture == "" or (.session_id == $session and .capture_id == $capture))
         and (.capture_id | strings | test("\\A[0-9a-f]{32}\\z"))
         and (.evidence_frame_set_sha256 | strings | test("\\A[0-9a-f]{64}\\z"))
-        and (.evidence_frame_count | numbers | . >= 0 and . <= 131 and floor == .)
+        and (.evidence_frame_count | frame_count)
         and (.rule_id == null or (.rule_id | strings | test("\\A[a-z0-9_.-]{1,128}\\z")))
         and (.revision == null or (.revision | numbers | . >= 1 and . <= 65535 and floor == .))
         and (.confidence == null or .confidence == "heuristic" or .confidence == "correlated" or .confidence == "direct_observation")
         and (.last_seen | numbers | isfinite);
     def unscoped_reference: valid_reference and priority
+        and (.evidence_frame_count | . == null or frame_count)
         and (.legacy_rule_hint == null or (.legacy_rule_hint | strings | test("\\A[a-z0-9_.-]{1,128}\\z")))
         and (.last_seen == null or (.last_seen | numbers | isfinite and . > 0));
     if length == 1 then .[0] else error("Expected one saved capture index") end
@@ -100,7 +102,9 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --a
     | {index_status:.status,sampled_alerts,sampled_unscoped_open_high_or_critical,sample_scan_complete,
        review_scope,review_rule,review_offset,review_eligible_in_sample,review_shortlist_truncated,next_review_offset,
        unscoped_review_queue:(.unscoped_review_queue | map({session_id,alert_id,severity,disposition,last_seen,
-             legacy_rule_hint,next_evidence_step:"locate_original_capture_or_host_logs"})),
+             legacy_rule_hint,evidence_frame_count,
+             packet_evidence_status:(if .evidence_frame_count == 0 then "no_references" else "scope_unverified" end),
+             next_evidence_step:(if .evidence_frame_count == 0 then "corroborate_with_host_or_service_logs" else "locate_original_capture_or_host_logs" end)})),
        review_shortlist:(.review_shortlist | map({session_id,capture_id,alert_id,rule_id,revision,confidence,
                                                severity,disposition,last_seen,evidence_frame_count,evidence_frame_set_sha256}))}
 ' <<< "$raw"); then

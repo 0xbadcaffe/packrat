@@ -35,6 +35,7 @@ if [[ $1 == --list-saved ]]; then
          sampled_unscoped_open_high_or_critical:3,sample_scan_complete:($mode != "bounded"),
          unscoped_review_queue:[{session_id:$session,alert_id:9,severity:"CRITICAL",disposition:"Reviewing",
            capture_id:"private scope",title:"private title",
+           evidence_frame_count:(if $mode=="no_refs" then 0 elif $mode=="bad_refs" then 132 else 1 end),
            legacy_rule_hint:"dns.competing_responders",next_evidence_step:"private suggestion"}],
          review_eligible_in_sample:$eligible,review_offset:$offset,
          review_shortlist_truncated:($eligible > $offset + 5),
@@ -88,7 +89,8 @@ run_review | jq -e '
     and .review_offset == 0 and .next_review_offset == 5 and .review_eligible_in_sample == 7
     and .unscoped_review_queue == [{
         session_id:"session-a",alert_id:9,severity:"CRITICAL",disposition:"Reviewing",last_seen:null,
-        legacy_rule_hint:"dns.competing_responders",next_evidence_step:"locate_original_capture_or_host_logs"}]
+        legacy_rule_hint:"dns.competing_responders",evidence_frame_count:1,packet_evidence_status:"scope_unverified",
+        next_evidence_step:"locate_original_capture_or_host_logs"}]
     and [.findings[].packet_evidence_status] ==
         ["complete","unavailable","changed_during_review","changed_during_review","check_failed"]
     and .findings[0].evidence_availability == {complete:2}
@@ -99,6 +101,10 @@ run_review | jq -e '
     and .findings[2].next_evidence_step == "refresh_saved_index"
     and (tostring | contains("private") | not) and all(.findings[]; has("evidence_frame_set_sha256") | not)' >/dev/null
 [[ $(wc -l < "$dir/checks") == 5 ]]
+TEST_MODE=no_refs run_review | jq -e '.unscoped_review_queue[0] |
+    .evidence_frame_count==0 and .packet_evidence_status=="no_references"
+    and .next_evidence_step=="corroborate_with_host_or_service_logs"' >/dev/null
+if TEST_MODE=bad_refs run_review >/dev/null 2>&1; then exit 1; fi
 touch -- "$dir/socket context.jsonl"
 TEST_MODE=socket run_review --socket-context "$dir/socket context.jsonl" | jq -e '
     [.findings[].socket_evidence] == ["latest","earlier",null,null,null]
