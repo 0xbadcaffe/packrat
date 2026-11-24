@@ -138,6 +138,7 @@ check_snapshot() {
            socket_context_status:(if $age >= -5 and $age <= .max_age_seconds
                then .socket_context_status | socket_status else null end),
            alert_save_failures:(if $age >= -5 and $age <= .max_age_seconds then .alert_save_failures | counter else null end),
+           alert_save_backlog_dropped:(if $age >= -5 and $age <= .max_age_seconds then .alert_save_backlog_dropped | counter else null end),
            invalid_alert_rows:(if $age >= -5 and $age <= .max_age_seconds
                then .invalid_alert_rows | sample_count else null end),
            duplicate_alert_ids:(if $age >= -5 and $age <= .max_age_seconds
@@ -301,6 +302,7 @@ sanitize() {
             truncated_frames:(.health.capture_truncated_frames | counter),
             alert_saving:(.health.alert_saving | flag), archive:(.live_packet_archive | token),
             alert_save_failures:(.health.alert_save_failures | counter),
+            alert_save_backlog_dropped:(.health.alert_save_backlog_dropped | counter),
             archive_mode:(.health | archive_mode),
             archive_rule_ids:(.health | if archive_mode == "alert_evidence"
                 then .archive_evidence_rules | archive_rules else null end),

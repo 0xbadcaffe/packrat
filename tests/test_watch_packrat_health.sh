@@ -391,10 +391,13 @@ PACKRAT_FAKE_STEPS=4 PACKRAT_FAKE_SAMPLES="$queue_samples" bash "$watch" | jq -s
 ' >/dev/null
 
 save_samples=$(jq -cn --argjson health "$PACKRAT_FAKE_HEALTH" '
-    [$health, ($health + {alert_save_failures:0}), ($health + {alert_save_failures:1}),
-     ($health + {alert_save_failures:1}), ($health + {alert_save_failures:"invalid"})]')
+    [$health, ($health + {alert_save_failures:0,alert_save_backlog_dropped:0}),
+     ($health + {alert_save_failures:1,alert_save_backlog_dropped:0}),
+     ($health + {alert_save_failures:1,alert_save_backlog_dropped:1}),
+     ($health + {alert_save_failures:"invalid",alert_save_backlog_dropped:-1})]')
 PACKRAT_FAKE_STEPS=5 PACKRAT_FAKE_SAMPLES="$save_samples" bash "$watch" | jq -se '
-    map(.alert_save_failures) == [null,0,1,null] and all(.[]; .issues == [])' >/dev/null
+    map(.alert_save_failures) == [null,0,1,1,null]
+    and map(.alert_save_backlog_dropped) == [null,0,0,1,null] and all(.[]; .issues == [])' >/dev/null
 
 truncation_samples=$(jq -cn --argjson health "$PACKRAT_FAKE_HEALTH" '
     ($health + {capture_run_id:"000000000000000a"}) as $a

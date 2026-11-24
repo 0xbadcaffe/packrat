@@ -47,10 +47,11 @@ live() {
 }
 queue='[{"alert_id":7,"severity":"HIGH","rule_id":"test.rule","revision":10,"confidence":"correlated","packet_evidence_status":"partial","next_evidence_step":"inspect_retained_and_recover_missing_frames"}]'
 medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","revision":65536,"disposition":"New","hit_count":1,"packet_evidence_status":"partial","evidence_frame_count":2,"evidence_frame_set_sha256":"invalid"}]'
-live current 12 "$queue" "$medium" | jq '.socket_context_status="available" | .health.alert_save_failures=2' >"$report"
+live current 12 "$queue" "$medium" | jq '.socket_context_status="available" | .health += {alert_save_failures:2,alert_save_backlog_dropped:1}' >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
 bash "$watch" --check "$state" | jq -e '.status=="current" and .socket_context_status=="available" and .alert_save_failures==2
+    and .alert_save_backlog_dropped==1
     and (.healthy_capture_seconds | type=="number" and .>=0) and .flow_cache=={retained_summaries:8192,summary_evictions:4}' >/dev/null
 [[ $(stat --format='%a' "$state") == 600 ]]
 jq -e '.status=="current" and .packets==12 and .review_queue[0].alert_id==7
@@ -87,7 +88,8 @@ bash "$watch" --once "$failed_state" -- bash -c 'cat -- "$1"; exit 2' mock "$scr
 bash "$watch" --check "$failed_state" | jq -e '.status=="current" and .evidence_check_failures==1' >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$failed_state" >"$scratch/old-evidence-error.json"
 { bash "$watch" --check "$scratch/old-evidence-error.json" || [[ $? == 1 ]]; } |
-    jq -e '.status=="snapshot_stale" and .evidence_check_failures==null and .socket_context_status==null and .alert_save_failures==null' >/dev/null
+    jq -e '.status=="snapshot_stale" and .evidence_check_failures==null and .socket_context_status==null
+        and .alert_save_failures==null and .alert_save_backlog_dropped==null' >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$state" >"$scratch/stale.json"
 check_status "$scratch/stale.json" snapshot_stale 1
 jq '.updated_at=(now + 120 | todateiso8601)' "$state" >"$scratch/future.json"
