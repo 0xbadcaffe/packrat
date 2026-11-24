@@ -53,6 +53,7 @@ pub struct AlertHistoryEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_review_delay_ms: Option<u64>,
     pub hit_count: u64,
+    pub trigger_frame_number: Option<u64>,
     pub evidence_frame_count: usize,
     pub evidence_frame_set_sha256: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -267,6 +268,7 @@ fn filtered_alerts_report(
             first_reviewed_unix_ms,
             first_review_delay_ms,
             hit_count: alert.hit_count,
+            trigger_frame_number: (alert.packet_no != 0).then_some(alert.packet_no),
             evidence_frame_count,
             evidence_frame_set_sha256: evidence_frame_set_sha256(&evidence_frames),
             flow: alert.flow,

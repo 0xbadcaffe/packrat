@@ -185,6 +185,7 @@ check_flow_context() {
             {session_id,capture_id,alert_id} == ($selected | {session_id,capture_id,alert_id}))
         | if .evidence_frame_set_sha256 != $selected.evidence_frame_set_sha256
              or .referenced_frames != $selected.evidence_frame_count
+             or (($selected | has("trigger_frame_number")) and .trigger_frame.frame_number != $selected.trigger_frame_number)
              or .missing_frames != ($verified.evidence_availability.missing // 0)
              or .unreadable_frames != ($verified.evidence_availability.unreadable // 0)
              or .truncated_frames != ($verified.evidence_availability.truncated // 0)
@@ -211,7 +212,9 @@ check_flow_context() {
                 udp_dns_replies:(.udp_dns_reply_candidates|length),
                 udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),
                 udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}
-                + timing_context + tcp_flag_context + syn_fanout + dns_timing_context + trigger_connection($flow_frames)}
+                + timing_context + tcp_flag_context + syn_fanout + dns_timing_context
+                + (if $selected | has("trigger_frame_number") then trigger_connection($flow_frames)
+                   else {trigger_connection_status:"snapshot_unverified"} end)}
           end
     ' <<< "$raw"
 }
@@ -249,6 +252,7 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --a
         and (.capture_id | strings | test("\\A[0-9a-f]{32}\\z"))
         and (.evidence_frame_set_sha256 | strings | test("\\A[0-9a-f]{64}\\z"))
         and (.evidence_frame_count | frame_count)
+        and (.trigger_frame_number | . == null or (type == "number" and . >= 1 and . <= 9007199254740991 and floor == .))
         and (.rule_id == null or (.rule_id | strings | test("\\A[a-z0-9_.-]{1,128}\\z")))
         and (.revision == null or (.revision | numbers | . >= 1 and . <= 65535 and floor == .))
         and (.confidence == null or .confidence == "heuristic" or .confidence == "correlated" or .confidence == "direct_observation")
@@ -281,7 +285,8 @@ if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --a
              packet_evidence_status:(if .evidence_frame_count == 0 then "no_references" else "scope_unverified" end),
              next_evidence_step:(if .evidence_frame_count == 0 then "corroborate_with_host_or_service_logs" else "locate_original_capture_or_host_logs" end)})),
        review_shortlist:(.review_shortlist | map({session_id,capture_id,alert_id,rule_id,revision,confidence,
-                                               severity,disposition,last_seen,evidence_frame_count,evidence_frame_set_sha256}))}
+                                               severity,disposition,last_seen,evidence_frame_count,evidence_frame_set_sha256}
+           + (if has("trigger_frame_number") then {trigger_frame_number} else {} end)))}
 ' <<< "$raw"); then
     printf '%s\n' 'Could not read the bounded saved-alert index.' >&2
     exit 1
@@ -316,8 +321,9 @@ while IFS= read -r candidate; do
                 | if .status == "saved_alert_not_observed" then
                     {packet_evidence_status:"changed_during_review",next_evidence_step:"refresh_saved_index"}
                   elif .status == "saved" and (.alerts | type == "array" and length == 1) then .alerts[0]
-                    | if ({session_id,capture_id,alert_id,rule_id,revision,confidence,severity,disposition,
-                            last_seen,evidence_frame_count,evidence_frame_set_sha256} != $selected) then
+                    | if (({session_id,capture_id,alert_id,rule_id,revision,confidence,severity,disposition,
+                            last_seen,evidence_frame_count,evidence_frame_set_sha256}
+                            + (if has("trigger_frame_number") then {trigger_frame_number} else {} end)) != $selected) then
                         {packet_evidence_status:"changed_during_review",next_evidence_step:"refresh_saved_index"}
                       elif valid_counts and (.packet_evidence_status | strings | test("\\A[a-z_]{1,48}\\z")) and
                            (.next_evidence_step | strings | test("\\A[a-z_]{1,64}\\z")) then
@@ -340,7 +346,7 @@ while IFS= read -r candidate; do
         fi
     fi
     results=$(jq -c --argjson candidate "$candidate" --argjson verdict "$verdict" --argjson flow "$flow" --arg status "$status" '
-        . + [($candidate | del(.evidence_frame_set_sha256))
+        . + [($candidate | del(.evidence_frame_set_sha256,.trigger_frame_number))
              + ($verdict // {packet_evidence_status:$status,next_evidence_step:"retry_evidence_check"}) + $flow]
     ' <<< "$results")
 done < <(jq -c '.review_shortlist[]' <<< "$index")

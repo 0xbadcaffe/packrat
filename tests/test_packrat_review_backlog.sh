@@ -13,12 +13,14 @@ set -euo pipefail
 [[ $PACKRAT_TRIAGE_AUTO_EVIDENCE == 0 && ! -v PACKRAT_TRIAGE_EVIDENCE_ALERT_ID ]]
 session=session-a capture=00000000000000000000000000000001
 base='{"rule_id":"scan.horizontal","revision":7,"confidence":"heuristic","severity":"HIGH",
-       "disposition":"New","last_seen":42,"evidence_frame_count":2,
+       "disposition":"New","last_seen":42,"evidence_frame_count":2,"trigger_frame_number":4,
        "evidence_frame_set_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}'
 if [[ ${TEST_MODE:-normal} == by_rule || ${TEST_MODE:-normal} == wrong_rule ]]; then
     base=$(jq -c '. + {rule_id:"ipv6.ra_router_link_change",severity:"MEDIUM"}' <<< "$base")
 elif [[ ${TEST_MODE:-normal} == info ]]; then
     base=$(jq -c '. + {rule_id:"vlan.vid_one_observed",severity:"INFO"}' <<< "$base")
+elif [[ ${TEST_MODE:-normal} == legacy_trigger ]]; then
+    base=$(jq -c 'del(.trigger_frame_number)' <<< "$base")
 fi
 if [[ $1 == --list-saved ]]; then
     [[ ! -v PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE ]]
@@ -71,6 +73,7 @@ case $4 in
     6|7) status=partial step=inspect_retained_and_recover_missing_frames counts='{"truncated":1,"missing":1}' ;;
 esac
 if [[ ${TEST_MODE:-normal} == invalid_counts && $4 == 1 ]]; then counts='{"complete":1}'; fi
+if [[ ${TEST_MODE:-normal} == trigger_drift && $4 == 1 ]]; then base=$(jq -c '.trigger_frame_number=5' <<< "$base"); fi
 case $4 in
     1|3) base=$(jq -c '.reader_rule_revision=8' <<< "$base") ;;
     2) base=$(jq -c '.reader_rule_revision=7' <<< "$base") ;;
@@ -125,6 +128,7 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "frame_count" then .retained_frames_without_flow=1
       elif $mode == "trigger_status" then .trigger_frame.transport_header_observed=false
       elif $mode == "trigger_private" then .trigger_frame.status="private payload"
+      elif $mode == "trigger_drift" then .trigger_frame.frame_number=5
       elif $mode == "legacy_timing" then del(.directional_flows[0].cited_timing)
       elif $mode == "invalid_timing" then .directional_flows[0].cited_timing.backwards_timestamps=1
       elif $mode == "malformed_timing" then .directional_flows[0].cited_timing="private time"
@@ -200,6 +204,15 @@ run_review --flow-context | jq -e '
         udp_dns_reply_timestamps:{capture_clock:0,legacy_packet_time:0,unavailable:0,not_reported:1}}
     and (tostring | contains("private") | not)' >/dev/null
 [[ $(cat "$dir/flow-checks") == 1 ]]
+TEST_MODE=trigger_drift run_review --flow-context | jq -e '
+    .findings[0] | .packet_evidence_status=="changed_during_review" and .flow_context_status=="not_checked"
+    and (has("trigger_frame_number") | not)' >/dev/null
+FLOW_MODE=trigger_drift run_review --flow-context | jq -e '
+    .findings[0] | .packet_evidence_status=="complete" and .flow_context_status=="changed_during_review"
+    and (has("flow_context") | not)' >/dev/null
+TEST_MODE=legacy_trigger FLOW_MODE=connection_pair run_review --flow-context | jq -e '
+    .findings[0].flow_context | .trigger_connection_status=="snapshot_unverified"
+    and (has("cited_trigger_connection") | not)' >/dev/null
 for mode in connection_pair connection_other connection_mismatch; do
     FLOW_MODE=$mode run_review --flow-context | jq -e --arg mode "$mode" '
         .findings[0].flow_context | .trigger_connection_status=="reported"

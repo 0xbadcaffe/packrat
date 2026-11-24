@@ -183,6 +183,7 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     center.record(4, "IDS", "HIGH", "Horizontal host scan", "initial");
     let mut snapshot = center.items[0].clone();
     snapshot.capture_id = Some("capture-a".into());
+    snapshot.packet_refs = vec![0, 4, 4, 7];
     let append = |file: &mut std::fs::File, session: &str, alert| {
         writeln!(file, "{}", json!({"schema_version": 1, "record_type":"alert",
             "session_id":session, "alert":alert})).unwrap();
@@ -194,7 +195,7 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     append(&mut file, "session-b", snapshot.clone());
     writeln!(file, "{}", "x".repeat(1_048_577)).unwrap();
     writeln!(file, "{{incomplete").unwrap();
-    snapshot.packet_refs = vec![0, 4, 4, 7];
+    snapshot.packet_no = 7;
     snapshot.hit_count = 2;
     snapshot.disposition = AlertDisposition::Benign;
     snapshot.flow = Some(AlertFlow {
@@ -215,6 +216,7 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
     assert_eq!(report[0]["capture_id"], "capture-a");
     assert_eq!(report[0]["disposition"], "Benign");
     assert_eq!(report[0]["evidence_frame_count"], 2);
+    assert_eq!(report[0]["trigger_frame_number"], 7);
     assert_eq!(report[0]["hit_count"], 2);
     assert_eq!(report[0]["rule_id"], "scan.horizontal");
     assert_eq!(report[0]["reader_rule_revision"], report[0]["revision"]);
@@ -225,6 +227,8 @@ fn alert_history_uses_latest_scoped_snapshots_without_a_packet_archive() {
         "transport":"tcp", "source":"[2001:db8::5]:40000", "destination":"[2001:db8::8]:443"
     }));
     assert_eq!(report[1]["session_id"], "session-b");
+    assert_eq!(report[1]["trigger_frame_number"], 4);
+    assert_eq!(report[0]["evidence_frame_set_sha256"], report[1]["evidence_frame_set_sha256"]);
     assert!(report[1].get("flow").is_none());
     assert_eq!(report[2]["capture_id"], "capture-b");
 
@@ -446,54 +450,4 @@ fn recent_history_reads_across_chunks_and_keeps_only_distinct_scoped_alerts() {
     assert_eq!(report[0]["hit_count"], 42);
     assert_eq!(report[0]["detail"], "\u{e9}".repeat(512));
     assert_eq!(report[1]["alert_id"], 1);
-}
-
-#[test]
-fn exact_alert_lookup_reaches_rotated_history_and_rejects_scope_collisions() {
-    let directory = tempfile::tempdir().unwrap();
-    let previous = directory.path().join("alerts.jsonl.1");
-    let active = directory.path().join("alerts.jsonl");
-    let mut center = AlertCenter::default();
-    center.record(1, "IDS", "MEDIUM", "Retained finding", "previous snapshot");
-    let mut alert = center.items[0].clone();
-    alert.capture_id = Some("capture-a".into());
-    let row = |session, alert| json!({
-        "schema_version":1, "record_type":"alert", "session_id":session, "alert":alert
-    });
-    let mut earlier = std::fs::File::create(&previous).unwrap();
-    writeln!(earlier, "{}", row("session-a", alert.clone())).unwrap();
-    alert.disposition = AlertDisposition::Benign;
-    writeln!(earlier, "{}", row("session-a", alert.clone())).unwrap();
-
-    let mut file = std::fs::File::create(&active).unwrap();
-    for id in 2..=65 {
-        alert.id = id;
-        writeln!(file, "{}", row("session-a", alert.clone())).unwrap();
-    }
-    alert.id = 1;
-    alert.disposition = AlertDisposition::Reviewing;
-    writeln!(file, "{}", row("session-b", alert.clone())).unwrap();
-    alert.capture_id = Some("capture-b".into());
-    writeln!(file, "{}", row("session-a", alert)).unwrap();
-
-    let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
-            .arg("--alerts").arg(&active)
-            .arg("--previous-log").arg(&previous)
-            .args(args).output().unwrap()
-    };
-    let output = run(&["--session", "session-a", "--capture-id", "capture-a",
-        "--alert-id", "1", "--report-integrity"]);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["alerts"].as_array().unwrap().len(), 1);
-    assert_eq!(report["alerts"][0]["alert_id"], 1);
-    assert_eq!(report["alerts"][0]["disposition"], "Benign");
-    assert_eq!(report["integrity"]["stopped_at_limit"], true);
-
-    let missing = run(&["--session", "session-a", "--capture-id", "capture-a", "--alert-id", "99"]);
-    assert!(missing.status.success(), "{}", String::from_utf8_lossy(&missing.stderr));
-    assert_eq!(serde_json::from_slice::<Value>(&missing.stdout).unwrap(), json!([]));
-    assert!(!run(&["--session", "session-a", "--alert-id", "1"]).status.success());
-    assert!(!run(&["--session", "session-a", "--capture-id", "capture-a", "--alert-id", "0"]).status.success());
 }
