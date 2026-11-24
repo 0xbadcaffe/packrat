@@ -23,9 +23,10 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
     draw_context_header(f, app, chunks[0]);
 
+    let tray_width = (area.width / 3).min(30);
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(30), Constraint::Min(0)])
+        .constraints([Constraint::Length(tray_width), Constraint::Min(0)])
         .split(chunks[1]);
 
     draw_worklist(f, app, body[0]);
@@ -202,9 +203,7 @@ fn draw_artifact_context(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(C_FG3()),
     )));
     f.render_widget(
-        Paragraph::new(scrolled(lines, app.investigation_scroll, area))
-            .wrap(Wrap { trim: false })
-            .block(panel("Context Inspector")),
+        wrapped_panel(lines, "Context Inspector", app.investigation_scroll, area),
         area,
     );
 }
@@ -271,9 +270,7 @@ fn draw_summary(f: &mut Frame, app: &App, packet: &Packet, area: Rect) {
         lines.insert(1, Line::from(format!("Retained evidence subset | Capture: {scope}")));
     }
     f.render_widget(
-        Paragraph::new(scrolled(lines, app.investigation_scroll, area))
-            .block(panel("Summary"))
-            .wrap(Wrap { trim: false }),
+        wrapped_panel(lines, "Summary", app.investigation_scroll, area),
         area,
     );
 }
@@ -360,14 +357,22 @@ fn packet_flow_id(packet: &Packet) -> String {
     }
 }
 
-fn scrolled(lines: Vec<Line<'static>>, scroll: usize, area: Rect) -> Vec<Line<'static>> {
-    let visible = area.height.saturating_sub(2) as usize;
-    if visible == 0 || lines.len() <= visible {
-        return lines;
-    }
-    let start = scroll.min(lines.len().saturating_sub(visible));
-    lines.into_iter().skip(start).take(visible).collect()
+fn wrapped_panel(lines: Vec<Line<'static>>, title: &'static str, scroll: usize, area: Rect) -> Paragraph<'static> {
+    let block = panel(title);
+    let inner = block.inner(area);
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let offset = if scroll > 0 && inner.height > 0 {
+        let max = paragraph.line_count(inner.width).saturating_sub(usize::from(inner.height));
+        scroll.min(max).min(usize::from(u16::MAX)) as u16
+    } else {
+        0
+    };
+    paragraph.scroll((offset, 0)).block(block)
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/investigation_wrapping_tests.rs"]
+mod tests;
 
 mod decode;
 use decode::*;

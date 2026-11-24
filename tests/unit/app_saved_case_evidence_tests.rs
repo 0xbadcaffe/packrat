@@ -301,7 +301,9 @@ fn alert_summary_keeps_the_last_scoped_archive_lookup_until_rechecked() {
         core.alert_center.items[0].clone()
     };
     assert_eq!(app.alert_evidence_status(&alert), "0/2 retained; 2 unchecked in archive");
+    app.investigation_scroll = 999;
     assert!(app.investigate_selected_alert());
+    assert_eq!(app.investigation_scroll, 0);
     assert_eq!(app.alert_evidence_status(&alert), "0/2 retained; 2 not found at last archive check");
     let summary = app.active_investigation_context().unwrap();
     assert!(summary.details.iter().any(|(label, value)| label == "Trigger frame" && value == "#10: not found at last archive check"));

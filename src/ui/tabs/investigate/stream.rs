@@ -93,9 +93,7 @@ pub(super) fn draw_stream_context(f: &mut Frame, app: &App, area: Rect) {
     }
     lines.extend(stream_segment_lines(stream));
     f.render_widget(
-        Paragraph::new(scrolled(lines, app.investigation_scroll, area))
-            .block(panel("Stream Reassembly"))
-            .wrap(Wrap { trim: false }),
+        wrapped_panel(lines, "Stream Reassembly", app.investigation_scroll, area),
         area,
     );
 }

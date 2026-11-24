@@ -20,9 +20,7 @@ pub(super) fn draw_strings(f: &mut Frame, app: &App, packet: &Packet, area: Rect
         lines.push(Line::from("No printable strings of length >= 4."));
     }
     f.render_widget(
-        Paragraph::new(scrolled(lines, app.investigation_scroll, area))
-            .block(panel("Packet Strings"))
-            .wrap(Wrap { trim: false }),
+        wrapped_panel(lines, "Packet Strings", app.investigation_scroll, area),
         area,
     );
 }
@@ -114,9 +112,7 @@ pub(super) fn draw_encrypted(f: &mut Frame, app: &App, packet: &Packet, area: Re
         ));
     }
     f.render_widget(
-        Paragraph::new(scrolled(lines, app.investigation_scroll, area))
-            .block(panel("Encrypted Context"))
-            .wrap(Wrap { trim: false }),
+        wrapped_panel(lines, "Encrypted Context", app.investigation_scroll, area),
         area,
     );
 }
@@ -195,9 +191,7 @@ pub(super) fn draw_security(f: &mut Frame, app: &App, packet: &Packet, area: Rec
         lines.push(Line::from("No packet-specific security findings recorded."));
     }
     f.render_widget(
-        Paragraph::new(scrolled(lines, app.investigation_scroll, area))
-            .block(panel("Security Context"))
-            .wrap(Wrap { trim: false }),
+        wrapped_panel(lines, "Security Context", app.investigation_scroll, area),
         area,
     );
 }
@@ -214,9 +208,7 @@ pub(super) fn draw_notes(f: &mut Frame, app: &App, packet: &Packet, area: Rect) 
             .collect()
     };
     f.render_widget(
-        Paragraph::new(scrolled(lines, app.investigation_scroll, area))
-            .block(panel("Packet Notes"))
-            .wrap(Wrap { trim: false }),
+        wrapped_panel(lines, "Packet Notes", app.investigation_scroll, area),
         area,
     );
 }

@@ -302,6 +302,7 @@ impl App {
                     .position(|item| *item == alert_item)
             });
         self.investigation_view = InvestigationView::Summary;
+        self.investigation_scroll = 0;
         self.navigate_to(Tab::Investigate);
         let quality: String = [(truncated, "truncated"), (unknown_lengths, "capture lengths unknown")]
             .into_iter().filter(|&(count, _)| count > 0)
