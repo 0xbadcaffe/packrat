@@ -22,7 +22,7 @@ pub enum Condition {
     And(Vec<Condition>),
     /// Logical OR of sub-conditions.
     Or(Vec<Condition>),
-    /// Negation.
+    /// Negation of a known result; unavailable fields remain unknown.
     Not(Box<Condition>),
 }
 
@@ -151,7 +151,7 @@ impl RuleEngine {
     pub(crate) fn evaluate_with_hits(&mut self, pkt: &Packet, mut on_hit: impl FnMut(&RuleHit)) {
         for rule in &mut self.rules {
             if !rule.enabled { continue; }
-            if eval_cond(&rule.condition, pkt) {
+            if eval_cond(&rule.condition, pkt) == Some(true) {
                 rule.hits = rule.hits.saturating_add(1);
                 for action in &rule.actions {
                     let message = match action {
@@ -188,13 +188,13 @@ impl RuleEngine {
     }
 }
 
-fn get_field_str<'a>(field: &str, pkt: &'a Packet) -> &'a str {
+fn get_field_str<'a>(field: &str, pkt: &'a Packet) -> Option<&'a str> {
     match field {
-        "src" | "ip.src"     => &pkt.src,
-        "dst" | "ip.dst"     => &pkt.dst,
-        "proto" | "protocol" => &pkt.protocol,
-        "info"               => &pkt.info,
-        _                    => "",
+        "src" | "ip.src"     => Some(&pkt.src),
+        "dst" | "ip.dst"     => Some(&pkt.dst),
+        "proto" | "protocol" => Some(&pkt.protocol),
+        "info"               => Some(&pkt.info),
+        _                    => None,
     }
 }
 
@@ -211,30 +211,37 @@ fn get_field_num(field: &str, pkt: &Packet) -> Option<u64> {
     }
 }
 
-fn eval_cond(cond: &Condition, pkt: &Packet) -> bool {
+fn eval_cond(cond: &Condition, pkt: &Packet) -> Option<bool> {
     match cond {
-        Condition::Contains { field, value } => {
-            get_field_str(field, pkt).to_lowercase().contains(value.to_lowercase().as_str())
-        }
-        Condition::Equals { field, value } => {
-            get_field_str(field, pkt).eq_ignore_ascii_case(value)
-        }
+        Condition::Contains { field, value } => Some(
+            get_field_str(field, pkt)?.to_lowercase().contains(value.to_lowercase().as_str()),
+        ),
+        Condition::Equals { field, value } => Some(get_field_str(field, pkt)?.eq_ignore_ascii_case(value)),
         Condition::Num { field, op, value } => {
-            if let Some(actual) = get_field_num(field, pkt) {
-                match op {
-                    CmpOp::Lt => actual < *value,
-                    CmpOp::Le => actual <= *value,
-                    CmpOp::Eq => actual == *value,
-                    CmpOp::Ge => actual >= *value,
-                    CmpOp::Gt => actual > *value,
-                    CmpOp::Ne => actual != *value,
-                }
-            } else {
-                false
-            }
+            let actual = get_field_num(field, pkt)?;
+            Some(match op {
+                CmpOp::Lt => actual < *value,
+                CmpOp::Le => actual <= *value,
+                CmpOp::Eq => actual == *value,
+                CmpOp::Ge => actual >= *value,
+                CmpOp::Gt => actual > *value,
+                CmpOp::Ne => actual != *value,
+            })
         }
-        Condition::And(conds) => conds.iter().all(|c| eval_cond(c, pkt)),
-        Condition::Or(conds)  => conds.iter().any(|c| eval_cond(c, pkt)),
-        Condition::Not(inner) => !eval_cond(inner, pkt),
+        Condition::And(conds) => eval_group(conds, pkt, false),
+        Condition::Or(conds)  => eval_group(conds, pkt, true),
+        Condition::Not(inner) => eval_cond(inner, pkt).map(|known| !known),
     }
+}
+
+fn eval_group(conditions: &[Condition], pkt: &Packet, decisive: bool) -> Option<bool> {
+    let mut unknown = false;
+    for condition in conditions {
+        match eval_cond(condition, pkt) {
+            Some(value) if value == decisive => return Some(decisive),
+            Some(_) => {}
+            None => unknown = true,
+        }
+    }
+    (!unknown).then_some(!decisive)
 }

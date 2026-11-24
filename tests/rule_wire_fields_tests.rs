@@ -7,10 +7,17 @@ use packrat_tui::{
 };
 
 fn matches_rule(packet: &Packet, field: &str, value: u64) -> bool {
+    matches_condition(packet, comparison(field, value))
+}
+
+fn comparison(field: &str, value: u64) -> Condition {
+    Condition::Num { field: field.into(), op: CmpOp::Eq, value }
+}
+
+fn matches_condition(packet: &Packet, condition: Condition) -> bool {
     let mut rules = RuleEngine::default();
     rules.add_rule(Rule::new(
-        "wire-field", "wire-field",
-        Condition::Num { field: field.into(), op: CmpOp::Eq, value },
+        "wire-field", "wire-field", condition,
         vec![Action::Log { message: "wire field matched".into() }],
     ));
     rules.evaluate(packet);
@@ -76,4 +83,39 @@ fn local_transport_port_rules_are_specific_to_the_wire_transport() {
     assert!(matches_rule(&udp, "udp.dstport", 80));
     assert!(matches_rule(&udp, "udp.srcport", 40_000));
     assert!(matches_rule(&udp, "port", 80));
+}
+
+#[test]
+fn negated_rule_does_not_treat_unavailable_fields_as_evidence() {
+    let tcp = packets::tcp(1, 100, 0x10, &[]);
+    let mut bytes = tcp.bytes.clone();
+    bytes.truncate(42);
+    bytes[16..18].copy_from_slice(&28_u16.to_be_bytes());
+    bytes[23] = 17;
+    bytes[38..40].copy_from_slice(&8_u16.to_be_bytes());
+    let udp = parse_ethernet(&bytes, 2, 2.0);
+    let not_443 = Condition::Not(Box::new(comparison("tcp.dstport", 443)));
+    assert!(matches_condition(&tcp, not_443.clone()));
+    assert!(!matches_condition(&udp, not_443));
+    assert!(!matches_condition(&udp, Condition::Not(Box::new(Condition::Not(Box::new(
+        comparison("tcp.dstport", 80),
+    ))))));
+
+    assert!(!matches_condition(&tcp, Condition::Equals { field: "typo".into(), value: "".into() }));
+    assert!(!matches_condition(&tcp, Condition::Contains { field: "typo".into(), value: "".into() }));
+    assert!(!matches_condition(&tcp, Condition::Not(Box::new(Condition::Equals {
+        field: "typo".into(), value: "present".into(),
+    }))));
+}
+
+#[test]
+fn boolean_groups_use_decisive_branches_without_converting_unknown_to_false() {
+    let tcp = packets::tcp(1, 100, 0x10, &[]);
+    let unknown = comparison("udp.dstport", 80);
+    let known_true = comparison("tcp.dstport", 80);
+    let known_false = comparison("tcp.dstport", 443);
+    assert!(matches_condition(&tcp, Condition::Or(vec![unknown.clone(), known_true.clone()])));
+    assert!(!matches_condition(&tcp, Condition::Not(Box::new(Condition::And(vec![unknown.clone(), known_true])))));
+    assert!(matches_condition(&tcp, Condition::Not(Box::new(Condition::And(vec![unknown.clone(), known_false.clone()])))));
+    assert!(!matches_condition(&tcp, Condition::Not(Box::new(Condition::Or(vec![known_false, unknown])))));
 }
