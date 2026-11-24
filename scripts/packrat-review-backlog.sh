@@ -4,15 +4,16 @@ set -euo pipefail
 export LC_ALL=C
 
 usage() {
-    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--socket-context FILE] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
+    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--socket-context FILE] [--flow-context] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
+        'With --flow-context, count candidate TCP and UDP DNS links in the cited evidence without disclosing endpoints.' \
         'Reader rule revisions are compared with saved revisions without reclassifying findings.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
 
 if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
-offset=0 rule='' session_scope='' capture_scope='' socket_file='' index_args=()
+offset=0 rule='' session_scope='' capture_scope='' socket_file='' index_args=() flow_context=false
 if [[ ${1-} == --review-scope ]]; then
     session_scope=${2-} capture_scope=${3-}
     [[ $session_scope =~ ^[A-Za-z0-9_-]{1,128}$ && $capture_scope =~ ^[0-9a-f]{32}$ ]] || { usage >&2; exit 2; }
@@ -37,6 +38,7 @@ if [[ ${1-} == --socket-context ]]; then
         { usage >&2; exit 2; }
     shift 2
 fi
+if [[ ${1-} == --flow-context ]]; then flow_context=true; shift; fi
 if (( $# < 2 || $# > 10 )) || [[ $1 != /* || ! -d $1 ]]; then usage >&2; exit 2; fi
 budget=${PACKRAT_BACKLOG_TIMEOUT:-15}
 if [[ ! $budget =~ ^[1-9][0-9]{0,2}$ ]] || (( budget > 120 )); then
@@ -57,6 +59,45 @@ triage_with_budget() {
     shift
     PACKRAT_TRIAGE_READ_TIMEOUT="$remaining" timeout --kill-after=1s "${remaining}s" \
         bash "$triage" "$@" | head -c 1048577
+}
+
+check_flow_context() {
+    local remaining=$1 selected=$2 reply=$3 session=$4 capture=$5 alert=$6 active=$7 raw rc=0
+    shift 7
+    local -a previous=()
+    local log
+    for log in "$@"; do previous+=(--previous-log "$log"); done
+    raw=$(timeout --kill-after=1s "${remaining}s" packrat-archive "$archive" --alert-flow-summary \
+        "$active" "$session" "$alert" --capture-id "$capture" "${previous[@]}" | head -c 1048577) || rc=$?
+    if (( rc == 124 || rc == 137 )); then
+        printf '%s\n' '{"flow_context_status":"check_timed_out"}'
+        return
+    fi
+    (( rc == 0 && ${#raw} <= 1048576 )) || return 1
+    jq -ces --argjson selected "$selected" --argjson verified "$reply" '
+        def frame: type == "number" and . >= 1 and . <= 9007199254740991 and floor == .;
+        def frames: type == "array" and length <= $selected.evidence_frame_count;
+        select(length == 1) | .[0] | objects
+        | select(.record_type == "alert_flow_summary" and
+            {session_id,capture_id,alert_id} == ($selected | {session_id,capture_id,alert_id}))
+        | if .evidence_frame_set_sha256 != $selected.evidence_frame_set_sha256
+             or .referenced_frames != $selected.evidence_frame_count
+             or .missing_frames != ($verified.evidence_availability.missing // 0)
+             or .unreadable_frames != ($verified.evidence_availability.unreadable // 0)
+             or .truncated_frames != ($verified.evidence_availability.truncated // 0)
+             or .length_unknown_frames != ($verified.evidence_availability.length_unknown // 0)
+          then {flow_context_status:"changed_during_review"}
+          else select((.directional_flows | frames and all(.[]; type == "object"))
+                and (.tcp_syn_ack_matches | frames and all(.[]; .syn_ack_frame | frame))
+                and (.udp_dns_reply_candidates | frames and all(.[]; .reply_frame as $reply
+                  | ($reply | frame) and (.query_candidate_frames | frames and all(.[]; frame and . < $reply) and . == unique))))
+            | {flow_context_status:"checked",flow_context:{
+                directional_flows:(.directional_flows|length),tcp_syn_ack_matches:(.tcp_syn_ack_matches|length),
+                udp_dns_replies:(.udp_dns_reply_candidates|length),
+                udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),
+                udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}}
+          end
+    ' <<< "$raw"
 }
 
 rc=0
@@ -152,9 +193,21 @@ while IFS= read -r candidate; do
                   else null end' <<< "$raw") || verdict='null'
         fi
     fi
-    results=$(jq -c --argjson candidate "$candidate" --argjson verdict "$verdict" --arg status "$status" '
+    flow='{}'
+    if "$flow_context"; then
+        flow='{"flow_context_status":"not_checked"}'
+        if jq -e '.packet_evidence_status | IN("complete","partial")' <<<"$verdict" >/dev/null; then
+            remaining=$((deadline - SECONDS))
+            flow='{"flow_context_status":"check_deferred"}'
+            if (( remaining > 0 )); then
+                flow=$(check_flow_context "$remaining" "$candidate" "$verdict" "$session" "$capture" "$alert" "$@") ||
+                    flow='{"flow_context_status":"check_failed"}'
+            fi
+        fi
+    fi
+    results=$(jq -c --argjson candidate "$candidate" --argjson verdict "$verdict" --argjson flow "$flow" --arg status "$status" '
         . + [($candidate | del(.evidence_frame_set_sha256))
-             + ($verdict // {packet_evidence_status:$status,next_evidence_step:"retry_evidence_check"})]
+             + ($verdict // {packet_evidence_status:$status,next_evidence_step:"retry_evidence_check"}) + $flow]
     ' <<< "$results")
 done < <(jq -c '.review_shortlist[]' <<< "$index")
 

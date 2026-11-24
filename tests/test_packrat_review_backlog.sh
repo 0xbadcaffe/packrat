@@ -80,6 +80,30 @@ jq -nc --arg session "$2" --arg capture "$3" --argjson id "$4" --arg status "$st
       evidence_checks:[{frames:[{status:"complete",bytes:[5,7]}],path:"private path"}]}'
 if [[ $status == check_failed ]]; then exit 2; fi
 STUB
+cat > "$dir/packrat-archive" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# == 9 && $1 == "$TEST_DIR" && $2 == --alert-flow-summary &&
+    $3 == "$TEST_DIR/alerts.jsonl" && $4 == session-a &&
+    $6 == --capture-id && $7 == 00000000000000000000000000000001 &&
+    $8 == --previous-log && $9 == "$TEST_DIR/previous.jsonl" ]]
+printf '%s\n' "$5" >> "$TEST_DIR/flow-checks"
+jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${FLOW_MODE:-normal}" '
+    {record_type:"alert_flow_summary",session_id:$session,capture_id:$capture,alert_id:$alert,
+     evidence_frame_set_sha256:("0"*64),referenced_frames:2,missing_frames:0,unreadable_frames:0,
+     truncated_frames:0,length_unknown_frames:0,
+     directional_flows:[{endpoint:"private endpoint"}],
+     tcp_syn_ack_matches:[{syn_ack_frame:2,sequence:123}],
+     udp_dns_reply_candidates:[{reply_frame:4,query_candidate_frames:[3],name:"private name"}]}
+    | if $mode == "digest" then .evidence_frame_set_sha256=("1"*64)
+      elif $mode == "availability" then .missing_frames=1
+      elif $mode == "scope" then .session_id="wrong-session"
+      elif $mode == "malformed" then .udp_dns_reply_candidates[0].query_candidate_frames=[4]
+      elif $mode == "old_reader" then del(.udp_dns_reply_candidates)
+      else . end'
+STUB
+chmod +x "$dir/packrat-archive"
+export PATH="$dir:$PATH"
 run_review() {
     PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=13 "$dir/packrat-review-backlog" "$@" "$dir" "$dir/alerts.jsonl" "$dir/previous.jsonl"
 }
@@ -101,6 +125,19 @@ run_review | jq -e '
     and .findings[2].next_evidence_step == "refresh_saved_index"
     and (tostring | contains("private") | not) and all(.findings[]; has("evidence_frame_set_sha256") | not)' >/dev/null
 [[ $(wc -l < "$dir/checks") == 5 ]]
+[[ ! -e $dir/flow-checks ]]
+run_review --flow-context | jq -e '
+    [.findings[].flow_context_status] == ["checked","not_checked","not_checked","not_checked","not_checked"]
+    and .findings[0].flow_context == {directional_flows:1,tcp_syn_ack_matches:1,udp_dns_replies:1,
+        udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0}
+    and (tostring | contains("private") | not)' >/dev/null
+[[ $(cat "$dir/flow-checks") == 1 ]]
+for mode in digest availability scope malformed old_reader; do
+    wanted=check_failed
+    if [[ $mode == digest || $mode == availability ]]; then wanted=changed_during_review; fi
+    FLOW_MODE=$mode run_review --flow-context | jq -e --arg wanted "$wanted" '
+        .findings[0] | .flow_context_status == $wanted and (has("flow_context") | not)' >/dev/null
+done
 TEST_MODE=no_refs run_review | jq -e '.unscoped_review_queue[0] |
     .evidence_frame_count==0 and .packet_evidence_status=="no_references"
     and .next_evidence_step=="corroborate_with_host_or_service_logs"' >/dev/null
