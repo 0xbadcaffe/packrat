@@ -3,6 +3,60 @@ use super::tcp_probe;
 use packrat_tui::storage::packet_archive::PacketArchive;
 
 #[test]
+fn opted_in_admin_fanout_archives_exact_pairs_and_the_timely_retry_after_rollover() {
+    use packrat_tui::net::parser::parse_ethernet;
+
+    let rule = "tcp.admin_service_response_fanout";
+    let packet = |frame, host, reply, vlan, time| {
+        let flags = if reply { 0x12 } else { 0x02 };
+        let mut bytes = tcp_probe(frame, [10, 0, 1, host], 445, flags, time).bytes;
+        let (src, dst) = if reply { ([10, 0, 1, host], [10, 0, 0, 9]) }
+            else { ([10, 0, 0, 9], [10, 0, 1, host]) };
+        bytes[26..30].copy_from_slice(&src);
+        bytes[30..34].copy_from_slice(&dst);
+        bytes[38..42].copy_from_slice(&100_u32.to_be_bytes());
+        if reply {
+            bytes[34..36].copy_from_slice(&445_u16.to_be_bytes());
+            bytes[36..38].copy_from_slice(&50_000_u16.to_be_bytes());
+            bytes[42..46].copy_from_slice(&101_u32.to_be_bytes());
+        }
+        bytes.splice(12..12, [0x81, 0, 0, vlan]);
+        parse_ethernet(&bytes, frame, time)
+    };
+    for selected in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("archive");
+        let rules = vec![if selected { rule } else { "icmp.address_sweep" }.into()];
+        let mut app = start(&path, rules);
+        app.inject_packet(packet(1, 8, false, 10, 1.0));
+        let mut cited = Vec::new();
+        for host in 1..=7_u8 {
+            let frame = 2 * u64::from(host);
+            cited.extend([packet(frame, host, false, 10, 2.0), packet(frame + 1, host, true, 10, 3.0)]);
+        }
+        for frame in &cited { app.inject_packet(frame.clone()); }
+        app.inject_packet(packet(16, 8, false, 20, 9.0));
+        cited.push(packet(17, 8, false, 10, 10.0));
+        app.inject_packet(cited.last().unwrap().clone());
+        let trigger = roll_history(&mut app, 18);
+        cited.push(packet(trigger, 8, true, 10, 17.0));
+        app.inject_packet(cited.last().unwrap().clone());
+        finish(&mut app);
+
+        let alert = app.query_core(|core| core.alert_center.items.iter().find(|alert|
+            alert.provenance.as_ref().is_some_and(|provenance| provenance.rule_id == rule)).cloned()).unwrap().unwrap();
+        assert_eq!(alert.packet_refs, cited.iter().map(|frame| frame.no).collect::<Vec<_>>());
+        let scope = alert.capture_id.unwrap();
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { cited.len() as u64 } else { 0 });
+        for frame in cited {
+            assert_eq!(archive.packet_for_capture(&scope, frame.no).unwrap().map(|packet| packet.bytes),
+                selected.then_some(frame.bytes));
+        }
+    }
+}
+
+#[test]
 fn scan_archive_keeps_only_the_selected_probes_and_matched_replies_after_rollover() {
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("archive");

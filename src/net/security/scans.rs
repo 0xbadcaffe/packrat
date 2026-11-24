@@ -158,7 +158,7 @@ impl SecurityEngine {
                     self.scan_packet_evidence.remember(pkt);
                 }
             }
-            self.record_admin_tcp(pkt, signal);
+            self.record_admin_tcp(pkt, signal, archive_rules);
         } else if let Some(Ipv6Probe::EmptyUdp(port)) = ipv6 {
             self.record_scan_probe(pkt, port, "UDP", None, retain);
         } else if let Some(Ipv4DiscoveryProbe::EmptyUdp(port)) = ipv4 {

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
+use crate::net::recent_evidence::RecentEvidence;
 
 const SYN_TIMEOUT: f64 = 15.0;
 const FANOUT_WINDOW: f64 = 60.0;
@@ -9,6 +10,12 @@ const MAX_TARGETS: usize = 64;
 const REARM_TARGETS: usize = LATERAL_TARGET_THRESHOLD / 2;
 const INITIAL_SYN: u8 = 0x02;
 const SYN_ACK: u8 = 0x12;
+const SIGNATURE: &str = "Administrative service response fan-out";
+
+fn retains_evidence(rules: Option<&[String]>) -> bool {
+    rules.is_some_and(|rules| crate::analysis::alert_provenance::rule_id_for("IDS", SIGNATURE)
+        .is_some_and(|id| rules.iter().any(|rule| rule == id)))
+}
 
 #[derive(PartialEq, Eq, Hash)]
 struct SynKey {
@@ -34,14 +41,15 @@ impl PendingSyn {
         Self { first: sample, latest: sample }
     }
 
-    fn retry(&mut self, sample: SynSample) {
+    fn retry(&mut self, sample: SynSample) -> bool {
         if sample.frame <= self.latest.frame || sample.at < self.latest.at {
-            return;
+            return false;
         }
         if sample.at - self.first.at > SYN_TIMEOUT {
             self.first = if sample.at - self.latest.at <= SYN_TIMEOUT { self.latest } else { sample };
         }
         self.latest = sample;
+        true
     }
 
     fn matched_frame(&self, at: f64, frame: u64) -> Option<u64> {
@@ -62,15 +70,18 @@ struct RespondedTargets {
 pub(super) struct AdminFanout {
     pending: HashMap<SynKey, PendingSyn>,
     responders: HashMap<(ServiceScope, String, u16), RespondedTargets>,
+    // A cited SYN may precede the oldest in-window reply by the full SYN timeout.
+    evidence: RecentEvidence<1024, 75>,
 }
 
 impl AdminFanout {
     pub(super) fn clear(&mut self) {
         self.pending.clear();
         self.responders.clear();
+        self.evidence = Default::default();
     }
 
-    fn observe(&mut self, pkt: &Packet, tcp: TcpSignal) -> Option<IdsFinding> {
+    fn observe(&mut self, pkt: &Packet, tcp: TcpSignal, archive_rules: Option<&[String]>) -> Option<IdsFinding> {
         let control = tcp.flags & 0x3f;
         let admin_port = match control {
             INITIAL_SYN => tcp.destination_port,
@@ -92,15 +103,21 @@ impl AdminFanout {
                 expected_ack: tcp.sequence.wrapping_add(1),
             };
             let sample = SynSample { at: now, frame: pkt.no };
-            if let Some(pending) = self.pending.get_mut(&key) {
-                pending.retry(sample);
+            let accepted = if let Some(pending) = self.pending.get_mut(&key) {
+                pending.retry(sample)
             } else {
                 if self.pending.len() >= MAX_PENDING {
                     self.pending.retain(|_, pending| now - pending.latest.at <= SYN_TIMEOUT);
                 }
                 if self.pending.len() < MAX_PENDING {
                     self.pending.insert(key, PendingSyn::new(sample));
+                    true
+                } else {
+                    false
                 }
+            };
+            if accepted && retains_evidence(archive_rules) {
+                self.evidence.remember(pkt);
             }
             return None;
         }
@@ -112,6 +129,9 @@ impl AdminFanout {
         };
         let syn = self.pending.get(&key)?.matched_frame(now, pkt.no)?;
         self.pending.remove(&key);
+        if retains_evidence(archive_rules) {
+            self.evidence.remember(pkt);
+        }
         self.record_pair(pkt, scope, admin_port, syn)
     }
 
@@ -148,7 +168,7 @@ impl AdminFanout {
         Some(IdsFinding {
             alert: IdsAlert {
                 pkt_no: reply.no,
-                signature: "Administrative service response fan-out",
+                signature: SIGNATURE,
                 severity: Severity::Medium,
                 detail: format!(
                     "{} received matching TCP SYN-ACKs from {count} internal hosts on port {port} within 60 seconds; connection and login outcomes unverified",
@@ -167,8 +187,12 @@ impl AdminFanout {
 mod tests;
 
 impl SecurityEngine {
-    pub(super) fn record_admin_tcp(&mut self, pkt: &Packet, tcp: TcpSignal) {
-        if let Some(finding) = self.admin_fanout.observe(pkt, tcp) {
+    pub(super) fn record_admin_tcp(&mut self, pkt: &Packet, tcp: TcpSignal, archive_rules: Option<&[String]>) {
+        if let Some(finding) = self.admin_fanout.observe(pkt, tcp, archive_rules) {
+            if retains_evidence(archive_rules) {
+                self.findings.retained_evidence.extend(finding.related_packets.iter()
+                    .filter_map(|&frame| self.admin_fanout.evidence.cited_packet(pkt, frame).cloned()));
+            }
             self.push_ids_finding(finding);
         }
     }
