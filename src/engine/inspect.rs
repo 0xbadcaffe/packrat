@@ -216,7 +216,10 @@ impl AnalysisCore {
         self.quic_scope.ingest(pkt);
 
         // VLAN intelligence
-        let vlan_added = self.vlan_intel.ingest(pkt);
+        let retain_vlan_crossing = self.alert_center.archive_evidence_rules.as_deref()
+            .is_some_and(|rules| rules.iter().any(|rule| rule == crate::analysis::vlan::MAC_VLAN_CROSSING_RULE));
+        let (vlan_added, vlan_evidence) = self.vlan_intel.ingest_with_evidence(pkt, retain_vlan_crossing);
+        retained_evidence.extend(vlan_evidence);
         for alert in self.vlan_intel.alerts.iter().skip(self.vlan_intel.alerts.len() - vlan_added) {
             self.alert_center.record_correlated_with_evidence(
                 (alert.pkt_no, alert.related_packet.as_slice()),

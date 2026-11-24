@@ -59,6 +59,7 @@ fn capture_interface(pkt: &Packet) -> Option<(u32, u32)> {
 
 pub(super) const VLAN_ID_ONE: &str = "VLAN ID 1 observed";
 pub(super) const VLAN_PCP_SEVEN: &str = "VLAN PCP 7 observed";
+pub(crate) const MAC_VLAN_CROSSING_RULE: &str = "vlan.mac_crossing";
 
 // ─── Data types ───────────────────────────────────────────────────────────────
 
@@ -112,6 +113,7 @@ pub struct VlanAlert {
 
 const MAC_VLAN_WINDOW_SECS: f64 = 300.0;
 const MAX_TRACKED_MACS: usize = 4096;
+const MAX_MAC_VLAN_EVIDENCE_BYTES: usize = 2048;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct MacVlanScope {
     interface: Option<(u32, u32)>,
@@ -119,12 +121,13 @@ struct MacVlanScope {
     tpid: u16,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 struct MacVlanSighting {
     vlan: u16,
     frame: u64,
     timestamp: f64,
     reported: bool,
+    evidence: Option<Box<Packet>>,
 }
 
 #[derive(Debug, Default)]
@@ -134,10 +137,21 @@ struct MacVlanMap {
 }
 
 impl MacVlanMap {
-    fn record(&mut self, scope: MacVlanScope, mac: [u8; 6], mut incoming: MacVlanSighting) -> Option<MacVlanSighting> {
-        if !incoming.timestamp.is_finite() || mac == [0; 6] || mac[0] & 1 != 0 {
+    fn record(&mut self, scope: MacVlanScope, mac: [u8; 6], vlan: u16, pkt: &Packet, retain: bool) -> Option<MacVlanSighting> {
+        if !pkt.timestamp.is_finite() || mac == [0; 6] || mac[0] & 1 != 0 {
             return None;
         }
+        let mut incoming = MacVlanSighting {
+            vlan, frame: pkt.no, timestamp: pkt.timestamp, reported: false, evidence: None,
+        };
+        // An already reported sighting cannot supply the opening frame of another crossing.
+        let remember = |sighting: &mut MacVlanSighting| {
+            if retain && !sighting.reported
+                && crate::model::project::pinned_packet_cost(pkt) <= MAX_MAC_VLAN_EVIDENCE_BYTES
+            {
+                sighting.evidence = Some(Box::new(pkt.clone()));
+            }
+        };
         let key = (scope, mac);
         if let Some(previous) = self.inner.get_mut(&key) {
             if incoming.frame == previous.frame
@@ -147,10 +161,11 @@ impl MacVlanMap {
             }
             let recent = incoming.timestamp - previous.timestamp <= MAC_VLAN_WINDOW_SECS;
             let changed = incoming.vlan != previous.vlan;
-            let result = (recent && changed && !previous.reported).then_some(*previous);
+            let detected = recent && changed && !previous.reported;
             incoming.reported = recent && (previous.reported || changed);
-            *previous = incoming;
-            return result;
+            remember(&mut incoming);
+            let previous = std::mem::replace(previous, incoming);
+            return detected.then_some(previous);
         }
         if self.inner.len() >= MAX_TRACKED_MACS {
             if self.last_prune.is_none_or(|last| incoming.timestamp - last >= 30.0) {
@@ -161,6 +176,7 @@ impl MacVlanMap {
                 return None;
             }
         }
+        remember(&mut incoming);
         self.inner.insert(key, incoming);
         None
     }
@@ -183,6 +199,10 @@ pub struct VlanIntel {
 
 impl VlanIntel {
     pub fn ingest(&mut self, pkt: &Packet) -> usize {
+        self.ingest_with_evidence(pkt, false).0
+    }
+
+    pub(crate) fn ingest_with_evidence(&mut self, pkt: &Packet, retain_crossing: bool) -> (usize, Option<Packet>) {
         let before = self.alerts.len();
         let wire_tags = captured_vlan_tags(pkt);
         // ── Extract Ethernet src MAC from raw bytes ──────────────────────────
@@ -212,10 +232,12 @@ impl VlanIntel {
             );
         }
 
-        if let Some(tags) = wire_tags {
+        let evidence = if let Some(tags) = wire_tags {
             self.observe_tag_markings(pkt, tags);
-            self.observe_mac_vlan(pkt, tags, &mac_src);
-        }
+            self.observe_mac_vlan(pkt, tags, &mac_src, retain_crossing)
+        } else {
+            None
+        };
 
         let policy_interface = pkt.capture.as_ref().and_then(|meta| meta.interface_name.as_deref())
             .filter(|name| self.policy.expects_single_tag(name));
@@ -269,23 +291,21 @@ impl VlanIntel {
         if self.alerts.len() > MAX_RECENT_VLAN_ALERTS {
             self.alerts.drain(..self.alerts.len() - MAX_RECENT_VLAN_ALERTS);
         }
-        added
+        (added, evidence)
     }
 
-    fn observe_mac_vlan(&mut self, pkt: &Packet, tags: &[u8], mac_src: &str) {
+    fn observe_mac_vlan(&mut self, pkt: &Packet, tags: &[u8], mac_src: &str, retain: bool) -> Option<Packet> {
         let decode = |&[a, b, c, d]: &[u8; 4]| (u16::from_be_bytes([a, b]), u16::from_be_bytes([c, d]) & 0x0fff);
-        let Some((preceding, inner)) = tags.split_last_chunk::<4>() else { return };
+        let (preceding, inner) = tags.split_last_chunk::<4>()?;
         let (tpid, vid) = decode(inner);
         let outer = preceding.first_chunk::<4>().map(decode);
         let assigned_vid = |vid| (1..=4094).contains(&vid);
         if !assigned_vid(vid) || outer.is_some_and(|(_, outer_vid)| !assigned_vid(outer_vid)) {
-            return;
+            return None;
         }
         let scope = MacVlanScope { interface: capture_interface(pkt), outer, tpid };
-        let Some(mac) = pkt.bytes.get(6..12).and_then(|bytes| <[u8; 6]>::try_from(bytes).ok()) else { return };
-        let Some(previous) = self.mac_vlans.record(scope, mac, MacVlanSighting {
-            vlan: vid, frame: pkt.no, timestamp: pkt.timestamp, reported: false,
-        }) else { return };
+        let mac = pkt.bytes.get(6..12)?.try_into().ok()?;
+        let previous = self.mac_vlans.record(scope, mac, vid, pkt, retain)?;
         let location = scope.interface.map_or_else(|| "unknown capture interface".to_owned(),
             |(section, interface)| format!("capture section {section}, interface {interface}"));
         let outer = outer.map_or_else(String::new, |(tag, vid)| format!(" under outer VLAN {vid} (0x{tag:04x})"));
@@ -296,6 +316,7 @@ impl VlanIntel {
             pkt_no: pkt.no, timestamp: pkt.timestamp, related_packet: Some(previous.frame),
             correlation_key: Some(format!("{scope:?}:{mac_src}")),
         });
+        if retain { previous.evidence.map(|packet| *packet) } else { None }
     }
 
     fn observe_tag_markings(&mut self, pkt: &Packet, tags: &[u8]) {

@@ -287,6 +287,9 @@ mod ipv4_fragment_archive_cases;
 #[path = "security_policy/archive_fixture.rs"]
 mod archive_fixture;
 #[cfg(feature = "terminal-ui")]
+#[path = "security_policy/vlan_crossing_archive_cases.rs"]
+mod vlan_crossing_archive_cases;
+#[cfg(feature = "terminal-ui")]
 #[path = "security_policy/tcp_overlap_archive_cases.rs"]
 mod tcp_overlap_archive_cases;
 #[cfg(feature = "terminal-ui")]
