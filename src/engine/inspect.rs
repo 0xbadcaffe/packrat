@@ -344,6 +344,13 @@ impl AnalysisCore {
         // Credential extraction
         let new_creds = crate::net::inspector::extract_credentials(pkt);
         if !new_creds.is_empty() {
+            let scope = service_alert_scope();
+            let flow = *packet_flow.get_or_insert_with(|| AlertFlow::from_packet(pkt));
+            let conversation = match flow {
+                Some(key) => format!("{scope:?}:{key:?}"),
+                None => format!("{scope:?}:{:?}:{:?}:{:?}>{:?}:{:?}",
+                    pkt.protocol, pkt.src, pkt.src_port, pkt.dst, pkt.dst_port),
+            };
             for credential in &new_creds {
                 self.operator_graph.on_credential(
                     Some(credential.kind),
@@ -354,14 +361,14 @@ impl AnalysisCore {
                     pkt.timestamp,
                     credential.pkt_no,
                 );
-                self.alert_center.record_correlated(
-                    credential.pkt_no,
+                self.alert_center.record_with_context(
+                    (credential.pkt_no, &[], flow),
                     pkt.timestamp,
                     "CREDENTIAL",
                     "HIGH",
                     credential.kind,
                     CREDENTIAL_ALERT_DETAIL,
-                    format!("{}:{}>{}", credential.kind, pkt.src, pkt.dst),
+                    &conversation,
                 );
             }
             self.credentials.extend(new_creds);

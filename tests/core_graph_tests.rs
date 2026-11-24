@@ -72,6 +72,38 @@ fn cleartext_credentials_have_host_links_and_packet_evidence() {
 }
 
 #[test]
+fn credential_alert_reviews_are_scoped_without_exposing_values() {
+    use packrat_tui::net::packet::{CaptureMetadata, CaptureTimestamp, TimestampResolution};
+
+    let mut core = AnalysisCore::default();
+    for (no, interface_id, port) in [(1, 0, 80_u16), (2, 0, 80), (3, 1, 80), (4, 0, 81)] {
+        let mut raw = packets::tcp(
+            no, 100, 0x18,
+            b"GET / HTTP/1.1\r\nAuthorization: Basic YWxpY2U6c2VjcmV0\r\n\r\n",
+        ).bytes;
+        raw[34..36].copy_from_slice(&20_480_u16.to_be_bytes());
+        raw[36..38].copy_from_slice(&port.to_be_bytes());
+        let mut packet = parse_ethernet(&raw, no, no as f64);
+        packet.capture = Some(CaptureMetadata {
+            captured_length: raw.len() as u32, wire_length: raw.len() as u32,
+            section_id: 0, interface_id, link_type: 1, interface_name: None, comments: Vec::new(),
+            timestamp: Some(CaptureTimestamp { ticks: no, resolution: TimestampResolution::Decimal(0), offset_seconds: 0 }),
+        });
+        core.analyze(&packet);
+    }
+    let alerts: Vec<_> = core.alert_center.items.iter().filter(|alert| alert.source == "CREDENTIAL").collect();
+    assert_eq!(alerts.len(), 3);
+    for (index, frames) in [&[1, 2][..], &[3][..], &[4][..]].into_iter().enumerate() {
+        let alert = alerts[index];
+        assert_eq!(alert.packet_refs, frames);
+        assert_eq!(alert.flow.unwrap().destination.port(), if index == 2 { 81 } else { 80 });
+        assert!(alert.detail.contains("value omitted"));
+        assert!(!serde_json::to_string(alert).unwrap().contains("alice:secret"));
+        assert!(!alert.correlation_key.contains("YWxpY2U6c2VjcmV0"));
+    }
+}
+
+#[test]
 fn detection_correlation_continues_after_alert_retention_rollover() {
     let mut core = AnalysisCore::default();
     for no in 1..=1002 {
