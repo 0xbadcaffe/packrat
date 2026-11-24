@@ -181,14 +181,7 @@ impl App {
             .take()
             .map(IncidentStore::from_snapshot)
             .transpose()?;
-        if state.endpoint_evidence.len() > 10_000
-            || serde_json::to_vec(&state.endpoint_evidence)
-                .map_err(|error| error.to_string())?
-                .len()
-                > 8 * 1024 * 1024
-        {
-            return Err("Saved endpoint evidence exceeds limits".into());
-        }
+        crate::analysis::impact::validate_endpoint_evidence(&state.endpoint_evidence)?;
         let bytes = state
             .embedded_packets
             .iter()

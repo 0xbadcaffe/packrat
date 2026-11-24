@@ -44,6 +44,8 @@ impl std::fmt::Display for IncidentStatus {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Incident {
     pub id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
     pub source: IncidentSource,
     pub detector: String,
     pub summary: String,
@@ -85,6 +87,7 @@ impl IncidentStore {
         let mut bytes = 0usize;
         for incident in &snapshot.incidents {
             if incident.id == 0 || incident.id > snapshot.last_id || !ids.insert(incident.id)
+                || incident.capture_id.as_deref().is_some_and(|id| !crate::storage::packet_archive::valid_capture_id(id))
                 || !incident.first_seen.is_finite() || !incident.last_seen.is_finite()
                 || incident.packet_history.len() > MAX_HISTORY_PACKETS {
                 return Err("Invalid saved incident metadata".into());
@@ -125,10 +128,23 @@ impl IncidentStore {
         packet: &Packet,
         prior_packets: impl Iterator<Item = Packet>,
     ) -> u64 {
+        self.open_or_update_scoped((source, None), detector, summary, severity, packet, prior_packets)
+    }
+
+    pub(crate) fn open_or_update_scoped(
+        &mut self,
+        (source, capture_id): (IncidentSource, Option<&str>),
+        detector: impl Into<String>,
+        summary: impl Into<String>,
+        severity: Severity,
+        packet: &Packet,
+        prior_packets: impl Iterator<Item = Packet>,
+    ) -> u64 {
         let detector = detector.into();
         if let Some(existing) = self.incidents.iter_mut().find(|incident| {
             incident.status == IncidentStatus::PendingReview
                 && incident.source == source
+                && incident.capture_id.as_deref() == capture_id
                 && incident.detector == detector
                 && incident.attacker == packet.src
                 && incident.target == packet.dst
@@ -143,6 +159,7 @@ impl IncidentStore {
         let id = self.next_id;
         let mut incident = Incident {
             id,
+            capture_id: capture_id.map(str::to_owned),
             source,
             detector,
             summary: summary.into(),
@@ -179,8 +196,14 @@ impl IncidentStore {
 
     /// Add any traffic involving an open incident's suspected attacker.
     pub fn retain_packet(&mut self, packet: &Packet) {
+        self.retain_scoped_packet(None, packet);
+    }
+
+    pub(crate) fn retain_scoped_packet(&mut self, capture_id: Option<&str>, packet: &Packet) {
         for incident in self.incidents.iter_mut().filter(|incident| {
-            incident.status == IncidentStatus::PendingReview && same_conversation(incident, packet)
+            incident.status == IncidentStatus::PendingReview
+                && incident.capture_id.as_deref() == capture_id
+                && same_conversation(incident, packet)
         }) {
             incident.last_packet = packet.no;
             incident.last_seen = packet.timestamp;

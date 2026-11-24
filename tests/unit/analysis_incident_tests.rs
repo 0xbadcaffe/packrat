@@ -53,6 +53,23 @@ fn deduplicates_repeated_pending_finding() {
 }
 
 #[test]
+fn incident_openings_and_retained_packets_do_not_cross_capture_scopes() {
+    let mut store = IncidentStore::default();
+    let first = packet(1, "203.0.113.7", "10.0.0.5");
+    let second = packet(2, "203.0.113.7", "10.0.0.5");
+    for (scope, trigger) in [("capture-a", &first), ("capture-b", &second)] {
+        store.open_or_update_scoped(
+            (IncidentSource::UserRule, Some(scope)), "rule", "finding",
+            Severity::Critical, trigger, std::iter::empty(),
+        );
+    }
+    store.retain_scoped_packet(Some("capture-b"), &packet(3, "203.0.113.7", "10.0.0.5"));
+    assert_eq!(store.incidents.len(), 2);
+    assert_eq!(store.incidents[0].last_packet, 1);
+    assert_eq!(store.incidents[1].last_packet, 3);
+}
+
+#[test]
 fn saved_incidents_validate_identifiers_and_restore_pending_review() {
     let mut store = IncidentStore::default();
     let packet = packet(1, "203.0.113.7", "10.0.0.5");

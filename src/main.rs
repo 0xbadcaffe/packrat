@@ -63,12 +63,6 @@ async fn main() -> Result<()> {
     app.latch_helper_path = options.latch_helper_path;
     app.reputation_helper_path = options.reputation_helper_path;
     app.capture_helper_path = options.capture_helper_path;
-    if let Some(path) = options.endpoint_evidence_path {
-        match analysis::impact::read_endpoint_evidence(&path) {
-            Ok(events) => app.configure_core(move |core| core.endpoint_evidence = events),
-            Err(error) => app.set_status(format!("Endpoint evidence import failed: {error}")),
-        }
-    }
     app.configure_core(move |core| {
         core.vlan_intel.policy = options.vlan_policy;
         core.tls_tracker.decrypt_helper_path = options.tls_decrypt_helper_path;
@@ -94,6 +88,9 @@ async fn main() -> Result<()> {
     app.start_background_analysis().map_err(anyhow::Error::msg)?;
     if let Some(path) = options.project_path {
         app.open_project(&path).map_err(anyhow::Error::msg)?;
+    }
+    if let Some(path) = options.endpoint_evidence_path {
+        app.load_endpoint_evidence(&path);
     }
 
     enable_raw_mode()?;

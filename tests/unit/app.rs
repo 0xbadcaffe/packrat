@@ -357,6 +357,7 @@ fn explicit_auto_contain_rule_cannot_enforce_an_offline_incident() {
 fn cases_restore_reviewed_incidents_and_correlated_impact_without_side_effects() {
     use crate::analysis::impact::{EndpointCategory, EndpointEvidence, ImpactConfidence};
     let mut source = App::new_for_test();
+    source.capture_id = Some(App::new_capture_id());
     source.inject_packet(packet(1));
     source.open_user_rule_incident(&packet(1), "rule", "rule", "finding", true);
     let id = source.core.edit().incidents.active().unwrap().id;
@@ -364,6 +365,7 @@ fn cases_restore_reviewed_incidents_and_correlated_impact_without_side_effects()
     source.core.edit().incidents.acknowledge_active().unwrap();
     source.core.edit().endpoint_evidence.push(EndpointEvidence {
         incident_id: id,
+        capture_id: source.capture_id.as_deref().map(str::to_owned),
         target: "198.51.100.2".into(),
         source: "audit".into(),
         evidence_id: "event-17".into(),

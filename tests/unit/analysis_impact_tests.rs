@@ -36,8 +36,8 @@ fn endpoint_evidence_requires_matching_incident_target_and_provenance() {
     packet.src = "192.0.2.1".into();
     packet.dst = "192.0.2.2".into();
     let mut store = IncidentStore::default();
-    let id = store.open_or_update(
-        IncidentSource::UserRule,
+    let id = store.open_or_update_scoped(
+        (IncidentSource::UserRule, Some("capture-a")),
         "rule",
         "alert",
         Severity::Critical,
@@ -47,6 +47,7 @@ fn endpoint_evidence_requires_matching_incident_target_and_provenance() {
     let incident = store.active().unwrap();
     let event = EndpointEvidence {
         incident_id: id,
+        capture_id: Some("capture-a".into()),
         target: packet.dst.clone(),
         source: "audit-log".into(),
         evidence_id: "event-42".into(),
@@ -64,6 +65,16 @@ fn endpoint_evidence_requires_matching_incident_target_and_provenance() {
                 && entry.confidence == ImpactConfidence::Observed)
     );
     assert!(!report.compromise_confirmed);
+    assert_eq!(report.capture_id.as_deref(), Some("capture-a"));
+    for capture_id in [None, Some("capture-b".into())] {
+        let unrelated = EndpointEvidence { capture_id, ..event.clone() };
+        assert!(!correlate(incident, &[unrelated]).evidence.iter()
+            .any(|entry| entry.subject == event.subject));
+    }
+    let mut legacy = incident.clone();
+    legacy.capture_id = None;
+    assert!(!correlate(&legacy, &[event.clone()]).evidence.iter()
+        .any(|entry| entry.subject == event.subject));
     let mut unrelated = event.clone();
     unrelated.target = "192.0.2.99".into();
     assert!(

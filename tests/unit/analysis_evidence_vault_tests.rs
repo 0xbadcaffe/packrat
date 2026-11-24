@@ -6,6 +6,7 @@ use crate::net::packet::Packet;
 fn incident() -> Incident {
     Incident {
         id: 9,
+        capture_id: None,
         source: IncidentSource::IndustrySignature,
         detector: "test detector".into(),
         summary: "test summary".into(),

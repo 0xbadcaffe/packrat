@@ -31,6 +31,7 @@ impl LatchBackend for FailingLatch {
 fn incident(address: &str) -> Incident {
     Incident {
         id: 1,
+        capture_id: None,
         source: IncidentSource::UserRule,
         detector: "test".into(),
         summary: "test".into(),

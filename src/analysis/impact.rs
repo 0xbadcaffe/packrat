@@ -2,6 +2,9 @@
 
 use crate::analysis::incident::Incident;
 
+const MAX_ENDPOINT_EVIDENCE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_ENDPOINT_EVIDENCE_EVENTS: usize = 10_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ImpactConfidence {
     Observed,
@@ -21,6 +24,8 @@ pub struct ImpactEvidence {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImpactReport {
     pub target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
     pub compromise_confirmed: bool,
     pub evidence: Vec<ImpactEvidence>,
     pub limitations: Vec<String>,
@@ -30,6 +35,8 @@ pub struct ImpactReport {
 #[serde(deny_unknown_fields)]
 pub struct EndpointEvidence {
     pub incident_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
     pub target: String,
     pub source: String,
     pub evidence_id: String,
@@ -49,9 +56,11 @@ pub enum EndpointCategory {
 
 pub fn correlate(incident: &Incident, events: &[EndpointEvidence]) -> ImpactReport {
     let mut report = assess(incident);
+    let Some(capture_id) = report.capture_id.as_deref() else { return report; };
     for event in events
         .iter()
-        .filter(|event| event.incident_id == incident.id && event.target == incident.target)
+        .filter(|event| event.capture_id.as_deref() == Some(capture_id)
+            && event.incident_id == incident.id && event.target == incident.target)
     {
         if event.source.trim().is_empty()
             || event.evidence_id.trim().is_empty()
@@ -85,12 +94,12 @@ pub fn read_endpoint_evidence(path: &std::path::Path) -> Result<Vec<EndpointEvid
     use std::io::{BufRead, BufReader, Read};
     let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
     let mut events = Vec::new();
-    let reader = BufReader::new(file.take(8 * 1024 * 1024 + 1));
+    let reader = BufReader::new(file.take(MAX_ENDPOINT_EVIDENCE_BYTES as u64 + 1));
     let mut total = 0usize;
     for (index, line) in reader.lines().enumerate() {
         let line = line.map_err(|error| error.to_string())?;
         total += line.len() + 1;
-        if total > 8 * 1024 * 1024 || events.len() >= 10_000 {
+        if total > MAX_ENDPOINT_EVIDENCE_BYTES || events.len() >= MAX_ENDPOINT_EVIDENCE_EVENTS {
             return Err("Endpoint evidence exceeds import limits".into());
         }
         if line.trim().is_empty() {
@@ -103,15 +112,38 @@ pub fn read_endpoint_evidence(path: &std::path::Path) -> Result<Vec<EndpointEvid
     Ok(events)
 }
 
+pub(crate) fn validate_endpoint_evidence(events: &[EndpointEvidence]) -> Result<(), String> {
+    if events.len() > MAX_ENDPOINT_EVIDENCE_EVENTS
+        || serde_json::to_vec(events).map_err(|error| error.to_string())?.len() > MAX_ENDPOINT_EVIDENCE_BYTES
+    {
+        return Err("Endpoint evidence exceeds case limits".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn merge_endpoint_evidence(
+    saved: &mut Vec<EndpointEvidence>, imported: Vec<EndpointEvidence>,
+) -> Result<(), String> {
+    let prior = saved.len();
+    saved.extend(imported);
+    if let Err(error) = validate_endpoint_evidence(saved) {
+        saved.truncate(prior);
+        return Err(error);
+    }
+    Ok(())
+}
+
 pub fn assess(incident: &Incident) -> ImpactReport {
     let mut report = ImpactReport {
         target: incident.target.clone(),
+        capture_id: incident.capture_id.clone().filter(|id| crate::storage::packet_archive::valid_capture_id(id)),
         compromise_confirmed: false,
         evidence: Vec::new(),
         limitations: vec![
             "A detection indicates suspicious activity; it does not establish successful exploitation.".into(),
             "Packet evidence cannot establish local file modification, execution, or acquired permissions without endpoint evidence.".into(),
             "Encrypted, missing, truncated, or unretained traffic limits the assessment.".into(),
+            "Endpoint reports require a matching capture ID, incident ID, and target. Unscoped reports do not establish impact.".into(),
         ],
     };
     for packet in &incident.packet_history {

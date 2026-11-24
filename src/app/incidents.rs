@@ -1,6 +1,16 @@
 use super::*;
 
 impl App {
+    pub fn load_endpoint_evidence(&mut self, path: &std::path::Path) {
+        use crate::analysis::impact::{merge_endpoint_evidence, read_endpoint_evidence};
+        match read_endpoint_evidence(path) {
+            Ok(events) => self.update_core("Endpoint evidence imported", move |core| {
+                merge_endpoint_evidence(&mut core.endpoint_evidence, events)
+            }),
+            Err(error) => self.set_status(format!("Endpoint evidence import failed: {error}")),
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn open_industry_incident(
         &mut self,
@@ -10,8 +20,8 @@ impl App {
     ) {
         let core_handle = self.core.clone();
         let mut core = core_handle.edit();
-        let id = core.incidents.open_or_update(
-            IncidentSource::IndustrySignature,
+        let id = core.incidents.open_or_update_scoped(
+            (IncidentSource::IndustrySignature, self.capture_id.as_deref()),
             signature,
             detail,
             EvidenceSeverity::Critical,
@@ -41,8 +51,8 @@ impl App {
     ) {
         let core_handle = self.core.clone();
         let mut core = core_handle.edit();
-        let id = core.incidents.open_or_update(
-            IncidentSource::UserRule,
+        let id = core.incidents.open_or_update_scoped(
+            (IncidentSource::UserRule, self.capture_id.as_deref()),
             rule_id,
             format!("{rule_name}: {message}"),
             EvidenceSeverity::Critical,

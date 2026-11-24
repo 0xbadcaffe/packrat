@@ -307,8 +307,8 @@ impl AnalysisCore {
             .collect();
 
         for (signature, detail) in critical_ids {
-            let id = self.incidents.open_or_update(
-                IncidentSource::IndustrySignature,
+            let id = self.incidents.open_or_update_scoped(
+                (IncidentSource::IndustrySignature, self.alert_center.capture_id.as_deref()),
                 &signature,
                 &detail,
                 EvidenceSeverity::Critical,
@@ -322,8 +322,8 @@ impl AnalysisCore {
             });
         }
         for (rule_id, rule_name, message, auto_contain) in critical_rule_hits {
-            let id = self.incidents.open_or_update(
-                IncidentSource::UserRule,
+            let id = self.incidents.open_or_update_scoped(
+                (IncidentSource::UserRule, self.alert_center.capture_id.as_deref()),
                 &rule_id,
                 format!("{rule_name}: {message}"),
                 EvidenceSeverity::Critical,
@@ -336,7 +336,7 @@ impl AnalysisCore {
                 auto_contain_rule: auto_contain,
             });
         }
-        self.incidents.retain_packet(pkt);
+        self.incidents.retain_scoped_packet(self.alert_center.capture_id.as_deref(), pkt);
 
         // Credential extraction
         let new_creds = crate::net::inspector::extract_credentials(pkt);
