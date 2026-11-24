@@ -15,6 +15,7 @@ usage() {
         'Reports score openings, snapshots, strict-policy violations, cited evidence, and classification separately.' \
         'Cases without verified scoring inputs are not scored.' \
         'Known DNS capacity declines make affected DNS labels and strict cases inconclusive; older analyzers may not report counters.' \
+        'TCP stream evictions make stream-dependent labels and strict cases inconclusive, independently of frame coverage.' \
         'A capture that changes during replay is marked inconclusive, even without a baseline.' \
         'Set PACKRAT_REPLAY_BASELINE_ANALYZER to compare analyzers; deltas require matching packet coverage.' \
         'Partial coverage requires frame fingerprints from both analyzers.'
@@ -102,7 +103,8 @@ replay_case() {
                 if $row.type == "summary" then
                     .summaries += 1 | .summary = ($row | {packets,analyzed,skipped,truncated_frames,allow_truncated,
                         frame_coverage_sha256_v1,alerts_opened,alert_snapshots,rule_counts,alert_expectations}
-                        + if has("dns_capacity") then {dns_capacity:(.dns_capacity | dns_capacity // null)} else {} end)
+                        + (if has("dns_capacity") then {dns_capacity:(.dns_capacity | dns_capacity // null)} else {} end)
+                        + (if has("evicted_streams") then {evicted_streams:(.evicted_streams | if ordinal then . else null end)} else {} end))
                 elif ($keys | length) > 0 and $row.type == "alert" and $row.schema_version == 1
                     and (if $row | has("opening") then $row.opening == true else $row.alert.hit_count == 1 end)
                     and ($row.alert.provenance.rule_id | type == "string")
@@ -136,6 +138,18 @@ replay_case() {
          elif $dns_capacity_status == "declines" then $strict or
             (if $limited_rules == null then $dns_labeled else ($limited_rules | length) > 0 end)
          else false end) as $dns_gate |
+        (if ($result | has("evicted_streams") | not) then "not_reported"
+         elif $result.evicted_streams == null then "unverified"
+         elif $result.evicted_streams > 0 then "evictions" else "clear" end) as $tcp_stream_cache_status |
+        (any($labeled[]; startswith("dns.") or startswith("tls.") or startswith("industrial.")
+                         or . == "http.unauthorized_burst")) as $possibly_stream_labeled |
+        ($result.alert_expectations.tcp_stream_limited_rules
+            | if type == "array" and length <= 64 and all(.[]; . as $id | $labeled | index($id) != null)
+              then . else null end) as $stream_limited_rules |
+        (if $tcp_stream_cache_status == "unverified" then $strict or $possibly_stream_labeled
+         elif $tcp_stream_cache_status == "evictions" then $strict or
+            (if $stream_limited_rules == null then $possibly_stream_labeled else ($stream_limited_rules | length) > 0 end)
+         else false end) as $tcp_gate |
         (if $label | has("expect_snapshots") then
             {expected:$label.expect_snapshots, observed:$result.alert_snapshots}
          else null end) as $snapshot_check |
@@ -156,7 +170,7 @@ replay_case() {
                 | .passed = (.passed and .classification.passed)
               else . end
         )) as $evidence_checks |
-        (if $status > 1 or $replay.summaries != 1 or $dns_gate then "inconclusive"
+        (if $status > 1 or $replay.summaries != 1 or $dns_gate or $tcp_gate then "inconclusive"
          elif $evaluation == "failed" then "failed"
          elif $evaluation != "passed" or $status != 0 or ($score_verified | not) then "inconclusive"
          elif $snapshot_delta != 0 then "failed"
@@ -168,6 +182,7 @@ replay_case() {
             map(select(.rule_id as $id | all($frames[]; .rule_id != $id)))) as $counts |
         {name:$name, verdict:$verdict,
          dns_capacity_status:$dns_capacity_status,
+         tcp_stream_cache_status:$tcp_stream_cache_status,
          unlisted_rule_counts:$unlisted, unregistered_alerts:$unregistered, summary:$result,
          snapshot_check:$snapshot_check,
          score:(if $verdict == "inconclusive" or ($score_verified | not) then null else {

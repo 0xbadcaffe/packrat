@@ -19,6 +19,7 @@ pub(super) struct ReplayAlerts {
 pub(super) struct ReplayEvaluation<'a> {
     pub verdict: &'static str,
     dns_capacity_limited_rules: Vec<&'a str>,
+    tcp_stream_limited_rules: Vec<&'a str>,
     checks: Vec<RuleCheck<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     frame_checks: Vec<FrameCheck<'a>>,
@@ -91,7 +92,7 @@ impl ReplayAlerts {
         Ok(())
     }
 
-    pub fn evaluate(&self, input_complete: bool, dns: DnsCapacityStats) -> Option<ReplayEvaluation<'_>> {
+    pub fn evaluate(&self, input_complete: bool, dns: DnsCapacityStats, evicted_streams: u64) -> Option<ReplayEvaluation<'_>> {
         if self.expected.is_empty() && self.expected_frames.is_empty() {
             return None;
         }
@@ -116,7 +117,14 @@ impl ReplayAlerts {
             .map(String::as_str).filter(|id| dns_rule_limited(id, dns)).collect();
         dns_capacity_limited_rules.sort_unstable();
         dns_capacity_limited_rules.dedup();
-        let verdict = if !input_complete || !dns_capacity_limited_rules.is_empty() {
+        let mut tcp_stream_limited_rules = Vec::new();
+        if evicted_streams > 0 {
+            tcp_stream_limited_rules.extend(self.expected.keys().chain(self.expected_frames.keys())
+                .map(String::as_str).filter(|id| uses_tcp_stream_cache(id)));
+            tcp_stream_limited_rules.sort_unstable();
+            tcp_stream_limited_rules.dedup();
+        }
+        let verdict = if !input_complete || !dns_capacity_limited_rules.is_empty() || !tcp_stream_limited_rules.is_empty() {
             "inconclusive"
         } else if checks.iter().all(|check| check.expected == check.observed)
             && frame_checks.iter().all(|check| check.missing_frames.is_empty() && check.unexpected_openings == 0)
@@ -125,8 +133,15 @@ impl ReplayAlerts {
         } else {
             "failed"
         };
-        Some(ReplayEvaluation { verdict, checks, frame_checks, dns_capacity_limited_rules })
+        Some(ReplayEvaluation { verdict, checks, frame_checks, dns_capacity_limited_rules, tcp_stream_limited_rules })
     }
+}
+
+fn uses_tcp_stream_cache(id: &str) -> bool {
+    id.starts_with("dns.") || matches!(id,
+        "http.unauthorized_burst"
+        | "industrial.state_change" | "industrial.critical_control"
+        | "tls.ssl30_selected" | "tls.tls10_selected" | "tls.tls11_selected" | "tls.rc4_selected")
 }
 
 fn dns_rule_limited(id: &str, dns: DnsCapacityStats) -> bool {
@@ -144,3 +159,7 @@ fn dns_rule_limited(id: &str, dns: DnsCapacityStats) -> bool {
 #[cfg(test)]
 #[path = "../../../tests/unit/replay_dns_capacity_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/replay_tcp_capacity_tests.rs"]
+mod tcp_tests;

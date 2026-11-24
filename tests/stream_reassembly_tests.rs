@@ -243,4 +243,13 @@ fn offline_alert_summary_keeps_stream_evictions_separate_from_skipped_packets() 
         assert_eq!(summary["retained_streams"], 500);
         assert_eq!(summary["evicted_streams"], 1);
     }
+    let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))
+        .args(["--expect-alert", "http.unauthorized_burst=0"]).arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let summary: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    assert_eq!(summary["alert_expectations"]["verdict"], "inconclusive");
+    assert_eq!(summary["alert_expectations"]["tcp_stream_limited_rules"],
+        serde_json::json!(["http.unauthorized_burst"]));
+    assert_eq!(summary["skipped"], 0);
 }

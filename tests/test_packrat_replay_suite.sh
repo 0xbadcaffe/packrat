@@ -12,6 +12,7 @@ touch -- "$scratch/unlisted.pcap" "$scratch/unregistered.pcap"
 touch -- "$scratch/counts.pcap"
 touch -- "$scratch/evidence.pcap"
 touch -- "$scratch/dns.pcap"
+touch -- "$scratch/tcp.pcap"
 
 packrat-analyze() {
     local verdict opened=0 rules='{}' summary
@@ -54,6 +55,10 @@ packrat-analyze() {
             [[ $# == 4 && $1 == --expect-alert && $2 == dns.unmatched_response=0 && $3 == -- ]] || return 2
             verdict=passed
             ;;
+        "$PACKRAT_TEST_DIRECTORY/tcp.pcap")
+            [[ $# == 4 && $1 == --expect-alert && $2 == http.unauthorized_burst=0 && $3 == -- ]] || return 2
+            verdict=passed
+            ;;
         "$PACKRAT_TEST_DIRECTORY/unlisted.pcap") verdict=passed; opened=1; rules='{"scan.vertical":1}' ;;
         "$PACKRAT_TEST_DIRECTORY/unregistered.pcap") verdict=passed; opened=1 ;;
         *) return 2 ;;
@@ -73,6 +78,13 @@ packrat-analyze() {
     fi
     if [[ -v PACKRAT_TEST_DNS_CAPACITY ]]; then
         summary=$(jq -c --argjson capacity "$PACKRAT_TEST_DNS_CAPACITY" '.dns_capacity=$capacity' <<< "$summary")
+    fi
+    if [[ -v PACKRAT_TEST_TCP_EVICTIONS ]]; then
+        summary=$(jq -c --argjson evictions "$PACKRAT_TEST_TCP_EVICTIONS" '.evicted_streams=$evictions' <<< "$summary")
+    fi
+    if [[ -v PACKRAT_TEST_TCP_RULES ]]; then
+        summary=$(jq -c --argjson rules "$PACKRAT_TEST_TCP_RULES" \
+            '.alert_expectations.tcp_stream_limited_rules=$rules' <<< "$summary")
     fi
     printf '%s\n' "$summary"
     case ${PACKRAT_TEST_CANDIDATE:-} in
@@ -151,6 +163,34 @@ status=0
 result=$(PACKRAT_TEST_DNS_CAPACITY='{"query_key_declines":"private"}' bash "$suite" "$scratch/dns-strict.json") || status=$?
 [[ $status == 1 ]]
 jq -e '.inconclusive==1 and .cases[0].dns_capacity_status=="unverified" and .cases[0].summary.dns_capacity==null' <<< "$result" >/dev/null
+jq '.strict=true' "$manifest" > "$scratch/tcp-strict.json"
+jq '.cases[0] |= (.capture="tcp.pcap" | .expect_counts={"http.unauthorized_burst":0})' \
+    "$manifest" > "$scratch/tcp-labeled.json"
+bash "$suite" "$scratch/tcp-strict.json" | jq -e '
+    .passed==1 and .cases[0].tcp_stream_cache_status=="not_reported"' >/dev/null
+PACKRAT_TEST_TCP_EVICTIONS=0 bash "$suite" "$scratch/tcp-labeled.json" | jq -e '
+    .passed==1 and .cases[0].tcp_stream_cache_status=="clear" and .cases[0].summary.evicted_streams==0' >/dev/null
+PACKRAT_TEST_TCP_EVICTIONS=3 bash "$suite" "$manifest" | jq -e '
+    .passed==1 and .cases[0].tcp_stream_cache_status=="evictions" and .cases[0].summary.evicted_streams==3' >/dev/null
+for case_manifest in "$scratch/tcp-strict.json" "$scratch/tcp-labeled.json"; do
+    status=0
+    result=$(PACKRAT_TEST_TCP_EVICTIONS=3 bash "$suite" "$case_manifest") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.inconclusive==1 and .cases[0].tcp_stream_cache_status=="evictions"
+        and .cases[0].score==null' <<< "$result" >/dev/null
+done
+for junk in '-1' '0.5' '"private"' '9007199254740992' 'null'; do
+    status=0
+    result=$(PACKRAT_TEST_TCP_EVICTIONS="$junk" bash "$suite" "$scratch/tcp-labeled.json") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.inconclusive==1 and .cases[0].tcp_stream_cache_status=="unverified"
+        and .cases[0].summary.evicted_streams==null' <<< "$result" >/dev/null
+done
+status=0
+result=$(PACKRAT_TEST_TCP_EVICTIONS=3 PACKRAT_TEST_TCP_RULES='["http.unauthorized_burst"]' \
+    bash "$suite" "$scratch/tcp-labeled.json") || status=$?
+[[ $status == 1 ]]
+jq -e '.inconclusive==1 and .score.scored_cases==0' <<< "$result" >/dev/null
 for mode in duplicate_summary interrupted; do
     status=0
     result=$(PACKRAT_TEST_CANDIDATE="$mode" bash "$suite" "$manifest") || status=$?

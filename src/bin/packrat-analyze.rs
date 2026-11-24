@@ -79,7 +79,11 @@ fn analyze(
     })?;
     let frame_coverage_sha256_v1 = format!("{:x}", coverage.finalize());
     let dns_capacity = core.security.dns_capacity_stats();
-    let evaluation = replay.evaluate(analyzed > 0 && skipped == 0 && (truncated_frames == 0 || allow_truncated), dns_capacity);
+    let evaluation = replay.evaluate(
+        analyzed > 0 && skipped == 0 && (truncated_frames == 0 || allow_truncated),
+        dns_capacity,
+        core.streams.evicted_streams(),
+    );
     if alerts_only {
         event(
             output,
@@ -184,7 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(arg) = args.next() {
         if !positional && (arg == "--help" || arg == "-h") {
             println!(
-                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--expect-alert-frame RULE_ID=FRAME] [--allow-truncated] [--quic-decode-helper PROGRAM] [--single-tag-interface NAME] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nExpectations imply --alerts-only and exit nonzero on mismatches or skipped input. Truncated frames make expectations inconclusive unless --allow-truncated is set. --expect-alert counts newly grouped alerts; --expect-alert-frame labels their exact opening frames for a rule. Repeat the frame option for each expected frame.\n--single-tag-interface requires an exact PCAPNG interface name and may be repeated. Unnamed interfaces do not match.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
+                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--expect-alert-frame RULE_ID=FRAME] [--allow-truncated] [--quic-decode-helper PROGRAM] [--single-tag-interface NAME] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nExpectations imply --alerts-only and exit nonzero on mismatches or skipped input. Truncated frames make expectations inconclusive unless --allow-truncated is set. TCP stream evictions make affected rule expectations inconclusive. --expect-alert counts newly grouped alerts; --expect-alert-frame labels their exact opening frames for a rule. Repeat the frame option for each expected frame.\n--single-tag-interface requires an exact PCAPNG interface name and may be repeated. Unnamed interfaces do not match.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
             );
             return Ok(());
         }

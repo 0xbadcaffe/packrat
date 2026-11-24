@@ -38,9 +38,20 @@ fn authentication_replay_preserves_recent_evidence_when_capacity_is_full() {
         cases.push(case);
     }
     let manifest = root.join("auth-cache-pressure.json");
-    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    // These FTP labels exercise independent evidence even when TCP reconstruction evicts streams.
+    std::fs::write(&manifest, json!({"version":1,"cases":cases}).to_string()).unwrap();
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["score"]["scored_cases"], 2);
+    assert!(report["cases"].as_array().unwrap().iter().all(|case| case["tcp_stream_cache_status"] == "evictions"));
+
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inconclusive"], 2);
+    assert_eq!(report["score"]["scored_cases"], 0);
 }
 
 #[test]
