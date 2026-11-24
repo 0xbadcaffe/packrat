@@ -140,7 +140,7 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         assert_eq!(alerts.len(), 1);
         let alert = &alerts[0]["alert"];
         assert_eq!(alert["provenance"]["rule_id"], rule);
-        assert_eq!(alert["provenance"]["revision"], 14);
+        assert_eq!(alert["provenance"]["revision"], 15);
         assert_eq!(alert["provenance"]["confidence"], confidence);
         assert_eq!(alert["severity"], severity);
         assert_eq!(alert["packet_refs"], json!([1, 2, 4]));

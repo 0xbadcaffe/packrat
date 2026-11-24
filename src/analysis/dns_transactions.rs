@@ -261,9 +261,10 @@ impl DnsTransactionTracker {
             };
         }
         let key = scope.transaction(&packet.dst, destination_port, message.id, &packet.src);
+        let order = (packet.timestamp, packet.no);
         let (exchange, ambiguous) = if let Some(bucket) = self.exchanges.get_mut(&key) {
             bucket.expire(packet.timestamp);
-            match bucket.find_reply((packet.timestamp, packet.no), &packet.src, &message.question) {
+            match bucket.find_reply(order, &packet.src, &message.question) {
                 ReplyMatch::Matched(index) => (Some(&mut bucket.entries[index]), false),
                 ReplyMatch::Missing => (None, false),
                 ReplyMatch::Ambiguous => (None, true),
@@ -293,7 +294,7 @@ impl DnsTransactionTracker {
                 ReplyOutcome::Inspect(finding) => findings.extend(finding),
                 ReplyOutcome::Repeat => return Vec::new(),
                 ReplyOutcome::Finding(mut finding) => {
-                    exchange.append_query_evidence(&mut finding.related_packets, frames);
+                    exchange.append_query_evidence(&mut finding.related_packets, frames, order);
                     return vec![finding];
                 }
             }
@@ -302,7 +303,7 @@ impl DnsTransactionTracker {
             exchange.reply = Some(RecentResponse::new(packet, &message, matches));
             if !matches {
                 let mut finding = question_mismatch(query, &message);
-                exchange.append_query_evidence(&mut finding.related_packets, frames);
+                exchange.append_query_evidence(&mut finding.related_packets, frames, order);
                 return vec![finding];
             }
         }
@@ -335,7 +336,7 @@ impl DnsTransactionTracker {
         }
         for finding in &mut findings {
             if finding.kind != DnsFindingKind::NxDomainBurst {
-                exchange.append_query_evidence(&mut finding.related_packets, frames);
+                exchange.append_query_evidence(&mut finding.related_packets, frames, order);
             }
         }
         findings

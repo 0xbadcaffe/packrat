@@ -70,22 +70,29 @@ impl Exchange {
         }
     }
 
-    pub(super) fn append_query_evidence(&self, evidence: &mut Vec<u64>, current_reply_frames: &[u64]) {
+    pub(super) fn append_query_evidence(&self, evidence: &mut Vec<u64>, current_reply_frames: &[u64], order: (f64, u64)) {
         append_evidence(evidence, &self.query.frames);
-        let Some((retry, retry_frames)) = self.timing_retry() else { return; };
-        // Reserve the trigger and its message segments before adding optional retry evidence.
-        if evidence.len() + current_reply_frames.len() + retry_frames.len() + 2 <= MAX_ALERT_PACKET_REFS {
-            append_evidence(evidence, &[retry]);
-            append_evidence(evidence, retry_frames);
+        let delayed_retry = self.reply.as_ref().filter(|reply| order < (reply.timestamp, reply.first.packet))
+            .and_then(|_| self.timing_retry_at(order));
+        for (retry, retry_frames) in [self.timing_retry(), delayed_retry].into_iter().flatten() {
+            // Reserve the trigger and its message segments before adding optional retry evidence.
+            if evidence.len() + current_reply_frames.len() + retry_frames.len() + 2 <= MAX_ALERT_PACKET_REFS {
+                append_evidence(evidence, &[retry]);
+                append_evidence(evidence, retry_frames);
+            }
         }
     }
 
     pub(super) fn timing_retry(&self) -> Option<(u64, &[u64])> {
         let reply = self.reply.as_ref()?;
-        if reply.timestamp - self.query.timestamp <= TRANSACTION_TTL_SECS {
+        self.timing_retry_at((reply.timestamp, reply.first.packet))
+    }
+
+    fn timing_retry_at(&self, order: (f64, u64)) -> Option<(u64, &[u64])> {
+        if order.0 - self.query.timestamp <= TRANSACTION_TTL_SECS {
             return None;
         }
-        let retry = self.retry_preceding((reply.timestamp, reply.first.packet))?;
+        let retry = self.retry_preceding(order)?;
         Some((retry.order.1, &retry.frames))
     }
 
@@ -98,6 +105,21 @@ impl Exchange {
     fn is_pending_at(&self, now: f64) -> bool {
         now - self.latest_query.0 <= TRANSACTION_TTL_SECS
             && now - self.query.timestamp <= MAX_PENDING_AGE_SECS
+    }
+
+    fn accepts_reply(&self, order: (f64, u64)) -> bool {
+        if order < (self.query.timestamp, self.query.packet_no) {
+            return false;
+        }
+        if let Some(reply) = &self.reply {
+            if order >= (reply.timestamp, reply.first.packet) {
+                return true; // The bucket already applied the forward reply window.
+            }
+            if reply.timestamp - order.0 > RESPONSE_TTL_SECS {
+                return false;
+            }
+        }
+        order.0 - self.query.timestamp <= TRANSACTION_TTL_SECS || self.retry_preceding(order).is_some()
     }
 }
 
@@ -142,11 +164,7 @@ impl ExchangeBucket {
         let mut partial = None;
         let mut ambiguous = self.saturated_at.is_some();
         for (index, entry) in self.entries.iter().enumerate() {
-            let newest = entry.reply.as_ref().map_or((entry.query.timestamp, entry.query.packet_no),
-                |reply| (reply.timestamp, reply.first.packet));
-            if newest > order || (entry.reply.is_none() && order.0 - entry.query.timestamp > TRANSACTION_TTL_SECS
-                && entry.retry_preceding(order).is_none())
-            {
+            if !entry.accepts_reply(order) {
                 continue;
             }
             let same_resolver = entry.query.server == resolver;

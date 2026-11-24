@@ -34,6 +34,45 @@ pub enum Scenario {
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn dns_reply_replay_correlates_delayed_responses_within_the_reply_window() {
+    use serde_json::json;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let changed = "dns.changed_answers";
+    let unmatched = "dns.unmatched_response";
+    let mut cases = Vec::new();
+    for (file, delayed_at, rcode, expected) in [
+        ("repeated.pcapng", 8.0, 0, None),
+        ("changed.pcapng", 8.0, 3, Some((changed, "MEDIUM", "correlated", 15, vec![1, 2, 3]))),
+        ("outside-window.pcapng", 5.0, 3, Some((unmatched, "LOW", "heuristic", 7, vec![3]))),
+    ] {
+        let mut capture = PcapNgWriter::create(&scratch.path().join(file)).unwrap();
+        for (frame, timestamp, response, code) in [(1, 1.0, false, 0), (2, 11.0, true, 0), (3, delayed_at, true, rcode)] {
+            let mut wire = message(110, b"safe.example", response);
+            wire[3] = code;
+            let mut packet = udp_frame(frame, &wire, response, 53, 40_000);
+            packet.timestamp = timestamp;
+            capture.write_packet(&packet).unwrap();
+        }
+        capture.flush().unwrap();
+        let mut case = json!({"name":file,"capture":file,"expect_snapshots":usize::from(expected.is_some()),
+            "expect_counts":{(changed):0,(unmatched):0}});
+        if let Some((rule, severity, confidence, revision, frames)) = expected {
+            case["expect_counts"][rule] = json!(1);
+            case["opening_frames"] = json!({(rule):[3]});
+            case["opening_evidence"] = json!([{"rule_id":rule,"opening_frame":3,"frames":frames,
+                "classification":{"severity":severity,"confidence":confidence,"revision":revision}}]);
+        }
+        cases.push(case);
+    }
+    let manifest = scratch.path().join("dns-delayed-replies.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = super::run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn nxdomain_replay_separates_rearmed_bursts_from_sustained_activity() {
     use serde_json::{Value, json};
 
@@ -73,7 +112,7 @@ fn nxdomain_replay_separates_rearmed_bursts_from_sustained_activity() {
             case["opening_frames"] = json!({(rule):expected});
             case["opening_evidence"] = json!(expected.iter().map(|&frame| json!({
                 "rule_id":rule, "opening_frame":frame, "frames":(frame - 39..=frame).collect::<Vec<_>>(),
-                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":5},
+                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":6},
             })).collect::<Vec<_>>());
         }
         cases.push(case);
@@ -243,7 +282,7 @@ fn early_alternate_resolver_does_not_mask_later_answer_changes() {
             "opening_evidence": [
                 {"rule_id": unexpected, "opening_frame": 2, "frames": [1, 2]},
                 {"rule_id": competing, "opening_frame": 3, "frames": [1, 2, 3],
-                 "classification":{"severity":"CRITICAL","confidence":"correlated","revision":8}}
+                 "classification":{"severity":"CRITICAL","confidence":"correlated","revision":9}}
             ]
         });
         if has_change {

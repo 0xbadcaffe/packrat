@@ -88,3 +88,69 @@ fn dns_reply_without_a_retained_preceding_retry_does_not_bind_to_a_future_retry(
     assert_eq!(findings[0].kind, DnsFindingKind::ReplyWithoutObservedQuery);
     assert!(findings[0].related_packets.is_empty());
 }
+
+#[test]
+fn replies_delivered_out_of_order_still_match_within_the_reply_window() {
+    let (client, resolver, other) = ("192.0.2.10", "192.0.2.53", "192.0.2.54");
+    for (timestamp, responder, kind) in [
+        (8.0, resolver, None),
+        (8.0, other, Some(DnsFindingKind::ConflictingResponse)),
+        (6.0, other, Some(DnsFindingKind::ConflictingResponse)),
+        (5.0, other, Some(DnsFindingKind::ReplyWithoutObservedQuery)),
+    ] {
+        let mut tracker = DnsTransactionTracker::default();
+        tracker.observe(&dns_packet(1, false, client, resolver, 89, "safe.example"));
+        let mut first_processed = dns_packet(2, true, resolver, client, 89, "safe.example");
+        first_processed.timestamp = 11.0;
+        assert!(tracker.observe(&first_processed).is_empty());
+        let mut delayed = dns_packet(3, true, responder, client, 89, "safe.example");
+        delayed.timestamp = timestamp;
+        let findings = tracker.observe(&delayed);
+        assert_eq!(findings.iter().map(|finding| finding.kind).collect::<Vec<_>>(), kind.into_iter().collect::<Vec<_>>());
+        if kind == Some(DnsFindingKind::ConflictingResponse) {
+            assert_eq!(findings[0].related_packets, [1, 2]);
+        }
+    }
+}
+
+#[test]
+fn a_correlated_reply_does_not_make_its_query_retry_valid_for_an_earlier_reply() {
+    let (client, resolver) = ("192.0.2.10", "192.0.2.53");
+    let mut tracker = DnsTransactionTracker::default();
+    tracker.observe(&dns_packet(1, false, client, resolver, 90, "safe.example"));
+    for (no, timestamp) in (2..=10).zip([29.0, 38.0, 39.0, 40.0, 41.0, 42.0, 43.0, 44.0, 45.0]) {
+        let mut retry = dns_packet(no, false, client, resolver, 90, "safe.example");
+        retry.timestamp = timestamp;
+        tracker.observe(&retry);
+    }
+    let mut first = dns_packet(11, true, resolver, client, 90, "safe.example");
+    first.timestamp = 39.0;
+    assert!(tracker.observe(&first).is_empty());
+    let mut delayed = dns_packet(12, true, "192.0.2.54", client, 90, "safe.example");
+    // The only preceding retry has fallen out of the bounded cache.
+    delayed.timestamp = 34.0;
+    let findings = tracker.observe(&delayed);
+    assert_eq!(findings[0].kind, DnsFindingKind::ReplyWithoutObservedQuery);
+    assert!(findings[0].related_packets.is_empty());
+}
+
+#[test]
+fn out_of_order_reply_comparison_cites_each_preceding_retry() {
+    let (client, resolver) = ("192.0.2.10", "192.0.2.53");
+    let mut tracker = DnsTransactionTracker::default();
+    for (no, timestamp) in [(1, 1.0), (2, 29.0), (3, 35.0)] {
+        let mut query = dns_packet(no, false, client, resolver, 91, "safe.example");
+        query.timestamp = timestamp;
+        tracker.observe(&query);
+    }
+    let mut first = dns_packet(4, true, resolver, client, 91, "safe.example");
+    first.timestamp = 37.0;
+    assert!(tracker.observe(&first).is_empty());
+    let mut delayed = dns_packet(5, true, resolver, client, 91, "safe.example");
+    delayed.timestamp = 33.0;
+    delayed.bytes[45] = 0x83;
+    let findings = tracker.observe(&delayed);
+    assert_eq!(findings[0].kind, DnsFindingKind::ChangedAnswerSet);
+    assert!(findings[0].detail.contains("response code (3 to 0) in capture order"));
+    assert_eq!(findings[0].related_packets, [1, 4, 3, 2]);
+}
