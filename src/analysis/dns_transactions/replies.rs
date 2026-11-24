@@ -25,6 +25,7 @@ pub(super) struct AlternateResponse {
 #[derive(Debug)]
 struct ComparisonBaseline {
     packet: u64,
+    timestamp: f64,
     frames: Vec<u64>,
     resolver: String,
     truncated: bool,
@@ -35,6 +36,7 @@ impl ComparisonBaseline {
     fn new(packet: &Packet, message: &DnsMessage<'_>) -> Self {
         Self {
             packet: packet.no,
+            timestamp: packet.timestamp,
             frames: message.frames.to_vec(),
             resolver: packet.src.clone(),
             truncated: message.truncated(),
@@ -119,10 +121,14 @@ impl RecentResponse {
                 baseline.answer_fingerprint.as_ref(),
                 answer.as_ref(),
             ) {
-                (Some(before), Some(after)) if before.rcode != after.rcode => (
-                    DnsFindingKind::ChangedAnswerSet,
-                    format!("a different response code ({} to {})", before.rcode, after.rcode),
-                ),
+                (Some(before), Some(after)) if before.rcode != after.rcode => {
+                    let (first, last) = if (packet.timestamp, packet.no) < (baseline.timestamp, baseline.packet) {
+                        (after.rcode, before.rcode)
+                    } else {
+                        (before.rcode, after.rcode)
+                    };
+                    (DnsFindingKind::ChangedAnswerSet, format!("a different response code ({first} to {last}) in capture order"))
+                }
                 (Some(before), Some(after)) if before.same_answers(after) => {
                     return ReplyOutcome::Repeat;
                 }

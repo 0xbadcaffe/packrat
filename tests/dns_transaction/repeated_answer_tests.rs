@@ -24,3 +24,27 @@ fn repeated_changed_dns_answers_do_not_open_another_finding() {
     assert_eq!(next_change[0].kind, DnsFindingKind::ChangedAnswerSet);
     assert_eq!(next_change[0].related_packets, [1, 2]);
 }
+
+#[test]
+fn changed_dns_response_codes_follow_capture_order_after_baseline_promotion() {
+    let client = "192.0.2.10";
+    let resolver = "192.0.2.53";
+    for (timestamp, expected) in [(2.5, "0 to 3"), (3.0, "3 to 0"), (4.0, "3 to 0")] {
+        let mut tracker = DnsTransactionTracker::default();
+        let query = dns_packet(1, false, client, resolver, 86, "safe.example");
+        let competing = dns_packet(2, true, "192.0.2.54", client, 86, "safe.example");
+        let mut expected_reply = dns_packet(3, true, resolver, client, 86, "safe.example");
+        expected_reply.bytes[45] = 0x83;
+        assert!(tracker.observe(&query).is_empty());
+        tracker.observe(&competing);
+        let conflict = tracker.observe(&expected_reply);
+        assert_eq!(conflict[0].kind, DnsFindingKind::ConflictingResponse);
+        assert_eq!(conflict[0].related_packets, [1, 2]);
+        let mut reply = dns_packet(4, true, resolver, client, 86, "safe.example");
+        reply.timestamp = timestamp;
+        let change = tracker.observe(&reply);
+        assert_eq!(change[0].kind, DnsFindingKind::ChangedAnswerSet);
+        assert_eq!(change[0].related_packets, [1, 3]);
+        assert!(change[0].detail.contains(&format!("response code ({expected}) in capture order")));
+    }
+}
