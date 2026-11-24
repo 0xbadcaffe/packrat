@@ -13,7 +13,11 @@ set -euo pipefail
 [[ ${*:1:11} == "--alerts $TEST_DIR/current.jsonl --session session-a --capture-id 00000000000000000000000000000001 --limit 512 --scan-bytes 8388608 --report-integrity" ]]
 shift 11
 if [[ ${TEST_MODE:-} == range-cap ]]; then
-    [[ $# == 130 && $2 == 2..2 && ${128} == 128..128 && ${129} == --previous-log && ${130} == "$TEST_DIR/old.jsonl" ]]
+    [[ $# == 130 && $2 == 2..2 && ${128} == 254..254 && ${129} == --previous-log && ${130} == "$TEST_DIR/old.jsonl" ]]
+    for (( index=2; index<=128; index+=2 )); do
+        expected=$((index * 2 - 2))
+        [[ ${!index} == "$expected..$expected" ]]
+    done
     printf '%s\n' '{"alerts":[],"integrity":{"invalid_records":0,"oversized_records":0,"stopped_at_limit":false}}'
     exit
 fi
@@ -64,12 +68,18 @@ jq '.missing_previously_observed_alert_ids = [8,9] | .missing_previously_observe
     "$scratch/report" > "$scratch/with-disappeared"
 run_gap "$scratch/with-disappeared" | jq -e '
     .missing_previously_observed_alert_ids == [8,9] and .request_ranges_truncated == false
+    and .previously_observed_reconciliation == {recovered_alert_ids:[8],not_in_supplied_logs:[9],unverified_alert_ids:[]}
     and [.ranges[] | [.first_id,.last_id,.found]] == [[5,9,2],[20,20,0]]' >/dev/null
+TEST_MODE=bounded run_gap "$scratch/with-disappeared" | jq -e '
+    .previously_observed_reconciliation == {recovered_alert_ids:[8],not_in_supplied_logs:[],unverified_alert_ids:[9]}' >/dev/null
 jq '.unobserved_alert_id_ranges = [range(1;65)*4 | {first_id:.,last_id:.}]
     | .missing_previously_observed_alert_ids = [range(1;65)*4 - 2]' "$scratch/report" >"$scratch/combined-cap"
 TEST_MODE=range-cap run_gap "$scratch/combined-cap" | jq -e '
     .request_ranges_truncated and (.ranges | length) == 64
-    and .ranges[0].first_id == 2 and .ranges[-1].last_id == 128' >/dev/null
+    and .ranges[0].first_id == 2 and .ranges[-1].last_id == 254
+    and .previously_observed_reconciliation.not_in_supplied_logs == [range(1;65)*4 - 2]
+    and .previously_observed_reconciliation.recovered_alert_ids == []
+    and .previously_observed_reconciliation.unverified_alert_ids == []' >/dev/null
 TEST_MODE=unknown-evidence run_gap | jq -e '
     .recovered_alerts[1] | .confidence==null and .evidence_frame_count==null
         and .evidence_frame_set_sha256==null and .next_evidence_step=="inspect_saved_alert"' >/dev/null

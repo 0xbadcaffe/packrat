@@ -6,7 +6,7 @@ export LC_ALL=C
 usage() {
     printf '%s\n' 'Usage: packrat-review-alert-gaps.sh COVERAGE.json ALERT_LOG [PREVIOUS_LOG ...]' \
         'Reads up to 8 MiB and returns up to 512 saved alerts matching the requested ID ranges. Supply previous logs oldest first.' \
-        'Includes IDs that were seen in an earlier watcher sample but missing in a later one.' \
+        'Prioritizes previously observed IDs that disappeared from the watcher sample when the range budget is reached.' \
         'Absence refers only to the supplied logs, never to uncaptured or unpersisted traffic.'
 }
 
@@ -36,13 +36,17 @@ requested=$(head -c 65537 -- "$1" | jq -Rces '
                    .[-1].last_id = ([.[-1].last_id,$range.last_id] | max)
                else . + [$range] end))}
     | .request_ranges_truncated = (.unobserved_alert_id_ranges_truncated or .missing_previously_observed_alert_ids_truncated
-        or (.ranges | length > 64)) | .ranges = .ranges[:64]
+        or (.ranges | length > 64))
+    | .ranges |= (sort_by(. as $range |
+        [(if any($missing[]; . >= $range.first_id and . <= $range.last_id) then 0 else 1 end),$range.first_id])
+        | .[:64] | sort_by(.first_id))
 ') || { printf '%s\n' 'Invalid or unsupported coverage report.' >&2; exit 2; }
 shift
 if jq -e '.ranges == []' <<< "$requested" >/dev/null; then
     jq -c '. + {record_type:"alert_gap_reconciliation",
         status:(if .alert_sample_gap_reported or .request_ranges_truncated then "unlocated_gap" else "no_reported_ranges" end),
-        saved_log_scan_complete:null,recovered_alerts:[]}' <<< "$requested"
+        saved_log_scan_complete:null,recovered_alerts:[],
+        previously_observed_reconciliation:{recovered_alert_ids:[],not_in_supplied_logs:[],unverified_alert_ids:[]}}' <<< "$requested"
     exit
 fi
 
@@ -81,9 +85,9 @@ printf '%s\n' "$requested" "$history" | jq -ces --arg session "$session" --arg c
     def safe_rule: if type == "string" and test("\\A[a-z0-9_.-]{1,128}\\z") then . else null end;
     def severity: if . == "WARN" then "MEDIUM" elif . == "CRIT" then "CRITICAL"
         elif IN("INFO","LOW","MEDIUM","HIGH","CRITICAL") then . else null end;
-    def in_ranges($ranges): .alert_id as $id | any($ranges[]; $id >= .first_id and $id <= .last_id);
+    def in_ranges($ranges; $id): any($ranges[]; $id >= .first_id and $id <= .last_id);
     select(length == 2) | .[0] as $input | .[1] as $history
-    | select($history.alerts | type == "array" and length <= 512 and all(.[]; valid_alert and in_ranges($input.ranges))
+    | select($history.alerts | type == "array" and length <= 512 and all(.[]; valid_alert and in_ranges($input.ranges; .alert_id))
         and (map(.alert_id) | length == (unique | length)))
     | $history.integrity as $integrity
     | select($integrity | type == "object" and (.invalid_records | counter) and (.oversized_records | counter)
@@ -103,10 +107,16 @@ printf '%s\n' "$requested" "$history" | jq -ces --arg session "$session" --arg c
                elif $refs != null then "verify_frame_availability" else "inspect_saved_alert" end),
            disposition:(.disposition | if IN("New","Reviewing","Confirmed","Benign","Contained","Closed") then . else null end)}]
         | sort_by(.alert_id) as $recovered
+    | ($recovered | map(.alert_id)) as $recovered_ids
+    | [$input.missing_previously_observed_alert_ids[] as $id | $id | select(($recovered_ids | index($id)) == null)] as $missing
+    | [$missing[] | select(. as $id | $complete and in_ranges($input.ranges; $id))] as $absent
     | $input + {
         record_type:"alert_gap_reconciliation",status:"reconciled",saved_log_scan_complete:$complete,
         alert_log_integrity:($integrity | {invalid_records,oversized_records,stopped_at_limit,stopped_at_scan_budget}),
         recovered_alerts:$recovered,
+        previously_observed_reconciliation:{
+            recovered_alert_ids:($input.missing_previously_observed_alert_ids - $missing),
+            not_in_supplied_logs:$absent,unverified_alert_ids:($missing - $absent)},
         ranges:[$input.ranges[] | . as $range
             | ([$recovered[].alert_id | select(. >= $range.first_id and . <= $range.last_id)] | length) as $found
             | (.last_id - .first_id + 1 - $found) as $remaining
