@@ -141,6 +141,22 @@ fn trigger_time(alert: &AlertItem) -> Option<f64> {
     (time.is_finite() && time != 0.0).then_some(time)
 }
 
+fn trigger_conflict(
+    saved: (Option<AlertFlow>, Option<f64>),
+    wire_flow: AlertFlow,
+    wire_time: Option<f64>,
+) -> Option<&'static str> {
+    if saved.0.is_some_and(|flow| flow != wire_flow) {
+        Some("tuple_differs_from_wire")
+    } else if saved.1.zip(wire_time).is_some_and(|(saved, wire)| {
+        (saved - wire).abs() > TRIGGER_TIMESTAMP_TOLERANCE_SECONDS
+    }) {
+        Some("timestamp_differs_from_wire")
+    } else {
+        None
+    }
+}
+
 fn classify(snapshot: TriggerSnapshot, anchor: AlertFlow, trigger: f64) -> Option<RelatedAlert> {
     let flow = snapshot.flow;
     let delta = snapshot.time - trigger;
@@ -298,11 +314,15 @@ pub fn related_alerts_query(
     if !verify_triggers && !options.match_cited_flows && anchor_header.as_ref().is_some_and(Result::is_err) {
         anchor_header.take().unwrap()?;
     }
-    if let Some(Ok(TriggerFrame::Transport { flow, time: Some(time), .. })) = anchor_header.as_ref() {
-        anchor_flow = Some(*flow);
-        trigger = Some(*time);
-        anchor_source = Some("retained_trigger_frame");
-        anchor_frame = Some(packet_no);
+    let mut anchor_conflict = false;
+    if let Some(Ok(TriggerFrame::Transport { flow, time, .. })) = anchor_header.as_ref() {
+        anchor_conflict = trigger_conflict((anchor_flow, trigger), *flow, *time).is_some();
+        if !anchor_conflict && time.is_some() {
+            anchor_flow = anchor_flow.or(Some(*flow));
+            trigger = trigger.or(*time);
+            anchor_source = Some("retained_trigger_frame");
+            anchor_frame = Some(packet_no);
+        }
     }
     let cited = if options.match_cited_flows {
         archive.as_mut().map(|reader| CitedFlowSearch::read(reader, capture, &cited_frames))
@@ -311,6 +331,8 @@ pub fn related_alerts_query(
         "anchor_not_in_sample"
     } else if let Some(search) = &cited {
         if search.has_flows() { "sampled" } else { "cited_flow_evidence_unavailable" }
+    } else if anchor_conflict {
+        "anchor_trigger_conflicts_with_recorded_fields"
     } else if anchor_flow.is_none() || trigger.is_none() {
         "anchor_tuple_or_time_unavailable"
     } else {
@@ -338,7 +360,7 @@ pub fn related_alerts_query(
     matches.truncate(if path_filter.is_some() { MAX_PATH_CHECKS } else { MAX_MATCHES });
     let mut anchor_trigger_evidence = None;
     if verify_triggers && let Some(archive) = &mut archive {
-        let expected = anchor_flow.zip(trigger);
+        let expected = (anchor_flow, trigger);
         anchor_trigger_evidence = Some(check_trigger(archive, capture, packet_no, expected,
             anchor_header.take(), anchor_source == Some("retained_trigger_frame")));
         let anchor_path = anchor_trigger_evidence.as_ref().and_then(|evidence| evidence.path.as_ref());
@@ -348,7 +370,7 @@ pub fn related_alerts_query(
         for alert in &mut matches {
             let snapshot = &alert.snapshot;
             let trigger_evidence = check_trigger(archive, capture, snapshot.frame,
-                Some((snapshot.flow, snapshot.time)), None, snapshot.derived_from_wire);
+                (Some(snapshot.flow), Some(snapshot.time)), None, snapshot.derived_from_wire);
             if options.require_verified_path
                 && let (Some(search), Some(path)) = (&cited, &trigger_evidence.path)
                 && let Some((frame, direction)) = search.nearest_frame(snapshot, Some(path))
@@ -424,7 +446,7 @@ fn read_trigger(archive: &mut PacketArchive, capture: &str, frame: u64) -> Resul
 }
 
 fn check_trigger(
-    archive: &mut PacketArchive, capture: &str, frame: u64, expected: Option<(AlertFlow, f64)>,
+    archive: &mut PacketArchive, capture: &str, frame: u64, expected: (Option<AlertFlow>, Option<f64>),
     cached: Option<Result<TriggerFrame>>, derived: bool,
 ) -> TriggerEvidence {
     let mut verified_path = None;
@@ -433,16 +455,18 @@ fn check_trigger(
             Err(_) => "read_failed",
             Ok(TriggerFrame::Missing) => "missing_frame",
             Ok(TriggerFrame::HeaderUnavailable) => "header_unavailable",
-            Ok(TriggerFrame::Transport { flow, time, path }) => match (expected, time) {
-                (Some((saved, _)), _) if saved != flow => "tuple_differs_from_wire",
-                (_, None) => "timestamp_unavailable",
-                (Some((_, saved_time)), Some(time)) if (saved_time - time).abs() > TRIGGER_TIMESTAMP_TOLERANCE_SECONDS => "timestamp_differs_from_wire",
-                (Some(_), Some(_)) => {
+            Ok(TriggerFrame::Transport { flow, time, path }) => {
+                if let Some(conflict) = trigger_conflict(expected, flow, time) {
+                    conflict
+                } else if time.is_none() {
+                    "timestamp_unavailable"
+                } else if expected.0.is_some() && expected.1.is_some() {
                     verified_path = Some(path);
                     if derived { "derived_from_wire" } else { "matches_wire" }
+                } else {
+                    "recorded_tuple_or_time_unavailable"
                 }
-                (None, Some(_)) => "recorded_tuple_or_time_unavailable",
-            },
+            }
         }
     };
     TriggerEvidence { frame_number: (frame > 0).then_some(frame), status, path: verified_path }

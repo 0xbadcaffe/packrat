@@ -250,7 +250,7 @@ fn related_search_recovers_only_the_exact_archived_trigger_in_the_same_capture()
 
     let matching = AlertFlow { source: "10.0.0.1:40000".parse().unwrap(),
         destination: "10.0.0.2:80".parse().unwrap(), ..flow() };
-    for (id, frame, time, tuple) in [(1, 1, 1300., None), (2, 2, 800., None), (3, 3, 800., None),
+    for (id, frame, time, tuple) in [(1, 1, 800., None), (2, 2, 800., None), (3, 3, 800., None),
         (4, 4, 801., Some(matching)), (5, 5, 1300., Some(matching))] {
         let mut row = record(id, time, tuple, "session-a", "capture-a");
         row["alert"]["packet_no"] = json!(frame);

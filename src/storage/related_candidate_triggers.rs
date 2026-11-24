@@ -1,6 +1,6 @@
-use super::TRIGGER_TIMESTAMP_TOLERANCE_SECONDS;
 use super::{
     AlertFlow, AlertItem, PacketArchive, TriggerFrame, TriggerSnapshot, read_trigger, snapshot,
+    trigger_conflict,
 };
 
 const MAX_RECOVERY: usize = 64;
@@ -52,11 +52,7 @@ impl CandidateTriggerRecovery {
                     time: Some(time),
                     ..
                 }) => {
-                    if saved_flow.is_some_and(|prior| prior != flow)
-                        || saved_time.is_some_and(|prior| {
-                            (prior - time).abs() > TRIGGER_TIMESTAMP_TOLERANCE_SECONDS
-                        })
-                    {
+                    if trigger_conflict((saved_flow, saved_time), flow, Some(time)).is_some() {
                         self.disagreed_with_saved_fields += 1;
                         continue;
                     }
