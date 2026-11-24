@@ -21,6 +21,12 @@ pub struct CaptureQueueTelemetry {
     pub analysis_packets_pending: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct TcpStreamCacheTelemetry {
+    pub retained_streams: usize,
+    pub evicted_streams: u64,
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct CaptureCounters {
     pub pcap_buffer_drops: Option<u32>,
@@ -35,6 +41,7 @@ pub struct TelemetrySnapshot {
     pub visible_packets: usize,
     pub flows: usize,
     pub flow_summary_evictions: u64,
+    pub tcp_stream_cache: Option<TcpStreamCacheTelemetry>,
     pub dns_capacity: Option<super::dns_transactions::DnsCapacityStats>,
     pub hosts: usize,
     pub security_findings: usize,
@@ -155,6 +162,15 @@ impl TelemetrySnapshot {
                 "# TYPE packrat_capture_queue_full_packets_total counter\npackrat_capture_queue_full_packets_total {packets}\n"
             ));
         }
+        if let Some(cache) = self.tcp_stream_cache {
+            metrics.push_str(&format!(concat!(
+                "# TYPE packrat_tcp_retained_streams gauge\n",
+                "packrat_tcp_retained_streams {}\n",
+                "# HELP packrat_tcp_stream_evictions_total TCP reconstruction state evicted at capacity, not capture packet loss.\n",
+                "# TYPE packrat_tcp_stream_evictions_total counter\n",
+                "packrat_tcp_stream_evictions_total {}\n"
+            ), cache.retained_streams, cache.evicted_streams));
+        }
         if let Some(stats) = self.dns_capacity {
             metrics.push_str("# HELP packrat_dns_capacity_declines_total DNS observations not retained at a tracker limit, not capture packet loss.\n");
             metrics.push_str("# TYPE packrat_dns_capacity_declines_total counter\n");
@@ -236,6 +252,7 @@ impl TelemetryHub {
                 "summary_evictions": snapshot.flow_summary_evictions,
             })),
             "dns_capacity": snapshot.dns_capacity.filter(|_| fresh),
+            "tcp_stream_cache": snapshot.tcp_stream_cache.filter(|_| fresh),
             "capture_run_id": snapshot.capture_run_id.map(|id| format!("{id:016x}")),
             "capture_interface": snapshot.capture_interface.as_deref(),
             "capture_link_type": snapshot.capture_link_type,

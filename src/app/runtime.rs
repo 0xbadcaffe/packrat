@@ -167,6 +167,10 @@ impl App {
             visible_packets: self.filtered.len(),
             flows: core.flow_tracker.len(),
             flow_summary_evictions: core.flow_tracker.evicted(),
+            tcp_stream_cache: Some(crate::analysis::telemetry::TcpStreamCacheTelemetry {
+                retained_streams: core.streams.len(),
+                evicted_streams: core.streams.evicted_streams(),
+            }),
             dns_capacity: Some(core.security.dns_capacity_stats()),
             hosts: core.hosts.len(),
             security_findings: core.security.alert_count(),

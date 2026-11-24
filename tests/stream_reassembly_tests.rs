@@ -215,3 +215,32 @@ fn late_stream_packet_refreshes_eviction_order_without_rewriting_event_time() {
     assert_eq!(stream.last_seen, 20.0);
     assert_eq!(assembler.len(), 500);
 }
+
+#[test]
+fn offline_alert_summary_keeps_stream_evictions_separate_from_skipped_packets() {
+    use packrat_tui::export::pcapng::PcapNgWriter;
+    use std::process::Command;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("stream-capacity.pcapng");
+    let mut writer = PcapNgWriter::create(&path).unwrap();
+    for i in 0..501_u16 {
+        let frame = u64::from(i) + 1;
+        let mut packet = tcp_packet(frame, 100, 0x02, b"");
+        packet.bytes[26..34].copy_from_slice(&[10, 0, 0, 1, 10, 0, 0, 2]);
+        let packet = on_clock(packet, 30_000 + i, frame, 0);
+        writer.write_packet(&packet).unwrap();
+    }
+    writer.flush().unwrap();
+    for options in [&[][..], &["--alerts-only"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze")).args(options).arg(&path).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let text = String::from_utf8(output.stdout).unwrap();
+        let summary: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(summary["type"], "summary");
+        assert_eq!(summary["analyzed"], 501);
+        assert_eq!(summary["skipped"], 0);
+        assert_eq!(summary["retained_streams"], 500);
+        assert_eq!(summary["evicted_streams"], 1);
+    }
+}

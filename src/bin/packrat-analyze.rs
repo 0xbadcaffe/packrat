@@ -87,6 +87,7 @@ fn analyze(
                 "type": "summary", "packets": packets, "analyzed": analyzed, "skipped": skipped,
                 "truncated_frames": truncated_frames, "allow_truncated": allow_truncated,
                 "dns_capacity": dns_capacity,
+                "retained_streams": core.streams.len(), "evicted_streams": core.streams.evicted_streams(),
                 "frame_coverage_sha256_v1": frame_coverage_sha256_v1,
                 "alert_scope": "grouped_alerts", "alerts_opened": replay.opened,
                 "alert_snapshots": replay.snapshots, "rule_counts": replay.rule_counts,

@@ -60,6 +60,28 @@ fn flow_cache_evictions_are_separate_from_capture_loss_and_require_fresh_health(
 }
 
 #[test]
+fn tcp_stream_evictions_are_separate_from_flow_summaries_and_capture_loss() {
+    let hub = TelemetryHub::default();
+    let health = || serde_json::from_str::<serde_json::Value>(&hub.health()).unwrap();
+    assert!(health()["tcp_stream_cache"].is_null());
+    assert!(!hub.snapshot().openmetrics().contains("packrat_tcp_stream_evictions_total"));
+    hub.publish(TelemetrySnapshot {
+        tcp_stream_cache: Some(TcpStreamCacheTelemetry { retained_streams: 500, evicted_streams: 9 }),
+        flow_summary_evictions: 3,
+        pcap_buffer_drops: Some(0),
+        ..Default::default()
+    });
+    assert_eq!(health()["tcp_stream_cache"], serde_json::json!({"retained_streams":500,"evicted_streams":9}));
+    assert_eq!(health()["flow_cache"]["summary_evictions"], 3);
+    assert_eq!(health()["pcap_buffer_drops"], 0);
+    let metrics = hub.snapshot().openmetrics();
+    assert!(metrics.contains("packrat_tcp_retained_streams 500\n"));
+    assert!(metrics.contains("packrat_tcp_stream_evictions_total 9\n"));
+    hub.inner.write().unwrap().updated_at = Instant::now().checked_sub(Duration::from_secs(6));
+    assert!(health()["tcp_stream_cache"].is_null());
+}
+
+#[test]
 fn dns_capacity_counters_are_separate_from_capture_loss_and_require_fresh_health() {
     use crate::analysis::dns_transactions::DnsCapacityStats;
 
