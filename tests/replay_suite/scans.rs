@@ -4,6 +4,61 @@ use super::{
 use packrat_tui::net::parser::parse_ethernet;
 use std::path::Path;
 
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn admin_fanout_replay_requires_a_timely_syn_or_its_exact_retry() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "tcp.admin_service_response_fanout";
+    let mut cases = Vec::new();
+    for (name, retry_host, final_time, expected) in [
+        ("valid-retry", 8, 17.0, 1),
+        ("unrelated-retry", 9, 17.0, 0),
+        ("reply-before-syn", 8, 0.5, 0),
+    ] {
+        let file = format!("{name}.pcapng");
+        let mut capture = PcapNgWriter::create(&root.join(&file)).unwrap();
+        let mut frame = 0;
+        let mut write = |host, at, reply| {
+            frame += 1;
+            let flags = if reply { 0x12 } else { 0x02 };
+            let mut raw = super::support::tcp(frame, 100, flags, &[], reply).bytes;
+            let (src, dst) = if reply { ([10, 0, 1, host], [10, 0, 0, 9]) }
+                else { ([10, 0, 0, 9], [10, 0, 1, host]) };
+            raw[26..30].copy_from_slice(&src);
+            raw[30..34].copy_from_slice(&dst);
+            let port = if reply { 34 } else { 36 };
+            raw[port..port + 2].copy_from_slice(&445_u16.to_be_bytes());
+            if reply { raw[42..46].copy_from_slice(&101_u32.to_be_bytes()); }
+            capture.write_packet(&parse_ethernet(&raw, frame, at)).unwrap();
+        };
+        write(8, 1.0, false);
+        for host in 1..=7_u8 {
+            write(host, 2.0 + f64::from(host) / 10.0, false);
+            write(host, 2.05 + f64::from(host) / 10.0, true);
+        }
+        write(retry_host, 10.0, false);
+        write(8, final_time, true);
+        capture.flush().unwrap();
+        let mut case = json!({
+            "name":name, "capture":file, "expect_counts":{(rule):expected},
+            "expect_snapshots":expected,
+        });
+        if expected == 1 {
+            case["opening_frames"] = json!({(rule):[17]});
+            case["opening_evidence"] = json!([{
+                "rule_id":rule, "opening_frame":17, "frames":(2..=17).collect::<Vec<_>>(),
+                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":3},
+            }]);
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("admin-fanout-retries.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+}
+
 fn write_observations(path: &Path, vary_host: bool, vary_port: bool, partial: bool) {
     let mut capture = PcapNgWriter::create(path).unwrap();
     for no in 1..=12_u64 {

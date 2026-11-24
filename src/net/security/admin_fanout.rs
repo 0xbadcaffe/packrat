@@ -18,6 +18,39 @@ struct SynKey {
     expected_ack: u32,
 }
 
+#[derive(Clone, Copy)]
+struct SynSample {
+    at: f64,
+    frame: u64,
+}
+
+struct PendingSyn {
+    first: SynSample,
+    latest: SynSample,
+}
+
+impl PendingSyn {
+    fn new(sample: SynSample) -> Self {
+        Self { first: sample, latest: sample }
+    }
+
+    fn retry(&mut self, sample: SynSample) {
+        if sample.frame <= self.latest.frame || sample.at < self.latest.at {
+            return;
+        }
+        if sample.at - self.first.at > SYN_TIMEOUT {
+            self.first = if sample.at - self.latest.at <= SYN_TIMEOUT { self.latest } else { sample };
+        }
+        self.latest = sample;
+    }
+
+    fn matched_frame(&self, at: f64, frame: u64) -> Option<u64> {
+        [self.first, self.latest].into_iter().find(|syn| {
+            syn.frame < frame && (0.0..=SYN_TIMEOUT).contains(&(at - syn.at))
+        }).map(|syn| syn.frame)
+    }
+}
+
 #[derive(Default)]
 struct RespondedTargets {
     targets: BTreeMap<String, (f64, [u64; 2])>,
@@ -27,7 +60,7 @@ struct RespondedTargets {
 
 #[derive(Default)]
 pub(super) struct AdminFanout {
-    pending: HashMap<SynKey, (f64, u64)>,
+    pending: HashMap<SynKey, PendingSyn>,
     responders: HashMap<(ServiceScope, String, u16), RespondedTargets>,
 }
 
@@ -44,7 +77,7 @@ impl AdminFanout {
             SYN_ACK => tcp.source_port,
             _ => return None,
         };
-        if !tcp.complete || !matches!(admin_port, 22 | 135 | 139 | 445 | 3389 | 5985 | 5986)
+        if !pkt.timestamp.is_finite() || !tcp.complete || !matches!(admin_port, 22 | 135 | 139 | 445 | 3389 | 5985 | 5986)
             || !is_internal_address(&pkt.src) || !is_internal_address(&pkt.dst)
         {
             return None;
@@ -58,15 +91,16 @@ impl AdminFanout {
                 server: (pkt.dst.clone(), tcp.destination_port),
                 expected_ack: tcp.sequence.wrapping_add(1),
             };
-            if self.pending.len() >= MAX_PENDING {
-                self.pending.retain(|_, (seen, _)| now - *seen <= SYN_TIMEOUT);
+            let sample = SynSample { at: now, frame: pkt.no };
+            if let Some(pending) = self.pending.get_mut(&key) {
+                pending.retry(sample);
+            } else {
                 if self.pending.len() >= MAX_PENDING {
-                    return None;
+                    self.pending.retain(|_, pending| now - pending.latest.at <= SYN_TIMEOUT);
                 }
-            }
-            let observation = self.pending.entry(key).or_insert((now, pkt.no));
-            if now - observation.0 > SYN_TIMEOUT {
-                *observation = (now, pkt.no);
+                if self.pending.len() < MAX_PENDING {
+                    self.pending.insert(key, PendingSyn::new(sample));
+                }
             }
             return None;
         }
@@ -76,10 +110,7 @@ impl AdminFanout {
             server: (pkt.src.clone(), tcp.source_port),
             expected_ack: tcp.acknowledgement,
         };
-        let &(seen, syn) = self.pending.get(&key)?;
-        if !(0.0..=SYN_TIMEOUT).contains(&(now - seen)) {
-            return None;
-        }
+        let syn = self.pending.get(&key)?.matched_frame(now, pkt.no)?;
         self.pending.remove(&key);
         self.record_pair(pkt, scope, admin_port, syn)
     }
@@ -120,7 +151,7 @@ impl AdminFanout {
                 signature: "Administrative service response fan-out",
                 severity: Severity::Medium,
                 detail: format!(
-                    "{} received matching TCP SYN-ACKs from {count} internal hosts on port {port}; connection and login outcomes unverified",
+                    "{} received matching TCP SYN-ACKs from {count} internal hosts on port {port} within 60 seconds; connection and login outcomes unverified",
                     reply.dst,
                 ),
             },
@@ -130,6 +161,10 @@ impl AdminFanout {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/admin_fanout_tests.rs"]
+mod tests;
 
 impl SecurityEngine {
     pub(super) fn record_admin_tcp(&mut self, pkt: &Packet, tcp: TcpSignal) {
