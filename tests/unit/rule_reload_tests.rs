@@ -59,3 +59,33 @@ fn missing_directory_is_distinct_from_an_intentionally_empty_directory() {
     engine.reload_from_path(&path).unwrap();
     assert!(engine.rules.is_empty());
 }
+
+#[test]
+fn unknown_or_wrong_type_fields_in_nested_conditions_reject_the_reload() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path();
+    let mut engine = RuleEngine::default();
+    engine.add_rule(rule("active"));
+    let mut staged = rule("staged");
+    for (broken, kind, field) in [
+        (Condition::Equals { field: "protocool".into(), value: "TCP".into() }, "text", "protocool"),
+        (Condition::Num { field: "protocol".into(), op: CmpOp::Eq, value: 6 }, "numeric", "protocol"),
+        (Condition::Contains { field: "tcp.dstport".into(), value: "443".into() }, "text", "tcp.dstport"),
+    ] {
+        staged.condition = Condition::Or(vec![Condition::Not(Box::new(Condition::And(vec![
+            broken,
+        ])))]);
+        write_rule(path, "staged.json", &staged);
+        let error = engine.reload_from_path(path).unwrap_err();
+        assert!(error.contains("staged.json") && error.contains("\"staged\"")
+            && error.contains(kind) && error.contains(&format!("\"{field}\"")), "{error}");
+        assert_eq!(engine.rules[0].id, "active");
+    }
+    staged.condition = Condition::And(vec![
+        Condition::Equals { field: "proto".into(), value: "UDP".into() },
+        Condition::Num { field: "udp.dstport".into(), op: CmpOp::Eq, value: 53 },
+    ]);
+    write_rule(path, "staged.json", &staged);
+    engine.reload_from_path(path).unwrap();
+    assert_eq!(engine.rules[0].id, "staged");
+}

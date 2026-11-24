@@ -146,6 +146,9 @@ impl RuleEngine {
                 if !ids.insert(rule.id.clone()) {
                     return Err(format!("{}: duplicate rule ID {:?}", path.display(), rule.id));
                 }
+                if let Some((kind, field)) = invalid_condition_field(&rule.condition) {
+                    return Err(format!("{}: rule {:?}: unknown {kind} field {field:?}", path.display(), rule.id));
+                }
                 next.push(rule);
             }
         }
@@ -203,37 +206,50 @@ impl RuleEngine {
     }
 }
 
-fn get_field_str<'a>(field: &str, pkt: &'a Packet) -> Option<&'a str> {
-    match field {
-        "src" | "ip.src"     => Some(&pkt.src),
-        "dst" | "ip.dst"     => Some(&pkt.dst),
-        "proto" | "protocol" => Some(&pkt.protocol),
-        "info"               => Some(&pkt.info),
-        _                    => None,
-    }
+fn text_field(field: &str) -> Option<fn(&Packet) -> &str> {
+    Some(match field {
+        "src" | "ip.src" => |pkt| &pkt.src,
+        "dst" | "ip.dst" => |pkt| &pkt.dst,
+        "proto" | "protocol" => |pkt| &pkt.protocol,
+        "info" => |pkt| &pkt.info,
+        _ => return None,
+    })
 }
 
-fn get_field_num(field: &str, pkt: &Packet) -> Option<u64> {
-    match field {
-        "len" | "frame.len"  => Some(pkt.length as u64),
-        "tcp.srcport" => crate::analysis::stream::tcp_port_pair(pkt).map(|(src, _)| u64::from(src)),
-        "tcp.dstport" => crate::analysis::stream::tcp_port_pair(pkt).map(|(_, dst)| u64::from(dst)),
-        "udp.srcport" => crate::analysis::dns_transactions::udp_port_pair(pkt).map(|(src, _)| u64::from(src)),
-        "udp.dstport" => crate::analysis::dns_transactions::udp_port_pair(pkt).map(|(_, dst)| u64::from(dst)),
-        "port" => pkt.dst_port.map(u64::from),
-        "ip.ttl" => crate::net::parser::ipv4_ttl(pkt).map(u64::from),
-        _ => None,
+fn numeric_field(field: &str) -> Option<fn(&Packet) -> Option<u64>> {
+    Some(match field {
+        "len" | "frame.len" => |pkt| Some(u64::from(pkt.length)),
+        "tcp.srcport" => |pkt| crate::analysis::stream::tcp_port_pair(pkt).map(|(src, _)| u64::from(src)),
+        "tcp.dstport" => |pkt| crate::analysis::stream::tcp_port_pair(pkt).map(|(_, dst)| u64::from(dst)),
+        "udp.srcport" => |pkt| crate::analysis::dns_transactions::udp_port_pair(pkt).map(|(src, _)| u64::from(src)),
+        "udp.dstport" => |pkt| crate::analysis::dns_transactions::udp_port_pair(pkt).map(|(_, dst)| u64::from(dst)),
+        "port" => |pkt| pkt.dst_port.map(u64::from),
+        "ip.ttl" => |pkt| crate::net::parser::ipv4_ttl(pkt).map(u64::from),
+        _ => return None,
+    })
+}
+
+fn invalid_condition_field(condition: &Condition) -> Option<(&'static str, &str)> {
+    match condition {
+        Condition::Contains { field, .. } | Condition::Equals { field, .. } => {
+            text_field(field).is_none().then_some(("text", field.as_str()))
+        }
+        Condition::Num { field, .. } => {
+            numeric_field(field).is_none().then_some(("numeric", field.as_str()))
+        }
+        Condition::And(children) | Condition::Or(children) => children.iter().find_map(invalid_condition_field),
+        Condition::Not(inner) => invalid_condition_field(inner),
     }
 }
 
 fn eval_cond(cond: &Condition, pkt: &Packet) -> Option<bool> {
     match cond {
         Condition::Contains { field, value } => Some(
-            get_field_str(field, pkt)?.to_lowercase().contains(value.to_lowercase().as_str()),
+            text_field(field)?(pkt).to_lowercase().contains(value.to_lowercase().as_str()),
         ),
-        Condition::Equals { field, value } => Some(get_field_str(field, pkt)?.eq_ignore_ascii_case(value)),
+        Condition::Equals { field, value } => Some(text_field(field)?(pkt).eq_ignore_ascii_case(value)),
         Condition::Num { field, op, value } => {
-            let actual = get_field_num(field, pkt)?;
+            let actual = numeric_field(field)?(pkt)?;
             Some(match op {
                 CmpOp::Lt => actual < *value,
                 CmpOp::Le => actual <= *value,
