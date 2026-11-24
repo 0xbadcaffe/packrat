@@ -19,6 +19,7 @@ if [[ ${TEST_MODE:-normal} == by_rule || ${TEST_MODE:-normal} == wrong_rule ]]; 
     base=$(jq -c '. + {rule_id:"ipv6.ra_router_link_change",severity:"MEDIUM"}' <<< "$base")
 fi
 if [[ $1 == --list-saved ]]; then
+    [[ ! -v PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE ]]
     shift
     offset=0 rule='' review_session='' review_capture=''
     if [[ $1 == --review-scope ]]; then review_session=$2 review_capture=$3; shift 3; fi
@@ -57,6 +58,15 @@ case $4 in
     6|7) status=partial step=inspect_retained_and_recover_missing_frames counts='{"truncated":1,"missing":1}' ;;
 esac
 if [[ ${TEST_MODE:-normal} == invalid_counts && $4 == 1 ]]; then counts='{"complete":1}'; fi
+if [[ ${TEST_MODE:-normal} == socket ]]; then
+    [[ $PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE == "$TEST_DIR/socket context.jsonl" ]]
+    marker=latest
+    if [[ $4 == 2 ]]; then marker=earlier; fi
+    if [[ $4 == 5 ]]; then marker='private invalid marker'; fi
+    base=$(jq -c --arg marker "$marker" '. + {socket_evidence:$marker,socket_context:{process:"private process",pid:123}}' <<< "$base")
+else
+    [[ -z ${PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE:-} ]]
+fi
 jq -nc --arg session "$2" --arg capture "$3" --argjson id "$4" --arg status "$status" --arg step "$step" \
     --argjson base "$base" --argjson counts "$counts" '
     {record_type:"capture_triage",mode:"saved",status:"saved",alerts:[$base + {session_id:$session,capture_id:$capture,alert_id:$id,
@@ -82,6 +92,13 @@ run_review | jq -e '
     and .findings[2].next_evidence_step == "refresh_saved_index"
     and (tostring | contains("private") | not) and all(.findings[]; has("evidence_frame_set_sha256") | not)' >/dev/null
 [[ $(wc -l < "$dir/checks") == 5 ]]
+touch -- "$dir/socket context.jsonl"
+TEST_MODE=socket run_review --socket-context "$dir/socket context.jsonl" | jq -e '
+    [.findings[].socket_evidence] == ["latest","earlier",null,null,null]
+    and .findings[1].packet_evidence_status == "unavailable"
+    and (tostring | contains("private") | not)' >/dev/null
+ln -s -- "$dir/socket context.jsonl" "$dir/socket-link"
+if run_review --socket-context "$dir/socket-link" >/dev/null 2>&1; then exit 1; fi
 TEST_MODE=invalid_counts run_review | jq -e '.findings[0].packet_evidence_status == "check_failed"' >/dev/null
 : > "$dir/checks"
 TEST_MODE=bounded run_review --review-offset 5 | jq -e '

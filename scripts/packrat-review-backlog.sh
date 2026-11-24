@@ -4,13 +4,14 @@ set -euo pipefail
 export LC_ALL=C
 
 usage() {
-    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
+    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--socket-context FILE] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
+        'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
 }
 
 if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
-offset=0 rule='' session_scope='' capture_scope='' index_args=()
+offset=0 rule='' session_scope='' capture_scope='' socket_file='' index_args=()
 if [[ ${1-} == --review-scope ]]; then
     session_scope=${2-} capture_scope=${3-}
     [[ $session_scope =~ ^[A-Za-z0-9_-]{1,128}$ && $capture_scope =~ ^[0-9a-f]{32}$ ]] || { usage >&2; exit 2; }
@@ -27,6 +28,12 @@ if [[ ${1-} == --review-offset ]]; then
     offset=${2-}
     if [[ ! $offset =~ ^(0|[1-9][0-9]{0,2})$ ]] || (( offset >= 512 )); then usage >&2; exit 2; fi
     index_args+=(--review-offset "$offset")
+    shift 2
+fi
+if [[ ${1-} == --socket-context ]]; then
+    socket_file=${2-}
+    [[ $socket_file == /* && $socket_file != *[[:cntrl:]]* && -f $socket_file && ! -L $socket_file ]] ||
+        { usage >&2; exit 2; }
     shift 2
 fi
 if (( $# < 2 || $# > 10 )) || [[ $1 != /* || ! -d $1 ]]; then usage >&2; exit 2; fi
@@ -107,7 +114,8 @@ while IFS= read -r candidate; do
     verdict='null' status=check_deferred
     if (( remaining > 0 )); then
         rc=0
-        raw=$(triage_with_budget "$remaining" --saved-alert "$session" "$capture" "$alert" "$@") || rc=$?
+        raw=$(PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE="$socket_file" \
+            triage_with_budget "$remaining" --saved-alert "$session" "$capture" "$alert" "$@") || rc=$?
         status=check_failed
         if (( rc == 124 || rc == 137 )); then status=check_timed_out; fi
         if (( rc <= 2 && ${#raw} <= 1048576 )); then
@@ -129,6 +137,7 @@ while IFS= read -r candidate; do
                       elif valid_counts and (.packet_evidence_status | strings | test("\\A[a-z_]{1,48}\\z")) and
                            (.next_evidence_step | strings | test("\\A[a-z_]{1,64}\\z")) then
                         {packet_evidence_status,next_evidence_step,evidence_availability}
+                        + (if .socket_evidence | IN("latest","earlier","latest_and_earlier") then {socket_evidence} else {} end)
                       else null end
                   else null end' <<< "$raw") || verdict='null'
         fi
