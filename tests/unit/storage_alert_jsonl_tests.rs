@@ -125,7 +125,6 @@ fn fresh_session_preserves_a_torn_tail_and_resuming_still_deduplicates() {
 
     let mut writer = AlertJsonlWriter::open_session(path.clone(), "new-session", LogSession::Fresh).unwrap();
     assert!(writer.latest_snapshots.is_empty());
-    assert!(writer.needs_separator);
     writer.append_alerts(&[alert(1, 1)]).unwrap();
     drop(writer);
 
@@ -331,6 +330,26 @@ fn reopening_after_a_torn_line_does_not_lose_the_next_snapshot() {
     let contents = std::fs::read_to_string(&path).unwrap();
     assert!(contents.starts_with("{\"alert\":\n"));
     assert_eq!(read_log(&path).len(), 1);
+}
+
+#[test]
+fn a_torn_tail_on_the_same_open_log_does_not_consume_the_next_snapshot() {
+    for truncate in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("alerts.jsonl");
+        let mut writer = AlertJsonlWriter::open(path.clone(), "session-a").unwrap();
+        writer.append_alerts(&[alert(1, 1)]).unwrap();
+        if truncate {
+            OpenOptions::new().write(true).truncate(true).open(&path).unwrap();
+        }
+        OpenOptions::new().append(true).open(&path).unwrap().write_all(b"{\"partial\":").unwrap();
+        let original = std::fs::read(&path).unwrap();
+
+        writer.append_alerts(&[alert(2, 2), alert(3, 3)]).unwrap();
+        assert!(std::fs::read(&path).unwrap().starts_with(&[original.as_slice(), b"\n"].concat()));
+        let hits = read_log(&path).into_iter().map(|row| row.alert.hit_count).collect::<Vec<_>>();
+        assert_eq!(hits, if truncate { vec![2, 3] } else { vec![1, 2, 3] });
+    }
 }
 
 #[test]

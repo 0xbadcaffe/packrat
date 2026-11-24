@@ -31,7 +31,6 @@ pub struct AlertJsonlWriter {
     latest_snapshots: BTreeMap<SnapshotKey, SavedSnapshot>,
     discarded_through_alert_id: u64,
     new_session: bool,
-    needs_separator: bool,
     writer: File,
 }
 
@@ -223,14 +222,12 @@ impl AlertJsonlWriter {
                 }
             }
         }
-        let needs_separator = needs_line_separator(&mut file)?;
         Ok(Self {
             path,
             session_id: session_id.to_owned(),
             latest_snapshots,
             discarded_through_alert_id,
             new_session,
-            needs_separator,
             writer: file,
         })
     }
@@ -262,8 +259,7 @@ impl AlertJsonlWriter {
     }
 
     fn write_alerts<'a>(&mut self, alerts: impl IntoIterator<Item = &'a AlertItem>) -> Result<(), String> {
-        #[cfg(unix)]
-        let mut checked_rotation = false;
+        let mut append_started = false;
         for alert in alerts {
             let key = snapshot_key(alert);
             let saved = self.latest_snapshots.get(&key);
@@ -282,22 +278,21 @@ impl AlertJsonlWriter {
             if record.len() >= MAX_ALERT_LINE {
                 return Err("Alert JSONL record exceeds the export size limit".into());
             }
-            // Avoid filesystem checks on the packet path when there is no new snapshot.
-            #[cfg(unix)]
-            if !checked_rotation {
+            // A changed tail can be on the same inode. Check only before the first actual append.
+            let needs_separator = if append_started {
+                false
+            } else {
+                #[cfg(unix)]
                 self.follow_rotation()?;
-                checked_rotation = true;
-            }
+                append_started = true;
+                needs_line_separator(&mut self.writer)?
+            };
             record.push(b'\n');
-            if self.needs_separator {
+            if needs_separator {
                 record.insert(0, b'\n');
             }
             // Cache only complete writes. A short write may leave a torn JSON line.
-            if let Err(error) = self.writer.write_all(&record) {
-                self.needs_separator = needs_line_separator(&mut self.writer).unwrap_or(true);
-                return Err(format!("Write alert JSONL record: {error}"));
-            }
-            self.needs_separator = false;
+            self.writer.write_all(&record).map_err(|error| format!("Write alert JSONL record: {error}"))?;
             remember(&mut self.latest_snapshots, &mut self.discarded_through_alert_id, key, SavedSnapshot { digest, first_saved_unix_ms });
         }
         Ok(())
@@ -317,9 +312,7 @@ impl AlertJsonlWriter {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("Stat alert JSONL file {}: {error}", self.path.display())),
         }
-        let mut replacement = open_alert_file(&self.path)?;
-        self.needs_separator = needs_line_separator(&mut replacement)?;
-        self.writer = replacement;
+        self.writer = open_alert_file(&self.path)?;
         Ok(())
     }
 }
