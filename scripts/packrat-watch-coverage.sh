@@ -7,6 +7,7 @@ usage() {
     printf '%s\n' 'Usage: watch-packrat-triage.sh --history STATE.json | packrat-watch-coverage.sh [--capture-id ID --session ID]' \
         'Reads retained journal records from stdin; defaults to the last observed capture scope.' \
         'Rates describe retained intervals with known coverage, not all traffic or all alerts.' \
+        'Alert rates require decodable capture and a valid saved-alert log at both endpoints.' \
         'Intervals spanning watcher restarts, missing journal records, or older unsequenced records are excluded.' \
         'Alert-ID gaps identify records not observed in the retained sample, not proven missing from the saved log.'
 }
@@ -30,8 +31,12 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         and (.status | id) and (.updated_at | type == "string" and test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z"));
     def same($key): .capture_id == $key.capture_id and .session_id == $key.session_id;
     def healthy:
-        .status == "current" and .buffer_drops == 0 and .packet_counter_gap == false
+        .status == "current" and .link_decodable == true and .buffer_drops == 0 and .packet_counter_gap == false
         and (.healthy_capture_since | counter and . > 0) and .healthy_capture_since <= .tick and (.packets | counter);
+    def alert_log_usable:
+        .alert_saving == true and .alert_log_integrity.invalid_records == 0
+        and .alert_log_integrity.oversized_records == 0
+        and (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null);
     def opening_delta($earlier; $later):
         $earlier.highest_observed_alert_id as $low | $later.highest_observed_alert_id as $high
         | (if $later.checkpoint == true and $later.alert_changes == null
@@ -41,7 +46,8 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
           then $ids else null end;
     def verified_opening_ids($earlier; $later):
         opening_delta($earlier; $later) as $ids
-        | if $earlier.alert_sample_gap == false and $later.alert_sample_gap == false and $ids != null
+        | if ($earlier | alert_log_usable) and ($later | alert_log_usable)
+             and $earlier.alert_sample_gap == false and $later.alert_sample_gap == false and $ids != null
              and $later.highest_observed_alert_id - $earlier.highest_observed_alert_id == ($ids | length)
           then $ids else null end;
     def alert_samples:
@@ -117,7 +123,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
     | ($openings | map(objects) | group_by([.rule_id,.revision])
         | map(.[0] + {openings:length}) | sort_by([-.openings,.rule_id,.revision])) as $by_rule
     | [limit(65; alert_gaps($sample))] as $alert_gaps
-    | {record_type:"capture_coverage_report",coverage_policy:"continuous_journal_v2",
+    | {record_type:"capture_coverage_report",coverage_policy:"continuous_journal_v3",
        status:(if ($sample | length) == 0 then "no_capture_records"
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
        scope:$key, journal_tail_status:$all[-1].status,

@@ -66,7 +66,7 @@ read_baseline() {
             | if ($times | length) == 3 and $times[0] <= $times[1] and $times[1] <= $times[2]
                 and $c.healthy_seconds <= $times[1] - $times[0] then
                   {interface:$b.interface,scope:$b.scope,capture_run_id:$b.capture_run_id,sha256:$b.sha256,
-                   coverage_policy:(if $c.coverage_policy | IN("capture_loss_counters_v1","continuous_journal_v2") then $c.coverage_policy else null end),
+                   coverage_policy:(if $c.coverage_policy | IN("capture_loss_counters_v1","continuous_journal_v2","continuous_journal_v3") then $c.coverage_policy else null end),
                    first_record_at:$c.first_record_at,last_record_at:$c.last_record_at,
                    healthy_seconds:$c.healthy_seconds,excluded_intervals:$c.excluded_intervals,
                    comparable_seconds:(if $c | has("alert_comparable_seconds") then $c.alert_comparable_seconds
@@ -74,7 +74,7 @@ read_baseline() {
                    comparable_packets:$c.alert_comparable_packets,openings:$c.observed_openings,
                    opening_rule_breakdown:($c.opening_rule_breakdown | if . == null then null else
                        {rules:[.rules[] | {rule_id,revision,openings}],unattributed_openings,omitted_rule_openings} end),
-                   openings_per_10000_packets:(if $c.coverage_policy == "continuous_journal_v2" and $c.alert_comparable_packets > 0
+                   openings_per_10000_packets:(if $c.coverage_policy == "continuous_journal_v3" and $c.alert_comparable_packets > 0
                        then $c.observed_openings * 10000 / $c.alert_comparable_packets else null end)}
               else error("Inconsistent baseline observation window") end
           else error("Invalid or mismatched build and coverage baseline") end
@@ -146,7 +146,7 @@ printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --arg
         (if $shared then "same_capture"
          elif $before.interface != $after.interface then "different_interfaces"
          elif $before.last_record_at > $after.first_record_at then "overlapping_or_reversed_windows"
-         elif $before.coverage_policy != "continuous_journal_v2" or $before.coverage_policy != $after.coverage_policy then
+         elif $before.coverage_policy != "continuous_journal_v3" or $before.coverage_policy != $after.coverage_policy then
            "coverage_policy_unverified"
          elif $before.openings_per_10000_packets == null or $after.openings_per_10000_packets == null then
            "insufficient_alert_coverage"
