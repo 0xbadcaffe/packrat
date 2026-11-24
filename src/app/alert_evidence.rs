@@ -198,6 +198,10 @@ impl App {
         if report.frames.values().all(|outcome| outcome.included()) {
             details.push(("Archive export".into(), "All cited frames included at export".into()));
         }
+        if !report.local_fallback_frames.is_empty() {
+            let frames = report.local_fallback_frames.iter().map(|frame| format!("#{frame}")).collect::<Vec<_>>();
+            details.push(("Local evidence at export".into(), frames.join(", ")));
+        }
         let unpinned: Vec<_> = report.frames.iter().filter(|(frame, outcome)| {
             outcome.included() && self.saved_alert_pin(alert, **frame).is_none()
         }).map(|(frame, _)| format!("#{frame}")).collect();

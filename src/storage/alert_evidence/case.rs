@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{Result, ensure};
 use serde::Serialize;
@@ -9,6 +9,7 @@ use crate::model::project::{
     SavedInvestigationItem, packet_bytes_sha256, pinned_packet_cost,
 };
 use crate::storage::project_store;
+use crate::net::packet::Packet;
 
 use super::{AlertLogs, FrameStatus, PacketArchive, frame_status, latest_alert_in_logs, scoped_frames};
 
@@ -20,8 +21,12 @@ pub struct AlertProjectSummary {
     pub missing_frames: usize,
     pub unreadable_frames: usize,
     pub omitted_at_limit: usize,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub local_fallback_frames: usize,
     trigger_frame: Option<CaseTrigger>,
 }
+
+fn is_zero(value: &usize) -> bool { *value == 0 }
 
 #[derive(Serialize)]
 struct CaseTrigger {
@@ -41,11 +46,12 @@ pub fn create_alert_project(
     ensure!(!session_id.is_empty() && session_id.len() <= 128 && session_id.bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')), "Invalid session ID");
     let alert = latest_alert_in_logs(logs, session_id, alert_id, Some(capture_id))?;
-    save_alert_archive_project(archive, &alert, Some(session_id), output)
+    save_alert_archive_project(archive, &alert, Some(session_id), output, BTreeMap::new())
 }
 
 pub(crate) fn save_alert_archive_project(
     archive: &mut PacketArchive, alert: &AlertItem, session_id: Option<&str>, output: &Path,
+    mut local_fallback: BTreeMap<u64, Packet>,
 ) -> Result<AlertProjectSummary> {
     let (capture_id, frames) = scoped_frames(alert)?;
     let alert_id = alert.id;
@@ -59,13 +65,21 @@ pub(crate) fn save_alert_archive_project(
         alert_id, capture_id: capture_id.to_owned(), session_id: session_id.map(str::to_owned),
         frames: Default::default(),
         retained_sha256: None,
+        local_fallback_frames: Default::default(),
     };
     let mut retained_sha256 = std::collections::BTreeMap::new();
     let mut bytes_left = MAX_PINNED_BYTES;
     let ordered = frames.iter().find(|&&frame| frame == trigger).into_iter()
         .chain(frames.iter().filter(|&&frame| frame != trigger));
     for &frame in ordered {
-        let (status, included) = match archive.packet_for_capture(capture_id, frame) {
+        let archived = archive.packet_for_capture(capture_id, frame);
+        let local = if matches!(&archived, Ok(Some(packet)) if frame_status(packet) != FrameStatus::Unreadable) {
+            None
+        } else {
+            local_fallback.remove(&frame).filter(|packet| packet.no == frame && frame_status(packet) != FrameStatus::Unreadable)
+        };
+        let used_local = local.is_some();
+        let (status, included) = match local.map_or(archived, |packet| Ok(Some(packet))) {
             Ok(Some(packet)) => {
                 let status = frame_status(&packet);
                 let cost = pinned_packet_cost(&packet);
@@ -80,6 +94,10 @@ pub(crate) fn save_alert_archive_project(
                     summary.truncated_frames += usize::from(status == FrameStatus::Truncated);
                     summary.length_unknown_frames += usize::from(status == FrameStatus::LengthUnknown);
                     retained_sha256.insert(frame, packet_bytes_sha256(&packet));
+                    if used_local {
+                        report.local_fallback_frames.insert(frame);
+                        summary.local_fallback_frames += 1;
+                    }
                     state.pinned_packet_scopes.insert(frame, capture_id.to_owned());
                     state.pinned_packets.push(packet);
                     (status, true)
@@ -115,8 +133,8 @@ pub(crate) fn save_alert_archive_project(
     let identity = session_id.map_or_else(|| format!("Capture {capture_id}"),
         |session| format!("Session {session}, capture {capture_id}"));
     state.metadata.description = Some(format!(
-        "{identity}. {} retained ({} truncated, {} length unknown), {} missing, {} unreadable, {} over the tray limit.{}",
-        summary.retained_frames, summary.truncated_frames, summary.length_unknown_frames, summary.missing_frames,
+        "{identity}. {} retained ({} from local evidence, {} truncated, {} length unknown), {} missing, {} unreadable, {} over the tray limit.{}",
+        summary.retained_frames, summary.local_fallback_frames, summary.truncated_frames, summary.length_unknown_frames, summary.missing_frames,
         summary.unreadable_frames, summary.omitted_at_limit,
         summary.trigger_frame.as_ref().filter(|trigger| !trigger.included)
             .map_or_else(String::new, |trigger| format!(" Trigger #{} not included.", trigger.frame_number)),

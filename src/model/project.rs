@@ -79,6 +79,8 @@ pub struct AlertArchiveReport {
     pub frames: std::collections::BTreeMap<u64, ArchivedFrameOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_sha256: Option<std::collections::BTreeMap<u64, String>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub local_fallback_frames: std::collections::BTreeSet<u64>,
 }
 
 pub(crate) fn packet_bytes_sha256(packet: &Packet) -> String {
@@ -103,6 +105,9 @@ impl AlertArchiveReport {
                     !digest.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))))
         {
             return Err("Invalid saved alert archive frame digests".into());
+        }
+        if !self.local_fallback_frames.iter().all(|frame| self.frames.get(frame).is_some_and(|outcome| outcome.included())) {
+            return Err("Invalid saved alert local fallback references".into());
         }
         Ok(())
     }

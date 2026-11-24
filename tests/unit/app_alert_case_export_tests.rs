@@ -115,3 +115,45 @@ fn selected_alert_archive_export_refuses_unscoped_and_missing_archive() {
     assert!(!output.exists());
     assert!(app.alert_case_export.is_none());
 }
+
+#[test]
+fn selected_alert_archive_export_fills_missing_frames_from_matching_local_evidence() {
+    let scratch = tempfile::tempdir().unwrap();
+    let output = scratch.path().join("mixed-case.json");
+    let mut app = App::new_for_test();
+    app.set_packet_archive(ArchiveWorker::open(&scratch.path().join("archive")).unwrap()).unwrap();
+    let scope = app.capture_id.clone().unwrap();
+    let mut archived = packet(1);
+    archived.info = "on disk".into();
+    app.packet_archive.as_ref().unwrap().record_scoped(&scope, &archived).unwrap();
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+
+    let mut alternate = packet(1);
+    alternate.bytes[0] ^= 1;
+    let mut local = packet(2);
+    local.info = "only in local buffer".into();
+    app.packets.extend([alternate, local.clone(), packet(3)]);
+    {
+        let mut core = app.core.edit();
+        core.alert_center.record(2, "IDS", "HIGH", "Mixed evidence", "fixture");
+        core.alert_center.items[0].packet_refs.extend([1, 4]);
+    }
+    app.start_alert_archive_case(output.clone()).unwrap();
+    app.packets.clear(); // The export snapshots local evidence before starting its worker.
+    finish_export(&mut app);
+
+    let project = project_store::load(&output).unwrap();
+    let report = project.alert_archive_report.as_ref().unwrap();
+    assert_eq!(report.local_fallback_frames.iter().copied().collect::<Vec<_>>(), [2]);
+    assert_eq!(report.frames.get(&4), Some(&ArchivedFrameOutcome::Missing));
+    assert!(!report.frames.contains_key(&3));
+    assert_eq!(project.pinned_packets[0].bytes, archived.bytes);
+    assert_eq!(project.pinned_packets[1].bytes, local.bytes);
+    assert_eq!(project.active_investigation, Some(2));
+    assert!(app.status_msg.as_deref().unwrap().contains("1 from local evidence"));
+    let mut review = App::new_for_test();
+    review.apply_project_state(project).unwrap();
+    review.worklist.active = Some(0);
+    assert!(review.active_investigation_context().unwrap().details.iter()
+        .any(|(label, value)| label == "Local evidence at export" && value == "#2"));
+}
