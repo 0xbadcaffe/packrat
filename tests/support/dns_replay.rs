@@ -4,6 +4,19 @@ use std::path::Path;
 
 #[path = "../replay_suite/dns_tcp.rs"]
 mod tcp_replay_tests;
+#[path = "../replay_suite/dns_udp_entropy.rs"]
+mod udp_entropy_replay_tests;
+
+fn message(id: u16, name: &[u8], reply: bool) -> Vec<u8> {
+    let mut body = id.to_be_bytes().to_vec();
+    body.extend([if reply { 0x81 } else { 1 }, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    for label in name.split(|&byte| byte == b'.') {
+        body.push(label.len() as u8);
+        body.extend_from_slice(label);
+    }
+    body.extend_from_slice(b"\x04test\0\0\x01\0\x01");
+    body
+}
 
 pub enum Scenario {
     Equivalent,

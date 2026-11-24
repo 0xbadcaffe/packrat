@@ -1,18 +1,7 @@
 use super::super::{PcapNgWriter, Value, json, run_suite};
-use super::udp_frame;
+use super::{message, udp_frame};
 use packrat_tui::net::{packet::Packet, parser::parse_ethernet};
 use std::path::Path;
-
-fn message(id: u16, name: &[u8], reply: bool) -> Vec<u8> {
-    let mut body = id.to_be_bytes().to_vec();
-    body.extend([if reply { 0x81 } else { 1 }, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
-    for label in name.split(|&byte| byte == b'.') {
-        body.push(label.len() as u8);
-        body.extend_from_slice(label);
-    }
-    body.extend_from_slice(b"\x04test\0\0\x01\0\x01");
-    body
-}
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
