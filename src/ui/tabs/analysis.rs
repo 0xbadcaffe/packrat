@@ -444,6 +444,9 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
             if impact.conflicting_endpoint_report_ids > 0 {
                 rows.push(("Impact", format!("Conflicting report IDs omitted: {}", impact.conflicting_endpoint_report_ids)));
             }
+            if impact.invalid_endpoint_reports > 0 {
+                rows.push(("Impact", format!("Invalid reports omitted: {}", impact.invalid_endpoint_reports)));
+            }
             for entry in impact.evidence.iter().filter(|entry| entry.category != "network_activity") {
                 rows.push(("Impact", format!("{}: {:?} - {}. {}", entry.category, entry.confidence, entry.subject, entry.explanation)));
             }

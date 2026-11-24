@@ -74,6 +74,12 @@ fn endpoint_evidence_requires_matching_incident_target_and_provenance() {
     assert!(report.evidence.iter().any(|entry| entry.category == "files"
         && entry.confidence == ImpactConfidence::Unknown));
     assert_eq!(report.capture_id.as_deref(), Some("capture-a"));
+    let incomplete = EndpointEvidence { action: " ".into(), ..event.clone() };
+    let report = correlate(incident, &[incomplete]);
+    assert_eq!(report.invalid_endpoint_reports, 1);
+    assert!(report.evidence.iter().any(|entry| entry.category == "files"
+        && entry.confidence == ImpactConfidence::Unknown));
+    assert!(!report.evidence.iter().any(|entry| entry.subject == event.subject));
     for capture_id in [None, Some("capture-b".into())] {
         let unrelated = EndpointEvidence { capture_id, ..event.clone() };
         assert!(!correlate(incident, &[unrelated]).evidence.iter()

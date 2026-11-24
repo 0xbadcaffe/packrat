@@ -30,6 +30,8 @@ pub struct ImpactReport {
     pub compromise_confirmed: bool,
     #[serde(default)]
     pub conflicting_endpoint_report_ids: usize,
+    #[serde(default)]
+    pub invalid_endpoint_reports: usize,
     pub evidence: Vec<ImpactEvidence>,
     pub limitations: Vec<String>,
 }
@@ -57,6 +59,28 @@ pub enum EndpointCategory {
     Capability,
 }
 
+impl EndpointEvidence {
+    fn invalid_field(&self) -> Option<&'static str> {
+        if self.incident_id == 0 {
+            return Some("incident_id");
+        }
+        if self.capture_id.as_deref().is_some_and(|id| !crate::storage::packet_archive::valid_capture_id(id)) {
+            return Some("capture_id");
+        }
+        [
+            ("target", self.target.as_str(), 256, true),
+            ("source", self.source.as_str(), 256, true),
+            ("evidence_id", self.evidence_id.as_str(), 256, true),
+            ("subject", self.subject.as_str(), 4096, false),
+            ("action", self.action.as_str(), 1024, false),
+        ].into_iter().find_map(|(field, text, limit, identifier)| {
+            let trimmed = text.trim();
+            (text.len() > limit || trimmed.is_empty() || (identifier && trimmed != text)
+                || text.chars().any(char::is_control)).then_some(field)
+        })
+    }
+}
+
 pub fn correlate(incident: &Incident, events: &[EndpointEvidence]) -> ImpactReport {
     let mut report = assess(incident);
     let Some(capture_id) = report.capture_id.as_deref() else { return report; };
@@ -66,10 +90,8 @@ pub fn correlate(incident: &Incident, events: &[EndpointEvidence]) -> ImpactRepo
         .filter(|event| event.capture_id.as_deref() == Some(capture_id)
             && event.incident_id == incident.id && event.target == incident.target)
     {
-        if event.source.trim().is_empty()
-            || event.evidence_id.trim().is_empty()
-            || event.subject.trim().is_empty()
-        {
+        if event.invalid_field().is_some() {
+            report.invalid_endpoint_reports += 1;
             continue;
         }
         reports.entry((event.source.as_str(), event.evidence_id.as_str()))
@@ -105,6 +127,9 @@ pub fn correlate(incident: &Incident, events: &[EndpointEvidence]) -> ImpactRepo
     if report.conflicting_endpoint_report_ids > 0 {
         report.limitations.push("Conflicting endpoint reports with the same reporter and evidence ID were omitted.".into());
     }
+    if report.invalid_endpoint_reports > 0 {
+        report.limitations.push("Incomplete or invalid endpoint reports were omitted.".into());
+    }
     report
 }
 
@@ -135,8 +160,11 @@ pub fn read_endpoint_evidence(path: &std::path::Path) -> Result<Vec<EndpointEvid
         if events.len() >= MAX_ENDPOINT_EVIDENCE_EVENTS {
             return Err("Endpoint evidence exceeds import limits".into());
         }
-        let event = serde_json::from_str(&line)
+        let event: EndpointEvidence = serde_json::from_str(&line)
             .map_err(|error| format!("Endpoint evidence line {line_number}: {error}"))?;
+        if let Some(field) = event.invalid_field() {
+            return Err(format!("Endpoint evidence line {line_number}: invalid {field}"));
+        }
         events.push(event);
     }
     Ok(events)
@@ -173,6 +201,7 @@ pub fn assess(incident: &Incident) -> ImpactReport {
         capture_id: incident.capture_id.clone().filter(|id| crate::storage::packet_archive::valid_capture_id(id)),
         compromise_confirmed: false,
         conflicting_endpoint_report_ids: 0,
+        invalid_endpoint_reports: 0,
         evidence: Vec::new(),
         limitations: vec![
             "A detection indicates suspicious activity; it does not establish successful exploitation.".into(),

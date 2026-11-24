@@ -25,6 +25,38 @@ fn endpoint_evidence_accepts_regular_ndjson_and_counts_the_exact_byte_limit() {
     );
 }
 
+#[test]
+fn endpoint_evidence_rejects_incomplete_or_unrenderable_observations() {
+    use serde_json::json;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("endpoint.ndjson");
+    let record: serde_json::Value = serde_json::from_str(RECORD).unwrap();
+    for (field, invalid) in [
+        ("incident_id", json!(0)),
+        ("capture_id", json!("invalid/scope")),
+        ("target", json!(" ")),
+        ("source", json!("audit ")),
+        ("evidence_id", json!("")),
+        ("subject", json!("/srv/record\nother")),
+        ("subject", json!("x".repeat(4097))),
+        ("action", json!("  ")),
+        ("action", json!("read\u{001b}[31m")),
+    ] {
+        let mut invalid_record = record.clone();
+        invalid_record[field] = invalid;
+        std::fs::write(&path, format!("{record}\n{invalid_record}\n")).unwrap();
+        assert_eq!(
+            read_endpoint_evidence(&path).unwrap_err(),
+            format!("Endpoint evidence line 2: invalid {field}")
+        );
+    }
+    let mut legacy = record;
+    legacy.as_object_mut().unwrap().remove("capture_id");
+    std::fs::write(&path, legacy.to_string()).unwrap();
+    assert_eq!(read_endpoint_evidence(&path).unwrap()[0].capture_id, None);
+}
+
 #[cfg(unix)]
 #[test]
 fn endpoint_evidence_rejects_pipes_without_waiting_for_a_writer() {

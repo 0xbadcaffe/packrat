@@ -59,6 +59,9 @@ fn importing_endpoint_reports_after_opening_a_case_preserves_scoped_evidence() {
         "1",
         "/srv/record",
     ));
+    let mut incomplete = event(EndpointCategory::Data, capture.clone(), "old", "unsubstantiated report");
+    incomplete.action.clear();
+    state.endpoint_evidence.push(incomplete);
     project_store::save(&state, &project).unwrap();
     let input = [
         event(
@@ -94,8 +97,9 @@ fn importing_endpoint_reports_after_opening_a_case_preserves_scoped_evidence() {
         std::thread::yield_now();
     }
     app.query_core(|core| {
-        assert_eq!(core.endpoint_evidence.len(), 4);
+        assert_eq!(core.endpoint_evidence.len(), 5);
         let impact = correlate(core.incidents.active().unwrap(), &core.endpoint_evidence);
+        assert_eq!(impact.invalid_endpoint_reports, 1);
         let observed: Vec<_> = impact
             .evidence
             .iter()
