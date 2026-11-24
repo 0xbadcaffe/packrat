@@ -245,9 +245,9 @@ pub(super) struct ExfilState {
     pub(super) last_seen: f64,
     pub(super) volume_episode: Option<VolumeEpisode>,
     pub(super) entropy_alerted: bool,
-    pub(super) outbound_frames: std::collections::VecDeque<(i64, u64)>,
-    pub(super) inbound_frames: std::collections::VecDeque<(i64, u64)>,
-    pub(super) entropy_frames: std::collections::VecDeque<behavior::EntropySample>,
+    pub(super) outbound_frames: std::collections::VecDeque<behavior::TransferSample>,
+    pub(super) inbound_frames: std::collections::VecDeque<behavior::TransferSample>,
+    pub(super) entropy_frames: std::collections::VecDeque<behavior::TransferSample>,
     pub(super) buckets: std::collections::VecDeque<TransferBucket>,
 }
 
