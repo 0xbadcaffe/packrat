@@ -72,12 +72,15 @@ fn admin_fanout_replay_requires_a_timely_syn_or_its_exact_retry() {
     let root = scratch.path();
     let rule = "tcp.admin_service_response_fanout";
     let mut cases = Vec::new();
-    for (name, retry_host, final_time, syn_data, final_ack, expected) in [
-        ("valid-retry", 8, 17.0, false, 101_u32, 1),
-        ("unrelated-retry", 9, 17.0, false, 101, 0),
-        ("reply-before-syn", 8, 0.5, false, 101, 0),
-        ("observed-syn-data", 8, 17.0, true, 104, 1),
-        ("ack-beyond-observed-syn-data", 8, 17.0, true, 105, 0),
+    for (name, retry_host, final_time, syn_data, final_ack, path, expected) in [
+        ("valid-retry", 8, 17.0, false, 101_u32, None, 1),
+        ("unrelated-retry", 9, 17.0, false, 101, None, 0),
+        ("reply-before-syn", 8, 0.5, false, 101, None, 0),
+        ("observed-syn-data", 8, 17.0, true, 104, None, 1),
+        ("ack-beyond-observed-syn-data", 8, 17.0, true, 105, None, 0),
+        ("same-tag-type-different-priority", 8, 17.0, false, 101, Some((false, false)), 1),
+        ("split-tag-types-in-pair", 8, 17.0, false, 101, Some((true, false)), 0),
+        ("split-tag-types-between-pairs", 8, 17.0, false, 101, Some((false, true)), 0),
     ] {
         let file = format!("{name}.pcapng");
         let mut capture = PcapNgWriter::create(&root.join(&file)).unwrap();
@@ -97,6 +100,12 @@ fn admin_fanout_replay_requires_a_timely_syn_or_its_exact_retry() {
                 let ack = if host == 8 { final_ack } else if syn_data { 104 } else { 101 };
                 raw[42..46].copy_from_slice(&ack.to_be_bytes());
             }
+            if let Some((split_pair, split_hosts)) = path {
+                let provider = (split_pair && host == 8 && reply) || (split_hosts && host > 4);
+                let tpid = if provider { 0x88a8_u16 } else { 0x8100_u16 };
+                let tci = if reply { 0xb014_u16 } else { 20_u16 };
+                raw.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+            }
             capture.write_packet(&parse_ethernet(&raw, frame, at)).unwrap();
         };
         write(8, 1.0, false);
@@ -115,7 +124,7 @@ fn admin_fanout_replay_requires_a_timely_syn_or_its_exact_retry() {
             case["opening_frames"] = json!({(rule):[17]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule, "opening_frame":17, "frames":(2..=17).collect::<Vec<_>>(),
-                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":4},
+                "classification":{"severity":"MEDIUM","confidence":"correlated","revision":5},
             }]);
         }
         cases.push(case);

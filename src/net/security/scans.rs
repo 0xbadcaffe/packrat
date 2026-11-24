@@ -419,7 +419,7 @@ impl ScanProbe {
     }
 }
 
-fn scan_scope(pkt: &Packet) -> ScanScope {
+pub(super) fn scan_scope(pkt: &Packet) -> ScanScope {
     let mut tag_types = [0; 2];
     if pkt.vlan_id.is_some() {
         // Keep wire tag types in order without treating PCP or DEI as a separate path.

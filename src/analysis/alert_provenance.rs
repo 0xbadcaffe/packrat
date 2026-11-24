@@ -277,7 +277,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check the controller, operator authorization, and response. A write-like packet does not prove a state change.",
         ),
         (
-            "IDS", "Administrative service response fan-out", "tcp.admin_service_response_fanout", 4, Correlated,
+            "IDS", "Administrative service response fan-out", "tcp.admin_service_response_fanout", 5, Correlated,
             "Inspect the retained SYN and SYN-ACK pairs; confirm completed sessions and expected management activity.",
         ),
         (

@@ -20,10 +20,43 @@ fn administrative_reply_pairs_require_a_timely_preceding_frame() {
 
 fn pending_key() -> SynKey {
     SynKey {
-        scope: (None, None, None),
+        scope: ((None, None, None), [0; 2]),
         client: ("10.0.0.1".into(), 40000),
         server: ("10.0.0.2".into(), 445),
     }
+}
+
+#[test]
+fn administrative_reply_must_have_the_same_vlan_tag_order_but_can_change_priority() {
+    let packet = |no, reverse, tpids: [u16; 2], tci: u16| {
+        let mut raw = [0u8; 62];
+        for (index, tpid) in tpids.into_iter().enumerate() {
+            let offset = 12 + index * 4;
+            raw[offset..offset + 2].copy_from_slice(&tpid.to_be_bytes());
+            raw[offset + 2..offset + 4].copy_from_slice(&tci.to_be_bytes());
+        }
+        raw[20..22].copy_from_slice(&0x0800_u16.to_be_bytes());
+        raw[22] = 0x45;
+        raw[24..26].copy_from_slice(&40_u16.to_be_bytes());
+        raw[31] = 6;
+        let (source, destination) = if reverse { (2, 1) } else { (1, 2) };
+        raw[34..38].copy_from_slice(&[10, 0, 0, source]);
+        raw[38..42].copy_from_slice(&[10, 0, 0, destination]);
+        crate::net::parser::parse_ethernet(&raw, no, no as f64)
+    };
+    let syn = TcpSignal { flags: INITIAL_SYN, source_port: 40000, destination_port: 445,
+        sequence: 100, acknowledgement: 0, payload_length: 0, complete: true };
+    let ack = TcpSignal { flags: SYN_ACK, source_port: 445, destination_port: 40000,
+        acknowledgement: 101, ..syn };
+    let mut state = AdminFanout::default();
+    state.observe(&packet(1, false, [0x88a8, 0x8100], 20), syn, None);
+    state.observe(&packet(2, true, [0x8100, 0x88a8], 20), ack, None);
+    assert_eq!(state.pending_count, 1);
+    assert!(state.responders.is_empty());
+    state.observe(&packet(3, true, [0x88a8, 0x8100], 0xb014), ack, None);
+    assert_eq!(state.pending_count, 0);
+    let targets = &state.responders.values().next().unwrap().targets;
+    assert_eq!(targets["10.0.0.2"].1, [1, 3]);
 }
 
 fn remember(state: &mut AdminFanout, sequence: u32, payload_length: u32, at: f64, frame: u64) -> bool {

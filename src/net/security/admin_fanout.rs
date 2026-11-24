@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
+use super::scans::scan_scope;
 use crate::net::flow::acknowledges_syn;
 use crate::net::recent_evidence::RecentEvidence;
 
@@ -21,7 +22,7 @@ fn retains_evidence(rules: Option<&[String]>) -> bool {
 
 #[derive(PartialEq, Eq, Hash)]
 struct SynKey {
-    scope: ServiceScope,
+    scope: ScanScope,
     client: (String, u16),
     server: (String, u16),
 }
@@ -84,7 +85,7 @@ pub(super) struct AdminFanout {
     pending: HashMap<SynKey, PendingTuple>,
     pending_count: usize,
     untracked_at: Option<f64>,
-    responders: HashMap<(ServiceScope, String, u16), RespondedTargets>,
+    responders: HashMap<(ScanScope, String, u16), RespondedTargets>,
     // A cited SYN may precede the oldest in-window reply by the full SYN timeout.
     evidence: RecentEvidence<1024, 75>,
 }
@@ -175,7 +176,7 @@ impl AdminFanout {
         {
             return None;
         }
-        let scope = service_scope(pkt);
+        let scope = scan_scope(pkt);
         let now = pkt.timestamp;
         if control == INITIAL_SYN {
             let key = SynKey {
@@ -202,7 +203,7 @@ impl AdminFanout {
         self.record_pair(pkt, scope, admin_port, syn)
     }
 
-    fn record_pair(&mut self, reply: &Packet, scope: ServiceScope, port: u16, syn: u64) -> Option<IdsFinding> {
+    fn record_pair(&mut self, reply: &Packet, scope: ScanScope, port: u16, syn: u64) -> Option<IdsFinding> {
         let now = reply.timestamp;
         self.responders.retain(|_, state| state.last_seen.is_some_and(|seen| now - seen <= FANOUT_WINDOW));
         let key = (scope, reply.dst.clone(), port);
