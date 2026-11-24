@@ -123,7 +123,8 @@ fn real_analyzer_replay_suite_distinguishes_retransmissions_from_distinct_respon
     assert_eq!(checks["unexpected_openings"], 1);
     assert_eq!(report["score"], json!({
         "scored_cases": 2, "missed_opening_frames": 1, "unexpected_openings": 1,
-        "count_deficit": 0, "count_surplus": 0
+        "count_deficit": 0, "count_surplus": 0, "evidence_opening_mismatches": 0,
+        "evidence_frame_mismatches": 0, "classification_mismatches": 0
     }));
     labels["cases"][1]["expect_counts"] = json!({"scan.horizontal": 0});
     labels["cases"][1]["opening_frames"] = json!({});

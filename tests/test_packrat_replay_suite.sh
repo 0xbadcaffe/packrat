@@ -70,6 +70,10 @@ packrat-analyze() {
 export -f packrat-analyze
 
 packrat-baseline() {
+    if [[ ${*: -1} == "$PACKRAT_TEST_DIRECTORY/evidence.pcap" ]]; then
+        PACKRAT_TEST_EVIDENCE=changed packrat-analyze "$@"
+        return
+    fi
     [[ $# == 4 && $1 == --expect-alert && $2 == scan.horizontal=0 && $3 == -- ]] || return 2
     case $4 in
         "$PACKRAT_TEST_DIRECTORY/benign fixture.pcap"|"$PACKRAT_TEST_DIRECTORY/unlisted.pcap") ;;
@@ -103,7 +107,8 @@ result=$(bash "$suite" "$manifest") || status=$?
 jq -e '
     .total == 4 and .passed == 1 and .failed == 1 and .inconclusive == 2
     and ([.cases[].verdict] == ["passed","failed","inconclusive","inconclusive"])
-    and .score == {scored_cases:2,missed_opening_frames:1,unexpected_openings:1,count_deficit:0,count_surplus:0}
+    and .score == {scored_cases:2,missed_opening_frames:1,unexpected_openings:1,count_deficit:0,count_surplus:0,
+        evidence_opening_mismatches:0,evidence_frame_mismatches:0,classification_mismatches:0}
     and .cases[2].score == null and .cases[3].score == null
     and .cases[3].summary == null and (tostring | contains("not in the suite report") | not)
 ' <<< "$result" >/dev/null
@@ -196,7 +201,8 @@ for mismatch in '.severity="HIGH"' '.severity="INFO"' '.confidence="correlated"'
     status=0
     result=$(bash "$suite" "$manifest") || status=$?
     [[ $status == 1 ]]
-    jq -e '.failed == 1 and (.cases[0].evidence_checks[0] | (.classification.passed | not)
+    jq -e '.failed == 1 and .score.classification_mismatches == 1 and .score.evidence_frame_mismatches == 0
+        and (.cases[0].evidence_checks[0] | (.classification.passed | not)
         and (.passed | not) and .expected_frames == .observed_frames)' <<< "$result" >/dev/null
 done
 for invalid_class in '{}' '{"revision":0}' '{"severity":"medium"}' '{"confidence":"guess"}' '{"unexpected":true}'; do
@@ -211,11 +217,18 @@ for sample_type in changed missing duplicate; do
     status=0
     result=$(PACKRAT_TEST_EVIDENCE="$sample_type" bash "$suite" "$manifest") || status=$?
     [[ $status == 1 ]]
-    jq -e --arg sample "$sample_type" '.failed == 1 and (.cases[0].evidence_checks[0] |
+    jq -e --arg sample "$sample_type" '.failed == 1
+        and .score.evidence_frame_mismatches == (if $sample == "changed" then 1 else 0 end)
+        and .score.evidence_opening_mismatches == (if $sample == "changed" then 0 else 1 end)
+        and .score.classification_mismatches == 0 and (.cases[0].evidence_checks[0] |
         .passed == false and (if $sample == "changed" then .observed_frames == [2,8,12] and .matching_openings == 1
             elif $sample == "missing" then .observed_frames == null and .matching_openings == 0
             else .observed_frames == null and .matching_openings == 2 end))' <<< "$result" >/dev/null
 done
+PACKRAT_REPLAY_BASELINE_ANALYZER=packrat-baseline bash "$suite" "$manifest" | jq -e '
+    .comparable == 1 and .cases[0].baseline.verdict == "failed"
+    and (.cases[0].delta | .alerts_opened == 0 and .evidence_frame_mismatches == -1
+        and .evidence_opening_mismatches == 0 and .classification_mismatches == 0)' >/dev/null
 for change in 'del(.cases[0].opening_frames)' '.cases[0].opening_evidence[0].frames = [2,9]' \
     '.cases[0].opening_evidence[0].frames = [2,12,2]' '.cases[0].opening_evidence |= . + .'; do
     jq -c "$change" <<< "$evidence_case" >"$manifest"
@@ -245,7 +258,8 @@ status=0
 result=$(bash "$suite" "$manifest") || status=$?
 [[ $status == 1 ]]
 jq -e '.score == {scored_cases:1,missed_opening_frames:0,unexpected_openings:0,
-                  count_deficit:1,count_surplus:2}' <<< "$result" >/dev/null
+                  count_deficit:1,count_surplus:2,evidence_opening_mismatches:0,
+                  evidence_frame_mismatches:0,classification_mismatches:0}' <<< "$result" >/dev/null
 
 strict_sample=$(jq -c '.cases = [
     .cases[0],

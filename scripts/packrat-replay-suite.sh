@@ -12,7 +12,7 @@ usage() {
         'Set "allow_truncated":true only for a case intentionally replaying partial frames.' \
         'Use "single_tag_interfaces":["access1"] to apply an exact interface-name VLAN policy during a case.' \
         'Set "strict":true to fail a case if any unlisted rule or unregistered finding opens.' \
-        'Reports score exact frames separately from count-only expectations. Inconclusive cases are not scored.' \
+        'Reports score openings, cited evidence, and classification separately. Inconclusive cases are not scored.' \
         'A capture that changes during replay is marked inconclusive, even without a baseline.' \
         'Set PACKRAT_REPLAY_BASELINE_ANALYZER to compare analyzers; deltas require matching packet coverage.'
 }
@@ -151,7 +151,10 @@ replay_case() {
              missed_opening_frames: ([$frames[].missing_frames | length] | add // 0),
              unexpected_openings: ([$frames[].unexpected_openings] | add // 0),
              count_deficit: ([$counts[] | [.expected - .observed, 0] | max] | add // 0),
-             count_surplus: ([$counts[] | [.observed - .expected, 0] | max] | add // 0)
+             count_surplus: ([$counts[] | [.observed - .expected, 0] | max] | add // 0),
+             evidence_opening_mismatches: ([$evidence_checks[] | select(.matching_openings != 1)] | length),
+             evidence_frame_mismatches: ([$evidence_checks[] | select(.matching_openings == 1 and .observed_frames != .expected_frames)] | length),
+             classification_mismatches: ([$evidence_checks[] | select(.matching_openings == 1 and .classification.passed == false)] | length)
          } end)}
         | if ($evidence_checks | length) > 0 then . + {evidence_checks:$evidence_checks} else . end
     '
@@ -251,7 +254,10 @@ report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" --arg
         missed_opening_frames: ([$scores[].missed_opening_frames] | add // 0),
         unexpected_openings: ([$scores[].unexpected_openings] | add // 0),
         count_deficit: ([$scores[].count_deficit] | add // 0),
-        count_surplus: ([$scores[].count_surplus] | add // 0)
+        count_surplus: ([$scores[].count_surplus] | add // 0),
+        evidence_opening_mismatches: ([$scores[].evidence_opening_mismatches] | add // 0),
+        evidence_frame_mismatches: ([$scores[].evidence_frame_mismatches] | add // 0),
+        classification_mismatches: ([$scores[].classification_mismatches] | add // 0)
     }, cases:.
 } | if $baseline == "" then . else
     . + {comparable: ([.cases[] | select(.comparison == "comparable")] | length)}

@@ -88,7 +88,8 @@ fn dns_replay_distinguishes_equivalent_replies_from_changed_answers_and_wire_dat
         json!({
             "alerts_opened": 0, "alert_snapshots": 0, "unregistered_alerts": 0, "rule_openings": {},
             "missed_opening_frames": 0,
-            "unexpected_openings": 0, "count_deficit": 0, "count_surplus": 0
+            "unexpected_openings": 0, "count_deficit": 0, "count_surplus": 0,
+            "evidence_opening_mismatches": 0, "evidence_frame_mismatches": 0, "classification_mismatches": 0
         })
     );
     for (capture, rule, severity, confidence) in [
