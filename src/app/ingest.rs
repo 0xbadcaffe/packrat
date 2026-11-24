@@ -25,6 +25,7 @@ impl App {
             core.alert_center.capture_id = Some(capture_id.to_string());
             core.alert_center.archive_evidence_rules = selective.then_some(rules);
         });
+        self.last_alert_archive_check = None;
         self.packet_archive = Some(archive);
         Ok(())
     }

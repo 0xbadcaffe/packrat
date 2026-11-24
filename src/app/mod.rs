@@ -159,6 +159,7 @@ pub struct App {
     pub tag_store: TagStore,
     pub notebook: Notebook,
     pub packet_archive: Option<crate::storage::packet_archive::ArchiveWorker>,
+    last_alert_archive_check: Option<alert_evidence::AlertArchiveCheck>,
     capture_id: Option<std::sync::Arc<str>>,
     capture_frame_high_water: u64,
     restored_project_max_frame: u64,

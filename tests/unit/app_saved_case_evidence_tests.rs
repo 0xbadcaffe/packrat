@@ -283,3 +283,58 @@ fn alert_open_repairs_unreadable_pin_from_verified_same_capture_archive_only() {
     assert_eq!(app.worklist.active_packet_no(), Some(10));
     assert!(app.status_msg.as_deref().unwrap().contains("opened 1 matching packets (1 archived); 1 unavailable (1 invalid capture lengths)"));
 }
+
+#[test]
+fn alert_summary_keeps_the_last_scoped_archive_lookup_until_rechecked() {
+    use crate::storage::packet_archive::{ArchiveWorker, PacketArchive};
+
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("archive");
+    let mut app = App::new_for_test();
+    app.set_packet_archive(ArchiveWorker::open(&path).unwrap()).unwrap();
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+    let scope = app.capture_id.clone().unwrap();
+    let alert = {
+        let mut core = app.core.edit();
+        core.alert_center.record(10, "IDS", "HIGH", "Scoped review", "test");
+        core.alert_center.items[0].packet_refs = vec![10, 20];
+        core.alert_center.items[0].clone()
+    };
+    assert_eq!(app.alert_evidence_status(&alert), "0/2 retained; 2 unchecked in archive");
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.alert_evidence_status(&alert), "0/2 retained; 2 not found at last archive check");
+    let summary = app.active_investigation_context().unwrap();
+    assert!(summary.details.iter().any(|(label, value)| label == "Trigger frame" && value == "#10: not found at last archive check"));
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 35)).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, &app)).unwrap();
+    assert!(terminal.backend().to_string().contains("#10: not found at last archive check"));
+    let mut expanded = alert.clone();
+    expanded.packet_refs.push(30);
+    assert_eq!(app.alert_evidence_status(&expanded), "0/3 retained; 2 not found at last archive check; 1 unchecked in archive");
+    PacketArchive::open(&path).unwrap().append_scoped(&scope, &[packet(10)]).unwrap();
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.alert_trigger_status(&alert), "#10: retained, capture length unknown");
+    assert_eq!(app.alert_evidence_status(&alert), "1/2 retained; 1 capture lengths unknown; 1 not found at last archive check");
+    app.try_clear_packets().unwrap();
+    assert_eq!(app.alert_evidence_status(&alert), "0/2 verified here; different capture");
+}
+
+#[test]
+fn alert_summary_distinguishes_archive_read_failure_from_missing_frames() {
+    use crate::storage::packet_archive::ArchiveWorker;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("archive");
+    let mut app = App::new_for_test();
+    app.set_packet_archive(ArchiveWorker::open(&path).unwrap()).unwrap();
+    app.packet_archive.as_mut().unwrap().finish().unwrap();
+    std::fs::rename(&path, scratch.path().join("unavailable")).unwrap();
+    let alert = {
+        let mut core = app.core.edit();
+        core.alert_center.record(10, "IDS", "HIGH", "Scoped review", "test");
+        core.alert_center.items[0].clone()
+    };
+    assert!(app.investigate_selected_alert());
+    assert_eq!(app.alert_trigger_status(&alert), "#10: archive read failed at last check");
+    assert_eq!(app.alert_evidence_status(&alert), "0/1 retained; 1 failed archive lookup at last check");
+}

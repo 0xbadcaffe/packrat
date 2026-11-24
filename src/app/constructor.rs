@@ -117,6 +117,7 @@ impl App {
             tag_store: TagStore::default(),
             notebook: Notebook::default(),
             packet_archive: None,
+            last_alert_archive_check: None,
             capture_id: None,
             capture_frame_high_water: 0,
             restored_project_max_frame: 0,

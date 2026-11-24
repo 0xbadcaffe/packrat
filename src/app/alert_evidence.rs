@@ -41,6 +41,16 @@ pub(super) struct AlertEvidenceReader {
     attempted: bool,
     pub(super) archive_error: bool,
     pub(super) invalid_lengths: usize,
+    checks: std::collections::BTreeMap<u64, ArchiveLookup>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArchiveLookup { Missing, Invalid, ReadFailed, Available }
+
+pub(super) struct AlertArchiveCheck {
+    alert_id: u64,
+    capture_id: String,
+    checks: std::collections::BTreeMap<u64, ArchiveLookup>,
 }
 
 impl AlertEvidenceReader {
@@ -54,30 +64,43 @@ impl AlertEvidenceReader {
         }
         if app.frame_may_be_local(app.alert_evidence_scope(alert), frame)
             && let Some(scope) = alert.capture_id.as_deref()
+            && let Some(worker) = &app.packet_archive
         {
             if !self.attempted {
                 self.attempted = true;
-                if let Some(worker) = &app.packet_archive {
-                    match worker.reader() {
-                        Ok(archive) => self.archive = Some(archive),
-                        Err(_) => self.archive_error = true,
-                    }
+                match worker.reader() {
+                    Ok(archive) => self.archive = Some(archive),
+                    Err(_) => self.archive_error = true,
                 }
             }
             if let Some(archive) = &mut self.archive {
                 match archive.packet_for_capture(scope, frame) {
                     Ok(Some(packet)) => {
                         let status = frame_status(&packet);
-                        if status != FrameStatus::Unreadable { return Some((packet, true, status)); }
+                        if status != FrameStatus::Unreadable {
+                            self.checks.insert(frame, ArchiveLookup::Available);
+                            return Some((packet, true, status));
+                        }
+                        self.checks.insert(frame, ArchiveLookup::Invalid);
                         invalid = true;
                     }
-                    Ok(None) => {}
-                    Err(_) => self.archive_error = true,
+                    Ok(None) => { self.checks.insert(frame, ArchiveLookup::Missing); }
+                    Err(_) => {
+                        self.archive_error = true;
+                        self.checks.insert(frame, ArchiveLookup::ReadFailed);
+                    }
                 }
+            } else {
+                self.checks.insert(frame, ArchiveLookup::ReadFailed);
             }
         }
         self.invalid_lengths += usize::from(invalid);
         None
+    }
+
+    pub(super) fn into_archive_check(self, alert: &AlertItem) -> Option<AlertArchiveCheck> {
+        if self.checks.is_empty() { return None; }
+        Some(AlertArchiveCheck { alert_id: alert.id, capture_id: alert.capture_id.clone()?, checks: self.checks })
     }
 }
 
@@ -132,6 +155,17 @@ impl App {
         }
     }
 
+    fn previous_archive_check(&self, alert: &AlertItem, frame: u64) -> Option<ArchiveLookup> {
+        let check = self.last_alert_archive_check.as_ref()?;
+        self.packet_archive.as_ref()?;
+        if check.alert_id != alert.id || alert.capture_id.as_deref() != Some(check.capture_id.as_str())
+            || !self.frame_may_be_local(self.alert_evidence_scope(alert), frame)
+        {
+            return None;
+        }
+        check.checks.get(&frame).copied()
+    }
+
     pub(crate) fn alert_evidence_status(&self, alert: &AlertItem) -> String {
         let frames = alert.evidence_frame_numbers();
         if frames.is_empty() {
@@ -159,12 +193,25 @@ impl App {
             let count = slots.iter().filter(|&&slot| slot == kind).count();
             if count > 0 { status.push_str(&format!("; {count} {label}")); }
         }
-        if unresolved > 0 {
-            if scope == AlertEvidenceScope::CurrentCapture && self.packet_archive.is_some() {
-                status.push_str(&format!("; {unresolved} unchecked in archive"));
-            } else {
-                status.push_str(&format!("; {unresolved} unavailable"));
-            }
+        let mut unresolved_counts = [0; 6];
+        for (&frame, slot) in frames.iter().zip(slots) {
+            if slot != FrameStatus::Missing { continue; }
+            let bucket = match self.previous_archive_check(alert, frame) {
+                Some(ArchiveLookup::Missing) => 0,
+                Some(ArchiveLookup::Invalid) => 1,
+                Some(ArchiveLookup::ReadFailed) => 2,
+                Some(ArchiveLookup::Available) => 3,
+                None if self.packet_archive.is_some() && scope == AlertEvidenceScope::CurrentCapture
+                    && self.frame_may_be_local(scope, frame) => 4,
+                None => 5,
+            };
+            unresolved_counts[bucket] += 1;
+        }
+        for (count, label) in unresolved_counts.into_iter().zip([
+            "not found at last archive check", "invalid at last archive check", "failed archive lookup at last check",
+            "in archive at last check", "unchecked in archive", "unavailable",
+        ]) {
+            if count > 0 { status.push_str(&format!("; {count} {label}")); }
         }
         if scope == AlertEvidenceScope::Unscoped {
             status.push_str("; capture ID not recorded");
@@ -186,7 +233,13 @@ impl App {
             FrameStatus::LengthUnknown => "retained, capture length unknown",
             FrameStatus::Unreadable => "invalid capture lengths",
             FrameStatus::Missing if scope == AlertEvidenceScope::CurrentCapture
-                && self.packet_archive.is_some() && self.frame_may_be_local(scope, frame) => "unchecked in archive",
+                && self.packet_archive.is_some() && self.frame_may_be_local(scope, frame) => match self.previous_archive_check(alert, frame) {
+                    Some(ArchiveLookup::Missing) => "not found at last archive check",
+                    Some(ArchiveLookup::Invalid) => "invalid at last archive check",
+                    Some(ArchiveLookup::ReadFailed) => "archive read failed at last check",
+                    Some(ArchiveLookup::Available) => "in archive at last check",
+                    None => "unchecked in archive",
+                },
             FrameStatus::Missing => "not retained here",
         };
         format!("#{frame}: {description}")

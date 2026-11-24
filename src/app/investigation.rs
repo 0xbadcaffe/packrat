@@ -323,6 +323,9 @@ impl App {
                 String::new()
             },
         ));
+        if let Some(check) = reader.into_archive_check(&alert) {
+            self.last_alert_archive_check = Some(check);
+        }
         true
     }
 

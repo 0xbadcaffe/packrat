@@ -36,6 +36,7 @@ impl App {
     pub(super) fn reset_inspection(&mut self) {
         self.inspection = Default::default();
         self.inspection_http3 = Default::default();
+        self.last_alert_archive_check = None;
     }
 
     pub(super) fn poll_inspection(&mut self) {
