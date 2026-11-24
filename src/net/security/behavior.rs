@@ -80,17 +80,24 @@ pub(super) struct VolumeEpisode {
 #[derive(Debug)]
 pub(super) struct TransferSample {
     minute: i64,
+    timestamp: f64,
     frame: u64,
     client_port: Option<u16>,
     evidence: Option<Box<Packet>>,
 }
 
 fn sample_transfer_frame(frames: &mut VecDeque<TransferSample>, minute: i64, packet: &Packet, client_port: Option<u16>, retain: bool) {
+    let mut index = frames.partition_point(|sample| {
+        sample.timestamp.total_cmp(&packet.timestamp).then(sample.frame.cmp(&packet.no)).is_lt()
+    });
     if frames.len() == MAX_TRANSFER_SAMPLE_FRAMES {
+        if index == 0 { return; }
         frames.pop_front();
+        index -= 1;
     }
-    frames.push_back(TransferSample {
+    frames.insert(index, TransferSample {
         minute,
+        timestamp: packet.timestamp,
         frame: packet.no,
         client_port,
         evidence: (retain && crate::model::project::pinned_packet_cost(packet) <= MAX_CANDIDATE_FRAME_COST)

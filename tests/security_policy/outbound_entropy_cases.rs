@@ -203,8 +203,8 @@ fn detects_large_high_entropy_outbound_transfer() {
             .any(|alert| alert.signature == "High-entropy outbound transfer")
     );
     for (rule, severity, revision, frames) in [
-        ("traffic.asymmetric_outbound", "MEDIUM", 13, (10..=17).collect::<Vec<_>>()),
-        ("traffic.high_entropy_outbound", "MEDIUM", 11, (1..=5).collect()),
+        ("traffic.asymmetric_outbound", "MEDIUM", 14, (10..=17).collect::<Vec<_>>()),
+        ("traffic.high_entropy_outbound", "MEDIUM", 12, (1..=5).collect()),
     ] {
         let alert = core
             .alert_center
