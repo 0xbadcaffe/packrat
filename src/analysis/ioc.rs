@@ -69,15 +69,20 @@ pub struct IocEngine {
 
 impl IocEngine {
     pub fn load_ioc(&mut self, ioc: Ioc) {
+        let _ = self.register_indicator(ioc);
+    }
+
+    fn register_indicator(&mut self, ioc: Ioc) -> Result<(), &'static str> {
+        if ioc.value.trim().is_empty() { return Err("missing indicator value"); }
         match ioc.kind {
             IocKind::Ip => {
-                let Ok(address) = ioc.value.trim().parse::<IpAddr>() else { return; };
+                let address = ioc.value.trim().parse::<IpAddr>().map_err(|_| "invalid IP address")?;
                 self.ips.entry(address).or_insert(self.iocs.len());
             }
             IocKind::Domain => {
                 let id = ioc.value.trim().to_ascii_lowercase();
                 let name = id.strip_suffix('.').unwrap_or(&id);
-                if !valid_indicator_name(name) { return; }
+                if !valid_indicator_name(name) { return Err("invalid domain name"); }
                 self.domains.entry(name.to_owned()).or_insert(self.iocs.len());
             }
             IocKind::Hash   => { self.hashes.insert(ioc.value.to_lowercase()); }
@@ -85,30 +90,14 @@ impl IocEngine {
             IocKind::Email  => {}
         }
         self.iocs.push(ioc);
+        Ok(())
     }
 
     pub fn load_csv(&mut self, csv: &str, source: &str) {
-        // Simple CSV: type,value[,description]
-        for line in csv.lines() {
-            let line = line.trim();
-            if line.starts_with('#') || line.is_empty() { continue; }
-            let parts: Vec<&str> = line.splitn(3, ',').collect();
-            if parts.len() < 2 { continue; }
-            let kind = match parts[0].trim().to_lowercase().as_str() {
-                "ip"     => IocKind::Ip,
-                "domain" => IocKind::Domain,
-                "hash"   => IocKind::Hash,
-                "url"    => IocKind::Url,
-                "email"  => IocKind::Email,
-                _        => continue,
-            };
-            let description = parts.get(2).unwrap_or(&"").to_string();
-            self.load_ioc(Ioc {
-                value:       parts[1].trim().to_string(),
-                kind,
-                description,
-                source:      source.to_string(),
-            });
+        for (_, line) in feed_lines(csv) {
+            if let Ok(ioc) = csv_entry(line, source) {
+                self.load_ioc(ioc);
+            }
         }
     }
 
@@ -192,11 +181,8 @@ impl IocEngine {
             if !matches!(ext.as_str(), "csv" | "txt" | "ioc") { continue; }
             let text = std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
             let source = path.file_name().and_then(|name| name.to_str()).unwrap_or("?");
-            if ext == "csv" {
-                next.load_csv(&text, source);
-            } else {
-                next.load_plain_text(&text, source);
-            }
+            next.load_file_entries(&text, source, ext == "csv")
+                .map_err(|(line, error)| format!("{}:{line}: {error}", path.display()))?;
         }
         // File records occupy a prefix; public load methods append session records.
         next.file_ioc_count = next.iocs.len();
@@ -209,20 +195,12 @@ impl IocEngine {
         Ok(())
     }
 
-    fn load_plain_text(&mut self, text: &str, source: &str) {
-        for line in text.lines().map(str::trim) {
-            if line.starts_with('#') || line.is_empty() { continue; }
-            let kind = if line.parse::<IpAddr>().is_ok() {
-                IocKind::Ip
-            } else if line.contains('.') {
-                IocKind::Domain
-            } else {
-                continue;
-            };
-            self.load_ioc(Ioc {
-                value: line.into(), kind, description: String::new(), source: source.into(),
-            });
+    fn load_file_entries(&mut self, text: &str, source: &str, csv: bool) -> Result<(), (usize, &'static str)> {
+        for (number, line) in feed_lines(text) {
+            let entry = if csv { csv_entry(line, source) } else { plain_entry(line, source) };
+            entry.and_then(|ioc| self.register_indicator(ioc)).map_err(|error| (number, error))?;
         }
+        Ok(())
     }
 
     pub fn ioc_count(&self) -> usize { self.iocs.len() }
@@ -242,6 +220,39 @@ impl IocEngine {
         self.file_ioc_count = 0;
         self.clear_hits();
     }
+}
+
+fn feed_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.lines().map(str::trim).enumerate()
+        .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
+        .map(|(index, line)| (index + 1, line))
+}
+
+fn csv_entry(line: &str, source: &str) -> Result<Ioc, &'static str> {
+    // Compact feed format: type,value[,description]. The description may contain commas.
+    let mut fields = line.splitn(3, ',');
+    let kind = fields.next().ok_or("expected type,value")?;
+    let value = fields.next().ok_or("expected type,value")?.trim();
+    let kind = match kind.trim().to_ascii_lowercase().as_str() {
+        "ip" => IocKind::Ip,
+        "domain" => IocKind::Domain,
+        "hash" => IocKind::Hash,
+        "url" => IocKind::Url,
+        "email" => IocKind::Email,
+        _ => return Err("unknown indicator type"),
+    };
+    Ok(Ioc { value: value.into(), kind, description: fields.next().unwrap_or("").into(), source: source.into() })
+}
+
+fn plain_entry(line: &str, source: &str) -> Result<Ioc, &'static str> {
+    let kind = if line.parse::<IpAddr>().is_ok() {
+        IocKind::Ip
+    } else if line.contains('.') {
+        IocKind::Domain
+    } else {
+        return Err("expected an IP address or domain name");
+    };
+    Ok(Ioc { value: line.into(), kind, description: String::new(), source: source.into() })
 }
 
 fn valid_indicator_name(name: &str) -> bool {

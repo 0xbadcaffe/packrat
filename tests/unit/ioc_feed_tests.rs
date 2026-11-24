@@ -3,10 +3,10 @@ use super::*;
 #[test]
 fn plain_text_feed_distinguishes_ipv6_ipv4_and_domains() {
     let mut engine = IocEngine::default();
-    engine.load_plain_text(
-        "# indicators\n2001:0DB8::42\n192.0.2.20\nINDICATOR.TEST.\nhttp://example.test\n2001::invalid",
-        "test.txt",
-    );
+    engine.load_file_entries(
+        "# indicators\n2001:0DB8::42\n192.0.2.20\nINDICATOR.TEST.",
+        "test.txt", false,
+    ).unwrap();
     assert_eq!(engine.ioc_count(), 3);
     assert_eq!(engine.ips.len(), 2);
     let index = engine.ips[&"2001:db8::42".parse::<IpAddr>().unwrap()];
@@ -61,4 +61,35 @@ fn failed_reload_keeps_the_active_file_feed_and_empty_directory_retires_it() {
     std::fs::create_dir(&path).unwrap();
     engine.reload_from_path(&path).unwrap();
     assert_eq!(engine.ioc_count(), 0);
+}
+
+#[test]
+fn malformed_file_entries_cannot_replace_a_valid_feed() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path();
+    let csv = path.join("a.csv");
+    let mut engine = IocEngine::default();
+    std::fs::write(&csv, "ip,192.0.2.7,known entry").unwrap();
+    engine.reload_from_path(path).unwrap();
+    for (line, problem) in [
+        ("ip,not-an-address", "invalid IP address"),
+        ("domain,bad/name", "invalid domain name"),
+        ("unknown,192.0.2.9", "unknown indicator type"),
+        ("ip", "expected type,value"),
+    ] {
+        std::fs::write(&csv, format!("# staged\nip,192.0.2.8,replacement\n{line}\n")).unwrap();
+        let error = engine.reload_from_path(path).unwrap_err();
+        assert!(error.contains("a.csv:3:") && error.contains(problem), "{error}");
+        assert_eq!(engine.iocs[0].value, "192.0.2.7");
+        assert_eq!(engine.ioc_count(), 1);
+    }
+    std::fs::write(&csv, "ip,192.0.2.8,replacement, with commas").unwrap();
+    let text = path.join("b.ioc");
+    std::fs::write(&text, "# staged\n\nnot an indicator").unwrap();
+    assert!(engine.reload_from_path(path).unwrap_err().contains("b.ioc:3:"));
+    assert_eq!(engine.iocs[0].value, "192.0.2.7");
+    std::fs::write(text, "# staged\n2001:db8::9").unwrap();
+    engine.reload_from_path(path).unwrap();
+    assert_eq!(engine.iocs[0].description, "replacement, with commas");
+    assert_eq!(engine.ioc_count(), 2);
 }
