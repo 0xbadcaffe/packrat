@@ -48,8 +48,24 @@ fn worker_handoff_prioritizes_trigger_and_bounds_payload_and_frame_count() {
 
     let history: VecDeque<_> = (1..=40).map(|n| packet(n, 14)).collect();
     let frames = alert_frames(&core, &analysis, &trigger, &history);
-    assert_eq!(frames.len(), MAX_FRAMES);
+    assert_eq!(frames.len(), 41);
     assert_eq!(frames.last().unwrap().no, 41);
+}
+
+#[test]
+fn worker_handoff_still_bounds_combined_citations_from_multiple_alerts() {
+    let mut core = AnalysisCore::default();
+    core.alert_center.archive_evidence_rules = Some(Vec::new());
+    for (range, key) in [(1..=100, "first"), (101..=200, "second")] {
+        core.alert_center.record_correlated_with_evidence(
+            (201, &range.collect::<Vec<_>>()), 201.0, "TEST", "HIGH", "Finding", "observation", key,
+        );
+    }
+    let analysis = PacketAnalysis { alert_pins: vec![1, 2], ..Default::default() };
+    let history = (1..=200).map(|frame| packet(frame, 14)).collect();
+    let frames = alert_frames(&core, &analysis, &packet(201, 14), &history);
+    assert_eq!(frames.len(), MAX_FRAMES);
+    assert_eq!(frames.last().unwrap().no, 201);
 }
 
 #[test]

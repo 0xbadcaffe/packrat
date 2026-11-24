@@ -185,3 +185,40 @@ fn delayed_tcp_dns_answer_change_archives_both_segments_of_the_query_retry() {
         assert!(archive.packet_for_capture(&scope, frame).unwrap().is_some());
     }
 }
+
+#[test]
+fn opted_in_nxdomain_burst_retains_cited_queries_and_replies_after_rollover() {
+    let scratch = tempfile::tempdir().unwrap();
+    let rule = "dns.nxdomain_distinct_names";
+    let (client, resolver) = ("10.0.0.5", "10.0.0.53");
+    let packet = |frame, index: u16, reply, time| {
+        let (source, destination) = if reply { (resolver, client) } else { (client, resolver) };
+        let mut bytes = dns_packet(frame, reply, source, destination, index, &format!("host{index}.audit.test")).bytes;
+        if reply { bytes[45] = 0x83; }
+        parse_ethernet(&bytes, frame, time)
+    };
+    for selected in [false, true] {
+        let path = scratch.path().join(if selected { "selected" } else { "unselected" });
+        let rules = if selected { vec![rule.into()] } else { vec!["dns.changed_answers".into()] };
+        let mut app = start_app(&path, rules);
+        for index in 0..19 {
+            let first = 2 * u64::from(index) + 1;
+            let time = 1.0 + f64::from(index) / 5.0;
+            app.inject_packet(packet(first, index, false, time));
+            app.inject_packet(packet(first + 1, index, true, time + 0.1));
+        }
+        app.inject_packet(packet(39, 19, false, 5.0));
+        drain(&mut app);
+        let trigger = if selected { noise(&mut app, 40, 6.0) } else { 40 };
+        app.inject_packet(packet(trigger, 19, true, 7.0));
+        let expected: Vec<_> = (1..=39).chain([trigger]).collect();
+        let scope = finish_app(&mut app, rule, &expected);
+        let mut archive = PacketArchive::open_readonly(&path).unwrap();
+        assert_eq!(archive.count().unwrap(), if selected { 40 } else { 0 });
+        if selected {
+            for frame in expected {
+                assert!(archive.packet_for_capture(&scope, frame).unwrap().is_some(), "frame {frame}");
+            }
+        }
+    }
+}

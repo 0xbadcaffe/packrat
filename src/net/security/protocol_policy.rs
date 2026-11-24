@@ -314,11 +314,9 @@ impl SecurityEngine {
                 }
             };
             if let Some(rules) = archive_rules
-                && (matches!(severity, Severity::Critical) || rules.iter().any(|rule| {
-                    matches!((finding.kind, rule.as_str()),
-                        (DnsFindingKind::ChangedAnswerSet, "dns.changed_answers")
-                        | (DnsFindingKind::ChangedReply, "dns.changed_wire_reply"))
-                }))
+                && (matches!(severity, Severity::Critical)
+                    || crate::analysis::alert_provenance::rule_id_for("IDS", signature)
+                        .is_some_and(|id| rules.iter().any(|rule| rule == id)))
             {
                 for &frame in &finding.related_packets {
                     if retained.len() == MAX_DNS_EVIDENCE_PER_PACKET { break; }

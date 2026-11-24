@@ -3,7 +3,7 @@ use crate::net::packet::Packet;
 use std::collections::{HashSet, VecDeque};
 
 const MAX_REFERENCES: usize = 512;
-const MAX_FRAMES: usize = 32;
+const MAX_FRAMES: usize = crate::analysis::alert_center::MAX_ALERT_PACKET_REFS + 3;
 const MAX_BYTES: usize = 256 * 1024;
 
 pub(super) fn alert_frames(

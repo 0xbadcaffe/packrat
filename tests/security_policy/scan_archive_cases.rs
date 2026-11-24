@@ -60,7 +60,7 @@ fn scan_archive_keeps_only_the_selected_probes_and_matched_replies_after_rollove
 }
 
 #[test]
-fn syn_arrival_archive_keeps_newest_cited_attempts_and_the_reordered_trigger() {
+fn syn_arrival_archive_keeps_cited_attempts_and_the_reordered_trigger() {
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("archive");
     let mut app = start(&path, Vec::new());
@@ -89,10 +89,10 @@ fn syn_arrival_archive_keeps_newest_cited_attempts_and_the_reordered_trigger() {
     assert_eq!(alert.packet_refs, refs);
     let scope = alert.capture_id.unwrap();
     let mut archive = PacketArchive::open_readonly(&path).unwrap();
-    assert_eq!(archive.count().unwrap(), 32);
+    assert_eq!(archive.count().unwrap(), refs.len() as u64);
     for frame in (1..=103).chain([trigger]) {
         assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(),
-            (70..=100).contains(&frame) || frame == trigger);
+            refs.contains(&frame));
     }
 }
 

@@ -29,7 +29,7 @@ fn ipv4_overlap_archives_the_exact_older_fragment_under_the_default_selective_po
 }
 
 #[test]
-fn opted_in_ipv4_fragment_burst_archives_only_cited_offsets_within_the_event_budget() {
+fn opted_in_ipv4_fragment_burst_archives_only_cited_offsets() {
     let rule = "ipv4.fragment_observation_burst";
     for opt_in in [false, true] {
         let scratch = tempfile::tempdir().unwrap();
@@ -56,10 +56,10 @@ fn opted_in_ipv4_fragment_burst_archives_only_cited_offsets_within_the_event_bud
         assert_eq!(alert.packet_refs, refs);
         let scope = alert.capture_id.unwrap();
         let mut archive = PacketArchive::open_readonly(&path).unwrap();
-        assert_eq!(archive.count().unwrap(), if opt_in { 32 } else { 0 });
-        for frame in refs.into_iter().chain([65, 66]) {
+        assert_eq!(archive.count().unwrap(), if opt_in { refs.len() as u64 } else { 0 });
+        for frame in (1..=66).chain([trigger]) {
             assert_eq!(archive.packet_for_capture(&scope, frame).unwrap().is_some(),
-                opt_in && ((34..=64).contains(&frame) || frame == trigger));
+                opt_in && refs.contains(&frame));
         }
     }
 }
