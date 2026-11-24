@@ -46,6 +46,8 @@ live() {
     }'
 }
 queue='[{"alert_id":7,"severity":"HIGH","rule_id":"test.rule","revision":10,"confidence":"correlated","packet_evidence_status":"partial","next_evidence_step":"inspect_retained_and_recover_missing_frames"}]'
+# shellcheck source=tests/support/watch_triage_dns_capacity.bash
+source "$root/tests/support/watch_triage_dns_capacity.bash"
 medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","revision":65536,"disposition":"New","hit_count":1,"packet_evidence_status":"partial","evidence_frame_count":2,"evidence_frame_set_sha256":"invalid"}]'
 live current 12 "$queue" "$medium" | jq '.socket_context_status="available" | .health += {alert_save_failures:2,alert_save_backlog_dropped:0}' >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"

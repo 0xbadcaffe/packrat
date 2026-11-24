@@ -9,6 +9,12 @@ snapshot_validation='
     def socket_status: if IN("not_configured","not_checked","not_recorded","available","unavailable") then . else null end;
     def flow_cache: if type == "object" then {retained_summaries:(.retained_summaries | counter),summary_evictions:(.summary_evictions | counter)}
         | if any(.[]; . == null) then null else . end else null end;
+    def dns_capacity: if type == "object" then
+        {query_key_declines,query_candidate_declines,nxdomain_client_declines,external_resolver_pair_declines}
+        | map_values(counter) | if any(.[]; . == null) then null else . end else null end;
+    def dns_capacity_delta($before):
+        . as $current | if $current == null or $before == null or any($current | keys[]; $current[.] < $before[.])
+            then null else with_entries(.value -= $before[.key]) end;
     def archive_usage:
         if type != "object" then null else {
             frames:(.frames | counter), payload_bytes:(.payload_bytes | counter),
@@ -82,6 +88,7 @@ usage() {
         'The state file must be in a private directory owned by the current user.' \
         'Check prints snapshot freshness and exits 0 for current, 1 for unhealthy, or 2 for unreadable state.' \
         'Check reports validated alert sample counts separately from capture health. A highest observed ID is not a total.' \
+        'DNS capacity counters describe analysis limits, not packet loss. Deltas require comparable fresh readings.' \
         'Check includes current disk space and archive capacity without exposing storage paths.' \
         'socket_context_status describes the optional snapshot store, not capture health or per-alert attribution.' \
         'healthy_capture_seconds restarts after a packet counter regression; packet_counter_gap marks the affected capture.' \
@@ -183,6 +190,9 @@ check_snapshot() {
                    elif .status == "current" then "current"
                    else "triage_unhealthy" end),
            triage_status:.status, age_seconds:$age, max_age_seconds, packets:(.packets | counter), flow_cache:(if $age >= -5 and $age <= .max_age_seconds then .flow_cache | flow_cache else null end),
+           dns_capacity:(if $age >= -5 and $age <= .max_age_seconds then .dns_capacity | dns_capacity else null end),
+           dns_capacity_delta:(if $age >= -5 and $age <= .max_age_seconds and (.dns_capacity | dns_capacity) != null
+               then .dns_capacity_delta | dns_capacity else null end),
            storage:(if $age >= -5 and $age <= .max_age_seconds and (.status | IN("current","degraded")) then
                (.archive | if IN("enabled","paused","disabled") then . else null end) as $archive
                | (if $archive | IN("enabled","paused") then .archive_usage | archive_usage else null end) as $usage
@@ -360,6 +370,8 @@ sanitize() {
             link_decodable:(.health.capture_link_decodable | flag),
             issues:(.health.issues | if type == "array" then .[:64] | map(token | select(. != null)) | unique else null end),
             packets:(.health.packets_total | counter), buffer_drops:(.health.pcap_buffer_drops | counter), flow_cache:(.health.flow_cache | flow_cache),
+            dns_capacity:(if (.status | IN("current","degraded")) and .health.telemetry_fresh == true and .health.capture_active == true
+                then .health.dns_capacity | dns_capacity else null end),
             capture_queue_full_packets:(.health.capture_queue_full_packets | counter),
             capture_queue_full_packets_delta:(.health.capture_queue_full_packets_delta | counter),
             truncated_frames:(.health.capture_truncated_frames | counter),
@@ -454,6 +466,7 @@ if [[ -f $state && -O $state ]]; then
                     and (.alert_id | type == "number" and . > 0 and . <= 9007199254740991 and floor == .))))
             | {status,capture_id,session_id,recent_alerts,alert_sample_gap:(.alert_sample_gap == true),
                 packets:(.packets | counter),packet_counter_gap:(.packet_counter_gap == true),
+                dns_capacity:(if $fresh then .dns_capacity | dns_capacity else null end),
                 capture_queue_full_packets:(.capture_queue_full_packets | counter),
                 buffer_drops:(.buffer_drops | if $fresh and type == "number" and . >= 0 and . <= 4294967295
                     and floor == . then . else null end),
@@ -530,6 +543,8 @@ while :; do
                     then $prior.healthy_capture_since else $started end),
                 buffer_drops_delta:(if $comparable and .buffer_drops != null and $prior.buffer_drops != null
                     and .buffer_drops >= $prior.buffer_drops then .buffer_drops - $prior.buffer_drops else null end),
+                dns_capacity_delta:(if $comparable and ($regressed | not) and ($prior.poll_started_at | type == "number"
+                    and . <= $started and $started - . <= $max_age) then .dns_capacity | dns_capacity_delta($prior.dns_capacity) else null end),
                 highest_observed_alert_id:(if $comparable then [$seen,$high] | max else $seen end),
                 alert_sample_gap: if observed | not then null elif $invalid_sample then true elif $comparable and $high > 0 then
                     $prior.alert_sample_gap == true or $seen < $high or $lost_from_complete_sample or ($seen - $high > ($new_ids | length))
@@ -561,7 +576,7 @@ while :; do
     snapshot=$(jq -c 'del(.alert_changes)' <<< "$event")
     if "$once"; then publish_snapshot not_checked; printf '%s\n' "$snapshot"; break; fi
     key=$(jq -c 'del(.updated_at, .poll_started_at, .packets, .disk_free_mib, .archive_usage, .flow_cache, .highest_observed_alert_id,
-        .last_observed, .buffer_drops_delta, .capture_queue_full_packets_delta)' <<< "$snapshot")
+        .last_observed, .buffer_drops_delta, .capture_queue_full_packets_delta, .dns_capacity_delta)' <<< "$snapshot")
     checkpoint=false
     if [[ $key == "$previous" && $journal_enabled == 1 ]] && (( SECONDS >= next_checkpoint )); then
         checkpoint=$(jq -c '(.status == "current" or .status == "degraded") and .capture_id != null and .session_id != null and .packets != null' <<< "$snapshot")

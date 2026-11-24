@@ -129,6 +129,17 @@ for cache in '{"retained_summaries":8192,"summary_evictions":4,"extra":"private"
     ' >/dev/null
 done
 
+dns_stats='{"query_key_declines":1,"query_candidate_declines":3,"nxdomain_client_declines":0,"external_resolver_pair_declines":2}'
+dns_sample=$(jq -c --argjson stats "$dns_stats" '.dns_capacity = ($stats + {extra:"private"})' <<< "$PACKRAT_FAKE_HEALTH")
+PACKRAT_FAKE_HEALTH="$dns_sample" bash "$watch" --once | jq -e --argjson stats "$dns_stats" '
+    .dns_capacity==$stats and .issues==[] and .pcap_buffer_drops==0 and (tostring | contains("private") | not)
+' >/dev/null
+bad_dns=$(jq -c 'del(.dns_capacity.query_key_declines)' <<< "$dns_sample")
+PACKRAT_FAKE_HEALTH="$bad_dns" bash "$watch" --once | jq -e '.dns_capacity==null and .issues==[]' >/dev/null
+stale_dns=$(jq -c '.telemetry_fresh=false' <<< "$dns_sample")
+{ PACKRAT_FAKE_HEALTH="$stale_dns" bash "$watch" --once || [[ $? == 1 ]]; } |
+    jq -e '.dns_capacity==null and (.issues | index("telemetry_stale") != null)' >/dev/null
+
 pipeline=$'91 2 Ss bash\n92 91 S sudo\n93 92 S sudo\n94 93 S tail'
 PACKRAT_ALERT_PIPELINE=1 PACKRAT_FAKE_PROCESSES="$pipeline"$'\n95 91 S jq' \
     bash "$watch" --once | jq -e '
