@@ -8,7 +8,7 @@ usage() {
         'Reads retained journal records from stdin; defaults to the last observed capture scope.' \
         'Rates describe retained intervals with known coverage, not all traffic or all alerts.' \
         'Alert rates require decodable capture and a valid saved-alert log at both endpoints.' \
-        'Alert rates require a known, unchanged save-failure counter across the interval.' \
+        'Alert rates require known, unchanged save-failure and retry-buffer drop counters.' \
         'Intervals spanning watcher restarts, missing journal records, or older unsequenced records are excluded.' \
         'Alert-ID gaps identify records not observed in the retained sample, not proven missing from the saved log.'
 }
@@ -38,11 +38,10 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         .alert_saving == true and .alert_log_integrity.invalid_records == 0
         and .alert_log_integrity.oversized_records == 0
         and (.alert_log_integrity.stopped_at_scan_budget | . == false or . == null);
-    def save_counter_status($earlier; $later):
-        $earlier.alert_save_failures as $before | $later.alert_save_failures as $after
-        | if (($before | counter) and ($after | counter)) | not then "unverified"
+    def counter_status($before; $after):
+        if (($before | counter) and ($after | counter)) | not then "unverified"
           elif $after < $before then "unverified"
-          elif $after > $before then "failure_observed"
+          elif $after > $before then "increased"
           else "unchanged" end;
     def opening_delta($earlier; $later):
         $earlier.highest_observed_alert_id as $low | $later.highest_observed_alert_id as $high
@@ -110,10 +109,13 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
             and $earlier.healthy_capture_since == $later.healthy_capture_since
             and $later.tick > $earlier.tick and $later.packets >= $earlier.packets
             and no_capture_loss_between($earlier; $later)
-        then save_counter_status($earlier; $later) as $saving
-          | (if $saving == "unchanged" then verified_opening_ids($earlier; $later) else null end) as $ids
+        then counter_status($earlier.alert_save_failures; $later.alert_save_failures) as $saving
+          | counter_status($earlier.alert_save_backlog_dropped; $later.alert_save_backlog_dropped) as $backlog
+          | (if $saving == "unchanged" and $backlog == "unchanged"
+             then verified_opening_ids($earlier; $later) else null end) as $ids
           | {seconds:($later.tick - $earlier.tick), packets:($later.packets - $earlier.packets),
              save_counter_status:$saving,
+             backlog_counter_status:$backlog,
              opening_rules:(if $ids == null then null else attribute_openings($later; $ids) end)} else null end;
     if utf8bytelength > 2097152 then error("Journal exceeds the 2 MiB input limit") else . end
     | split("\n") | map(select(length > 0) | fromjson
@@ -132,7 +134,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
     | ($openings | map(objects) | group_by([.rule_id,.revision])
         | map(.[0] + {openings:length}) | sort_by([-.openings,.rule_id,.revision])) as $by_rule
     | [limit(65; alert_gaps($sample))] as $alert_gaps
-    | {record_type:"capture_coverage_report",coverage_policy:"continuous_journal_v4",
+    | {record_type:"capture_coverage_report",coverage_policy:"continuous_journal_v5",
        status:(if ($sample | length) == 0 then "no_capture_records"
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
        scope:$key, journal_tail_status:$all[-1].status,
@@ -143,8 +145,10 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        healthy_seconds:([$healthy[].seconds] | add // 0), healthy_packets:([$healthy[].packets] | add // 0),
        alert_comparable_intervals:($comparable | length), alert_comparable_packets:$measured_packets,
        alert_comparable_seconds:([$comparable[].seconds] | add // 0),
-       alert_save_failure_intervals:([$healthy[] | select(.save_counter_status == "failure_observed")] | length),
+       alert_save_failure_intervals:([$healthy[] | select(.save_counter_status == "increased")] | length),
        alert_save_counter_unverified_intervals:([$healthy[] | select(.save_counter_status == "unverified")] | length),
+       alert_save_backlog_drop_intervals:([$healthy[] | select(.backlog_counter_status == "increased")] | length),
+       alert_save_backlog_unverified_intervals:([$healthy[] | select(.backlog_counter_status == "unverified")] | length),
        alert_sample_gap_reported:any($sample[]; .alert_sample_gap == true),
        unobserved_alert_id_ranges:$alert_gaps[:64], unobserved_alert_id_ranges_truncated:($alert_gaps | length > 64),
        observed_openings:(if ($comparable | length) > 0 then ($openings | length) else null end),

@@ -6,7 +6,7 @@ coverage="$root/scripts/packrat-watch-coverage.sh"
 sample=$(jq -cn '
     {record_type:"capture_triage_watch",status:"current",capture_id:"a",session_id:"a-1",packets:10,
      updated_at:"2023-11-14T22:13:20Z",healthy_capture_since:1700000000,buffer_drops:0,
-     capture_queue_full_packets:0,truncated_frames:0,link_decodable:true,alert_saving:true,alert_save_failures:0,
+     capture_queue_full_packets:0,truncated_frames:0,link_decodable:true,alert_saving:true,alert_save_failures:0,alert_save_backlog_dropped:0,
      alert_log_integrity:{invalid_records:0,oversized_records:0,stopped_at_scan_budget:null},
      packet_counter_gap:false,alert_sample_gap:false,highest_observed_alert_id:4} as $base
     | [$base,
@@ -20,7 +20,7 @@ sample=$(jq -cn '
     | to_entries[] | .value + {journal_writer:"writer-a",journal_sequence:(.key+1)}')
 
 bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
-    .status=="sampled" and .coverage_policy=="continuous_journal_v4" and .scope=={capture_id:"a",session_id:"a-1"}
+    .status=="sampled" and .coverage_policy=="continuous_journal_v5" and .scope=={capture_id:"a",session_id:"a-1"}
     and .scoped_records==6 and .healthy_intervals==3 and .excluded_intervals==2
     and .journal_discontinuities==0
     and .healthy_seconds==180 and .healthy_packets==80 and .alert_comparable_intervals==2
@@ -78,6 +78,15 @@ jq -sc '.[0], ((.[1],.[2]) | .alert_save_failures=1)' <<< "$sample" |
     bash "$coverage" | jq -e '.healthy_intervals==2 and .alert_save_failure_intervals==1
         and .alert_save_counter_unverified_intervals==0 and .alert_comparable_intervals==1
         and .alert_comparable_packets==35 and .observed_openings==2' >/dev/null
+jq -sc '.[0], ((.[1],.[2]) | .alert_save_backlog_dropped=1)' <<< "$sample" |
+    bash "$coverage" | jq -e '.healthy_intervals==2 and .alert_save_backlog_drop_intervals==1 and .alert_save_failure_intervals==0
+        and .alert_save_backlog_unverified_intervals==0 and .alert_comparable_intervals==1
+        and .alert_comparable_packets==35 and .observed_openings==2' >/dev/null
+for patch in 'del(.alert_save_backlog_dropped)' '.alert_save_backlog_dropped=-1' '.alert_save_backlog_dropped=1'; do
+    jq -sc "(.[0] | $patch), .[1]" <<< "$sample" |
+        bash "$coverage" | jq -e '.healthy_intervals==1 and .alert_save_backlog_unverified_intervals==1
+            and .alert_save_backlog_drop_intervals==0 and .observed_openings==null' >/dev/null
+done
 for patch in 'del(.alert_save_failures)' '.alert_save_failures="0"' '.alert_save_failures=1'; do
     jq -sc "(.[0] | $patch), .[1]" <<< "$sample" |
         bash "$coverage" | jq -e '.healthy_intervals==1 and .alert_save_counter_unverified_intervals==1
