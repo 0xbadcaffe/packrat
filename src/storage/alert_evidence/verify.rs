@@ -50,6 +50,15 @@ pub struct VerifiedEvidence {
     pub alert_snapshot_matches_log: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archive_frames_verified: Option<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    archive_omission_checks: Vec<ArchiveOmissionCheck>,
+}
+
+#[derive(Serialize)]
+struct ArchiveOmissionCheck {
+    frame_number: u64,
+    bundle_status: FrameStatus,
+    archive_status_now: FrameStatus,
 }
 
 pub fn verify_alert_evidence(directory: &Path) -> Result<VerifiedEvidence> {
@@ -115,13 +124,29 @@ fn verify(directory: &Path, logs: Option<AlertLogs<'_>>, archive: Option<&Path>)
     } else {
         None
     };
-    let archive_frames_verified = if let Some(archive) = archive {
+    let (archive_frames_verified, archive_omission_checks) = if let Some(directory) = archive {
         let capture = manifest.capture.as_ref()
             .context("Evidence bundle contains no packets to compare with the archive")?;
-        verify_archive_capture(archive, scope, capture)?;
-        Some(recovered.len())
+        let mut archive = PacketArchive::open_readonly(directory).map_err(anyhow::Error::msg)?;
+        verify_archive_capture(&mut archive, scope, capture)?;
+        let omissions = missing.iter().map(|&frame_number| {
+            let bundle_status = if unreadable.binary_search(&frame_number).is_ok() {
+                FrameStatus::Unreadable
+            } else if unknown.binary_search(&frame_number).is_ok() {
+                FrameStatus::LengthUnknown
+            } else {
+                FrameStatus::Missing
+            };
+            let archive_status_now = match archive.packet_for_capture(scope, frame_number) {
+                Ok(Some(packet)) => frame_status(&packet),
+                Ok(None) => FrameStatus::Missing,
+                Err(_) => FrameStatus::Unreadable,
+            };
+            ArchiveOmissionCheck { frame_number, bundle_status, archive_status_now }
+        }).collect();
+        (Some(recovered.len()), omissions)
     } else {
-        None
+        (None, Vec::new())
     };
     Ok(VerifiedEvidence {
         session_id: manifest.session_id,
@@ -134,11 +159,11 @@ fn verify(directory: &Path, logs: Option<AlertLogs<'_>>, archive: Option<&Path>)
         capture_sha256_verified: verified_hash,
         alert_snapshot_matches_log,
         archive_frames_verified,
+        archive_omission_checks,
     })
 }
 
-fn verify_archive_capture(directory: &Path, scope: &str, capture: &Capture) -> Result<()> {
-    let mut archive = PacketArchive::open_readonly(directory).map_err(anyhow::Error::msg)?;
+fn verify_archive_capture(archive: &mut PacketArchive, scope: &str, capture: &Capture) -> Result<()> {
     let mut hash = Sha256::new();
     {
         let mut writer = PcapNgWriter::new(&mut hash);
