@@ -1,3 +1,6 @@
+#[path = "ech_config.rs"]
+mod ech_config;
+
 // RFC 9460: an uncompressed target followed by ordered SvcParam TLVs.
 pub(super) fn canonical(data: &[u8]) -> Option<Vec<u8>> {
     let priority = data.get(..2)?;
@@ -45,6 +48,7 @@ pub(super) fn canonical(data: &[u8]) -> Option<Vec<u8>> {
             2 if value.is_empty() && keys.binary_search(&1).is_ok() => Vec::new(),
             3 if value.len() == 2 => value.to_vec(),
             4 => address_set(value, 4)?,
+            5 if ech_config::valid_list(value) => value.to_vec(),
             6 => address_set(value, 16)?,
             _ => return None,
         };

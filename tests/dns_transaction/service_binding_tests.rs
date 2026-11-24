@@ -2,6 +2,9 @@ use super::{append_answer, dns_packet};
 use packrat_tui::analysis::dns_transactions::{DnsFindingKind, DnsTransactionTracker};
 use packrat_tui::net::packet::Packet;
 
+#[path = "../support/ech_config.rs"]
+mod ech_config;
+
 fn packet(frame: u64, reply: bool, rr_type: u16) -> Packet {
     let (client, resolver) = ("192.0.2.5", "192.0.2.53");
     let (source, destination) = if reply {
@@ -112,6 +115,56 @@ fn malformed_or_unsupported_service_parameters_remain_wire_only() {
     ] {
         assert_eq!(
             observe_replies(65, &[(300, first.clone()), (299, data)]),
+            [vec![], vec![DnsFindingKind::ChangedReply]]
+        );
+    }
+}
+
+#[test]
+fn https_ech_compares_the_exact_config_but_ignores_dns_encoding_changes() {
+    let config = ech_config::fixture(1, b"ech.test", &[]);
+    let changed = ech_config::fixture(2, b"ech.test", &[]);
+    let target = b"\x03cdn\x04test\0";
+    assert_eq!(
+        observe_replies(
+            65,
+            &[
+                (300, binding(1, target, &[(5, &config)])),
+                (299, binding(1, b"\x03CDN\x04TEST\0", &[(5, &config)])),
+                (299, binding(1, target, &[(5, &changed)])),
+            ],
+        ),
+        [vec![], vec![], vec![DnsFindingKind::ChangedAnswerSet]]
+    );
+}
+
+#[test]
+fn https_ech_rejects_invalid_lengths_unknown_versions_and_unsupported_extensions() {
+    let config = ech_config::fixture(1, b"ech.test", &[]);
+    let target = b"\x03cdn\x04test\0";
+    let baseline = binding(1, target, &[(5, &config)]);
+    let mut incomplete = config.clone();
+    incomplete.pop();
+    let mut unknown = config.clone();
+    unknown[3] = 0x0e;
+    let mut wrong_list_length = config.clone();
+    wrong_list_length[1] -= 1;
+    for invalid in [
+        incomplete,
+        unknown,
+        wrong_list_length,
+        ech_config::fixture(1, b"192.0.2.5", &[]),
+        ech_config::fixture(1, b"ech.test", &[(0x80ff, b"required")]),
+        ech_config::fixture(1, b"ech.test", &[(0xff, b"one"), (0xff, b"two")]),
+    ] {
+        assert_eq!(
+            observe_replies(
+                65,
+                &[
+                    (300, baseline.clone()),
+                    (299, binding(1, target, &[(5, &invalid)]))
+                ]
+            ),
             [vec![], vec![DnsFindingKind::ChangedReply]]
         );
     }

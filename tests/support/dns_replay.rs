@@ -2,6 +2,9 @@ use packrat_tui::export::pcapng::PcapNgWriter;
 use packrat_tui::net::parser::parse_ethernet;
 use std::path::Path;
 
+#[path = "ech_config.rs"]
+mod ech_config;
+
 #[path = "../replay_suite/dns_tcp.rs"]
 mod tcp_replay_tests;
 #[path = "../replay_suite/dns_udp_entropy.rs"]
@@ -26,6 +29,7 @@ pub enum Scenario {
     ChangedSoa,
     EquivalentHttps,
     ChangedHttps,
+    ChangedEch,
 }
 
 #[test]
@@ -89,7 +93,7 @@ fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool)
     let rr_type = match scenario {
         Scenario::ChangedWire => 65_280_u16,
         Scenario::EquivalentSoa | Scenario::ChangedSoa => 6,
-        Scenario::EquivalentHttps | Scenario::ChangedHttps => 65,
+        Scenario::EquivalentHttps | Scenario::ChangedHttps | Scenario::ChangedEch => 65,
         _ => 1,
     };
     let mut capture = PcapNgWriter::create(path).unwrap();
@@ -132,7 +136,8 @@ fn write_answer_sequence(path: &Path, scenario: Scenario, early_alternate: bool)
                     &typed_data
                 }
                 65 => {
-                    typed_data = https_rdata(equivalent_variation, changed);
+                    let ech_changed = changed && matches!(scenario, Scenario::ChangedEch);
+                    typed_data = https_rdata(equivalent_variation, changed && !ech_changed, ech_changed);
                     &typed_data
                 }
                 _ => &opaque,
@@ -170,17 +175,21 @@ fn soa_rdata(uncompressed: bool, serial: u32) -> Vec<u8> {
     data
 }
 
-fn https_rdata(reorder: bool, changed: bool) -> Vec<u8> {
+fn https_rdata(reorder: bool, changed_port: bool, changed_ech: bool) -> Vec<u8> {
     let mut data = if reorder {
         b"\0\x01\x03CDN\x04TEST\0".to_vec()
     } else {
         b"\0\x01\x03cdn\x04test\0".to_vec()
     };
-    data.extend([0, 3, 0, 2, 1, if changed { 0xbc } else { 0xbb }]);
+    data.extend([0, 3, 0, 2, 1, if changed_port { 0xbc } else { 0xbb }]);
     data.extend([0, 4, 0, 8]);
     for last in if reorder { [2, 1] } else { [1, 2] } {
         data.extend([192, 0, 2, last]);
     }
+    let ech = ech_config::fixture(if changed_ech { 2 } else { 1 }, b"ech.test", &[]);
+    data.extend(5_u16.to_be_bytes());
+    data.extend(u16::try_from(ech.len()).unwrap().to_be_bytes());
+    data.extend(ech);
     data
 }
 
