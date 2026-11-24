@@ -165,7 +165,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the capture-interface mapping and expected switch-port policy, then check switch logs before inferring forwarding.",
         ),
         (
-            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 12, Heuristic,
+            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 13, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
         (

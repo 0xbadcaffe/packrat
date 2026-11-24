@@ -244,6 +244,40 @@ fn periodic_traffic_counts_new_tcp_sequences_not_identical_retransmissions() {
 }
 
 #[test]
+fn periodic_traffic_excludes_partial_retries_without_hiding_fresh_packets() {
+    use super::PacketFixtureExt;
+    let title = "Periodic fixed-size traffic";
+    let fixtures: [fn(u64, u32, u8, &[u8]) -> Packet; 2] = [ipv4_tcp_packet, ipv6_tcp_packet];
+    for packet in fixtures {
+        let payload = [1; 16];
+        let mut partial = SecurityEngine::default();
+        let mut interleaved = SecurityEngine::default();
+        for index in 0..7_u64 {
+            let time = index as f64 * 15.0;
+            let frame = index + 1;
+            let mostly_repeated = packet(frame, 100 + index as u32, 0x18, &payload)
+                .with_number_and_timestamp(frame, time);
+            assert!(partial.inspect(&mostly_repeated).ids.iter().all(|hit| hit.alert.signature != title));
+
+            let fresh_frame = index * 2 + 1;
+            let sequence = 100 + index as u32 * 17;
+            let clean = packet(fresh_frame, sequence, 0x18, &payload)
+                .with_number_and_timestamp(fresh_frame, time);
+            let result = interleaved.inspect(&clean);
+            let finding = result.ids.iter().find(|hit| hit.alert.signature == title);
+            if index == 6 {
+                assert_eq!(finding.unwrap().related_packets, [1, 3, 5, 7, 9, 11]);
+            } else {
+                assert!(finding.is_none());
+                let retry = packet(fresh_frame + 1, sequence + 1, 0x18, &payload)
+                    .with_number_and_timestamp(fresh_frame + 1, time + 7.0);
+                assert!(interleaved.inspect(&retry).ids.iter().all(|hit| hit.alert.signature != title));
+            }
+        }
+    }
+}
+
+#[test]
 fn ipv6_tcp_integrity_ignores_incomplete_or_fragmented_resets() {
     for fragmented in [false, true] {
         let mut engine = SecurityEngine::default();

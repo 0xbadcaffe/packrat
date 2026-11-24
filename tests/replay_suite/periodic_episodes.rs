@@ -2,6 +2,41 @@ use super::{CaptureMetadata, CaptureTimestamp, PcapNgWriter, TimestampResolution
 
 #[test]
 #[ignore = "requires Bash and jq; run explicitly by Linux CI"]
+fn periodic_replay_distinguishes_fresh_tcp_segments_from_partial_retransmissions() {
+    let scratch = tempfile::tempdir().unwrap();
+    let root = scratch.path();
+    let rule = "traffic.periodic_fixed_size";
+    let mut cases = Vec::new();
+    for (name, sequence_step, expected) in [("partial-retries", 1, 0), ("fresh-segments", 16, 1)] {
+        let file = format!("{name}.pcapng");
+        let mut writer = PcapNgWriter::create(&root.join(&file)).unwrap();
+        for index in 0..7_u32 {
+            let mut packet = support::tcp(u64::from(index) + 1, 100 + index * sequence_step, 0x18, &[1; 16], false);
+            packet.timestamp = f64::from(index) * 15.0;
+            writer.write_packet(&packet).unwrap();
+        }
+        writer.flush().unwrap();
+        let mut case = json!({
+            "name":name, "capture":file, "expect_counts":{(rule):expected},
+            "expect_snapshots":expected,
+        });
+        if expected == 1 {
+            case["opening_frames"] = json!({(rule):[7]});
+            case["opening_evidence"] = json!([{
+                "rule_id":rule, "opening_frame":7, "frames":[1, 2, 3, 4, 5, 6, 7],
+                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":13},
+            }]);
+        }
+        cases.push(case);
+    }
+    let manifest = root.join("periodic-tcp-retries.json");
+    std::fs::write(&manifest, json!({"version":1,"strict":true,"cases":cases}).to_string()).unwrap();
+    let output = run_suite(&manifest);
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+#[ignore = "requires Bash and jq; run explicitly by Linux CI"]
 fn replay_separates_periodic_episodes_after_directional_expiry_but_not_a_continuous_run() {
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();
