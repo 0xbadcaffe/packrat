@@ -436,6 +436,7 @@ fn build_content(app: &App, section: usize) -> Vec<Line<'static>> {
                 ("Attacker", incident.attacker.clone()),
                 ("Target", incident.target.clone()),
                 ("Capture ID", incident.capture_id.clone().unwrap_or_else(|| "Not recorded".into())),
+                ("Observation path", incident.observation_path.map_or_else(|| "Not recorded".into(), |path| path.to_string())),
                 ("Packet window", format!("#{} - #{}", incident.first_packet, incident.last_packet)),
                 ("Retained packets", incident.packet_history.len().to_string()),
             ];

@@ -32,6 +32,7 @@ fn incident(address: &str) -> Incident {
     Incident {
         id: 1,
         capture_id: None,
+        observation_path: None,
         source: IncidentSource::UserRule,
         detector: "test".into(),
         summary: "test".into(),

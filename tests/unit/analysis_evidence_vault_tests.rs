@@ -7,6 +7,7 @@ fn incident() -> Incident {
     Incident {
         id: 9,
         capture_id: None,
+        observation_path: None,
         source: IncidentSource::IndustrySignature,
         detector: "test detector".into(),
         summary: "test summary".into(),

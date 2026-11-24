@@ -21,6 +21,7 @@ fn importing_endpoint_reports_after_opening_a_case_preserves_scoped_evidence() {
     let incident = Incident {
         id: 1,
         capture_id: Some("capture-a".into()),
+        observation_path: None,
         target: "192.0.2.10".into(),
         source: IncidentSource::UserRule,
         detector: "Rule".into(),

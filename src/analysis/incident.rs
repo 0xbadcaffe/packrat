@@ -46,6 +46,8 @@ pub struct Incident {
     pub id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_path: Option<IncidentPath>,
     pub source: IncidentSource,
     pub detector: String,
     pub summary: String,
@@ -59,6 +61,41 @@ pub struct Incident {
     pub status: IncidentStatus,
     pub reviewed: bool,
     pub packet_history: Vec<Packet>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IncidentPath {
+    interface: Option<(u32, u32)>,
+    outer_vlan: Option<u16>,
+    vlan: Option<u16>,
+    tag_types: [u16; 2],
+}
+
+impl IncidentPath {
+    fn from_packet(packet: &Packet) -> Self {
+        Self {
+            interface: packet.capture.as_ref().map(|capture| (capture.section_id, capture.interface_id)),
+            outer_vlan: packet.outer_vlan_id,
+            vlan: packet.vlan_id,
+            tag_types: crate::net::parser::ethernet_vlan_tag_types(&packet.bytes),
+        }
+    }
+}
+
+impl std::fmt::Display for IncidentPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some((section, interface)) = self.interface {
+            write!(f, "section {section}, interface {interface}; ")?;
+        } else {
+            write!(f, "interface not recorded; ")?;
+        }
+        let [first, second] = self.tag_types;
+        match (self.outer_vlan, self.vlan) {
+            (Some(outer), Some(inner)) => write!(f, "VLAN {first:04x}:{outer} / {second:04x}:{inner}"),
+            (None, Some(vid)) => write!(f, "VLAN {first:04x}:{vid}"),
+            _ => write!(f, "no VLAN ID recorded"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -97,6 +134,9 @@ impl IncidentStore {
                 if packet.bytes.len() > 1_048_576 || !packet.timestamp.is_finite()
                     || bytes > 256 * 1024 * 1024 {
                     return Err("Saved incident packet history exceeds limits".into());
+                }
+                if incident.observation_path.is_some_and(|path| path != IncidentPath::from_packet(packet)) {
+                    return Err("Saved incident packet is outside the recorded observation path".into());
                 }
             }
         }
@@ -141,10 +181,12 @@ impl IncidentStore {
         prior_packets: impl Iterator<Item = Packet>,
     ) -> u64 {
         let detector = detector.into();
+        let observation_path = Some(IncidentPath::from_packet(packet));
         if let Some(existing) = self.incidents.iter_mut().find(|incident| {
             incident.status == IncidentStatus::PendingReview
                 && incident.source == source
                 && incident.capture_id.as_deref() == capture_id
+                && incident.observation_path == observation_path
                 && incident.detector == detector
                 && incident.attacker == packet.src
                 && incident.target == packet.dst
@@ -160,6 +202,7 @@ impl IncidentStore {
         let mut incident = Incident {
             id,
             capture_id: capture_id.map(str::to_owned),
+            observation_path,
             source,
             detector,
             summary: summary.into(),
@@ -177,7 +220,8 @@ impl IncidentStore {
 
         let attacker = incident.attacker.clone();
         for prior in prior_packets
-            .filter(|prior| prior.src == attacker || prior.dst == attacker)
+            .filter(|prior| (prior.src == attacker || prior.dst == attacker)
+                && Some(IncidentPath::from_packet(prior)) == observation_path)
             .take(INITIAL_HISTORY_PACKETS)
         {
             retain_packet(&mut incident, prior);
@@ -200,10 +244,14 @@ impl IncidentStore {
     }
 
     pub(crate) fn retain_scoped_packet(&mut self, capture_id: Option<&str>, packet: &Packet) {
+        let mut observation_path = None;
         for incident in self.incidents.iter_mut().filter(|incident| {
             incident.status == IncidentStatus::PendingReview
                 && incident.capture_id.as_deref() == capture_id
                 && same_conversation(incident, packet)
+                && incident.observation_path.is_some_and(|saved| {
+                    saved == *observation_path.get_or_insert_with(|| IncidentPath::from_packet(packet))
+                })
         }) {
             incident.last_packet = packet.no;
             incident.last_seen = packet.timestamp;
