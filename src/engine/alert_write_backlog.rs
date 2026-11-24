@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::analysis::alert_center::AlertItem;
+use crate::storage::alert_jsonl::compact_alert_export;
 
 const MAX_SNAPSHOTS: usize = 1_024;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -14,7 +15,8 @@ pub(crate) struct AlertWriteBacklog {
 
 impl AlertWriteBacklog {
     pub(crate) fn extend(&mut self, alerts: Vec<AlertItem>) {
-        for alert in alerts {
+        for mut alert in alerts {
+            compact_alert_export(&mut alert);
             let bytes = allocation_cost(&alert);
             if bytes > MAX_BYTES {
                 self.dropped = self.dropped.saturating_add(1);

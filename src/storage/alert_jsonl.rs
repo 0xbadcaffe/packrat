@@ -97,23 +97,33 @@ fn clip_exported_text(text: &mut String, max_bytes: usize) {
         text.truncate(end);
         text.insert_str(0, MARKER);
     }
+    if text.capacity() > max_bytes {
+        text.shrink_to_fit();
+    }
+}
+
+fn needs_credential_redaction(alert: &AlertItem) -> bool {
+    alert.source == "CREDENTIAL" && alert.detail != CREDENTIAL_ALERT_DETAIL
+}
+
+pub(crate) fn compact_alert_export(alert: &mut AlertItem) {
+    if needs_credential_redaction(alert) {
+        alert.detail = CREDENTIAL_ALERT_DETAIL.into();
+    } else {
+        clip_exported_text(&mut alert.detail, MAX_EXPORTED_DESCRIPTION);
+    }
+    clip_exported_text(&mut alert.title, MAX_EXPORTED_LABEL);
+    if let Some(text) = &mut alert.recommendation {
+        clip_exported_text(text, MAX_EXPORTED_LABEL);
+    }
 }
 
 fn encode_alert_record(session_id: &str, alert: &AlertItem, first_saved_unix_ms: Option<u64>) -> Result<Vec<u8>, String> {
-    let redact = alert.source == "CREDENTIAL" && alert.detail != CREDENTIAL_ALERT_DETAIL;
-    let bounded = (redact || alert.detail.len() > MAX_EXPORTED_DESCRIPTION
+    let bounded = (needs_credential_redaction(alert) || alert.detail.len() > MAX_EXPORTED_DESCRIPTION
         || alert.title.len() > MAX_EXPORTED_LABEL
         || alert.recommendation.as_ref().is_some_and(|text| text.len() > MAX_EXPORTED_LABEL)).then(|| {
         let mut copy = alert.clone();
-        if redact {
-            copy.detail = CREDENTIAL_ALERT_DETAIL.into();
-        } else {
-            clip_exported_text(&mut copy.detail, MAX_EXPORTED_DESCRIPTION);
-        }
-        clip_exported_text(&mut copy.title, MAX_EXPORTED_LABEL);
-        if let Some(text) = &mut copy.recommendation {
-            clip_exported_text(text, MAX_EXPORTED_LABEL);
-        }
+        compact_alert_export(&mut copy);
         copy
     });
     serde_json::to_vec(&AlertRecord {
