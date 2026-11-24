@@ -210,11 +210,10 @@ pub fn project_alert_evidence(
 ) -> Result<EvidenceAvailability> {
     let alert = latest_alert_in_logs(logs, session_id, alert_id, Some(capture_filter))?;
     let (capture_id, frames) = scoped_frames(&alert)?;
-    let project = super::project_store::load(project)?;
+    let project = load_project_for_alert(project, session_id, capture_id, alert_id)?;
     let pins = project_pins(&project, capture_id, &frames);
     let report = project.alert_archive_report.as_ref().filter(|report| {
         report.alert_id == alert_id && report.capture_id == capture_id
-            && report.session_id.as_deref().is_none_or(|session| session == session_id)
             && report.frames.keys().copied().eq(frames.iter().copied())
     });
     Ok(EvidenceAvailability {
@@ -251,7 +250,7 @@ pub fn export_project_alert_evidence(
 ) -> Result<EvidenceExportSummary> {
     let alert = latest_alert_in_logs(logs, session_id, alert_id, Some(capture_filter))?;
     let (capture_id, frames) = scoped_frames(&alert)?;
-    let project = super::project_store::load(project)?;
+    let project = load_project_for_alert(project, session_id, capture_id, alert_id)?;
     let pins = project_pins(&project, capture_id, &frames);
     export_frames(output, session_id, capture_id, &alert, &frames, |number| {
         match frames.binary_search(&number).ok().and_then(|index| pins.get(index)).copied() {
@@ -260,6 +259,18 @@ pub fn export_project_alert_evidence(
             _ => Ok(None),
         }
     })
+}
+
+fn load_project_for_alert(path: &Path, session_id: &str, capture_id: &str, alert_id: u64) -> Result<ProjectState> {
+    let project = super::project_store::load(path)?;
+    ensure!(
+        !project.alert_archive_report.as_ref().is_some_and(|report| {
+            report.alert_id == alert_id && report.capture_id == capture_id
+                && report.session_id.as_deref().is_some_and(|recorded| recorded != session_id)
+        }),
+        "Saved case records a different alert session for this capture and alert ID"
+    );
+    Ok(project)
 }
 
 #[derive(Clone, Copy)]
