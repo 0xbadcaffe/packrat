@@ -63,8 +63,13 @@ fn an_unscoped_alert_is_rejected_and_unreadable_evidence_has_no_packet_capture()
     let verified = verify_alert_evidence(&output).unwrap();
     assert_eq!(verified.capture_sha256_verified, None);
     assert_eq!((verified.unreadable_frames, verified.length_unknown_frames), (1, 1));
-    let error = verify_archived_alert_evidence(&output, &archive_path, None).err().unwrap();
-    assert!(error.to_string().contains("no packets to compare"));
+    let checked = verify_archived_alert_evidence(&output, &archive_path, None).unwrap();
+    assert_eq!(checked.archive_frames_verified, Some(0));
+    assert_eq!(checked.capture_sha256_verified, None);
+    assert_eq!(serde_json::to_value(checked).unwrap()["archive_omission_checks"], serde_json::json!([
+        {"frame_number":1,"bundle_status":"length_unknown","archive_status_now":"length_unknown"},
+        {"frame_number":2,"bundle_status":"unreadable","archive_status_now":"unreadable"},
+    ]));
 }
 
 #[test]

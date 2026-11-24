@@ -7,6 +7,49 @@ use packrat_tui::net::parser::parse_ethernet;
 use packrat_tui::storage::packet_archive::PacketArchive;
 use serde_json::{Value, json};
 
+#[test]
+fn omission_only_bundle_reports_later_availability_in_the_original_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive_path = directory.path().join("archive");
+    let bundle = directory.path().join("bundle");
+    let log = directory.path().join("alerts.jsonl");
+    let mut center = AlertCenter::default();
+    center.record(1, "IDS", "MEDIUM", "Recorded alert", "test");
+    center.items[0].capture_id = Some("capture-a".into());
+    std::fs::write(&log, json!({"schema_version":1,"record_type":"alert","session_id":"s","alert":center.items[0]}).to_string()).unwrap();
+    let mut archive = PacketArchive::open(&archive_path).unwrap();
+    let mut packet = parse_ethernet(&[0; 14], 1, 1.0);
+    packet.capture = Some(CaptureMetadata {
+        timestamp: None, captured_length: 14, wire_length: 14, link_type: 1,
+        interface_id: 0, section_id: 0, interface_name: None, comments: Vec::new(),
+    });
+    archive.append_scoped("capture-b", &[packet.clone()]).unwrap();
+    packrat_tui::storage::alert_evidence::export_alert_evidence(&mut archive, &log, "s", 1, &bundle).unwrap();
+    let manifest_path = bundle.join("manifest.json");
+    let manifest = std::fs::read(&manifest_path).unwrap();
+    let check = |expected: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+            .arg("--verify-evidence").arg(&bundle).arg("--archive").arg(&archive_path)
+            .arg("--alert-log").arg(&log).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["archive_frames_verified"], 0);
+        assert_eq!(report["recovered_frames"], 0);
+        assert_eq!(report["missing_frames"], 1);
+        assert!(report["capture_sha256_verified"].is_null());
+        assert_eq!(report["alert_snapshot_matches_log"], true);
+        assert_eq!(report["archive_omission_checks"], json!([
+            {"frame_number":1,"bundle_status":"missing","archive_status_now":expected},
+        ]));
+    };
+    check("missing");
+    archive.append_scoped("capture-a", &[packet]).unwrap();
+    drop(archive);
+    check("complete");
+    assert_eq!(std::fs::read(&manifest_path).unwrap(), manifest);
+    assert!(!bundle.join("evidence.pcapng").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn archive_reader_rejects_named_pipes_and_symlinks_without_waiting() {

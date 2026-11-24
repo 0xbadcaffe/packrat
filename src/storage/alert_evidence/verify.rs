@@ -70,7 +70,7 @@ pub fn verify_logged_alert_evidence(directory: &Path, logs: AlertLogs<'_>) -> Re
     verify(directory, Some(logs), None)
 }
 
-/// Require the exported stream to match the claimed frame IDs in a supplied read-only archive.
+/// Compare any exported packets with a read-only archive and report current availability of omissions.
 pub fn verify_archived_alert_evidence(directory: &Path, archive: &Path, logs: Option<AlertLogs<'_>>) -> Result<VerifiedEvidence> {
     verify(directory, logs, Some(archive))
 }
@@ -125,10 +125,10 @@ fn verify(directory: &Path, logs: Option<AlertLogs<'_>>, archive: Option<&Path>)
         None
     };
     let (archive_frames_verified, archive_omission_checks) = if let Some(directory) = archive {
-        let capture = manifest.capture.as_ref()
-            .context("Evidence bundle contains no packets to compare with the archive")?;
         let mut archive = PacketArchive::open_readonly(directory).map_err(anyhow::Error::msg)?;
-        verify_archive_capture(&mut archive, scope, capture)?;
+        if let Some(capture) = &manifest.capture {
+            verify_archive_capture(&mut archive, scope, capture)?;
+        }
         let omissions = missing.iter().map(|&frame_number| {
             let bundle_status = if unreadable.binary_search(&frame_number).is_ok() {
                 FrameStatus::Unreadable
