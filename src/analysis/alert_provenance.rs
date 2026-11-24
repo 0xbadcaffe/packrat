@@ -173,15 +173,15 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare the marking with the port's QoS trust policy and switch counters before inferring priority misuse.",
         ),
         (
-            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 20, Heuristic,
+            "IDS", "Periodic fixed-size traffic", "traffic.periodic_fixed_size", 21, Heuristic,
             "Identify the owning process and compare the interval with expected keepalives or scheduled activity before escalating.",
         ),
         (
-            "IDS", "Large asymmetric outbound transfer", "traffic.asymmetric_outbound", 17, Heuristic,
+            "IDS", "Large asymmetric outbound transfer", "traffic.asymmetric_outbound", 18, Heuristic,
             "Identify the owning process and destination. Check for an expected upload, backup, or sync job.",
         ),
         (
-            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 15, Heuristic,
+            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 16, Heuristic,
             "Compare the contributing flows with expected encrypted uploads or compression. A trigger socket does not identify all traffic in the window; corroborate with endpoint logs.",
         ),
         (
@@ -197,11 +197,11 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check handshake completion, server reachability, and whether a burst was expected.",
         ),
         (
-            "IDS", "TCP payload after reset", "tcp.payload_after_observed_reset", 11, Heuristic,
+            "IDS", "TCP payload after reset", "tcp.payload_after_observed_reset", 12, Heuristic,
             "Compare the retained reset and payload frames with the flow, capture timing, and endpoint TCP logs.",
         ),
         (
-            "IDS", "Conflicting TCP retransmission", "tcp.conflicting_retransmission", 7, DirectObservation,
+            "IDS", "Conflicting TCP retransmission", "tcp.conflicting_retransmission", 8, DirectObservation,
             "Compare both frames and their TCP sequence ranges. Check capture duplication or offload and verify what the receiver processed independently.",
         ),
         (

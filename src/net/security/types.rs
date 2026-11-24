@@ -82,6 +82,7 @@ pub(super) struct TcpResetObservation {
 
 #[derive(Debug, Default)]
 pub(super) struct TcpIntegrityState {
+    pub(super) last_observation_order: u64,
     pub(super) from_a: TcpPayloadHistory,
     pub(super) from_b: TcpPayloadHistory,
     pub(super) last_seen: f64,

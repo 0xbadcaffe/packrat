@@ -198,7 +198,7 @@ impl SecurityEngine {
                 .tcp_integrity
                 .iter()
                 .min_by(|left, right| {
-                    left.1.last_seen.total_cmp(&right.1.last_seen).then(left.0.cmp(right.0))
+                    left.1.last_observation_order.cmp(&right.1.last_observation_order).then(left.0.cmp(right.0))
                 })
                 .map(|(key, _)| key.clone())
             {
@@ -210,6 +210,9 @@ impl SecurityEngine {
         if state.started_at.is_some_and(|start| pkt.timestamp < start) {
             return if segment.payload.is_empty() { Empty } else { BeforeConnectionStart };
         }
+        // Capacity spans capture clocks, but TCP ordering below is local to this path.
+        self.tcp_observation_order = self.tcp_observation_order.saturating_add(1);
+        state.last_observation_order = self.tcp_observation_order;
         let in_time_order = observation_precedes(
             (state.last_seen, state.last_seen_frame), (pkt.timestamp, pkt.no),
         );
@@ -231,6 +234,7 @@ impl SecurityEngine {
                 if follows_reset || state.started_at.is_none() || state.past_opening || opening.is_some() {
                     started_connection = true;
                     *state = TcpIntegrityState {
+                        last_observation_order: self.tcp_observation_order,
                         last_seen: pkt.timestamp,
                         last_seen_frame: pkt.no,
                         started_at: Some(pkt.timestamp),
