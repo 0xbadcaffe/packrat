@@ -84,7 +84,8 @@ pub(super) fn ipv6_probe(raw: &[u8]) -> Option<Ipv6Probe> {
             }))
         }
         17 if transport.len() == 8 && transport[4..6] == [0, 8] => {
-            Some(Ipv6Probe::EmptyUdp(read_port(2)?))
+            let port = read_port(2)?;
+            (port != 0).then_some(Ipv6Probe::EmptyUdp(port))
         }
         58 if transport.len() >= 8 && transport[..2] == [128, 0] => Some(Ipv6Probe::EchoRequest),
         _ => None,

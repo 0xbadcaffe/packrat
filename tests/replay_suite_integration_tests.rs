@@ -19,6 +19,8 @@ mod vlan_tags;
 mod control_plane;
 #[path = "replay_suite/scans.rs"]
 mod scans;
+#[path = "replay_suite/ipv6_udp_discovery.rs"]
+mod ipv6_udp_discovery;
 #[path = "replay_suite/dhcp.rs"]
 mod dhcp;
 #[path = "replay_suite/periodic_episodes.rs"]

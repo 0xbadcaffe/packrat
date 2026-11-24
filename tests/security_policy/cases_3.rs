@@ -450,11 +450,12 @@ fn ipv6_tcp_scan_counts_only_complete_initial_syns_through_extensions() {
     }
     let alert = core.alert_center.items.iter().find(|a| a.title == "Horizontal host scan").unwrap();
     assert_eq!(alert.packet_refs, (37..=48).collect::<Vec<_>>());
-    assert_eq!(alert.provenance.as_ref().unwrap().revision, 14);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 15);
 }
 
 #[rstest]
 #[case(17, [0x9c, 0x40, 0x01, 0xbb, 0, 7, 0, 0], [0x9c, 0x40, 0x01, 0xbb, 0, 8, 0, 0], "Horizontal host scan", "scan.horizontal")]
+#[case(17, [0x9c, 0x40, 0x00, 0x00, 0, 8, 0, 0], [0x9c, 0x40, 0x01, 0xbb, 0, 8, 0, 0], "Horizontal host scan", "scan.horizontal")]
 #[case(58, [129, 0, 0, 0, 0, 0, 0, 0], [128, 0, 0, 0, 0, 0, 0, 0], "ICMP address sweep", "icmp.address_sweep")]
 fn ipv6_udp_and_echo_sweeps_keep_only_distinct_matching_evidence(
     #[case] next_header: u8,
