@@ -181,8 +181,8 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Identify the owning process and destination. Check for an expected upload, backup, or sync job.",
         ),
         (
-            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 10, Heuristic,
-            "Check whether the traffic is normally encrypted or compressed. Verify the transfer with endpoint logs.",
+            "IDS", "High-entropy outbound transfer", "traffic.high_entropy_outbound", 11, Heuristic,
+            "Compare the contributing flows with expected encrypted uploads or compression. A trigger socket does not identify all traffic in the window; corroborate with endpoint logs.",
         ),
         (
             "IDS", "Horizontal host scan", "scan.horizontal", 17, Heuristic,

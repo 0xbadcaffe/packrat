@@ -321,8 +321,9 @@ impl SecurityEngine {
                     "High-entropy outbound transfer",
                     Severity::Medium,
                     format!(
-                        "{} to {}: {} high-entropy outbound transport payload bytes in the rolling hour; encryption or compression is possible, and exfiltration is unverified",
-                        pkt.src, pkt.dst, state.high_entropy_bytes
+                        "{} to {}: {} high-entropy outbound transport payload bytes out of {} in the rolling hour, aggregated across client ports to service port {}; attached flow describes the trigger packet only; encryption or compression is possible, and exfiltration is unverified",
+                        pkt.src, pkt.dst, state.high_entropy_bytes, state.outbound_payload_bytes,
+                        pkt.dst_port.unwrap_or(0)
                     ),
                     state.entropy_frames.iter().map(|sample| sample.frame).collect::<Vec<_>>(),
                     pkt.no,

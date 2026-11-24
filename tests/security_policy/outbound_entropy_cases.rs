@@ -157,6 +157,27 @@ fn entropy_counts_new_suffixes_of_partial_retransmissions() {
 }
 
 #[test]
+fn entropy_report_distinguishes_service_totals_from_the_trigger_connection() {
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    core.analyze(&outbound_tcp(1, &vec![0; 20_000]));
+    let varied: Vec<_> = (0..60_000).map(|index| (index * 73 % 256) as u8).collect();
+    for no in 2..=6 {
+        let mut packet = outbound_tcp(no, &varied);
+        let port = 40_000 + no as u16;
+        packet.bytes[34..36].copy_from_slice(&port.to_be_bytes());
+        packet.src_port = Some(port);
+        core.analyze(&packet);
+    }
+    let alert = core.alert_center.items.iter()
+        .find(|item| item.title == "High-entropy outbound transfer").unwrap();
+    assert_eq!(alert.packet_refs, [2, 3, 4, 5, 6]);
+    assert_eq!(alert.flow.unwrap().source.port(), 40_006);
+    assert!(alert.detail.contains("300000 high-entropy outbound transport payload bytes out of 320000"));
+    assert!(alert.detail.contains("aggregated across client ports"));
+    assert!(alert.detail.contains("flow describes the trigger packet only"));
+}
+
+#[test]
 fn detects_large_high_entropy_outbound_transfer() {
     let mut security = SecurityEngine::default();
     let mut core = packrat_tui::engine::AnalysisCore::default();
@@ -183,7 +204,7 @@ fn detects_large_high_entropy_outbound_transfer() {
     );
     for (rule, severity, revision, frames) in [
         ("traffic.asymmetric_outbound", "MEDIUM", 11, (10..=17).collect::<Vec<_>>()),
-        ("traffic.high_entropy_outbound", "MEDIUM", 10, (1..=5).collect()),
+        ("traffic.high_entropy_outbound", "MEDIUM", 11, (1..=5).collect()),
     ] {
         let alert = core
             .alert_center
