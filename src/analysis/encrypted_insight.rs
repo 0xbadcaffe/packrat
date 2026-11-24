@@ -257,8 +257,11 @@ pub struct QuicHeader {
 }
 
 pub fn parse_quic_header(raw: &[u8]) -> Option<QuicHeader> {
-    let start = find_quic_start(raw)?;
-    let first = *raw.get(start)?;
+    parse_quic_payload(raw.get(find_quic_start(raw)?..)?)
+}
+
+pub(crate) fn parse_quic_payload(raw: &[u8]) -> Option<QuicHeader> {
+    let first = *raw.first()?;
     let long_header = first & 0x80 != 0;
     let fixed_bit = first & 0x40 != 0;
     if !long_header {
@@ -273,11 +276,11 @@ pub fn parse_quic_header(raw: &[u8]) -> Option<QuicHeader> {
         });
     }
     let version = u32::from_be_bytes([
-        *raw.get(start + 1)?, *raw.get(start + 2)?, *raw.get(start + 3)?, *raw.get(start + 4)?,
+        *raw.get(1)?, *raw.get(2)?, *raw.get(3)?, *raw.get(4)?,
     ]);
-    let destination_len = *raw.get(start + 5)? as usize;
+    let destination_len = *raw.get(5)? as usize;
     if destination_len > 20 { return None; }
-    let destination_start = start + 6;
+    let destination_start = 6;
     let destination_end = destination_start + destination_len;
     let source_len = *raw.get(destination_end)? as usize;
     if source_len > 20 { return None; }

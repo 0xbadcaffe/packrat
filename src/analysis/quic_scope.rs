@@ -3,10 +3,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
-use crate::analysis::encrypted_insight::parse_quic_header;
+use crate::analysis::encrypted_insight::{QuicHeader, parse_quic_payload};
 use crate::analysis::helper_process::JsonLineHelper;
+use crate::analysis::packet_fields::udp::captured_udp_payload;
 use crate::analysis::transactions::http3::{AuthenticatedHttp3Batch, Http3Tracker};
 use crate::net::packet::Packet;
+
+const MAX_PACKET_LINKS: usize = 128;
 
 #[derive(Debug, Clone, Default)]
 pub struct QuicDecodedFrame {
@@ -31,6 +34,7 @@ pub struct QuicConnection {
     pub last_seen: f64,
     pub fixed_bit_valid: bool,
     pub decoded_frames: Vec<QuicDecodedFrame>,
+    packet_numbers: VecDeque<u64>,
 }
 
 impl QuicConnection {
@@ -90,19 +94,8 @@ struct QuicDecodeFrameResponse {
 
 impl QuicScope {
     pub fn ingest(&mut self, packet: &Packet) {
-        if !packet.protocol.eq_ignore_ascii_case("QUIC")
-            && packet.dst_port != Some(443)
-            && packet.src_port != Some(443)
-        {
+        let Some((id, header)) = scoped_quic_candidate(packet) else {
             return;
-        }
-        let Some(header) = parse_quic_header(&packet.bytes) else {
-            return;
-        };
-        let id = if !header.destination_id.is_empty() {
-            header.destination_id.clone()
-        } else {
-            flow_id(packet)
         };
         if !self.connections.contains_key(&id) {
             while self.connections.len() >= 1024 {
@@ -133,7 +126,12 @@ impl QuicScope {
                 last_seen: packet.timestamp,
                 fixed_bit_valid: header.fixed_bit,
                 decoded_frames: Vec::new(),
+                packet_numbers: VecDeque::new(),
             });
+        if connection.packet_numbers.len() == MAX_PACKET_LINKS {
+            connection.packet_numbers.pop_front();
+        }
+        connection.packet_numbers.push_back(packet.no);
         connection.packet_types.insert(header.packet_type.into());
         for address in [&packet.src, &packet.dst] {
             if connection.addresses.len() < 32 {
@@ -165,6 +163,11 @@ impl QuicScope {
                 }
             }
         }
+    }
+
+    pub fn for_packet(&self, packet: &Packet) -> Option<&QuicConnection> {
+        let (id, _) = scoped_quic_candidate(packet)?;
+        self.connections.get(&id).filter(|connection| connection.packet_numbers.contains(&packet.no))
     }
 
     pub fn all(&self) -> Vec<&QuicConnection> {
@@ -232,6 +235,31 @@ impl QuicScope {
         }
         result.ok()
     }
+}
+
+fn scoped_quic_candidate(packet: &Packet) -> Option<(String, QuicHeader)> {
+    if !packet.protocol.eq_ignore_ascii_case("QUIC")
+        && packet.dst_port != Some(443)
+        && packet.src_port != Some(443)
+    {
+        return None;
+    }
+    let header = parse_quic_payload(captured_udp_payload(packet)?)?;
+    if !header.fixed_bit && header.version != Some(0) {
+        return None;
+    }
+    let mut id = if header.destination_id.is_empty() {
+        flow_id(packet)
+    } else {
+        header.destination_id.clone()
+    };
+    let [first, second] = crate::net::parser::ethernet_vlan_tag_types(&packet.bytes);
+    let (section, interface) = packet.capture.as_ref().map_or((0, 0), |capture| (capture.section_id, capture.interface_id));
+    if first != 0 || section != 0 || interface != 0 || packet.vlan_id.is_some() || packet.outer_vlan_id.is_some() {
+        id.push_str(&format!("|{section}:{interface}|{first:04x}:{second:04x}|{:?}:{:?}",
+            packet.outer_vlan_id, packet.vlan_id));
+    }
+    Some((id, header))
 }
 
 fn flow_id(packet: &Packet) -> String {

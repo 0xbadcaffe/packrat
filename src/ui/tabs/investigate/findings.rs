@@ -72,34 +72,24 @@ pub(super) fn draw_encrypted(f: &mut Frame, app: &App, packet: &Packet, area: Re
             )));
         }
     }
-    for connection in app.core.quic_scope.connections.values() {
-        let frames: Vec<_> = connection
-            .decoded_frames
-            .iter()
-            .filter(|frame| frame.packet_no == packet.no)
-            .collect();
-        if !frames.is_empty()
-            || connection.addresses.contains(&packet.src)
-            || connection.addresses.contains(&packet.dst)
-        {
-            lines.push(Line::raw(""));
-            lines.push(Line::from(vec![Span::styled("QUIC connection", heading())]));
-            lines.push(Line::from(format!("ID: {}", connection.id)));
+    if let Some(connection) = app.core.quic_scope.for_packet(packet) {
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![Span::styled("Observed QUIC candidate", heading())]));
+        lines.push(Line::from(format!("ID: {}", connection.id)));
+        lines.push(Line::from(format!(
+            "Version: {}",
+            connection
+                .version
+                .map(|v| format!("{v:08x}"))
+                .unwrap_or_else(|| "short".into())
+        )));
+        lines.push(Line::from(format!("RATQ: {}", connection.ratq)));
+        for frame in connection.decoded_frames.iter().filter(|frame| frame.packet_no == packet.no) {
             lines.push(Line::from(format!(
-                "Version: {}",
-                connection
-                    .version
-                    .map(|v| format!("{v:08x}"))
-                    .unwrap_or_else(|| "short".into())
+                "Decoded frame: {} - {}",
+                printable_bytes(frame.frame_type.as_bytes(), 64),
+                printable_bytes(frame.detail.as_bytes(), 512)
             )));
-            lines.push(Line::from(format!("RATQ: {}", connection.ratq)));
-            for frame in frames {
-                lines.push(Line::from(format!(
-                    "Decoded frame: {} - {}",
-                    printable_bytes(frame.frame_type.as_bytes(), 64),
-                    printable_bytes(frame.detail.as_bytes(), 512)
-                )));
-            }
         }
     }
     if lines.len() == 3 {

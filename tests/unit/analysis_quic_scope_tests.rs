@@ -6,22 +6,17 @@ fn quic_packet() -> Packet {
     bytes.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
     bytes.push(4);
     bytes.extend_from_slice(&[9, 10, 11, 12]);
-    Packet { capture: None,
-        no: 11,
-        timestamp: 11.0,
-        src: "192.0.2.10".into(),
-        dst: "198.51.100.7".into(),
-        protocol: "QUIC".into(),
-        length: bytes.len() as u16,
-        info: String::new(),
-        src_port: Some(50000),
-        dst_port: Some(443),
-        vlan_id: None,
-        vlan_pcp: None,
-        vlan_dei: None,
-        outer_vlan_id: None,
-        bytes,
-    }
+    let frame_len = bytes.len() as u16;
+    bytes[12..14].copy_from_slice(&0x0800_u16.to_be_bytes());
+    bytes[14] = 0x45;
+    bytes[16..18].copy_from_slice(&(frame_len - 14).to_be_bytes());
+    bytes[22] = 64;
+    bytes[23] = 17;
+    bytes[26..34].copy_from_slice(&[192, 0, 2, 10, 198, 51, 100, 7]);
+    bytes[34..36].copy_from_slice(&50_000_u16.to_be_bytes());
+    bytes[36..38].copy_from_slice(&443_u16.to_be_bytes());
+    bytes[38..40].copy_from_slice(&(frame_len - 34).to_be_bytes());
+    crate::net::parser::parse_ethernet(&bytes, 11, 11.0)
 }
 
 #[cfg(unix)]

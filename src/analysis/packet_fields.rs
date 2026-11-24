@@ -86,6 +86,8 @@ pub(crate) struct CapturedTransportHeader {
 
 pub(crate) const MAX_EVIDENCE_VLAN_TAGS: usize = 16;
 
+pub(crate) mod udp;
+
 pub(crate) fn captured_transport_header(packet: &Packet) -> Option<CapturedTransportHeader> {
     if packet.capture.as_ref()?.link_type != 1 {
         return None;
