@@ -7,15 +7,22 @@ fn periodic_replay_distinguishes_fresh_tcp_segments_from_partial_retransmissions
     let root = scratch.path();
     let rule = "traffic.periodic_fixed_size";
     let mut cases = Vec::new();
-    for (name, flags, sequence_step, expected) in [
-        ("partial-retries", 0x18, 1, 0),
-        ("opening-control-with-data", 0x12, 16, 0),
-        ("fresh-segments", 0x18, 16, 1),
+    for (name, flags, sequence_step, tag_path, expected) in [
+        ("partial-retries", 0x18, 1, None, 0),
+        ("opening-control-with-data", 0x12, 16, None, 0),
+        ("fresh-segments", 0x18, 16, None, 1),
+        ("same-path-priority-changes", 0x18, 16, Some(false), 1),
+        ("split-tag-paths", 0x18, 16, Some(true), 0),
     ] {
         let file = format!("{name}.pcapng");
         let mut writer = PcapNgWriter::create(&root.join(&file)).unwrap();
         for index in 0..7_u32 {
             let mut packet = support::tcp(u64::from(index) + 1, 100 + index * sequence_step, flags, &[1; 16], false);
+            if let Some(split) = tag_path {
+                let tpid = if split && index % 2 == 0 { 0x88a8_u16 } else { 0x8100_u16 };
+                let tci = if index % 2 == 0 { 0xb014_u16 } else { 20_u16 };
+                packet.bytes.splice(12..12, [tpid, tci].into_iter().flat_map(u16::to_be_bytes));
+            }
             packet.timestamp = f64::from(index) * 15.0;
             writer.write_packet(&packet).unwrap();
         }
@@ -28,7 +35,7 @@ fn periodic_replay_distinguishes_fresh_tcp_segments_from_partial_retransmissions
             case["opening_frames"] = json!({(rule):[7]});
             case["opening_evidence"] = json!([{
                 "rule_id":rule, "opening_frame":7, "frames":[1, 2, 3, 4, 5, 6, 7],
-                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":16},
+                "classification":{"severity":"MEDIUM","confidence":"heuristic","revision":17},
             }]);
         }
         cases.push(case);

@@ -236,7 +236,7 @@ pub(super) struct ExfilKey {
     pub(super) external: String,
     pub(super) destination_port: u16,
     pub(super) transport: TransferTransport,
-    pub(super) scope: ServiceScope,
+    pub(super) scope: ScanScope,
 }
 
 #[derive(Debug, Default)]

@@ -240,7 +240,7 @@ fn periodic_traffic_uses_wire_lengths_and_separates_capture_scopes() {
         }
         let alert = scoped.alert_center.items.iter().find(|item| is_periodic(item)).unwrap();
         assert_eq!(alert.packet_refs, [1, 3, 5, 7, 8, 9, 10]);
-        assert_eq!(alert.provenance.as_ref().unwrap().revision, 16);
+        assert_eq!(alert.provenance.as_ref().unwrap().revision, 17);
     }
 }
 

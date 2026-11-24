@@ -290,7 +290,7 @@ fn periodic_replay_preserves_wire_lengths_and_capture_interfaces() {
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .find(|event| event["type"] == "alert").unwrap();
     assert_eq!(finding["alert"]["provenance"]["confidence"], "heuristic");
-    assert_eq!(finding["alert"]["provenance"]["revision"], 16);
+    assert_eq!(finding["alert"]["provenance"]["revision"], 17);
     let detail = finding["alert"]["detail"].as_str().unwrap();
     assert!(detail.starts_with("7 TCP packets") && detail.contains("gaps 10.0-10.0s (mean 10.0s), sizes 900-900 bytes on wire, 12-12 captured payload bytes per packet"));
     assert_eq!(finding["alert"]["flow"], json!({
@@ -421,6 +421,8 @@ fn outbound_transfer_replay_checks_thresholds_scope_and_packet_samples() {
     transfer_replay::write_fixture(&root.join("small.pcapng"), 4, true, false);
     transfer_replay::write_fixture(&root.join("split.pcapng"), 17, false, true);
     transfer_replay::write_fixture(&root.join("large.pcapng"), 17, true, false);
+    transfer_replay::write_vlans_fixture(&root.join("tagged-volume.pcapng"), 17, false);
+    transfer_replay::write_vlans_fixture(&root.join("tagged-entropy.pcapng"), 5, true);
     let sparse = (0..20).map(|index| index * 2_400 + (index % 2) * 1_600);
     transfer_replay::write_timed_fixture(&root.join("sparse.pcapng"), sparse, false, false);
     let manifest = root.join("transfers.json");
@@ -433,13 +435,17 @@ fn outbound_transfer_replay_checks_thresholds_scope_and_packet_samples() {
          "expect_counts":{(volume):0,(entropy):0}, "expect_snapshots":0},
         {"name":"large varied transfer", "capture":"large.pcapng",
          "expect_counts":{(volume):1,(entropy):1}, "opening_frames":{(volume):[17],(entropy):[5]},
-         "expect_snapshots":2}
+         "expect_snapshots":2},
+        {"name":"volume split across tag paths with the same VLAN ID", "capture":"tagged-volume.pcapng",
+         "expect_counts":{(volume):0,(entropy):0}, "expect_snapshots":0},
+        {"name":"entropy split across tag paths with the same VLAN ID", "capture":"tagged-entropy.pcapng",
+         "expect_counts":{(volume):0,(entropy):0}, "expect_snapshots":0}
     ]});
     std::fs::write(&manifest, labels.to_string()).unwrap();
     let output = run_suite(&manifest);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["passed"], 4);
+    assert_eq!(report["passed"], 6);
     assert_eq!(report["cases"][2]["summary"]["analyzed"], 20);
 
     let output = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"))

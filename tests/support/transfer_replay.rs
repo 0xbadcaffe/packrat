@@ -17,6 +17,20 @@ pub fn write_timed_fixture(
     varied_bytes: bool,
     split_interface: bool,
 ) {
+    write_scoped_fixture(path, ticks, varied_bytes, split_interface, false);
+}
+
+pub fn write_vlans_fixture(path: &Path, frames: u64, varied_bytes: bool) {
+    write_scoped_fixture(path, 1..=frames, varied_bytes, false, true);
+}
+
+fn write_scoped_fixture(
+    path: &Path,
+    ticks: impl IntoIterator<Item = u64>,
+    varied_bytes: bool,
+    split_interface: bool,
+    split_tag_paths: bool,
+) {
     let mut capture = PcapNgWriter::create(path).unwrap();
     let payload: Vec<u8> = (0..60_000)
         .map(|index| {
@@ -39,11 +53,18 @@ pub fn write_timed_fixture(
     bytes[36..38].copy_from_slice(&45_001_u16.to_be_bytes());
     bytes[38..40].copy_from_slice(&((8 + payload.len()) as u16).to_be_bytes());
     bytes.extend_from_slice(&payload);
-    let len = bytes.len() as u32;
+    let tagged = |tpid: u16| {
+        let mut raw = bytes.clone();
+        raw.splice(12..12, [tpid, 20].into_iter().flat_map(u16::to_be_bytes));
+        raw
+    };
+    let tagged_paths = split_tag_paths.then(|| [tagged(0x8100), tagged(0x88a8)]);
 
     for (index, ticks) in ticks.into_iter().enumerate() {
         let frame = index as u64 + 1;
-        let mut packet = parse_ethernet(&bytes, frame, ticks as f64 / 10.0);
+        let raw = tagged_paths.as_ref().map_or(&bytes, |paths| &paths[index % 2]);
+        let len = raw.len() as u32;
+        let mut packet = parse_ethernet(raw, frame, ticks as f64 / 10.0);
         packet.capture = Some(CaptureMetadata {
             timestamp: Some(CaptureTimestamp {
                 ticks,

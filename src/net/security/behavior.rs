@@ -1,5 +1,6 @@
 use super::*;
 use super::fragments::TcpPayloadObservation;
+use super::scans::scan_scope;
 use std::collections::VecDeque;
 
 const MAX_CANDIDATE_FRAME_COST: usize = 2 * 1024;
@@ -11,7 +12,7 @@ pub(super) struct BehaviorFlowKey {
     first: (String, u16),
     second: (String, u16),
     transport: &'static str,
-    scope: ServiceScope,
+    scope: ScanScope,
 }
 
 #[derive(Debug)]
@@ -230,9 +231,10 @@ impl SecurityEngine {
         self.exfil_flows.retain(|_, state| {
             pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 3600.0
         });
+        let scope = scan_scope(pkt);
         // A partial retry does not represent one full, independently sized application send.
         if matches!(tcp_payload, TcpPayloadObservation::UnknownOrNew) {
-            self.check_periodic_traffic(pkt, archive_rules);
+            self.check_periodic_traffic(pkt, scope, archive_rules);
         }
         let mut alerts = Vec::new();
         let source_internal = is_internal_address(&pkt.src);
@@ -257,7 +259,7 @@ impl SecurityEngine {
                 external,
                 destination_port: if outbound { pkt.dst_port } else { pkt.src_port }.unwrap_or(0),
                 transport: transport.clone(),
-                scope: service_scope(pkt),
+                scope,
             };
             if !self.exfil_flows.contains_key(&key) {
                 evict_oldest_exfil(&mut self.exfil_flows);
@@ -336,7 +338,7 @@ impl SecurityEngine {
             related_packets.dedup();
             let correlation_key = format!(
                 "{:?}:{transport:?}:[{}]>[{}]:{}:episode:{opening_frame}",
-                service_scope(pkt), pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)
+                scope, pkt.src, pkt.dst, pkt.dst_port.unwrap_or(0)
             );
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert { pkt_no: pkt.no, signature, severity, detail },
@@ -346,7 +348,7 @@ impl SecurityEngine {
         }
     }
 
-    fn check_periodic_traffic(&mut self, pkt: &Packet, archive_rules: Option<&[String]>) {
+    fn check_periodic_traffic(&mut self, pkt: &Packet, scope: ScanScope, archive_rules: Option<&[String]>) {
         let (Some(source_port @ 1..), Some(destination_port @ 1..)) = (pkt.src_port, pkt.dst_port) else {
             return;
         };
@@ -370,7 +372,6 @@ impl SecurityEngine {
         } else {
             (destination, source, 1)
         };
-        let scope = service_scope(pkt);
         let key = BehaviorFlowKey {
             first: (first.0.into(), first.1),
             second: (second.0.into(), second.1),

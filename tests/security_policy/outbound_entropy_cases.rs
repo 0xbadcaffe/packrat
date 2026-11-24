@@ -37,6 +37,28 @@ fn outbound_tcp(frame: u64, payload: &[u8]) -> Packet {
 }
 
 #[rstest]
+#[case(false, 17, "Large asymmetric outbound transfer")]
+#[case(true, 5, "High-entropy outbound transfer")]
+fn outbound_thresholds_cannot_mix_tag_paths(#[case] varied: bool, #[case] threshold: u64, #[case] title: &str) {
+    let mut core = packrat_tui::engine::AnalysisCore::default();
+    let payload: Vec<_> = (0..60_000).map(|index| if varied { (index * 73 % 256) as u8 } else { 0 }).collect();
+    let trigger = threshold + threshold / 2;
+    for frame in 1..=trigger {
+        let packet = outbound_tcp(frame, &payload);
+        let mut raw = packet.bytes;
+        let tpid = if frame <= threshold && frame % 2 == 0 { 0x88a8_u16 } else { 0x8100_u16 };
+        raw.splice(12..12, [tpid, 20].into_iter().flat_map(u16::to_be_bytes));
+        core.analyze(&packrat_tui::net::parser::parse_ethernet(&raw, frame, packet.timestamp));
+        if frame < trigger {
+            assert!(core.alert_center.items.iter().all(|alert| alert.title != title));
+        }
+    }
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == title).unwrap();
+    let eligible = (1..=trigger).filter(|&frame| frame > threshold || frame % 2 == 1).collect::<Vec<_>>();
+    assert_eq!(alert.packet_refs, eligible[eligible.len().saturating_sub(8)..]);
+}
+
+#[rstest]
 #[case(false)]
 #[case(true)]
 fn repeated_tcp_bytes_do_not_accumulate_outbound_evidence(#[case] resegmented: bool) {
@@ -160,8 +182,8 @@ fn detects_large_high_entropy_outbound_transfer() {
             .any(|alert| alert.signature == "High-entropy outbound transfer")
     );
     for (rule, severity, revision, frames) in [
-        ("traffic.asymmetric_outbound", "MEDIUM", 10, (10..=17).collect::<Vec<_>>()),
-        ("traffic.high_entropy_outbound", "MEDIUM", 9, (1..=5).collect()),
+        ("traffic.asymmetric_outbound", "MEDIUM", 11, (10..=17).collect::<Vec<_>>()),
+        ("traffic.high_entropy_outbound", "MEDIUM", 10, (1..=5).collect()),
     ] {
         let alert = core
             .alert_center
