@@ -79,3 +79,81 @@ fn dns_reply_candidates_match_only_prior_questions_on_the_reverse_wire_path() {
         {"reply_frame":10,"query_candidate_frames":[]}
     ]));
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
+    use std::{env, fs, path::Path};
+
+    const SCOPE: &str = "00000000000000000000000000000001";
+    let root = tempfile::tempdir().unwrap();
+    let archive_path = root.path().join("archive");
+    let active = root.path().join("alerts.jsonl");
+    let previous = root.path().join("previous.jsonl");
+
+    let mut alerts = AlertCenter::default();
+    alerts.record(4, "IDS", "HIGH", "Private title", "Private detail");
+    let mut alert = alerts.items.remove(0);
+    alert.capture_id = Some(SCOPE.into());
+    alert.packet_refs = vec![1, 2, 3, 4];
+    fs::write(&active, "").unwrap();
+    fs::write(
+        &previous,
+        format!(
+            "{}\n",
+            json!({"schema_version":1,"record_type":"alert","session_id":"session-a","alert":alert})
+        ),
+    )
+    .unwrap();
+
+    let mut archive = PacketArchive::open(&archive_path).unwrap();
+    archive
+        .append_scoped(
+            SCOPE,
+            &[
+                dns_frame(1, 42, b"PrivateName", false, 10, 1),
+                dns_frame(2, 42, b"PrivateName", false, 10, 1),
+                dns_frame(3, 42, b"PrivateName", true, 10, 1),
+            ],
+        )
+        .unwrap();
+    drop(archive);
+
+    let executable = Path::new(env!("CARGO_BIN_EXE_packrat-archive"));
+    let path = env::join_paths(
+        std::iter::once(executable.parent().unwrap().to_owned())
+            .chain(env::split_paths(&env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/packrat-review-backlog.sh");
+    let output = Command::new("bash")
+        .arg(script)
+        .args(["--review-scope", "session-a", SCOPE, "--flow-context"])
+        .arg(&archive_path)
+        .arg(&active)
+        .arg(&previous)
+        .env("PATH", path)
+        .env("PACKRAT_BACKLOG_TIMEOUT", "30")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(!text.to_ascii_lowercase().contains("private"));
+    assert!(!text.contains("192.0.2."));
+    let report: Value = serde_json::from_str(&text).unwrap();
+    let findings = report["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1);
+    let finding = &findings[0];
+    assert_eq!(finding["packet_evidence_status"], "partial");
+    assert_eq!(
+        finding["evidence_availability"],
+        json!({"complete":3,"missing":1}),
+        "{finding}"
+    );
+    assert_eq!(finding["flow_context_status"], "checked");
+    assert_eq!(
+        finding["flow_context"],
+        json!({"directional_flows":2,"tcp_syn_ack_matches":0,"udp_dns_replies":1,
+               "udp_dns_replies_with_query_candidates":1,"udp_dns_ambiguous_replies":1})
+    );
+}
