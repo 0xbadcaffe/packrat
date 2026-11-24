@@ -114,12 +114,15 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
           | .directional_flows=[
               {protocol:"tcp",evidence_frames:1,initial_syn_frames:1,syn_ack_frames:0,reset_frames:0},
               {protocol:"tcp",evidence_frames:1,initial_syn_frames:0,syn_ack_frames:1,reset_frames:0}]
+          | .cited_syn_fanout={source_hosts:1,destination_hosts:1,destination_ports:1,capture_paths:1,
+              endpoint:"private source"}
           | .tcp_syn_ack_matches=[{syn_ack_frame:2,latest_candidate_syn_frame:1,
               prior_syn_candidates:1,later_ack_candidates:0,earliest_candidate_ack_frame:null}]
           | if $mode == "tcp_impossible_ack" then .tcp_syn_ack_matches[0].earliest_candidate_ack_frame=3
             elif $mode == "tcp_duplicate" then .tcp_syn_ack_matches += .tcp_syn_ack_matches
             elif $mode == "tcp_wrong_order" then .tcp_syn_ack_matches[0].latest_candidate_syn_frame=4
             elif $mode == "tcp_bad_flags" then .directional_flows[0].reset_frames=1
+            elif $mode == "tcp_bad_fanout" then .cited_syn_fanout.destination_hosts=2
             else . end
       elif $mode == "udp_flags" then
           .directional_flows[0] += {protocol:"udp",initial_syn_frames:0,syn_ack_frames:0,reset_frames:0}
@@ -169,7 +172,10 @@ FLOW_MODE=tcp_pair run_review --flow-context | jq -e '
     .findings[0].flow_context | .tcp_syn_ack_matches==1
     and .tcp_syn_ack_without_later_ack_candidates==1 and .tcp_syn_ack_with_later_ack_candidates==0
     and .tcp_syn_ack_ambiguous_candidates==0 and .tcp_flag_status=="reported"
-    and .cited_tcp_flags=={initial_syn_frames:1,syn_ack_frames:1,reset_frames:0}' >/dev/null
+    and .cited_tcp_flags=={initial_syn_frames:1,syn_ack_frames:1,reset_frames:0}
+    and .cited_syn_fanout=={source_hosts:1,destination_hosts:1,destination_ports:1,capture_paths:1}' >/dev/null
+FLOW_MODE=tcp_bad_fanout run_review --flow-context | jq -e '
+    .findings[0].flow_context | .tcp_flag_status=="reported" and (has("cited_syn_fanout")|not)' >/dev/null
 FLOW_MODE=tcp_bad_flags run_review --flow-context | jq -e '
     .findings[0].flow_context | .tcp_flag_status=="invalid" and (has("cited_tcp_flags")|not)' >/dev/null
 FLOW_MODE=udp_flags run_review --flow-context | jq -e '

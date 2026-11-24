@@ -7,7 +7,7 @@ usage() {
     printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--socket-context FILE] [--flow-context] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
-        'With --flow-context, report cited transport-header coverage, TCP flag counts, and candidate TCP and UDP DNS links without disclosing endpoints.' \
+        'With --flow-context, report cited transport-header coverage, initial SYN fan-out, and candidate TCP and UDP DNS links without disclosing endpoints.' \
         'Timing counts describe adjacent cited frames, not full-flow cadence.' \
         'Reader rule revisions are compared with saved revisions without reclassifying findings.' \
         'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
@@ -128,6 +128,12 @@ check_flow_context() {
                   syn_ack_frames:([.[].syn_ack_frames] | add),
                   reset_frames:([.[].reset_frames] | add)
               }} end;
+        def syn_fanout:
+            (tcp_flag_context | .cited_tcp_flags.initial_syn_frames // 0) as $syns
+            | ([.directional_flows[] | select((.initial_syn_frames | count) and .initial_syn_frames > 0)] | length) as $directions
+            | ((.cited_syn_fanout | objects | {source_hosts,destination_hosts,destination_ports,capture_paths}
+                | select($syns > 0 and all(.[]; count and . > 0 and . <= $directions))
+                | {cited_syn_fanout:.}) // {});
         def valid_trigger:
             (.trigger_tuple_status | IN("not_recorded","trigger_header_unavailable","matches_wire","differs_from_wire"))
             and (.trigger_frame | . == null or
@@ -170,7 +176,7 @@ check_flow_context() {
                 udp_dns_replies:(.udp_dns_reply_candidates|length),
                 udp_dns_replies_with_query_candidates:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 0)]|length),
                 udp_dns_ambiguous_replies:([.udp_dns_reply_candidates[] | select(.query_candidate_frames|length > 1)]|length)}
-                + timing_context + tcp_flag_context}
+                + timing_context + tcp_flag_context + syn_fanout}
           end
     ' <<< "$raw"
 }

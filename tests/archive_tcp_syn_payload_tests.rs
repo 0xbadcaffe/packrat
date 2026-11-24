@@ -97,6 +97,8 @@ fn archived_handshake_candidates_account_for_data_on_syn_and_syn_ack() {
         assert_eq!(context["tcp_flag_status"], "reported");
         assert_eq!(context["cited_tcp_flags"],
             json!({"initial_syn_frames":5,"syn_ack_frames":4,"reset_frames":0}));
+        assert_eq!(context["cited_syn_fanout"],
+            json!({"source_hosts":1,"destination_hosts":1,"destination_ports":1,"capture_paths":1}));
         let text = String::from_utf8(output.stdout).unwrap();
         assert!(!text.contains("10.0.0.") && !text.contains("earliest_candidate_ack_frame"));
     }

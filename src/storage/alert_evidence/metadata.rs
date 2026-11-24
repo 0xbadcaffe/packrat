@@ -15,6 +15,8 @@ use super::{
 
 #[path = "flow_timing.rs"]
 mod flow_timing;
+#[path = "syn_fanout.rs"]
+mod syn_fanout;
 
 #[derive(Serialize)]
 pub struct AlertPacketMetadata {
@@ -223,6 +225,8 @@ pub struct AlertFlowSummary {
     trigger_tuple_status: TriggerTupleStatus,
     directional_flows: Vec<DirectionalFlow>,
     tcp_syn_ack_matches: Vec<SynAckMatch>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cited_syn_fanout: Option<syn_fanout::CitedSynFanout>,
     udp_dns_reply_candidates: Vec<DnsReplyCandidates>,
     unassigned_frames: Vec<FlowFrameRef>,
     timing_limitation: &'static str,
@@ -297,6 +301,7 @@ pub fn alert_flow_summary(
         },
         directional_flows: Vec::new(),
         tcp_syn_ack_matches: Vec::new(),
+        cited_syn_fanout: None,
         udp_dns_reply_candidates: Vec::new(),
         unassigned_frames: Vec::new(),
         timing_limitation: "Gaps use capture-clock timestamps of adjacent cited frames in the same direction, in frame order. Frames missing capture time break the chain. Uncited or unassigned frames may intervene; these gaps do not establish full-flow cadence.",
@@ -378,6 +383,7 @@ pub fn alert_flow_summary(
         }
     }
     result.tcp_syn_ack_matches = syn_ack_matches(&flows);
+    result.cited_syn_fanout = syn_fanout::summarize(&flows);
     result.udp_dns_reply_candidates = dns_reply_candidates(&dns);
     let counts: BTreeMap<_, _> = flows.iter().map(|(key, value)| (key.clone(), value.evidence_frames)).collect();
     result.directional_flows = flows.into_iter().map(|(key, counts_for_flow)| {
