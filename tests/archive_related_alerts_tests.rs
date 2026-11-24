@@ -358,11 +358,10 @@ fn cited_flow_search_pivots_beyond_the_trigger_and_reports_incomplete_evidence()
     let mut second_path = packet(3, 1120., 81);
     second_path.capture.as_mut().unwrap().interface_id = 1;
     let mut reply = packet(6, 1119., 81);
-    reply.capture.as_mut().unwrap().interface_id = 1;
     for index in 0..4 { reply.bytes.swap(26 + index, 30 + index); }
     for index in 0..2 { reply.bytes.swap(34 + index, 36 + index); }
     archive.append_scoped("capture-a", &[
-        packet(1, 1000., 80), packet(2, 1100., 81), second_path, unreadable, reply,
+        packet(1, 1000., 80), packet(2, 1100., 81), second_path, unreadable, reply, packet(8, 1002., 80),
     ]).unwrap();
     archive.append_scoped("capture-b", &[packet(5, 1140., 81)]).unwrap();
     drop(archive);
@@ -401,11 +400,26 @@ fn cited_flow_search_pivots_beyond_the_trigger_and_reports_incomplete_evidence()
     assert!(matches[1].get("seconds_from_anchor_trigger").is_none());
     let verified = run(log.path(), "1", &[args[0], args[1], args[2], "--verify-trigger-frames"]);
     assert_eq!(verified["matches"][1]["trigger_evidence"]["status"], "matches_wire");
-    assert_eq!(verified["matches"][1]["captured_path_comparison"], "same_observed_path");
+    assert_eq!(verified["matches"][1]["captured_path_comparison"], "different_observed_path");
+    let strict = run(log.path(), "1", &[args[0], args[1], args[2], "--require-verified-path"]);
+    assert_eq!(strict["matching_alerts_in_sample"], 4);
+    let matches = strict["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["alert_id"], 2);
+    assert_eq!(matches[0]["direction"], "reverse");
+    assert_eq!(matches[0]["matched_cited_frame"], json!({"frame_number":2,"seconds_from_frame":19.0}));
+    assert_eq!(matches[0]["captured_path_comparison"], "same_observed_path");
+    assert_eq!(strict["verified_path_filter"]["same_observed_path"], 1);
     let unavailable = run(log.path(), "7", &args);
     assert_eq!(unavailable["status"], "cited_flow_evidence_unavailable");
     assert_eq!(unavailable["matching_alerts_in_sample"], 0);
     assert!(!command(log.path(), "1").args(SCOPE).arg("--match-cited-flows").output().unwrap().status.success());
+    let mut closer = record(8, 1002., Some(first), "session-a", "capture-a");
+    closer["alert"]["packet_no"] = json!(8);
+    writeln!(log, "{closer}").unwrap();
+    let ranked = run(log.path(), "1", &[args[0], args[1], args[2], "--require-verified-path"]);
+    let matches = ranked["matches"].as_array().unwrap();
+    assert_eq!(matches.iter().map(|entry| entry["alert_id"].as_u64().unwrap()).collect::<Vec<_>>(), [8, 2]);
 }
 
 #[test]

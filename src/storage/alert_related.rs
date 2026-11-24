@@ -325,10 +325,11 @@ pub fn related_alerts_query(
     } else if let Some((flow, trigger)) = anchor_flow.zip(trigger) {
         candidates.into_iter().filter_map(|alert| classify(alert, flow, trigger)).collect()
     } else { Vec::new() };
-    matches.sort_unstable_by(|left, right| {
+    let order_by_distance = |left: &RelatedAlert, right: &RelatedAlert| {
         left.distance().total_cmp(&right.distance())
             .then(left.snapshot.alert_id.cmp(&right.snapshot.alert_id))
-    });
+    };
+    matches.sort_unstable_by(order_by_distance);
     let matching_alerts_in_sample = matches.len();
     let mut path_filter = options.require_verified_path.then(|| VerifiedPathFilter {
         unchecked_candidates: matches.len().saturating_sub(MAX_PATH_CHECKS),
@@ -348,6 +349,13 @@ pub fn related_alerts_query(
             let snapshot = &alert.snapshot;
             let trigger_evidence = check_trigger(archive, capture, snapshot.frame,
                 Some((snapshot.flow, snapshot.time)), None, snapshot.derived_from_wire);
+            if options.require_verified_path
+                && let (Some(search), Some(path)) = (&cited, &trigger_evidence.path)
+                && let Some((frame, direction)) = search.nearest_frame(snapshot, Some(path))
+            {
+                alert.matched_cited_frame = Some(frame);
+                alert.direction = direction;
+            }
             let reference_path = if let Some(frame) = &alert.matched_cited_frame {
                 cited.as_ref().and_then(|search| search.path_for(frame.frame_number))
             } else { anchor_path };
@@ -366,6 +374,9 @@ pub fn related_alerts_query(
             Some(CapturedPathComparison::DifferentObservedPath) => { filter.different_observed_path += 1; false }
             _ => { filter.path_unavailable += 1; false }
         });
+        if cited.is_some() {
+            matches.sort_unstable_by(order_by_distance);
+        }
         matches.truncate(MAX_MATCHES);
     }
     Ok(RelatedAlertReport {

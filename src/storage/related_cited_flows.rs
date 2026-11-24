@@ -51,21 +51,33 @@ impl CitedFlowSearch {
 
     pub(super) fn path_for(&self, frame: u64) -> Option<&CapturePath> { self.paths.get(&frame) }
 
-    pub(super) fn classify(&self, snapshot: TriggerSnapshot) -> Option<RelatedAlert> {
+    pub(super) fn nearest_frame(
+        &self,
+        snapshot: &TriggerSnapshot,
+        required_path: Option<&CapturePath>,
+    ) -> Option<(CitedFrameMatch, &'static str)> {
         let flow = snapshot.flow;
         let reverse = AlertFlow { source: flow.destination, destination: flow.source, ..flow };
         let (frame_number, seconds_from_frame, direction) = [(flow, "same"), (reverse, "reverse")]
             .into_iter().flat_map(|(key, direction)| {
                 self.by_flow.get(&key).into_iter().flatten().filter_map(move |&(frame, time)| {
+                    if required_path.is_some_and(|path| self.path_for(frame) != Some(path)) {
+                        return None;
+                    }
                     let delta = snapshot.time - time;
                     (delta.abs() <= WINDOW_SECONDS as f64).then_some((frame, delta, direction))
                 })
             })
             .min_by(|left, right| left.1.abs().total_cmp(&right.1.abs()).then(left.0.cmp(&right.0)))?;
+        Some((CitedFrameMatch { frame_number, seconds_from_frame }, direction))
+    }
+
+    pub(super) fn classify(&self, snapshot: TriggerSnapshot) -> Option<RelatedAlert> {
+        let (frame, direction) = self.nearest_frame(&snapshot, None)?;
         Some(RelatedAlert {
             snapshot, seconds_from_anchor_trigger: None, direction, trigger_evidence: None,
             captured_path_comparison: None,
-            matched_cited_frame: Some(CitedFrameMatch { frame_number, seconds_from_frame }),
+            matched_cited_frame: Some(frame),
         })
     }
 }
