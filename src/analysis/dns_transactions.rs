@@ -21,7 +21,7 @@ use correlation::{ExchangeBucket, ReplyMatch};
 pub use investigation::{DnsExchangeEvidence, DnsQueryRetryEvidence, DnsReplyEvidence};
 use replies::{RecentResponse, ReplyOutcome, question_mismatch};
 
-const TRANSACTION_TTL_SECS: f64 = 30.0;
+pub(crate) const TRANSACTION_TTL_SECS: f64 = 30.0;
 const RESPONSE_TTL_SECS: f64 = 5.0;
 const MAX_TRANSACTIONS: usize = 2_048;
 
@@ -137,7 +137,7 @@ struct PendingQuery {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct Question {
+pub(crate) struct Question {
     name: String,
     qtype: u16,
     qclass: u16,
@@ -391,6 +391,11 @@ impl DnsQueryHeader {
 
 fn parse_message(bytes: &[u8]) -> Option<DnsMessage<'_>> {
     parse_single_question(bytes, DnsQueryHeader::parse(bytes)?)
+}
+
+pub(crate) fn captured_question(bytes: &[u8]) -> Option<(u16, bool, Question)> {
+    let message = parse_message(bytes)?;
+    Some((message.id, message.response, message.question))
 }
 
 pub(crate) fn wire_query_name(packet: &Packet) -> Option<String> {

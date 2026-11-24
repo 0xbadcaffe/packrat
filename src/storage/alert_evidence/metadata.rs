@@ -4,6 +4,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::analysis::alert_center::{AlertFlow, AlertTransport};
+use crate::analysis::dns_transactions::{Question, TRANSACTION_TTL_SECS, captured_question};
 use crate::analysis::packet_fields::{CapturedVlanTag, MAX_EVIDENCE_VLAN_TAGS, captured_transport_header};
 use crate::net::packet::Packet;
 
@@ -46,6 +47,8 @@ struct PacketMetadata {
     transport: Option<TransportHeader>,
     #[serde(skip)]
     flow: Option<FlowKey>,
+    #[serde(skip)]
+    dns: Option<(u16, bool, Question)>,
 }
 
 #[derive(Serialize)]
@@ -138,6 +141,21 @@ struct SynAckMatch {
 }
 
 #[derive(Serialize)]
+struct DnsReplyCandidates {
+    reply_frame: u64,
+    query_candidate_frames: Vec<u64>,
+}
+
+struct DnsObservation {
+    frame: u64,
+    timestamp: f64,
+    flow: FlowKey,
+    id: u16,
+    reply: bool,
+    question: Question,
+}
+
+#[derive(Serialize)]
 struct TriggerFrame {
     frame_number: u64,
     status: FrameStatus,
@@ -171,6 +189,7 @@ pub struct AlertFlowSummary {
     trigger_tuple_status: TriggerTupleStatus,
     directional_flows: Vec<DirectionalFlow>,
     tcp_syn_ack_matches: Vec<SynAckMatch>,
+    udp_dns_reply_candidates: Vec<DnsReplyCandidates>,
     unassigned_frames: Vec<FlowFrameRef>,
     limitation: &'static str,
 }
@@ -179,6 +198,17 @@ impl PacketMetadata {
     fn new(packet: &Packet) -> Self {
         let capture = packet.capture.as_ref();
         let wire = captured_transport_header(packet);
+        let dns = wire.as_ref().and_then(|wire| {
+            let (source, destination) = (wire.source.port(), wire.destination.port());
+            if wire.protocol != 17 || source == 0 || destination == 0
+                || wire.captured_payload_length != wire.declared_payload_length
+                || (source == 53) == (destination == 53)
+            {
+                return None;
+            }
+            let observed = captured_question(packet.bytes.get(wire.payload_range.clone())?)?;
+            (observed.1 == (source == 53)).then_some(observed)
+        });
         let transport = wire.as_ref().map(|wire| TransportHeader {
             protocol: if wire.protocol == 6 { "tcp" } else { "udp" },
             source_port: wire.source.port(),
@@ -208,6 +238,7 @@ impl PacketMetadata {
             interface_id: capture.map(|value| value.interface_id),
             transport,
             flow,
+            dns,
         }
     }
 }
@@ -230,10 +261,12 @@ pub fn alert_flow_summary(
         },
         directional_flows: Vec::new(),
         tcp_syn_ack_matches: Vec::new(),
+        udp_dns_reply_candidates: Vec::new(),
         unassigned_frames: Vec::new(),
-        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP handshake candidates account for declared SYN payload, but sequence matches do not establish endpoint acceptance or a specific retransmission. Earlier SYN candidates do not cross a cited reset or a different initial SYN in the same direction. Later ACK candidates do not cross a cited reset or another SYN. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
+        limitation: "Only cited evidence is summarized; unseen reverse traffic and endpoint outcomes are unknown. Payload sums count cited frame bytes, including possible retransmissions, not unique transfer bytes. Declared lengths can include uncaptured payload. TCP handshake candidates account for declared SYN payload, but sequence matches do not establish endpoint acceptance or a specific retransmission. Earlier SYN candidates do not cross a cited reset or a different initial SYN in the same direction. Later ACK candidates do not cross a cited reset or another SYN. UDP DNS candidates match complete cited datagrams with one question, the reverse tuple and path, and a 30-second window. These are candidate links, not proof of acceptance. Fragmented datagrams and frames beyond the VLAN depth limit have no flow summary.",
     };
     let mut flows = BTreeMap::<FlowKey, FlowCounts>::new();
+    let mut dns = Vec::new();
     for frame in metadata.frames {
         let is_trigger = metadata.trigger_frame_number == Some(frame.frame_number);
         if is_trigger {
@@ -273,6 +306,9 @@ pub fn alert_flow_summary(
                 TriggerTupleStatus::DiffersFromWire
             };
         }
+        if let (Some((id, reply, question)), Some(timestamp)) = (packet.dns, packet.timestamp) {
+            dns.push(DnsObservation { frame: frame.frame_number, timestamp, flow: flow.clone(), id, reply, question });
+        }
         let counts = flows.entry(flow).or_default();
         counts.frames.push(reference);
         counts.evidence_frames = counts.frames.len();
@@ -302,6 +338,7 @@ pub fn alert_flow_summary(
         }
     }
     result.tcp_syn_ack_matches = syn_ack_matches(&flows);
+    result.udp_dns_reply_candidates = dns_reply_candidates(&dns);
     let counts: BTreeMap<_, _> = flows.iter().map(|(key, value)| (key.clone(), value.evidence_frames)).collect();
     result.directional_flows = flows.into_iter().map(|(key, counts_for_flow)| {
         let reverse = key.reversed();
@@ -309,6 +346,18 @@ pub fn alert_flow_summary(
         DirectionalFlow { key, counts: counts_for_flow, reverse_evidence_frames }
     }).collect();
     Ok(result)
+}
+
+fn dns_reply_candidates(observations: &[DnsObservation]) -> Vec<DnsReplyCandidates> {
+    observations.iter().filter(|reply| reply.reply).map(|reply| {
+        let request_flow = reply.flow.reversed();
+        let query_candidate_frames = observations.iter()
+            .filter(|query| !query.reply && query.frame < reply.frame
+                && (0.0..=TRANSACTION_TTL_SECS).contains(&(reply.timestamp - query.timestamp))
+                && query.flow == request_flow && query.id == reply.id && query.question == reply.question)
+            .map(|query| query.frame).collect();
+        DnsReplyCandidates { reply_frame: reply.frame, query_candidate_frames }
+    }).collect()
 }
 
 fn syn_ack_matches(flows: &BTreeMap<FlowKey, FlowCounts>) -> Vec<SynAckMatch> {

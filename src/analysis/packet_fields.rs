@@ -80,6 +80,7 @@ pub(crate) struct CapturedTransportHeader {
     pub tcp_sequence_pair: Option<(u32, u32)>,
     pub declared_payload_length: usize,
     pub captured_payload_length: usize,
+    pub payload_range: std::ops::Range<usize>,
     pub vlan_stack: Vec<CapturedVlanTag>,
 }
 
@@ -122,6 +123,7 @@ pub(crate) fn captured_transport_header(packet: &Packet) -> Option<CapturedTrans
         tcp_sequence_pair,
         declared_payload_length: transport.declared_end - transport.payload_offset,
         captured_payload_length: transport.end - transport.payload_offset,
+        payload_range: transport.payload_offset..transport.end,
         vlan_stack,
     })
 }
