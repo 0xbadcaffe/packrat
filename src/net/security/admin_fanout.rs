@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
 use super::*;
+use crate::net::flow::acknowledges_syn;
 use crate::net::recent_evidence::RecentEvidence;
 
 const SYN_TIMEOUT: f64 = 15.0;
 const FANOUT_WINDOW: f64 = 60.0;
 const MAX_PENDING: usize = 2048;
+const MAX_PENDING_PER_TUPLE: usize = 8;
 const MAX_TARGETS: usize = 64;
 const REARM_TARGETS: usize = LATERAL_TARGET_THRESHOLD / 2;
 const INITIAL_SYN: u8 = 0x02;
@@ -22,7 +24,18 @@ struct SynKey {
     scope: ServiceScope,
     client: (String, u16),
     server: (String, u16),
-    expected_ack: u32,
+}
+
+struct SynAttempt {
+    sequence: u32,
+    payload_length: u32,
+    samples: PendingSyn,
+}
+
+#[derive(Default)]
+struct PendingTuple {
+    attempts: Vec<SynAttempt>,
+    overflow_at: Option<f64>,
 }
 
 #[derive(Clone, Copy)]
@@ -68,7 +81,9 @@ struct RespondedTargets {
 
 #[derive(Default)]
 pub(super) struct AdminFanout {
-    pending: HashMap<SynKey, PendingSyn>,
+    pending: HashMap<SynKey, PendingTuple>,
+    pending_count: usize,
+    untracked_at: Option<f64>,
     responders: HashMap<(ServiceScope, String, u16), RespondedTargets>,
     // A cited SYN may precede the oldest in-window reply by the full SYN timeout.
     evidence: RecentEvidence<1024, 75>,
@@ -77,8 +92,75 @@ pub(super) struct AdminFanout {
 impl AdminFanout {
     pub(super) fn clear(&mut self) {
         self.pending.clear();
+        self.pending_count = 0;
+        self.untracked_at = None;
         self.responders.clear();
         self.evidence = Default::default();
+    }
+
+    fn remember_syn(&mut self, key: SynKey, tcp: TcpSignal, sample: SynSample) -> bool {
+        if let Some(tuple) = self.pending.get_mut(&key) {
+            if let Some(attempt) = tuple.attempts.iter_mut().find(|attempt| {
+                (attempt.sequence, attempt.payload_length) == (tcp.sequence, tcp.payload_length)
+            }) {
+                return attempt.samples.retry(sample);
+            }
+        }
+        if self.pending_count >= MAX_PENDING {
+            self.pending_count = 0;
+            self.pending.retain(|_, tuple| {
+                tuple.attempts.retain(|attempt| sample.at - attempt.samples.latest.at <= SYN_TIMEOUT);
+                self.pending_count += tuple.attempts.len();
+                if tuple.attempts.is_empty()
+                    && let Some(at) = tuple.overflow_at.filter(|at| sample.at - at <= SYN_TIMEOUT)
+                {
+                    self.untracked_at = Some(self.untracked_at.map_or(at, |latest| latest.max(at)));
+                }
+                !tuple.attempts.is_empty()
+            });
+            if self.pending_count >= MAX_PENDING {
+                let overflow = self.pending.get_mut(&key).map_or(&mut self.untracked_at, |tuple| &mut tuple.overflow_at);
+                *overflow = Some(overflow.map_or(sample.at, |at| at.max(sample.at)));
+                return false;
+            }
+        }
+        let tuple = self.pending.entry(key).or_default();
+        let attempts = &mut tuple.attempts;
+        let before = attempts.len();
+        attempts.retain(|attempt| sample.at - attempt.samples.latest.at <= SYN_TIMEOUT);
+        self.pending_count -= before - attempts.len();
+        if attempts.len() >= MAX_PENDING_PER_TUPLE {
+            tuple.overflow_at = Some(tuple.overflow_at.map_or(sample.at, |at| at.max(sample.at)));
+            return false;
+        }
+        attempts.push(SynAttempt {
+            sequence: tcp.sequence, payload_length: tcp.payload_length, samples: PendingSyn::new(sample),
+        });
+        self.pending_count += 1;
+        true
+    }
+
+    fn take_unique_syn(&mut self, key: &SynKey, reply: &Packet, acknowledgement: u32) -> Option<u64> {
+        let tuple = self.pending.get_mut(key)?;
+        // A dropped attempt might also match this reply.
+        if [self.untracked_at, tuple.overflow_at].into_iter().flatten()
+            .any(|at| reply.timestamp - at <= SYN_TIMEOUT)
+        {
+            return None;
+        }
+        let attempts = &mut tuple.attempts;
+        let mut matches = attempts.iter().enumerate().filter_map(|(index, attempt)| {
+            if !acknowledges_syn(attempt.sequence, attempt.payload_length, acknowledgement) {
+                return None;
+            }
+            Some((index, attempt.samples.matched_frame(reply.timestamp, reply.no)?))
+        });
+        let (index, frame) = matches.next()?;
+        if matches.next().is_some() { return None; }
+        attempts.swap_remove(index);
+        self.pending_count -= 1;
+        if attempts.is_empty() { self.pending.remove(key); }
+        Some(frame)
     }
 
     fn observe(&mut self, pkt: &Packet, tcp: TcpSignal, archive_rules: Option<&[String]>) -> Option<IdsFinding> {
@@ -100,22 +182,9 @@ impl AdminFanout {
                 scope,
                 client: (pkt.src.clone(), tcp.source_port),
                 server: (pkt.dst.clone(), tcp.destination_port),
-                expected_ack: tcp.sequence.wrapping_add(1),
             };
             let sample = SynSample { at: now, frame: pkt.no };
-            let accepted = if let Some(pending) = self.pending.get_mut(&key) {
-                pending.retry(sample)
-            } else {
-                if self.pending.len() >= MAX_PENDING {
-                    self.pending.retain(|_, pending| now - pending.latest.at <= SYN_TIMEOUT);
-                }
-                if self.pending.len() < MAX_PENDING {
-                    self.pending.insert(key, PendingSyn::new(sample));
-                    true
-                } else {
-                    false
-                }
-            };
+            let accepted = self.remember_syn(key, tcp, sample);
             if accepted && retains_evidence(archive_rules) {
                 self.evidence.remember(pkt);
             }
@@ -125,10 +194,8 @@ impl AdminFanout {
             scope,
             client: (pkt.dst.clone(), tcp.destination_port),
             server: (pkt.src.clone(), tcp.source_port),
-            expected_ack: tcp.acknowledgement,
         };
-        let syn = self.pending.get(&key)?.matched_frame(now, pkt.no)?;
-        self.pending.remove(&key);
+        let syn = self.take_unique_syn(&key, pkt, tcp.acknowledgement)?;
         if retains_evidence(archive_rules) {
             self.evidence.remember(pkt);
         }
