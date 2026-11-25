@@ -43,6 +43,39 @@ fn run_suite(manifest: &Path) -> Output {
     run_suite_with_baseline(manifest, None)
 }
 fn run_suite_with_baseline(manifest: &Path, baseline: Option<&str>) -> Output {
+    let output = replay_command(manifest, baseline).output().unwrap();
+    if baseline.is_none()
+        && output.status.success()
+        && let Some(previous) = std::env::var_os("PACKRAT_REPLAY_RELEASE_BASELINE")
+    {
+        let previous = Path::new(&previous)
+            .canonicalize()
+            .expect("release baseline analyzer path");
+        let previous = previous.to_str().expect("UTF-8 release baseline analyzer path");
+        let verdict = replay_command(manifest, Some(previous)).output().unwrap();
+        let report: Value = serde_json::from_slice(&verdict.stdout).unwrap_or_else(|error| {
+            panic!("release replay report: {error}: {}", String::from_utf8_lossy(&verdict.stderr))
+        });
+        let cases = report["cases"].as_array().expect("release replay cases");
+        let summary = cases.iter().map(|case| {
+            let fingerprint = &case["summary"]["frame_coverage_sha256_v1"];
+            json!({
+                "name": case["name"], "comparison": case["comparison"], "candidate": case["score"],
+                "baseline": case["baseline"]["score"], "delta": case["delta"],
+                "packets": case["summary"]["packets"],
+                "matching_frame_fingerprint": case["comparison"] == "comparable" && fingerprint.is_string()
+                    && *fingerprint == case["baseline"]["summary"]["frame_coverage_sha256_v1"],
+            })
+        }).collect::<Vec<_>>();
+        eprintln!("release replay: {}", json!({
+            "manifest": manifest.file_name().unwrap().to_string_lossy(), "cases": summary
+        }));
+        assert!(verdict.status.success(), "release replay comparison failed for {}", manifest.display());
+    }
+    output
+}
+
+fn replay_command(manifest: &Path, baseline: Option<&str>) -> Command {
     let analyzer = Path::new(env!("CARGO_BIN_EXE_packrat-analyze"));
     let existing_path = std::env::var_os("PATH").unwrap_or_default();
     let path = std::env::join_paths(
@@ -60,7 +93,7 @@ fn run_suite_with_baseline(manifest: &Path, baseline: Option<&str>) -> Output {
     if let Some(baseline) = baseline {
         command.env("PACKRAT_REPLAY_BASELINE_ANALYZER", baseline);
     }
-    command.output().unwrap()
+    command
 }
 fn write_fixture(path: &Path, distinct_responses: bool) {
     let mut capture = PcapNgWriter::create(path).unwrap();
