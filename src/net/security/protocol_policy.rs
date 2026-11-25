@@ -7,6 +7,10 @@ const MAX_DHCP_SCOPES: usize = 128;
 const MAX_DHCP_CLIENTS: usize = 128;
 const MAX_DHCP_SERVERS: usize = 32;
 
+#[cfg(test)]
+#[path = "../../../tests/unit/http_framing_scope_tests.rs"]
+mod http_framing_scope_tests;
+
 impl SecurityEngine {
     // ─── DHCP Authority and Starvation ──────────────────────────────────────
 
@@ -186,33 +190,34 @@ impl SecurityEngine {
         let Some(TcpFrame::Segment(segment)) = parse_ipv4_tcp_frame(&pkt.bytes) else {
             return;
         };
-        let destination_port = pkt.dst_port.unwrap_or(0);
-        if !matches!(destination_port, 80 | 3000 | 8000 | 8080 | 8888) || segment.payload.is_empty()
+        let (source, destination) = if segment.from_a {
+            (segment.key.endpoint_a, segment.key.endpoint_b)
+        } else {
+            (segment.key.endpoint_b, segment.key.endpoint_a)
+        };
+        if !segment.complete || !pkt.timestamp.is_finite() || segment.payload.is_empty()
+            || !matches!(destination.port(), 80 | 3000 | 8000 | 8080 | 8888)
         {
             return;
         }
-        self.http_headers.retain(|_, state| {
-            pkt.timestamp < state.last_seen || pkt.timestamp - state.last_seen <= 30.0
+        let scope = scan_scope(pkt);
+        let interface = (scope.0).0;
+        self.http_headers.retain(|(path, _, _), state| {
+            (path.0).0 != interface || pkt.timestamp - state.last_seen <= 30.0
         });
-        if self.http_headers.len() >= MAX_SCAN_STATES
-            && !self
-                .http_headers
-                .contains_key(&(segment.key.clone(), segment.from_a))
-        {
+        let key = (scope, segment.key, segment.from_a);
+        if self.http_headers.len() >= MAX_SCAN_STATES && !self.http_headers.contains_key(&key) {
             if let Some(oldest) = self
                 .http_headers
                 .iter()
-                .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen))
+                .min_by(|left, right| left.1.last_seen.total_cmp(&right.1.last_seen).then(left.0.cmp(right.0)))
                 .map(|(key, _)| key.clone())
             {
                 self.http_headers.remove(&oldest);
             }
         }
 
-        let state = self
-            .http_headers
-            .entry((segment.key, segment.from_a))
-            .or_default();
+        let state = self.http_headers.entry(key).or_default();
         state.last_seen = pkt.timestamp;
         if state.complete {
             return;
@@ -229,14 +234,15 @@ impl SecurityEngine {
         };
         state.complete = true;
         if let Some(reason) = http_smuggling_reason(&state.bytes[..header_end]) {
-            self.push_ids(IdsAlert {
-                pkt_no: pkt.no,
-                signature: "HTTP request smuggling ambiguity",
-                severity: Severity::Critical,
-                detail: format!(
-                    "{reason} from {} to {}:{destination_port}",
-                    pkt.src, pkt.dst
-                ),
+            self.push_ids_finding(IdsFinding {
+                alert: IdsAlert {
+                    pkt_no: pkt.no,
+                    signature: "HTTP request smuggling ambiguity",
+                    severity: Severity::Critical,
+                    detail: format!("{reason} from {source} to {destination}"),
+                },
+                related_packets: Vec::new(),
+                correlation_key: Some(format!("{scope:?}:{source}>{destination}")),
             });
         }
     }

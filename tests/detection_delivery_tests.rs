@@ -22,14 +22,15 @@ fn saturated_ids_history_does_not_suppress_new_critical_incidents() {
     assert_eq!(app.core.read().unwrap().security.ids_alerts.len(), 1000);
     assert!(app.alert_overlay_open);
     let core = app.core.read().unwrap();
-    let alert = core
+    let mut delivered: Vec<_> = core
         .alert_center
         .items
         .iter()
-        .find(|item| item.source == "IDS" && item.title == "HTTP request smuggling ambiguity")
-        .unwrap();
-    assert_eq!(alert.hit_count, 2);
-    assert_eq!(alert.last_packet, 1002);
+        .filter(|item| item.source == "IDS" && item.title == "HTTP request smuggling ambiguity")
+        .map(|item| (item.first_packet, item.last_packet, item.hit_count))
+        .collect();
+    delivered.sort_unstable();
+    assert_eq!(delivered, [(1001, 1001, 1), (1002, 1002, 1)]);
     assert_eq!(core.incidents.active().unwrap().last_packet, 1002);
 }
 
