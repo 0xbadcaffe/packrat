@@ -10,6 +10,7 @@ usage() {
         'Rate deltas require 300 comparable seconds and 1000 comparable packets in each capture by default.' \
         'Override with PACKRAT_BASELINE_MIN_SECONDS and PACKRAT_BASELINE_MIN_PACKETS.' \
         'Per-rule deltas require the same single revision to be observed in both windows.' \
+        'Known different or mixed capture link types prevent rate comparison.' \
         'Observed alert openings do not measure detector accuracy or total network activity.'
 }
 
@@ -20,6 +21,10 @@ read_baseline() {
         def token: type == "string" and test("\\A[A-Za-z0-9_.:-]{1,128}\\z");
         def scope: type == "object" and (.capture_id | token) and (.session_id | token);
         def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+        def capture_link:
+            .capture_link | objects | {status,link_type}
+            | select(if .status == "verified" then (.link_type | count and . <= 65535)
+                     else (.status | IN("mixed","unverified")) and .link_type == null end);
         def dns_capacity_summary:
             . as $coverage | .dns_capacity_coverage | objects
             | {no_decline_intervals,decline_intervals,unverified_intervals,no_decline_packets,no_decline_seconds,
@@ -121,6 +126,7 @@ read_baseline() {
             | if ($times | length) == 3 and $times[0] <= $times[1] and $times[1] <= $times[2]
                 and $c.healthy_seconds <= $times[1] - $times[0] then
                   {interface:$b.interface,scope:$b.scope,capture_run_id:$b.capture_run_id,sha256:$b.sha256,
+                   capture_link:($c | capture_link // null),
                    coverage_policy:(if $c.coverage_policy | IN("capture_loss_counters_v1","continuous_journal_v2","continuous_journal_v3","continuous_journal_v4","continuous_journal_v5","continuous_journal_v6") or verified_rate_policy then $c.coverage_policy else null end),
                    journal_tail_unconfirmed_events:($c.journal_tail_unconfirmed_events | if count then . else null end),
                    alert_journal_counter_unverified_intervals:($c.alert_journal_counter_unverified_intervals | if count then . else null end),
@@ -214,6 +220,10 @@ printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --arg
         or $before.scope.session_id == $after.scope.session_id
         or $before.capture_run_id == $after.capture_run_id) as $shared
     | ($before.sha256 == $after.sha256) as $same_build
+    | (if $before.capture_link.status == "mixed" or $after.capture_link.status == "mixed" then "mixed"
+       elif $before.capture_link.status == "verified" and $after.capture_link.status == "verified" then
+           if $before.capture_link.link_type == $after.capture_link.link_type then "matched" else "different" end
+       else "unverified" end) as $link_status
     | if $shared and ($before.scope != $after.scope or $before.capture_run_id != $after.capture_run_id
              or $before.interface != $after.interface or ($same_build | not)) then
         error("Conflicting metadata for the same capture")
@@ -221,6 +231,8 @@ printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --arg
         (if $shared then "same_capture"
          elif $before.interface != $after.interface then "different_interfaces"
          elif $before.last_record_at > $after.first_record_at then "overlapping_or_reversed_windows"
+         elif $link_status == "mixed" then "capture_link_type_mixed"
+         elif $link_status == "different" then "different_capture_link_types"
          elif ($before.coverage_policy | IN("continuous_journal_v7","continuous_journal_v8") | not)
                or $before.coverage_policy != $after.coverage_policy then
            "coverage_policy_unverified"
@@ -239,6 +251,7 @@ printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --arg
            elif $rules.deltas == [] then "rule_revisions_unverified"
            else "partially_comparable" end) as $rule_status
         | {record_type:"capture_build_comparison",status:$status,same_build:$same_build,
+           capture_link_comparison:$link_status,
            before:$before,after:$after,comparison_minimums:{seconds:$seconds,packets:$packets},
            rule_rate_status:$rule_status,
            rule_rate_deltas:$rules.deltas,rule_rate_unpaired:$rules.unpaired,

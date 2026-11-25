@@ -32,6 +32,13 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
     def id: type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z");
     def scope: (.capture_id | id) and (.session_id | id);
     def counter: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+    def link_type: .link_type | if counter and . <= 65535 then . else null end;
+    def capture_link_summary($sample):
+        [$sample[] | select(.status == "current") | link_type] as $types
+        | ($types | map(numbers) | unique) as $known
+        | if ($known | length) > 1 then {status:"mixed",link_type:null}
+          elif $known == [] or ($types | index(null)) != null then {status:"unverified",link_type:null}
+          else {status:"verified",link_type:$known[0]} end;
     def valid_record:
         type == "object" and .record_type == "capture_triage_watch"
         and (.status | id) and (.updated_at | type == "string" and test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z"));
@@ -175,7 +182,9 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         and (if ($earlier.journal_unconfirmed_events | counter) and ($later.journal_unconfirmed_events | counter)
              then $earlier.journal_unconfirmed_events == $later.journal_unconfirmed_events else true end);
     def pair($earlier; $later):
+        ($earlier | link_type) as $before_link | ($later | link_type) as $after_link |
         if ($earlier | healthy) and ($later | healthy)
+            and ($before_link == null or $after_link == null or $before_link == $after_link)
             and $earlier.healthy_capture_since == $later.healthy_capture_since
             and $later.tick > $earlier.tick and $later.packets >= $earlier.packets
             and no_capture_loss_between($earlier; $later)
@@ -214,6 +223,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        status:(if ($sample | length) == 0 then "no_capture_records"
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
        scope:$key, journal_tail_status:$all[-1].status,
+       capture_link:capture_link_summary($sample),
        journal_tail_unconfirmed_events:($all[-1].journal_unconfirmed_events | if counter then . else null end),
        first_record_at:$sample[0].updated_at,last_record_at:$sample[-1].updated_at,
        scoped_records:($sample | length),

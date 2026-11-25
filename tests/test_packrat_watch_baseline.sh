@@ -29,6 +29,23 @@ jq '.build.scope = {capture_id:"b",session_id:"two"} | .coverage.scope = .build.
     | .coverage.observed_openings = 0' "$before" > "$after"
 
 unset PACKRAT_BASELINE_MIN_SECONDS PACKRAT_BASELINE_MIN_PACKETS
+jq '.coverage.capture_link={status:"verified",link_type:1,detail:"private"}' "$before" > "$tmp/link-before"
+jq '.coverage.capture_link={status:"verified",link_type:113}' "$after" > "$tmp/link-after"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/link-before" "$tmp/link-after" | jq -e '
+    .status=="different_capture_link_types" and .capture_link_comparison=="different"
+    and .before.capture_link=={status:"verified",link_type:1}
+    and .rule_rate_deltas==null and .observed_rate_delta_per_10000_packets==null' >/dev/null
+jq '.coverage.capture_link={status:"mixed",link_type:null}' "$after" > "$tmp/link-mixed"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$before" "$tmp/link-mixed" | jq -e '
+    .status=="capture_link_type_mixed" and .capture_link_comparison=="mixed"
+    and .observed_rate_delta_per_10000_packets==null' >/dev/null
+jq '.coverage.capture_link.link_type=1' "$tmp/link-after" > "$fixture"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/link-before" "$fixture" | jq -e '
+    .status=="separate_capture_windows" and .capture_link_comparison=="matched"
+    and .observed_rate_delta_per_10000_packets==-5' >/dev/null
+jq '.coverage.capture_link.link_type=-1' "$tmp/link-after" > "$fixture"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/link-before" "$fixture" | jq -e '
+    .status=="separate_capture_windows" and .capture_link_comparison=="unverified" and .after.capture_link==null' >/dev/null
 dns_coverage='{"no_decline_intervals":0,"decline_intervals":1,"unverified_intervals":0,"no_decline_packets":0,"no_decline_seconds":0,"observed_declines":{"query_key_declines":2,"query_candidate_declines":1,"nxdomain_client_declines":0,"external_resolver_pair_declines":0}}'
 jq --argjson dns "$dns_coverage" '.coverage.dns_capacity_coverage=$dns | .coverage.dns_capacity_coverage.note="private"' \
     "$after" > "$tmp/dns-after.json"

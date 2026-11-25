@@ -25,6 +25,7 @@ bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
     and .scoped_records==6 and .healthy_intervals==3 and .excluded_intervals==2
     and .journal_discontinuities==0 and .journal_tail_unconfirmed_events==0 and .alert_journal_counter_unverified_intervals==0
     and .alert_log_snapshot_unverified_intervals==0
+    and .capture_link=={status:"unverified",link_type:null}
     and .healthy_seconds==180 and .healthy_packets==80 and .alert_comparable_intervals==2
     and .alert_comparable_packets==60 and .alert_comparable_seconds==120 and .observed_openings==2
     and .opening_rule_breakdown=={rules:[],unattributed_openings:2,omitted_rule_openings:0}
@@ -35,6 +36,13 @@ bash "$coverage" <<< "$sample" | jq -e '.status=="insufficient_coverage" and .sc
 bash "$coverage" </dev/null | jq -e '.status=="no_capture_records" and .scope==null' >/dev/null
 bash "$coverage" --capture-id missing --session a-1 <<< "$sample" |
     jq -e '.status=="no_capture_records" and .scope.capture_id=="missing"' >/dev/null
+jq -sc '.[0:4][] | .link_type=1' <<< "$sample" | bash "$coverage" | jq -e '
+    .capture_link=={status:"verified",link_type:1} and .healthy_intervals==3 and .observed_openings==2' >/dev/null
+jq -sc '.[0:4][] | .link_type=(if .journal_sequence < 3 then 1 else 113 end)' <<< "$sample" | bash "$coverage" | jq -e '
+    .capture_link=={status:"mixed",link_type:null} and .healthy_intervals==2 and .excluded_intervals==1
+    and .alert_comparable_packets==25 and .observed_openings==0' >/dev/null
+jq -sc '.[0:4][] | .link_type=(if .journal_sequence==3 then -1 else 1 end)' <<< "$sample" | bash "$coverage" | jq -e '
+    .capture_link=={status:"unverified",link_type:null} and .healthy_intervals==3 and .observed_openings==2' >/dev/null
 bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
     .dns_capacity_coverage == {no_decline_intervals:0,decline_intervals:0,unverified_intervals:3,
         no_decline_packets:0,no_decline_seconds:0,observed_declines:null}
