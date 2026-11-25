@@ -5,6 +5,7 @@ dir=$(mktemp -d)
 trap 'rm -rf -- "$dir"' EXIT
 cp -- "$(dirname "$0")/../scripts/packrat-review-backlog.sh" "$dir/packrat-review-backlog"
 export TEST_DIR=$dir
+unset PACKRAT_BACKLOG_SCAN_BYTES
 touch -- "$dir/alerts.jsonl" "$dir/previous.jsonl"
 cat > "$dir/packrat-triage" <<'STUB'
 #!/usr/bin/env bash
@@ -27,7 +28,7 @@ elif [[ ${TEST_MODE:-normal} == legacy_tuple ]]; then
 fi
 if [[ ${FLOW_MODE:-normal} == tcp_ack_* ]]; then base=$(jq -c '.evidence_frame_count=3' <<< "$base"); fi
 if [[ $1 == --list-saved ]]; then
-    [[ ! -v PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE ]]
+    [[ ! -v PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE && $PACKRAT_TRIAGE_INDEX_SCAN_BYTES == "${PACKRAT_TEST_SCAN_BYTES:-8388608}" ]]
     shift
     offset=0 rule='' review_session='' review_capture=''
     if [[ $1 == --review-scope ]]; then review_session=$2 review_capture=$3; shift 3; fi
@@ -65,7 +66,7 @@ if [[ $1 == --list-saved ]]; then
     exit
 fi
 [[ $1 == --saved-alert && $2 == "$session" && $3 == "$capture" &&
-    $5 == "$TEST_DIR/alerts.jsonl" && $6 == "$TEST_DIR/previous.jsonl" && $PACKRAT_TRIAGE_EXACT_SCAN_BYTES == 8388608 ]]
+    $5 == "$TEST_DIR/alerts.jsonl" && $6 == "$TEST_DIR/previous.jsonl" && $PACKRAT_TRIAGE_EXACT_SCAN_BYTES == "${PACKRAT_TEST_SCAN_BYTES:-8388608}" ]]
 printf '%s\n' "$4" >> "$TEST_DIR/checks"
 if [[ ${TEST_MODE:-normal} == evidence_race && $4 == 3 ]]; then printf 'late record\n' >>"$6"; fi
 if [[ ${TEST_MODE:-normal} == timed ]]; then sleep 20; fi
@@ -128,7 +129,7 @@ set -euo pipefail
 [[ $# == 11 && $1 == "$TEST_DIR" && $2 == --alert-flow-summary &&
     $3 == "$TEST_DIR/alerts.jsonl" && $4 == session-a &&
     $6 == --capture-id && $7 == 00000000000000000000000000000001 &&
-    $8 == --scan-bytes && $9 == 8388608 && ${10} == --previous-log && ${11} == "$TEST_DIR/previous.jsonl" ]]
+    $8 == --scan-bytes && $9 == "${PACKRAT_TEST_SCAN_BYTES:-8388608}" && ${10} == --previous-log && ${11} == "$TEST_DIR/previous.jsonl" ]]
 [[ ${FLOW_MODE:-} != scan_budget_exhausted ]] || exit 3
 printf '%s\n' "$5" >> "$TEST_DIR/flow-checks"
 jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${FLOW_MODE:-normal}" '
@@ -263,6 +264,7 @@ run_review() {
 }
 run_review | jq -e '
     .record_type == "saved_alert_evidence_review" and .index_status == "saved"
+    and .alert_log_scan_bytes == 8388608
     and .sample_review_latency == null
     and .sampled_unscoped_open_high_or_critical == 3 and .review_shortlist_truncated and .sample_scan_complete
     and .review_offset == 0 and .next_review_offset == 5 and .review_eligible_in_sample == 7
@@ -476,4 +478,15 @@ PACKRAT_BACKLOG_TIMEOUT=2 TEST_MODE=timed run_review | jq -e '
     [.findings[].packet_evidence_status] ==
         ["check_timed_out","check_deferred","check_deferred","check_deferred","check_deferred"]' >/dev/null
 [[ $(wc -l < "$dir/checks") == 1 ]]
+report=$(PACKRAT_BACKLOG_SCAN_BYTES=16777216 PACKRAT_TEST_SCAN_BYTES=16777216 run_review --flow-context)
+jq -e '.alert_log_scan_bytes == 16777216 and .findings[0].flow_context_status == "checked"' <<< "$report" >/dev/null
+custom_token=$(jq -er '.review_snapshot_token' <<< "$report")
+PACKRAT_BACKLOG_SCAN_BYTES=16777216 PACKRAT_TEST_SCAN_BYTES=16777216 run_review --review-offset 5 --snapshot-token "$custom_token" |
+    jq -e '[.findings[].alert_id]==[6,7]' >/dev/null
+if run_review --review-offset 5 --snapshot-token "$custom_token" >/dev/null 2>&1; then exit 1; fi
+for bad_budget in 0 08 67108865; do
+    status=0
+    PACKRAT_BACKLOG_SCAN_BYTES=$bad_budget run_review >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
+done
 printf '%s\n' 'saved alert backlog evidence tests passed'

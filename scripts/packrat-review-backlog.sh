@@ -2,7 +2,7 @@
 # Check saved findings against a packet archive without exporting frames.
 set -euo pipefail
 export LC_ALL=C
-readonly scan_bytes=8388608
+readonly scan_bytes=${PACKRAT_BACKLOG_SCAN_BYTES:-8388608}
 
 usage() {
     printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--snapshot-token SHA256] [--socket-context FILE] [--flow-context] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
@@ -17,10 +17,13 @@ usage() {
         'UDP DNS timing counts distinguish capture-clock, legacy, unavailable, and unreported reply times.' \
         'Review latency covers the saved-alert sample, not the current shortlist or rule filter.' \
         'Reader rule revisions are compared with saved revisions without reclassifying findings.' \
-        'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds).'
+        'PACKRAT_BACKLOG_TIMEOUT sets the shared deadline (default: 15 seconds); PACKRAT_BACKLOG_SCAN_BYTES sets the per-lookup limit (default: 8 MiB, max: 64 MiB).'
 }
 
 if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
+if [[ ! $scan_bytes =~ ^[1-9][0-9]{0,7}$ ]] || (( scan_bytes > 67108864 )); then
+    printf '%s\n' 'PACKRAT_BACKLOG_SCAN_BYTES must be between 1 and 67108864 bytes.' >&2; exit 2
+fi
 offset=0 rule='' session_scope='' capture_scope='' socket_file='' expected_token='' index_args=() flow_context=false
 if [[ ${1-} == --review-scope ]]; then
     session_scope=${2-} capture_scope=${3-}
@@ -70,7 +73,7 @@ deadline=$((SECONDS + budget))
 review_snapshot_token() {
     local log sum
     sum=$({
-        printf '%s\0' 'packrat-backlog-snapshot-v1' "$session_scope" "$capture_scope" "$rule"
+        printf '%s\0' 'packrat-backlog-snapshot-v2' "$session_scope" "$capture_scope" "$rule" "$scan_bytes"
         for log in "$@"; do
             [[ -f $log ]] && TZ=UTC0 stat -L --format='%d:%i:%s:%y:%z' -- "$log" || return 1
         done
@@ -79,7 +82,7 @@ review_snapshot_token() {
 }
 snapshot=$(review_snapshot_token "$@") || { printf '%s\n' 'Expected regular saved alert logs.' >&2; exit 2; }
 if [[ -n $expected_token && $expected_token != "$snapshot" ]]; then
-    printf '%s\n' 'Saved alert snapshot or review filters changed; restart at the first page.' >&2
+    printf '%s\n' 'Saved alert snapshot, review filters, or scan budget changed; restart at the first page.' >&2
     exit 1
 fi
 
@@ -334,7 +337,7 @@ check_flow_context() {
 }
 
 rc=0
-raw=$(triage_with_budget "$budget" --list-saved "${index_args[@]}" "$@") || rc=$?
+raw=$(PACKRAT_TRIAGE_INDEX_SCAN_BYTES="$scan_bytes" triage_with_budget "$budget" --list-saved "${index_args[@]}" "$@") || rc=$?
 if (( rc > 1 || ${#raw} > 1048576 )) || ! index=$(jq -ces --arg rule "$rule" --argjson offset "$offset" \
     --arg session "$session_scope" --arg capture "$capture_scope" '
     def count: type == "number" and . >= 0 and . <= 512 and floor == .;
@@ -491,5 +494,5 @@ if ! latest=$(review_snapshot_token "$@") || [[ $latest != "$snapshot" ]]; then
     printf '%s\n' 'Saved alert logs changed during review; retry from a stable snapshot.' >&2
     exit 1
 fi
-jq -ce --argjson results "$results" --arg token "$snapshot" 'del(.review_shortlist) + {
-    record_type:"saved_alert_evidence_review", review_snapshot_token:$token, findings:$results}' <<< "$index"
+jq -ce --argjson results "$results" --arg token "$snapshot" --argjson scan_bytes "$scan_bytes" 'del(.review_shortlist) + {
+    record_type:"saved_alert_evidence_review", review_snapshot_token:$token, alert_log_scan_bytes:$scan_bytes, findings:$results}' <<< "$index"

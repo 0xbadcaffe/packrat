@@ -10,7 +10,7 @@ export PACKRAT_TEST_STATE="$health"
 export PACKRAT_TEST_DEFAULT_DIGEST=8c7654ecfd7b0b623b803e2f4e02ad1cc84278efdfcd7c4c9208edd81f17e115
 touch -- "$PACKRAT_TEST_LOG" "$scratch/other.jsonl"
 unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT PACKRAT_TRIAGE_ARCHIVE PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
-unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE PACKRAT_TRIAGE_AUTO_EVIDENCE PACKRAT_TRIAGE_PROJECT PACKRAT_TRIAGE_EXACT_SCAN_BYTES
+unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE PACKRAT_TRIAGE_AUTO_EVIDENCE PACKRAT_TRIAGE_PROJECT PACKRAT_TRIAGE_EXACT_SCAN_BYTES PACKRAT_TRIAGE_INDEX_SCAN_BYTES
 date() {
     [[ $* == '-u +%s' ]] || return 2
     printf '%s\n' 1700000000
@@ -46,8 +46,8 @@ mock_archive() {
     local scope=' --session 1700000000-432 --capture-id 00000000000000000000000000000001' selector='--limit 512'
     if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope=${PACKRAT_TEST_INDEX_SCOPE:-}; fi
     if [[ -n ${PACKRAT_TEST_TARGET:-} ]]; then selector="--alert-id $PACKRAT_TEST_TARGET"; fi
-    if [[ ${PACKRAT_TEST_INDEX:-0} == 1 && $* != *" --scan-bytes 8388608 --report-integrity"* ]]; then return 2; fi
     local scan_bytes=${PACKRAT_TEST_EXPECT_SCAN_BYTES:-8388608}
+    if [[ ${PACKRAT_TEST_INDEX:-0} == 1 && $* != *" --scan-bytes $scan_bytes --report-integrity"* ]]; then return 2; fi
     if [[ $* == *" --scan-bytes $scan_bytes --report-integrity"* ]]; then selector+=" --scan-bytes $scan_bytes"; elif [[ ${PACKRAT_TEST_SCAN_STOPPED:-false} == true ]]; then return 2; fi
     [[ $* == "--alerts $PACKRAT_TEST_LOG$scope $selector --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi

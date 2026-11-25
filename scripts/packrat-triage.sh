@@ -6,7 +6,7 @@ usage() {
         '       packrat-triage --saved-alert SESSION_ID CAPTURE_ID ALERT_ID ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         '       packrat-triage --list-saved [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] ALERT_LOG.jsonl [PREVIOUS_LOG ...]' \
         'Supply up to eight immutable previous logs, oldest first.' \
-        'Live triage and saved backlog indexing scan up to 8 MiB and report when the budget limits coverage.' \
+        'Live triage scans up to 8 MiB. PACKRAT_TRIAGE_INDEX_SCAN_BYTES sets the saved index limit (default: 8 MiB, max: 64 MiB).' \
         '--saved does not consult live health; an unmatched scope reports saved_scope_not_observed.' \
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
         'PACKRAT_TRIAGE_EXACT_SCAN_BYTES optionally bounds --saved-alert; an incomplete lookup reports saved_log_degraded.' \
@@ -55,18 +55,6 @@ elif [[ ${1-} == --list-saved ]]; then
 else
     if (( $# < 2 || $# > 10 )); then usage >&2; exit 2; fi
     health_file=$1 alert_log=$2; shift 2
-fi
-alert_limit=50 query_limit=512
-limit_args=(--limit "$query_limit") scan_args=()
-if [[ $mode == live || $mode == list_saved ]]; then scan_args=(--scan-bytes 8388608); fi
-if [[ -n $target_alert ]]; then
-    alert_limit=1 query_limit=1
-    limit_args=(--alert-id "$target_alert")
-    if [[ ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-} =~ ^[1-9][0-9]{0,14}$ ]]; then
-        scan_args=(--scan-bytes "$PACKRAT_TRIAGE_EXACT_SCAN_BYTES")
-    elif [[ -n ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-} ]]; then
-        printf '%s\n' 'PACKRAT_TRIAGE_EXACT_SCAN_BYTES must be a positive byte count of up to 15 digits.' >&2; exit 2
-    fi
 fi
 previous_logs=("$@") previous_args=()
 for log in "${previous_logs[@]}"; do
@@ -323,6 +311,7 @@ verify_watch_identity() {
 triage_script=$(realpath -- "${BASH_SOURCE[0]}") || exit 2
 # shellcheck source=scripts/packrat-triage-evidence.sh
 source "${triage_script%/*}/packrat-triage-evidence.sh" || exit 2
+configure_scan || exit 2
 scope_args=()
 if [[ $mode == live ]]; then
     if ! state=$(load_state "$health_file"); then

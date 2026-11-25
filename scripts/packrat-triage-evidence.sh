@@ -1,6 +1,32 @@
 #!/usr/bin/env bash
 # Sourced by packrat-triage.sh.
 
+configure_scan() {
+    alert_limit=50 query_limit=512
+    limit_args=(--limit "$query_limit") scan_args=()
+    case $mode in
+        live) scan_args=(--scan-bytes 8388608) ;;
+        list_saved)
+            local bytes=${PACKRAT_TRIAGE_INDEX_SCAN_BYTES:-8388608}
+            if [[ ! $bytes =~ ^[1-9][0-9]{0,7}$ ]] || (( bytes > 67108864 )); then
+                printf '%s\n' 'PACKRAT_TRIAGE_INDEX_SCAN_BYTES must be between 1 and 67108864 bytes.' >&2
+                return 2
+            fi
+            scan_args=(--scan-bytes "$bytes")
+            ;;
+    esac
+    if [[ -n $target_alert ]]; then
+        alert_limit=1 query_limit=1
+        limit_args=(--alert-id "$target_alert")
+        if [[ ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-} =~ ^[1-9][0-9]{0,14}$ ]]; then
+            scan_args=(--scan-bytes "$PACKRAT_TRIAGE_EXACT_SCAN_BYTES")
+        elif [[ -n ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-} ]]; then
+            printf '%s\n' 'PACKRAT_TRIAGE_EXACT_SCAN_BYTES must be a positive byte count of up to 15 digits.' >&2
+            return 2
+        fi
+    fi
+}
+
 log_stamp() {
     [[ -f $1 ]] && stat -L --format='%d:%i %s %y %z' -- "$1"
 }

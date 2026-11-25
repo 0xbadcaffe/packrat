@@ -2,6 +2,13 @@
 list_saved() {
     PACKRAT_TEST_INDEX=1 bash "$triage" --list-saved "$@"
 }
+PACKRAT_TRIAGE_INDEX_SCAN_BYTES=16777216 PACKRAT_TEST_EXPECT_SCAN_BYTES=16777216 list_saved "$PACKRAT_TEST_LOG" |
+    jq -e '.status=="saved" and .sample_scan_complete' >/dev/null
+for bad_budget in 0 08 67108865; do
+    status=0
+    PACKRAT_TRIAGE_INDEX_SCAN_BYTES=$bad_budget list_saved "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
+done
 result=$(list_saved "$PACKRAT_TEST_LOG")
 jq -e '.record_type == "saved_capture_index" and .status == "saved"
     and .review_rule == null
