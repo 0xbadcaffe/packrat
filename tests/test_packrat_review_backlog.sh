@@ -25,6 +25,7 @@ elif [[ ${TEST_MODE:-normal} == legacy_trigger ]]; then
 elif [[ ${TEST_MODE:-normal} == legacy_tuple ]]; then
     base=$(jq -c 'del(.recorded_trigger_flow_sha256)' <<< "$base")
 fi
+if [[ ${FLOW_MODE:-normal} == tcp_ack_* ]]; then base=$(jq -c '.evidence_frame_count=3' <<< "$base"); fi
 if [[ $1 == --list-saved ]]; then
     [[ ! -v PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE ]]
     shift
@@ -79,6 +80,7 @@ if [[ ${TEST_MODE:-normal} == invalid_counts && $4 == 1 ]]; then counts='{"compl
 if [[ ${FLOW_MODE:-normal} == status_swap && $4 == 1 ]]; then
     status=partial counts='{"complete":1,"truncated":1}'
 fi
+if [[ ${FLOW_MODE:-normal} == tcp_ack_* && $4 == 1 ]]; then counts='{"complete":3}'; fi
 if [[ ${TEST_MODE:-normal} == trigger_drift && $4 == 1 ]]; then base=$(jq -c '.trigger_frame_number=5' <<< "$base"); fi
 if [[ ${TEST_MODE:-normal} == tuple_drift && $4 == 1 ]]; then base=$(jq -c '.recorded_trigger_flow_sha256=("b"*64)' <<< "$base"); fi
 case $4 in
@@ -104,6 +106,7 @@ jq -nc --arg session "$2" --arg capture "$3" --argjson id "$4" --arg status "$st
         frames:[{frame_number:3,status:(if $counts.truncated then "truncated" else "complete" end),bytes:[5,7]},
                 {frame_number:4,status:(if $counts.missing then "missing" else "complete" end)}]}
       else . end
+    | if $counts.complete==3 then .evidence_status.frames += [{frame_number:5,status:"complete"}] else . end
     | if $mode=="missing_receipt" then del(.evidence_status)
       elif $mode=="duplicate_receipt" then .evidence_status.frames[1].frame_number=3
       elif $mode=="unmatched_receipt" then .evidence_status.alert_id=2
@@ -120,6 +123,10 @@ set -euo pipefail
     $8 == --previous-log && $9 == "$TEST_DIR/previous.jsonl" ]]
 printf '%s\n' "$5" >> "$TEST_DIR/flow-checks"
 jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${FLOW_MODE:-normal}" '
+    def exchange($protocol):
+        {protocol:$protocol,section_id:0,interface_id:1,evidence_frames:1,vlan_stack:[{tpid:33024,vid:20}]} as $base
+        | [$base + {source:"192.0.2.1:22222",destination:"192.0.2.2:443",frames:[{frame_number:3,status:"complete"}]},
+           $base + {source:"192.0.2.2:443",destination:"192.0.2.1:22222",frames:[{frame_number:4,status:"complete"}]}];
     {record_type:"alert_flow_summary",session_id:$session,capture_id:$capture,alert_id:$alert,
      evidence_frame_set_sha256:("0"*64),referenced_frames:2,missing_frames:0,unreadable_frames:0,
      truncated_frames:0,length_unknown_frames:0,
@@ -132,7 +139,7 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
         backwards_timestamps:0,min_forward_gap_secs:2.75,private_debug:"private time"},
         frames:[{frame_number:3,status:"complete"},{frame_number:4,status:"complete"}]}],
      tcp_syn_ack_matches:[],
-     udp_dns_reply_candidates:[{reply_frame:4,query_candidate_frames:[3],name:"private name"}]}
+     udp_dns_reply_candidates:[{reply_frame:4,query_candidate_frames:[],name:"private name"}]}
     | if $mode == "digest" then .evidence_frame_set_sha256=("1"*64)
       elif $mode == "availability" then .missing_frames=1
       elif $mode == "scope" then .session_id="wrong-session"
@@ -140,6 +147,11 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "status_swap" then .truncated_frames=1
           | .directional_flows[0].frames[1].status="truncated" | .trigger_frame.status="truncated"
       elif $mode == "dns_outside_frame" then .udp_dns_reply_candidates[0].query_candidate_frames=[2]
+      elif ($mode | startswith("dns_path_")) then
+          .directional_flows=exchange("udp") | .udp_dns_reply_candidates[0].query_candidate_frames=[3]
+          | if $mode=="dns_path_wrong_vlan" then .directional_flows[0].vlan_stack[0].tpid=34984
+            elif $mode=="dns_path_unknown" then del(.directional_flows[0].interface_id)
+            else . end
       elif $mode == "trigger_header_across_partition" then
           .unassigned_frames=[.directional_flows[0].frames[1]]
           | .directional_flows[0].frames |= .[:1]
@@ -151,7 +163,8 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "dns_partial_timing" then
           .udp_dns_reply_candidates[0].query_candidate_frames=[]
           | .udp_dns_reply_candidates += [{reply_frame:3,query_candidate_frames:[],timestamp_basis:"legacy_packet_time"}]
-      elif $mode == "dns_impossible_timing" then .udp_dns_reply_candidates[0].timestamp_basis="unavailable"
+      elif $mode == "dns_impossible_timing" then
+          .udp_dns_reply_candidates[0] += {timestamp_basis:"unavailable",query_candidate_frames:[3]}
       elif $mode == "dns_unknown_basis" then .udp_dns_reply_candidates[0].timestamp_basis="private time"
       elif $mode == "dns_duplicate_reply" then .udp_dns_reply_candidates += .udp_dns_reply_candidates
       elif $mode == "frame_count" then .retained_frames_without_flow=1
@@ -199,11 +212,9 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
             else . end
       elif ($mode | startswith("tcp_")) then
           .udp_dns_reply_candidates=[]
-          | .directional_flows=[
-              {protocol:"tcp",evidence_frames:1,initial_syn_frames:1,syn_ack_frames:0,reset_frames:0,
-                   frames:[{frame_number:3,status:"complete"}]},
-              {protocol:"tcp",evidence_frames:1,initial_syn_frames:0,syn_ack_frames:1,reset_frames:0,
-                   frames:[{frame_number:4,status:"complete"}]}]
+          | .directional_flows=exchange("tcp")
+          | .directional_flows[0] += {initial_syn_frames:1,syn_ack_frames:0,reset_frames:0}
+          | .directional_flows[1] += {initial_syn_frames:0,syn_ack_frames:1,reset_frames:0}
           | .cited_syn_fanout={source_hosts:1,destination_hosts:1,destination_ports:1,capture_paths:1,
               endpoint:"private source"}
           | .tcp_syn_ack_matches=[{syn_ack_frame:4,latest_candidate_syn_frame:3,
@@ -212,6 +223,17 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
             elif $mode == "tcp_duplicate" then .tcp_syn_ack_matches += .tcp_syn_ack_matches
             elif $mode == "tcp_outside_frame" then .tcp_syn_ack_matches[0].latest_candidate_syn_frame=2
             elif $mode == "tcp_wrong_order" then .tcp_syn_ack_matches[0].latest_candidate_syn_frame=4
+            elif $mode == "tcp_wrong_interface" then .directional_flows[0].interface_id=2
+            elif ($mode | startswith("tcp_ack_")) then
+                .referenced_frames=3
+                | .tcp_syn_ack_matches[0] += {later_ack_candidates:1,earliest_candidate_ack_frame:5}
+                | .directional_flows[0].frames += [{frame_number:5,status:"complete"}]
+                | .directional_flows[0].evidence_frames=2
+                | if $mode=="tcp_ack_wrong_path" then
+                    .directional_flows[2]=(.directional_flows[0] | .frames |= .[1:] | .evidence_frames=1
+                        | .initial_syn_frames=0 | .section_id=1)
+                    | .directional_flows[0].frames |= .[:1] | .directional_flows[0].evidence_frames=1
+                  else . end
             elif $mode == "tcp_bad_flags" then .directional_flows[0].reset_frames=1
             elif $mode == "tcp_bad_fanout" then .cited_syn_fanout.destination_hosts=2
             else . end
@@ -259,7 +281,7 @@ run_review --flow-context | jq -e '
         trigger_connection_status:"not_reported",
         timing_status:"reported",cited_timing:{timestamped_frames:2,missing_timestamp_frames:0,forward_gaps:1,
             tied_timestamps:0,backwards_timestamps:0,directions_with_forward_gaps:1},
-        udp_dns_replies_with_query_candidates:1,udp_dns_ambiguous_replies:0,tcp_flag_status:"not_reported",
+        udp_dns_replies_with_query_candidates:0,udp_dns_ambiguous_replies:0,tcp_flag_status:"not_reported",
         udp_dns_timing_status:"not_reported",cited_payload_status:"not_reported",
         udp_dns_reply_timestamps:{capture_clock:0,legacy_packet_time:0,unavailable:0,not_reported:1}}
     and (tostring | contains("private") | not)' >/dev/null
@@ -270,12 +292,17 @@ for mode in missing_receipt duplicate_receipt unmatched_receipt receipt_count_dr
         and (has("frame_receipt") or has("flow_context") | not)' >/dev/null
 done
 [[ $(cat "$dir/flow-checks") == 1 ]]
-for mode in partition_drift status_swap trigger_header_across_partition dns_outside_frame tcp_outside_frame; do
+for mode in partition_drift status_swap trigger_header_across_partition dns_outside_frame tcp_outside_frame \
+    dns_path_wrong_vlan dns_path_unknown tcp_wrong_interface tcp_ack_wrong_path; do
     wanted=citation_unverified
     if [[ $mode == partition_drift || $mode == status_swap ]]; then wanted=changed_during_review; fi
     FLOW_MODE=$mode run_review --flow-context | jq -e --arg wanted "$wanted" '
         .findings[0] | .flow_context_status==$wanted and (has("flow_context") or has("frame_receipt") | not)' >/dev/null
 done
+FLOW_MODE=dns_path_pair run_review --flow-context | jq -e '
+    .findings[0].flow_context | .udp_dns_replies_with_query_candidates==1 and (tostring | contains("192.0.2.") | not)' >/dev/null
+FLOW_MODE=tcp_ack_pair run_review --flow-context | jq -e '
+    .findings[0].flow_context | .tcp_syn_ack_with_later_ack_candidates==1 and (tostring | contains("192.0.2.") | not)' >/dev/null
 TEST_MODE=trigger_drift run_review --flow-context | jq -e '
     .findings[0] | .packet_evidence_status=="changed_during_review" and .flow_context_status=="not_checked"
     and (has("trigger_frame_number") | not)' >/dev/null

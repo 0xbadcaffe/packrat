@@ -222,6 +222,26 @@ check_flow_context() {
                 and (.vid | type == "number" and . >= 0 and . <= 4095 and floor == .)));
         def direction_key:
             {section_id,interface_id,protocol,source,destination,vlan_stack:(.vlan_stack | map({tpid,vid}))};
+        def reverse_direction:
+            . as $key | .source = $key.destination | .destination = $key.source;
+        def directions_by_frame:
+            reduce .directional_flows[] as $row ({};
+                ($row | if valid_direction_key then {key:direction_key,frames:.evidence_frames} else null end) as $direction
+                | reduce $row.frames[].frame_number as $frame (. ; .[$frame|tostring] = $direction));
+        def valid_exchange_paths:
+            directions_by_frame as $by_frame
+            | all(.tcp_syn_ack_matches[]; . as $match
+                | $by_frame[$match.syn_ack_frame|tostring].key as $response
+                | $by_frame[$match.latest_candidate_syn_frame|tostring] as $request
+                | $response != null and $request.key != null and $response.source != $response.destination
+                and ($response | reverse_direction) == $request.key
+                and $match.prior_syn_candidates + $match.later_ack_candidates <= $request.frames
+                and ($match.earliest_candidate_ack_frame == null
+                    or $by_frame[$match.earliest_candidate_ack_frame|tostring].key == $request.key))
+            and all(.udp_dns_reply_candidates[]; . as $match
+                | $by_frame[$match.reply_frame|tostring].key as $response
+                | all($match.query_candidate_frames[]; . as $frame | $response != null
+                    and ($response | reverse_direction) == $by_frame[$frame|tostring].key));
         def trigger_connection($assigned):
             .directional_flows as $rows
             | .trigger_frame.frame_number as $frame
@@ -238,7 +258,7 @@ check_flow_context() {
               elif ($rows | map(direction_key) | length != (unique | length)) then {trigger_connection_status:"invalid"}
               else $triggers[0] as $trigger
                 | ($trigger | direction_key) as $key
-                | ($key | .source = $key.destination | .destination = $key.source) as $reverse
+                | ($key | reverse_direction) as $reverse
                 | (if $key == $reverse then 0 else
                     [$rows[] | select(direction_key == $reverse) | .evidence_frames] | add // 0 end) as $reverse_frames
                 | if $reverse_frames != $trigger.reverse_evidence_frames then {trigger_connection_status:"invalid"}
@@ -268,7 +288,7 @@ check_flow_context() {
             | ([.directional_flows[].evidence_frames] | add // 0) as $flow_frames
             | select($flow_frames + .retained_frames_without_flow + .missing_frames + .unreadable_frames == .referenced_frames)
             | if cited_refs != $verified.frame_receipt then {flow_context_status:"changed_during_review"}
-              elif valid_citations | not then {flow_context_status:"citation_unverified"}
+              elif (valid_citations and valid_exchange_paths) | not then {flow_context_status:"citation_unverified"}
               else {flow_context_status:"checked",flow_context:{
                 retained_flow_frames:$flow_frames,retained_frames_without_flow,
                 trigger_frame_status:.trigger_frame.status,
