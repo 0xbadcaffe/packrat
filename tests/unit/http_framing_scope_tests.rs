@@ -34,6 +34,21 @@ fn at_sequence(mut packet: Packet, sequence: u32) -> Packet {
     packet
 }
 
+fn ipv6_request_frame(no: u64, extension: u8, sequence: u32, data: &[u8]) -> Packet {
+    let ipv4 = at_sequence(request_frame(no, no as f64, 1, 0x8100, 10, 80, data), sequence);
+    let tcp = &ipv4.bytes[38..];
+    let mut frame = vec![0; 14 + 40 + 8];
+    frame[12..14].copy_from_slice(&0x86dd_u16.to_be_bytes());
+    frame[14] = 0x60;
+    frame[18..20].copy_from_slice(&((8 + tcp.len()) as u16).to_be_bytes());
+    frame[20..22].copy_from_slice(&[extension, 64]);
+    frame[22..38].copy_from_slice(&"2001:db8::1".parse::<Ipv6Addr>().unwrap().octets());
+    frame[38..54].copy_from_slice(&"2001:db8::2".parse::<Ipv6Addr>().unwrap().octets());
+    frame[54] = 6;
+    frame.extend(tcp);
+    parse_ethernet(&frame, no, no as f64)
+}
+
 #[rstest::rstest]
 #[case(1, 0x8100, 20, 2.0)] // Different VLAN ID
 #[case(1, 0x88a8, 10, 2.0)] // Same ID, different tag type
@@ -46,8 +61,8 @@ fn benign_headers_with_identical_tuples_stay_on_their_paths(
     let a = request_frame(1, 1.0, 1, 0x8100, 10, 80, first);
     let b = request_frame(2, time, interface, tpid, vid, 80, end);
     let mut engine = SecurityEngine::new();
-    engine.check_http_request_smuggling(&a);
-    engine.check_http_request_smuggling(&b);
+    engine.check_tcp_integrity(&a, None);
+    engine.check_tcp_integrity(&b, None);
     let buffer = |engine: &SecurityEngine, scope| {
         engine.http_headers.iter().find(|((key, _, _), _)| *key == scope)
             .map(|(_, state)| (state.bytes.clone(), state.complete)).unwrap()
@@ -58,7 +73,7 @@ fn benign_headers_with_identical_tuples_stay_on_their_paths(
     assert_eq!(buffer(&engine, scope_a), (first.to_vec(), false));
     assert_eq!(buffer(&engine, scope_b), (end.to_vec(), false));
     let end_a = at_sequence(request_frame(3, 3.0, 1, 0x8100, 10, 80, end), first.len() as u32);
-    engine.check_http_request_smuggling(&end_a);
+    engine.check_tcp_integrity(&end_a, None);
     assert_eq!(buffer(&engine, scope_a), (Vec::new(), true));
     assert!(engine.ids_alerts.is_empty());
 }
@@ -73,7 +88,7 @@ fn header_sampler_skips_repeated_and_gapped_segments_and_accepts_sequence_wrap()
     );
     let mut engine = SecurityEngine::new();
     for packet in [sample(1, start, first), sample(2, start, first), sample(3, 5, tail)] {
-        engine.check_http_request_smuggling(&packet);
+        engine.check_tcp_integrity(&packet, None);
     }
     let state = engine.http_headers.values().next().unwrap();
     assert_eq!(state.next_sequence, Some(0));
@@ -81,7 +96,7 @@ fn header_sampler_skips_repeated_and_gapped_segments_and_accepts_sequence_wrap()
     assert_eq!(state.frames, [1]);
     assert!(!state.complete);
 
-    engine.check_http_request_smuggling(&sample(4, 0, tail));
+    engine.check_tcp_integrity(&sample(4, 0, tail), None);
     let state = engine.http_headers.values().next().unwrap();
     assert!(state.complete);
     assert_eq!(state.bytes.capacity(), 0);
@@ -93,7 +108,7 @@ fn header_sampler_skips_repeated_and_gapped_segments_and_accepts_sequence_wrap()
 fn reaching_the_header_limit_releases_the_sample() {
     let mut engine = SecurityEngine::new();
     let large_field = vec![b'a'; 32_768];
-    engine.check_http_request_smuggling(&request_frame(1, 1.0, 1, 0x8100, 10, 80, &large_field));
+    engine.check_tcp_integrity(&request_frame(1, 1.0, 1, 0x8100, 10, 80, &large_field), None);
     let state = engine.http_headers.values().next().unwrap();
     assert!(state.complete);
     assert_eq!(state.bytes.capacity(), 0);
@@ -144,15 +159,38 @@ fn header_buffer_uses_wire_port_and_ignores_truncated_segments() {
     let mut engine = SecurityEngine::new();
     let mut non_http = request_frame(1, 1.0, 1, 0x8100, 10, 443, data);
     non_http.dst_port = Some(80);
-    engine.check_http_request_smuggling(&non_http);
+    engine.check_tcp_integrity(&non_http, None);
     let mut http = request_frame(2, 2.0, 1, 0x8100, 10, 80, data);
     let mut truncated = http.clone();
     truncated.bytes.pop();
-    engine.check_http_request_smuggling(&truncated);
+    engine.check_tcp_integrity(&truncated, None);
     assert!(engine.http_headers.is_empty());
     http.dst_port = None;
-    engine.check_http_request_smuggling(&http);
+    engine.check_tcp_integrity(&http, None);
     assert_eq!(engine.http_headers.len(), 1);
+    assert!(engine.http_headers.values().next().unwrap().complete);
+    assert!(engine.ids_alerts.is_empty());
+}
+
+#[test]
+fn ipv6_sampler_uses_complete_segments_after_extension_headers() {
+    let first = b"GET / HTTP/1.1\r\nHost: example.test\r\n";
+    let mut engine = SecurityEngine::new();
+    let fragmented = ipv6_request_frame(1, 44, 0, first);
+    let mut truncated = ipv6_request_frame(2, 60, 0, first);
+    truncated.bytes.pop();
+    engine.check_tcp_integrity(&fragmented, None);
+    engine.check_tcp_integrity(&truncated, None);
+    assert!(engine.http_headers.is_empty());
+
+    let complete = ipv6_request_frame(3, 60, 0, first);
+    engine.check_tcp_integrity(&complete, None);
+    let ((_, flow, _), state) = engine.http_headers.iter().next().unwrap();
+    assert!(flow.endpoint_a.is_ipv6() && flow.endpoint_b.is_ipv6());
+    assert_eq!(state.frames, [3]);
+    assert!(!state.complete);
+    let end = ipv6_request_frame(4, 60, first.len() as u32, b"\r\n");
+    engine.check_tcp_integrity(&end, None);
     assert!(engine.http_headers.values().next().unwrap().complete);
     assert!(engine.ids_alerts.is_empty());
 }

@@ -172,7 +172,6 @@ impl SecurityEngine {
         self.check_ntlm_fanout(pkt, archive_rules);
         self.check_dhcp_integrity(pkt, archive_rules);
         self.check_ipv6_fragment_reassembly(pkt, archive_rules);
-        self.check_http_request_smuggling(pkt);
         self.check_industrial_policy(pkt, modbus);
         self.check_dns_transaction_integrity(pkt, &dns, archive_rules);
         self.check_ids(pkt);

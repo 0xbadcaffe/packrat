@@ -186,26 +186,21 @@ impl SecurityEngine {
         }
     }
 
-    pub(super) fn check_http_request_smuggling(&mut self, pkt: &Packet) {
-        let Some(TcpFrame::Segment(segment)) = parse_ipv4_tcp_frame(&pkt.bytes) else {
-            return;
-        };
+    pub(super) fn check_http_request_smuggling(&mut self, pkt: &Packet, scope: ScanScope, segment: &TcpSegment<'_>) {
         let (source, destination) = if segment.from_a {
             (segment.key.endpoint_a, segment.key.endpoint_b)
         } else {
             (segment.key.endpoint_b, segment.key.endpoint_a)
         };
-        if !segment.complete || !pkt.timestamp.is_finite() || segment.payload.is_empty()
-            || !matches!(destination.port(), 80 | 3000 | 8000 | 8080 | 8888)
+        if segment.payload.is_empty() || !matches!(destination.port(), 80 | 3000 | 8000 | 8080 | 8888)
         {
             return;
         }
-        let scope = scan_scope(pkt);
         let interface = (scope.0).0;
         self.http_headers.retain(|(path, _, _), state| {
             (path.0).0 != interface || pkt.timestamp - state.last_seen <= 30.0
         });
-        let key = (scope, segment.key, segment.from_a);
+        let key = (scope, segment.key.clone(), segment.from_a);
         if self.http_headers.len() >= MAX_SCAN_STATES && !self.http_headers.contains_key(&key) {
             if let Some(oldest) = self
                 .http_headers

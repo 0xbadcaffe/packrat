@@ -370,9 +370,10 @@ impl SecurityEngine {
         }
         if started_connection {
             self.http_headers.remove(&(scope, segment.key.clone(), true));
-            self.http_headers.remove(&(scope, segment.key, false));
+            self.http_headers.remove(&(scope, segment.key.clone(), false));
             self.start_periodic_tcp_connection(pkt, scope);
         }
+        self.check_http_request_smuggling(pkt, scope, &segment);
         payload_observation
     }
 }
