@@ -125,6 +125,7 @@ load_state() {
 unresolved_jq='def unresolved: .disposition == "New" or .disposition == "Reviewing" or .disposition == "Confirmed";'
 selective_archive_jq='
     def valid_rule_id: type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z");
+    def opt_in_severity: .severity | IN("MEDIUM","LOW","INFO");
     def selective_rules:
         .health | if .archive_enabled == true and (.archive_paused | type == "boolean")
             and .archive_alert_evidence_only == true
@@ -157,7 +158,7 @@ report() {
             | (if $counts.complete == ($evidence.frames | length) and $counts != null then "complete"
                elif $counts.complete or $counts.truncated or $counts.length_unknown then "partial"
                elif $counts != null then "unavailable" elif .evidence_frame_count == 0 then "no_references"
-               elif $evidence == null and $policy != null and (.rule_id | valid_rule_id)
+               elif $evidence == null and $policy != null and opt_in_severity and (.rule_id | valid_rule_id)
                    and (.evidence_frame_count | type == "number" and . > 0 and . <= 131 and floor == .)
                    and (.rule_id as $rule | $policy | index($rule) == null)
                then "not_selected_by_current_policy"
@@ -178,7 +179,7 @@ report() {
             ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO") as $severity | $alerts | to_entries[]
             | (.key < $limit) as $recent | .value
             | select(.severity == $severity and unresolved)
-            | ($severity | IN("MEDIUM","LOW","INFO")) as $opt_in
+            | opt_in_severity as $opt_in
             | select(($opt_in | not) or (.rule_id as $rule | any($rules[]; . == $rule)))
             | with_evidence($evidence; $policy)
             | {alert_id,title,rule_id,revision,severity,disposition,hit_count,confidence,verify,packet_evidence_status,evidence_frame_count,evidence_frame_set_sha256,

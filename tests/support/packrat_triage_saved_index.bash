@@ -137,3 +137,11 @@ result=$(PACKRAT_TRIAGE_EXACT_SCAN_BYTES=1024 PACKRAT_TEST_EXPECT_SCAN_BYTES=102
 jq -e '.status == "saved" and .evidence_status == {status:"scan_budget_exhausted",alert_id:42,frames:null}
     and .alerts[0].packet_evidence_status == "scan_budget_exhausted"
     and .alerts[0].next_evidence_step == "retry_exact_lookup_with_larger_scan_budget"' <<< "$result" >/dev/null
+
+jq -c '. + {archive_enabled:true,archive_paused:false,archive_alert_evidence_only:true,
+    archive_evidence_rules:[]}' <<< "$sample" >"$health"
+PACKRAT_TEST_AUTO_QUEUE=yes bash "$triage" "$health" "$PACKRAT_TEST_LOG" | jq -e '
+    [.alerts[] | select(.rule_id=="test.rule" or .rule_id=="test.high") |
+        [.severity,.packet_evidence_status,.next_evidence_step]] ==
+    [["HIGH","not_checked","verify_frame_availability"],["CRITICAL","not_checked","verify_frame_availability"]]
+    and (.evidence_checks == [])' >/dev/null

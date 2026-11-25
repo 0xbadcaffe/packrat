@@ -113,7 +113,7 @@ mock_archive() {
             | if $queue == "yes" then [
                   ({Benign:46,Contained:47,Closed:48} | to_entries[] | $valid + {alert_id:.value,severity:"CRITICAL",disposition:.key}),
                   ($valid + {alert_id:45,severity:"CRITICAL",disposition:"New",evidence_frame_count:0}),
-                  ($valid + {alert_id:44,severity:"HIGH",disposition:"New"}),
+                  ($valid + {alert_id:44,severity:"HIGH",disposition:"New",rule_id:"test.high"}),
                   ($valid + {severity:"CRITICAL",disposition:"Confirmed",rule_id:"test.rule",revision:10}),
                   ($valid + {alert_id:41,severity:"CRITICAL",disposition:"New"})
               ] elif $queue == "socket" then [$valid + {severity:"HIGH",disposition:"New"}]
