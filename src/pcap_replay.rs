@@ -149,7 +149,9 @@ pub fn read_pcap(path: &std::path::Path) -> Result<Vec<Packet>, String> {
 /// Decode one record at a time without retaining the input file in memory.
 pub fn stream_pcap(path: &std::path::Path, mut consume: impl FnMut(Packet) -> Result<(), String>) -> Result<u64, String> {
     use std::io::{Read, BufRead};
-    let mut f = std::io::BufReader::new(std::fs::File::open(path).map_err(|e| e.to_string())?);
+    let (file, _) = crate::storage::regular_file::open(path, "Capture input is not a regular file")
+        .map_err(|err| err.to_string())?;
+    let mut f = std::io::BufReader::new(file);
     if f.fill_buf().map_err(|error| error.to_string())?.starts_with(&[0x0a, 0x0d, 0x0d, 0x0a]) {
         return crate::capture::pcapng::stream(f, consume);
     }

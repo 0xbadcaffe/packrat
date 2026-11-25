@@ -83,6 +83,61 @@ fn streaming_reader_stops_on_consumer_error() {
     std::fs::remove_file(path).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn replay_and_archive_reject_pipes_without_waiting_for_a_writer() {
+    use std::ffi::CString;
+    use std::os::unix::{ffi::OsStrExt, fs::symlink};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let capture = dir.path().join("capture.pcap");
+    let capture_alias = dir.path().join("capture-alias.pcap");
+    std::fs::write(&capture, pcap(&ipv6_tcp_frame(), 1, false)).unwrap();
+    symlink(&capture, &capture_alias).unwrap();
+    assert_eq!(read_pcap(&capture_alias).unwrap().len(), 1);
+
+    let pipe = dir.path().join("pipe.pcap");
+    let pipe_alias = dir.path().join("pipe-alias.pcap");
+    let pipe_name = CString::new(pipe.as_os_str().as_bytes()).unwrap();
+    // SAFETY: pipe_name is a null-terminated path in the private test directory.
+    assert_eq!(unsafe { libc::mkfifo(pipe_name.as_ptr(), 0o600) }, 0);
+    symlink(&pipe, &pipe_alias).unwrap();
+    let commands = [
+        {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_packrat-analyze"));
+            command.arg("--alerts-only").arg(&pipe);
+            command
+        },
+        {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_packrat-archive"));
+            command.arg(dir.path().join("archive")).arg("--import").arg(&pipe_alias);
+            command
+        },
+    ];
+    for mut command in commands {
+        let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                let output = child.wait_with_output().unwrap();
+                assert!(!output.status.success());
+                assert!(output.stdout.is_empty());
+                let error = String::from_utf8_lossy(&output.stderr);
+                assert!(error.contains("Capture input is not a regular file"), "{error}");
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                child.wait().unwrap();
+                panic!("{command:?} blocked on a capture pipe");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 #[test]
 fn streaming_reader_rejects_invalid_timestamps_and_wire_lengths() {
     for (offset, value, label) in [(28, 1_000_000u32, "fraction"), (36, 1u32, "wire-length")] {
