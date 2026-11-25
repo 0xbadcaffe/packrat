@@ -1,4 +1,6 @@
 use packrat_tui::net::{packet::Packet, parser::parse_ethernet, security::SecurityEngine};
+use packrat_tui::{analysis::alert_center::{AlertFlow, AlertTransport}, engine::AnalysisCore};
+use super::cases_2::{HTTP_SPLIT_FIRST, HTTP_SPLIT_LAST};
 
 fn tagged_ipv6_tcp(no: u64, source: u16, destination: u16, payload: &[u8]) -> Packet {
     let mut wire = vec![0; 12];
@@ -15,6 +17,28 @@ fn tagged_ipv6_tcp(no: u64, source: u16, destination: u16, payload: &[u8]) -> Pa
     wire.extend([0x60, 0x18, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1]);
     wire.extend(payload);
     parse_ethernet(&wire, no, no as f64)
+}
+
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn ipv6_http_framing_records_a_flow_only_if_metadata_matches_wire(#[case] mismatched: bool) {
+    let mut core = AnalysisCore::default();
+    core.analyze(&tagged_ipv6_tcp(1, 40_000, 80, HTTP_SPLIT_FIRST));
+    let mut trigger = tagged_ipv6_tcp(2, 40_000, 80, HTTP_SPLIT_LAST);
+    trigger.bytes[62..66].copy_from_slice(&(HTTP_SPLIT_FIRST.len() as u32).to_be_bytes());
+    if mismatched {
+        trigger.dst_port = Some(81);
+    }
+    core.analyze(&trigger);
+    let finding = core.alert_center.items.iter()
+        .find(|alert| alert.title == "HTTP request smuggling ambiguity").unwrap();
+    assert_eq!(finding.packet_refs, [1, 2]);
+    assert_eq!(finding.flow, (!mismatched).then_some(AlertFlow {
+        transport: AlertTransport::Tcp,
+        source: "[2001:db8::1]:40000".parse().unwrap(),
+        destination: "[2001:db8::2]:80".parse().unwrap(),
+    }));
 }
 
 #[test]

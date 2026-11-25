@@ -58,6 +58,7 @@ impl AnalysisCore {
                 "Periodic fixed-size traffic" | "TCP payload after reset" | "Conflicting TCP retransmission"
                 | "Industrial state-changing command" | "Critical industrial control command"
                 | "Cleartext HTTP Basic authorization"
+                | "HTTP request smuggling ambiguity"
                 | "Anonymous FTP login accepted"
                 | "DNS tunnel behavior" | "Conflicting DNS responses" | "Unexpected DNS responder"
                 | "DNS transaction question mismatch" | "DNS reply changed at the same resolver"
