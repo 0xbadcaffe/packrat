@@ -17,6 +17,7 @@ usage() {
         'Known DNS capacity declines make affected DNS labels and strict cases inconclusive; older analyzers may not report counters.' \
         'TCP stream evictions make stream-dependent labels and strict cases inconclusive, independently of frame coverage.' \
         'A capture that changes during replay is marked inconclusive, even without a baseline.' \
+        'Analyzer replacement invalidates affected replay scores and comparisons for the suite.' \
         'Set PACKRAT_REPLAY_BASELINE_ANALYZER to compare analyzers; deltas require matching packet coverage.' \
         'Partial coverage requires frame fingerprints from both analyzers.'
 }
@@ -211,13 +212,30 @@ elif stat -L -f "$bsd_stamp" -- "$base" >/dev/null 2>&1; then
     stat_style=bsd
 fi
 
-capture_stamp() {
+file_stamp() {
     case $stat_style in
-        gnu) stat -L --format="$gnu_stamp" -- "$capture" 2>/dev/null ;;
-        bsd) stat -L -f "$bsd_stamp" -- "$capture" 2>/dev/null ;;
+        gnu) stat -L --format="$gnu_stamp" -- "$1" 2>/dev/null ;;
+        bsd) stat -L -f "$bsd_stamp" -- "$1" 2>/dev/null ;;
         *) return 1 ;;
     esac
 }
+analyzer_stamp() {
+    local path stamp
+    case $(type -t -- "$1") in
+        function) declare -f -- "$1" ;;
+        file)
+            path=$(type -p -- "$1") && [[ -f $path ]] && stamp=$(file_stamp "$path") || return 1
+            printf '%s\n%s\n' "$path" "$stamp"
+            ;;
+        *) return 1 ;;
+    esac
+}
+candidate_stamp=$(analyzer_stamp packrat-analyze) || candidate_stamp=
+baseline_stamp=
+if [[ -n $baseline ]]; then baseline_stamp=$(analyzer_stamp "$baseline") || baseline_stamp=; fi
+candidate_check=stable baseline_check=stable
+[[ -n $candidate_stamp ]] || candidate_check=unverified
+[[ -n $baseline_stamp ]] || baseline_check=unverified
 
 results=()
 while IFS= read -r label; do
@@ -232,9 +250,10 @@ while IFS= read -r label; do
             "--expect-alert-frame", ($id + "=" + (floor | tostring)))
     ' <<< "$label")
 
-    stamp=$(capture_stamp) || stamp=
+    stamp=$(file_stamp "$capture") || stamp=
     candidate=$(replay_case packrat-analyze)
-    after_candidate=$(capture_stamp) || after_candidate=
+    if [[ $candidate_check == stable && $(analyzer_stamp packrat-analyze) != "$candidate_stamp" ]]; then candidate_check=changed; fi
+    after_candidate=$(file_stamp "$capture") || after_candidate=
     if [[ -z $stamp || $stamp != "$after_candidate" ]]; then
         candidate=$(jq -c --arg before "$stamp" --arg after "$after_candidate" --arg baseline "$baseline" '
             .verdict = "inconclusive" | .score = null
@@ -243,7 +262,8 @@ while IFS= read -r label; do
         ' <<< "$candidate")
     elif [[ -n $baseline ]]; then
         reference=$(replay_case "$baseline")
-        after=$(capture_stamp) || after=
+        if [[ $baseline_check == stable && $(analyzer_stamp "$baseline") != "$baseline_stamp" ]]; then baseline_check=changed; fi
+        after=$(file_stamp "$capture") || after=
         candidate=$(jq -c --argjson reference "$reference" --arg before "$stamp" --arg after "$after" '
             def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
             def packet_coverage:
@@ -297,10 +317,23 @@ while IFS= read -r label; do
     results+=("$candidate")
 done < <(jq -c '.cases[]' <<< "$validated")
 
-report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" --arg baseline "$baseline" '
+if [[ $candidate_check == stable && $(analyzer_stamp packrat-analyze) != "$candidate_stamp" ]]; then candidate_check=changed; fi
+if [[ $baseline_check == stable && $(analyzer_stamp "$baseline") != "$baseline_stamp" ]]; then baseline_check=changed; fi
+report=$(printf '%s\n' "${results[@]}" | jq -cs --argjson strict "$strict" --arg baseline "$baseline" \
+    --arg candidate_check "$candidate_check" --arg baseline_check "$baseline_check" '
+    map(
+        (if $candidate_check != "stable" then .verdict = "inconclusive" | .score = null else . end)
+        | (if $baseline != "" and $baseline_check != "stable" and .baseline != null
+           then .baseline |= (.verdict = "inconclusive" | .score = null) else . end)
+        | if $baseline != "" and ($candidate_check != "stable" or $baseline_check != "stable") then
+              .comparison = (if $candidate_check == "changed" or $baseline_check == "changed"
+                            then "analyzer_unstable" else "analyzer_unverified" end) | del(.delta)
+          else . end)
+    |
     [.[].score | objects] as $scores |
     {
     record_type:"capture_replay_suite", strict:$strict, total:length,
+    analyzer_check:{candidate:$candidate_check,baseline:(if $baseline == "" then null else $baseline_check end)},
     passed:([.[] | select(.verdict == "passed")] | length),
     failed:([.[] | select(.verdict == "failed")] | length),
     inconclusive:([.[] | select(.verdict == "inconclusive")] | length),

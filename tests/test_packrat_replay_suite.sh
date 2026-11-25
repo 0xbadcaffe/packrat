@@ -402,4 +402,35 @@ for invalid in '.version = 2' 'del(.cases[0].expect_counts)' '.strict = "true"' 
     bash "$suite" "$manifest" >/dev/null 2>&1 || status=$?
     [[ $status == 2 ]]
 done
+real_tool_dir="$scratch/analyzer binaries"
+mkdir -- "$real_tool_dir"
+cat > "$real_tool_dir/packrat-analyze" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' '{"type":"summary","packets":20,"analyzed":20,"skipped":0,"truncated_frames":0,"alerts_opened":0,"rule_counts":{},"alert_expectations":{"verdict":"passed"}}'
+if [[ -f $0.next ]]; then mv -fT -- "$0.next" "$0"; fi
+STUB
+chmod +x "$real_tool_dir/packrat-analyze"
+cp -- "$real_tool_dir/packrat-analyze" "$real_tool_dir/baseline analyzer"
+jq '.cases = [.cases[0],(.cases[0] | .name="second observation")]' <<< "$sample" > "$scratch/tool-stamps.json"
+(
+    unset -f packrat-analyze
+    export PATH="$real_tool_dir:$PATH"
+    bash "$suite" "$scratch/tool-stamps.json" | jq -e '
+        .passed==2 and .analyzer_check=={candidate:"stable",baseline:null}' >/dev/null
+    cp -- "$real_tool_dir/packrat-analyze" "$real_tool_dir/packrat-analyze.next"
+    status=0
+    result=$(bash "$suite" "$scratch/tool-stamps.json") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.analyzer_check=={candidate:"changed",baseline:null} and .inconclusive==2 and .score.scored_cases==0
+        and all(.cases[]; .score==null and .summary.alert_expectations.verdict=="passed")' <<< "$result" >/dev/null
+    cp -- "$real_tool_dir/baseline analyzer" "$real_tool_dir/baseline analyzer.next"
+    status=0
+    result=$(PACKRAT_REPLAY_BASELINE_ANALYZER="$real_tool_dir/baseline analyzer" \
+        bash "$suite" "$scratch/tool-stamps.json") || status=$?
+    [[ $status == 1 ]]
+    jq -e '.analyzer_check=={candidate:"stable",baseline:"changed"} and .passed==2 and .comparable==0
+        and all(.cases[]; .comparison=="analyzer_unstable" and .baseline.score==null and (has("delta") | not))' \
+        <<< "$result" >/dev/null
+)
 printf '%s\n' 'Packrat replay suite tests passed'
