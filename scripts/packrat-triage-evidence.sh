@@ -60,7 +60,8 @@ check_evidence() {
     fi
     expected=$(jq -c --argjson id "$evidence_id" --argjson limit "$alert_limit" '
         {match:(first(.alerts[] | select(.alert_id == $id) |
-            {digest:.evidence_frame_set_sha256, count:.evidence_frame_count}) // null),
+            {digest:.evidence_frame_set_sha256, count:.evidence_frame_count,
+             trigger:with_entries(select(.key | IN("trigger_frame_number","recorded_trigger_flow_sha256")))}) // null),
          outside_report: ([.alerts[:$limit][] | select(.alert_id == $id)] | length) == 0,
          stopped_at_limit:.integrity.stopped_at_limit,
          stopped_at_scan_budget:.integrity.stopped_at_scan_budget}
@@ -83,9 +84,14 @@ check_evidence() {
                     and (.status == "complete" or .status == "truncated" or .status == "missing"
                         or .status == "length_unknown" or .status == "unreadable"))
                 and (map(.frame_number) | . == unique)))
+        | . as $observed | ($expected.match.trigger // {} | to_entries) as $trigger
         | if ($expected.match != null and ($expected.match.digest != .evidence_frame_set_sha256
                   or $expected.match.count != (.frames | length)))
               or ($expected.match == null and ($expected.stopped_at_limit | not))
+          then {status:"alert_evidence_changed", alert_id, frames:null}
+          elif any($trigger[]; .key as $key | $observed | has($key) | not)
+          then {status:"trigger_snapshot_unverified", alert_id, frames:null}
+          elif any($trigger[]; .key as $key | .value != $observed[$key])
           then {status:"alert_evidence_changed", alert_id, frames:null}
           else {status:"checked", alert_id, frames:(.frames | map({frame_number,status})),
                 in_recent_alerts:($expected.outside_report | not), claimed_digest:.evidence_frame_set_sha256}

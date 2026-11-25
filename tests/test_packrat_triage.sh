@@ -35,11 +35,11 @@ mock_archive() {
         jq -cn --arg capture "${PACKRAT_TEST_EVIDENCE_SCOPE:-00000000000000000000000000000001}" \
             --arg digest "${PACKRAT_TEST_EVIDENCE_DIGEST:-${PACKRAT_TEST_SAVED_DIGEST:-$PACKRAT_TEST_DEFAULT_DIGEST}}" \
             --argjson ordinals "${PACKRAT_TEST_FRAME_ORDINALS:-[1,2]}" --argjson id "$id" \
-            --argjson extra "${PACKRAT_TEST_EVIDENCE_PADDING:-0}" \
+            --argjson extra "${PACKRAT_TEST_EVIDENCE_PADDING:-0}" --argjson trigger "${PACKRAT_TEST_EVIDENCE_TRIGGER:-"{}"}" \
             --argjson statuses "${PACKRAT_TEST_FRAME_STATUSES:-[\"truncated\",\"missing\"]}" '
             {session_id:"1700000000-432",capture_id:$capture,alert_id:$id,
              evidence_frame_set_sha256:$digest,
-             frames:($statuses | to_entries | map({frame_number:$ordinals[.key],status:.value,bytes:[0,1]}))}
+             frames:($statuses | to_entries | map({frame_number:$ordinals[.key],status:.value,bytes:[0,1]}))} + $trigger
             | if $extra > 0 then . + {padding:("x" * $extra)} else . end'
         return
     fi
@@ -140,8 +140,8 @@ packrat-archive() {
     mock_archive "$@" | jq -c --argjson invalid "${PACKRAT_TEST_INVALID_RECORDS:-0}" \
         --argjson oversized "${PACKRAT_TEST_OVERSIZED_RECORDS:-0}" \
         --arg target "${PACKRAT_TEST_TARGET:-}" --argjson stopped "${PACKRAT_TEST_SCAN_STOPPED:-false}" \
-        --argjson timing "${PACKRAT_TEST_REVIEW_LATENCY:-null}" '
-        {alerts:.,integrity:{invalid_records:$invalid,oversized_records:$oversized,
+        --argjson timing "${PACKRAT_TEST_REVIEW_LATENCY:-null}" --argjson trigger "${PACKRAT_TEST_HISTORY_TRIGGER:-"{}"}" '
+        {alerts:map(.+$trigger),integrity:{invalid_records:$invalid,oversized_records:$oversized,
             stopped_at_limit:(length == (if $target != "" then 1 else 512 end)),stopped_at_scan_budget:$stopped},review_latency:$timing}'
 }
 

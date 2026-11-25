@@ -149,7 +149,7 @@ report() {
             elif . == "unavailable" then "locate_original_capture"
             elif . == "not_selected_by_current_policy" then "locate_original_capture_or_corroborate_with_host_logs"
             elif . == "no_references" then "corroborate_with_host_or_service_logs"
-            elif . == "check_failed" or . == "changed_during_review" or . == "check_timed_out" or . == "check_deferred" then "retry_evidence_check"
+            elif IN("check_failed","changed_during_review","check_timed_out","check_deferred","trigger_snapshot_unverified") then "retry_evidence_check"
             elif . == "scan_budget_exhausted" then "retry_exact_lookup_with_larger_scan_budget" else "verify_frame_availability" end;
         def with_evidence($checks; $policy):
             .alert_id as $id | (first($checks[] | select(.alert_id == $id)) // null) as $evidence
@@ -164,6 +164,7 @@ report() {
                then "not_selected_by_current_policy"
                else (($evidence.status // "") | {alert_evidence_changed:"changed_during_review",unavailable:"check_failed",
                      evidence_frame_set_mismatch:"check_failed",scan_budget_exhausted:"scan_budget_exhausted",
+                     trigger_snapshot_unverified:"trigger_snapshot_unverified",
                      timed_out:"check_timed_out",deferred:"check_deferred"}[.] // "not_checked") end) as $availability
             | . + {packet_evidence_status:$availability,evidence_availability:$counts,
                  next_evidence_step:(if $counts.unreadable then "check_archive_integrity"

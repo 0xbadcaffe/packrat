@@ -308,6 +308,8 @@ fn alert_status_distinguishes_missing_partial_and_unreadable_scoped_frames() {
     assert_eq!(report, json!({
         "capture_id":"capture-a", "session_id":"s", "alert_id":1,
         "evidence_frame_set_sha256":fingerprint,
+        "trigger_frame_number":history[0]["trigger_frame_number"],
+        "recorded_trigger_flow_sha256":history[0]["recorded_trigger_flow_sha256"],
         "frames":[
             {"frame_number":1,"status":"complete"},
             {"frame_number":2,"status":"truncated"},

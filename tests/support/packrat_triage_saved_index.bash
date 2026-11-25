@@ -145,3 +145,22 @@ PACKRAT_TEST_AUTO_QUEUE=yes bash "$triage" "$health" "$PACKRAT_TEST_LOG" | jq -e
         [.severity,.packet_evidence_status,.next_evidence_step]] ==
     [["HIGH","not_checked","verify_frame_availability"],["CRITICAL","not_checked","verify_frame_availability"]]
     and (.evidence_checks == [])' >/dev/null
+
+(
+    PACKRAT_TEST_HISTORY_TRIGGER=$(jq -cn '{trigger_frame_number:2,recorded_trigger_flow_sha256:("a"*64)}')
+    export PACKRAT_TEST_HISTORY_TRIGGER PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space"
+    for variant in matching changed_frame changed_flow legacy_reader; do
+        case $variant in
+            matching) evidence_trigger=$PACKRAT_TEST_HISTORY_TRIGGER receipt=checked step=inspect_retained_and_recover_missing_frames code=0 ;;
+            changed_frame) evidence_trigger=$(jq '.trigger_frame_number=1' <<< "$PACKRAT_TEST_HISTORY_TRIGGER"); receipt=alert_evidence_changed step=retry_evidence_check code=2 ;;
+            changed_flow) evidence_trigger=$(jq '.recorded_trigger_flow_sha256=null' <<< "$PACKRAT_TEST_HISTORY_TRIGGER"); receipt=alert_evidence_changed step=retry_evidence_check code=2 ;;
+            legacy_reader) evidence_trigger='{}' receipt=trigger_snapshot_unverified step=retry_evidence_check code=2 ;;
+        esac
+        status=0
+        result=$(PACKRAT_TEST_EVIDENCE_TRIGGER=$evidence_trigger saved_alert 42 "$PACKRAT_TEST_LOG") || status=$?
+        [[ $status == "$code" ]]
+        jq -e --arg receipt "$receipt" --arg step "$step" '.status=="saved" and .evidence_status.status==$receipt
+            and .alerts[0].next_evidence_step==$step
+            and (if $receipt=="checked" then (.evidence_status.frames|length)==2 else .evidence_status.frames==null end)' <<< "$result" >/dev/null
+    done
+)

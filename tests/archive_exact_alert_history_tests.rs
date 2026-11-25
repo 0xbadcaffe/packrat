@@ -27,6 +27,12 @@ fn saved_trigger_flow_change_is_visible_without_changing_the_frame_set() {
         assert!(history.status.success() && summary.status.success(), "{history:?} {summary:?}");
         let history: Value = serde_json::from_slice(&history.stdout).unwrap();
         let summary: Value = serde_json::from_slice(&summary.stdout).unwrap();
+        let availability = Command::new(tool).arg(&archive).arg("--alert-status").arg(&log)
+            .args(["session-a", "1", "--capture-id", "capture-a"]).output().unwrap();
+        assert!(availability.status.success(), "{availability:?}");
+        let availability: Value = serde_json::from_slice(&availability.stdout).unwrap();
+        assert_eq!(history[0]["recorded_trigger_flow_sha256"], availability["recorded_trigger_flow_sha256"]);
+        assert_eq!(history[0]["trigger_frame_number"], availability["trigger_frame_number"]);
         assert_eq!(history[0]["recorded_trigger_flow_sha256"], summary["recorded_trigger_flow_sha256"]);
         assert_eq!(history[0]["evidence_frame_set_sha256"], summary["evidence_frame_set_sha256"]);
         (summary["evidence_frame_set_sha256"].clone(), summary["recorded_trigger_flow_sha256"].clone())
