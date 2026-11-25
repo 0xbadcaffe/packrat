@@ -25,10 +25,13 @@ snapshot_validation='
             .max_frames <= 0 or .max_payload_bytes <= 0 then null else . end end;
     def near_archive_limit:
         if . == null then null else (.frames / .max_frames >= 0.9 or .payload_bytes / .max_payload_bytes >= 0.9) end;
-    def evidence_check_failures:
+    def evidence_failures:
         if type == "array" and length <= 5 and
             all(.[]; type == "object" and (.status | scope_id) != null)
-        then map(select(.status != "checked")) | length else null end;
+        then map(.status | select(. != "checked")
+            | if IN("alert_evidence_changed","outside_history_scan","trigger_snapshot_unverified",
+                    "evidence_frame_set_mismatch","scan_budget_exhausted","timed_out","unavailable","deferred")
+              then . else "other" end) else null end;
     def packet_evidence_counts: (.evidence_frame_count | counter) as $refs
         | if (.evidence_availability | type == "object" and length > 0 and
               all(to_entries[]; (.key | IN("complete","truncated","missing","length_unknown","unreadable"))
@@ -187,6 +190,7 @@ check_snapshot() {
             (.status | type == "string" and test("\\A[A-Za-z0-9_.-]{1,128}\\z")) and
             (.max_age_seconds | type == "number" and . >= 9 and . <= 200005 and floor == .) and valid_current)
         | mark_backlog_loss | . as $snapshot | (.updated_at | fromdateiso8601) as $observed_at | (now - $observed_at | floor) as $age
+        | (if $age >= -5 and $age <= .max_age_seconds then .evidence_checks | evidence_failures else null end) as $failures
         | {status:(if $age < -5 then "snapshot_future"
                    elif $age > .max_age_seconds then "snapshot_stale"
                    elif .packet_counter_regressed == true then "packet_counter_regressed"
@@ -210,8 +214,9 @@ check_snapshot() {
                       (.archive_pause_reason | IN("frame_limit","byte_limit","disk_reserve","queue_unavailable","write_failed"))
                       then .archive_pause_reason else null end)}
                else null end),
-           evidence_check_failures:(if $age >= -5 and $age <= .max_age_seconds
-               then .evidence_checks | evidence_check_failures else null end),
+           evidence_check_failures:($failures | if . == null then null else length end),
+           evidence_check_failure_reasons:($failures | if . == null then null
+               else group_by(.) | map({key:.[0],value:length}) | from_entries end),
            socket_context_status:(if $age >= -5 and $age <= .max_age_seconds
                then .socket_context_status | socket_status else null end),
            alert_save_failures:(if $age >= -5 and $age <= .max_age_seconds then .alert_save_failures | counter else null end),

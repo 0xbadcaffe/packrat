@@ -174,12 +174,17 @@ for code in 70 126 127 143; do
     jq -e '.status=="triage_unavailable" and .capture_id==null' "$failed_state" >/dev/null
     check_status "$failed_state" triage_unhealthy 1
 done
-jq '.evidence_checks[0].status="unavailable"' "$report" >"$scratch/evidence-error.json"
+jq '.evidence_checks=[{alert_id:1,status:"unavailable"},{alert_id:2,status:"scan_budget_exhausted"},
+    {alert_id:3,status:"trigger_snapshot_unverified"},{alert_id:4,status:"private-token"},{alert_id:5,status:"checked"}]' \
+    "$report" >"$scratch/evidence-error.json"
 bash "$watch" --once "$failed_state" -- bash -c 'cat -- "$1"; exit 2' mock "$scratch/evidence-error.json" >/dev/null
-bash "$watch" --check "$failed_state" | jq -e '.status=="current" and .evidence_check_failures==1' >/dev/null
+bash "$watch" --check "$failed_state" | jq -e '.status=="current" and .evidence_check_failures==4
+    and .evidence_check_failure_reasons=={unavailable:1,scan_budget_exhausted:1,trigger_snapshot_unverified:1,other:1}' >/dev/null
+bash "$watch" --check "$state" | jq -e '.evidence_check_failures==0 and .evidence_check_failure_reasons=={}' >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$failed_state" >"$scratch/old-evidence-error.json"
 { bash "$watch" --check "$scratch/old-evidence-error.json" || [[ $? == 1 ]]; } |
-    jq -e '.status=="snapshot_stale" and .evidence_check_failures==null and .socket_context_status==null
+    jq -e '.status=="snapshot_stale" and .evidence_check_failures==null and .evidence_check_failure_reasons==null
+        and .socket_context_status==null
         and .alert_save_failures==null and .alert_save_backlog_dropped==null and .alert_log_scan_complete==null
         and .alert_counts==null' >/dev/null
 jq '.updated_at=(now - 120 | todateiso8601)' "$state" >"$scratch/stale.json"
