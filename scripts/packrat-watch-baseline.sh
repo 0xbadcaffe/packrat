@@ -22,6 +22,15 @@ read_baseline() {
         def token: type == "string" and test("\\A[A-Za-z0-9_.:-]{1,128}\\z");
         def scope: type == "object" and (.capture_id | token) and (.session_id | token);
         def count: type == "number" and . >= 0 and . <= 9007199254740991 and floor == .;
+        def exclusion_reasons:
+            .excluded_intervals as $excluded | .excluded_interval_reasons | objects
+            | select(all(to_entries[]; (.key | IN("interleaved_records","journal_discontinuity","watcher_not_current",
+                "pcap_drops_observed","capture_queue_drops_observed","truncated_frames_observed",
+                "link_unsupported_or_unverified","capture_link_changed","pcap_drop_counter_unverified",
+                "packet_counter_discontinuity","healthy_epoch_changed_or_unverified","timestamp_not_increasing",
+                "capture_queue_counter_unverified","truncation_counter_unverified"))
+                and (.value | count and . > 0 and . <= $excluded))
+                and ([.[]] | add // 0) == $excluded);
         def capture_link:
             .capture_link | objects | {status,link_type}
             | select(if .status == "verified" then (.link_type | count and . <= 65535)
@@ -147,6 +156,7 @@ read_baseline() {
                    alert_reverified_intervals:(if $c.coverage_policy == "continuous_journal_v8" then $c.alert_reverified_intervals else null end),
                    first_record_at:$c.first_record_at,last_record_at:$c.last_record_at,
                    healthy_seconds:$c.healthy_seconds,excluded_intervals:$c.excluded_intervals,
+                   excluded_interval_reasons:($c | exclusion_reasons // null),
                    dns_capacity_coverage:($c | dns_capacity_summary // null),
                    tcp_stream_cache_coverage:($c | tcp_stream_cache_summary // null),
                    comparable_seconds:(if $c | has("alert_comparable_seconds") then $c.alert_comparable_seconds

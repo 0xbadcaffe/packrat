@@ -23,6 +23,7 @@ sample=$(jq -cn '
 bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
     .status=="sampled" and .coverage_policy=="continuous_journal_v8" and .scope=={capture_id:"a",session_id:"a-1"}
     and .scoped_records==6 and .healthy_intervals==3 and .excluded_intervals==2
+    and .excluded_interval_reasons=={interleaved_records:1,packet_counter_discontinuity:1}
     and .journal_discontinuities==0 and .journal_tail_unconfirmed_events==0 and .alert_journal_counter_unverified_intervals==0
     and .alert_log_snapshot_unverified_intervals==0
     and .capture_link=={status:"unverified",link_type:null}
@@ -35,6 +36,19 @@ bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
 bash "$coverage" <<< "$sample" | jq -e '.status=="insufficient_coverage" and .scope.session_id=="b-2"
     and .alert_comparable_seconds==0 and .observed_openings==null and .observed_openings_per_10000_packets==null' >/dev/null
 bash "$coverage" </dev/null | jq -e '.status=="no_capture_records" and .scope==null' >/dev/null
+for trial in 'journal_discontinuity .journal_sequence+=1' 'watcher_not_current .status="degraded"' \
+    'pcap_drops_observed .buffer_drops=2 | .status="degraded"' 'capture_queue_drops_observed .capture_queue_full_packets=1' \
+    'truncated_frames_observed .truncated_frames=1' 'link_unsupported_or_unverified .link_decodable=false' \
+    'capture_link_changed .link_type=113' 'pcap_drop_counter_unverified .buffer_drops=-1' \
+    'packet_counter_discontinuity .packets=9' 'healthy_epoch_changed_or_unverified .healthy_capture_since=1700000001' \
+    'timestamp_not_increasing .updated_at="2023-11-14T22:13:20Z"' \
+    'capture_queue_counter_unverified del(.capture_queue_full_packets)' 'truncation_counter_unverified del(.truncated_frames)'; do
+    reason=${trial%% *} patch=${trial#* }
+    jq -sc "(.[0] | .link_type=1), (.[1] | .link_type=1 | $patch)" <<< "$sample" |
+        bash "$coverage" | jq -e --arg reason "$reason" '
+            .healthy_intervals==0 and .excluded_intervals==1 and .excluded_interval_reasons=={($reason):1}
+            and .observed_openings==null' >/dev/null
+done
 bash "$coverage" --capture-id missing --session a-1 <<< "$sample" |
     jq -e '.status=="no_capture_records" and .scope.capture_id=="missing"' >/dev/null
 jq -sc '.[0:4][] | .link_type=1' <<< "$sample" | bash "$coverage" | jq -e '

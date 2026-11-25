@@ -29,6 +29,16 @@ jq '.build.scope = {capture_id:"b",session_id:"two"} | .coverage.scope = .build.
     | .coverage.observed_openings = 0' "$before" > "$after"
 
 unset PACKRAT_BASELINE_MIN_SECONDS PACKRAT_BASELINE_MIN_PACKETS
+jq '.coverage |= (.excluded_intervals=1 | .scoped_records=3 | .excluded_interval_reasons={pcap_drops_observed:1})' \
+    "$after" > "$tmp/excluded-after"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$before" "$tmp/excluded-after" | jq -e '
+    .before.excluded_interval_reasons==null and .after.excluded_interval_reasons=={pcap_drops_observed:1}
+    and .observed_rate_delta_per_10000_packets==-5' >/dev/null
+for patch in '{}' '{private_detail:1}' '{pcap_drops_observed:0.5}' '{pcap_drops_observed:2}'; do
+    jq ".coverage.excluded_interval_reasons=$patch" "$tmp/excluded-after" > "$fixture"
+    PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$before" "$fixture" | jq -e '
+        .after.excluded_interval_reasons==null and .observed_rate_delta_per_10000_packets==-5' >/dev/null
+done
 jq '.coverage.archive_policy_coverage={status:"verified",mode:"alert_evidence",opt_in_rule_ids:["dns.unmatched_response"],
     paused_records:0,unverified_records:0,path:"private"}' "$before" > "$tmp/archived-before"
 jq '.coverage.archive_policy_coverage={status:"verified",mode:"all_packets",opt_in_rule_ids:null,

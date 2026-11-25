@@ -15,6 +15,7 @@ usage() {
         'Alert rates also require a known, unchanged unconfirmed journal event count.' \
         'After a historical gap, only complete, consistent alert samples can reestablish comparable intervals.' \
         'Intervals spanning watcher restarts, missing journal records, or older unsequenced records are excluded.' \
+        'Excluded interval counts record one primary reason per interval.' \
         'The tail unconfirmed count is watcher-wide, not attributed to the selected capture.' \
         'Previously observed gaps distinguish outstanding IDs from later sightings.' \
         'Alert-ID gaps and IDs that disappeared between samples are not proof of deletion from the saved log.'
@@ -41,14 +42,14 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         | if ($known | length) > 1 then {status:"mixed",link_type:null}
           elif $known == [] or ($types | index(null)) != null then {status:"unverified",link_type:null}
           else {status:"verified",link_type:$known[0]} end;
-    def archive_visible: .status | IN("current","degraded");
+    def capture_observed: .status | IN("current","degraded");
     def archive_rule_ids:
         type == "array" and length <= 16 and length == (unique | length)
         and all(.[]; type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z"));
     def archive_policy:
-        if archive_visible and .archive == "disabled" and .archive_mode == "disabled" and .archive_rule_ids == null
+        if capture_observed and .archive == "disabled" and .archive_mode == "disabled" and .archive_rule_ids == null
         then {mode:"disabled",opt_in_rule_ids:null}
-        elif archive_visible and (.archive | IN("enabled","paused")) then
+        elif capture_observed and (.archive | IN("enabled","paused")) then
             if .archive_mode == "all_packets" and .archive_rule_ids == null then {mode:"all_packets",opt_in_rule_ids:null}
             elif .archive_mode == "alert_evidence" and (.archive_rule_ids | archive_rule_ids)
             then {mode:"alert_evidence",opt_in_rule_ids:(.archive_rule_ids | sort)}
@@ -61,14 +62,13 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         | (if ($known | length) > 1 then {status:"mixed",mode:null,opt_in_rule_ids:null}
            elif $known == [] or $unknown > 0 then {status:"unverified",mode:null,opt_in_rule_ids:null}
            else {status:"verified"} + $known[0] end)
-          + {unverified_records:$unknown,paused_records:([$sample[] | select(archive_visible and .archive=="paused")] | length)};
+          + {unverified_records:$unknown,paused_records:([$sample[] | select(capture_observed and .archive=="paused")] | length)};
     def valid_record:
         type == "object" and .record_type == "capture_triage_watch"
         and (.status | id) and (.updated_at | type == "string" and test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z"));
     def same($key): .capture_id == $key.capture_id and .session_id == $key.session_id;
-    def healthy:
-        .status == "current" and .link_decodable == true and .buffer_drops == 0 and .packet_counter_gap == false
-        and (.healthy_capture_since | counter and . > 0) and .healthy_capture_since <= .tick and (.packets | counter);
+    def known_epoch:
+        (.healthy_capture_since | counter and . > 0) and .healthy_capture_since <= .tick;
     def alert_log_usable:
         .alert_saving == true and .alert_log_integrity.invalid_records == 0
         and .alert_log_integrity.oversized_records == 0
@@ -203,11 +203,29 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         | (lower_bound($observed; $end)) as $end_index
         # Later queue entries can account for holes in an earlier poll.
         | unobserved_ranges($range.first_id - 1; $observed[$start_index:$end_index] + [$end]; $range.recorded_at);
-    def no_capture_loss_between($earlier; $later):
-        all([$earlier.capture_queue_full_packets, $later.capture_queue_full_packets,
-             $earlier.truncated_frames, $later.truncated_frames][]; counter)
-        and $earlier.capture_queue_full_packets == $later.capture_queue_full_packets
-        and $earlier.truncated_frames == $later.truncated_frames;
+    def interval_exclusion($earlier; $later):
+        ($earlier | link_type) as $before_link | ($later | link_type) as $after_link
+        | if ($earlier | capture_observed | not) or ($later | capture_observed | not) then "watcher_not_current"
+          elif ($earlier.buffer_drops | counter and . > 0) or ($later.buffer_drops | counter and . > 0)
+              then "pcap_drops_observed"
+          elif counter_status($earlier.capture_queue_full_packets; $later.capture_queue_full_packets) == "increased"
+              then "capture_queue_drops_observed"
+          elif counter_status($earlier.truncated_frames; $later.truncated_frames) == "increased"
+              then "truncated_frames_observed"
+          elif $earlier.status != "current" or $later.status != "current" then "watcher_not_current"
+          elif $earlier.link_decodable != true or $later.link_decodable != true then "link_unsupported_or_unverified"
+          elif $before_link != null and $after_link != null and $before_link != $after_link then "capture_link_changed"
+          elif $earlier.buffer_drops != 0 or $later.buffer_drops != 0 then "pcap_drop_counter_unverified"
+          elif $earlier.packet_counter_gap != false or $later.packet_counter_gap != false
+              or counter_status($earlier.packets; $later.packets) == "unverified" then "packet_counter_discontinuity"
+          elif ($earlier | known_epoch | not) or ($later | known_epoch | not)
+              or $earlier.healthy_capture_since != $later.healthy_capture_since then "healthy_epoch_changed_or_unverified"
+          elif $later.tick <= $earlier.tick then "timestamp_not_increasing"
+          elif counter_status($earlier.capture_queue_full_packets; $later.capture_queue_full_packets) != "unchanged"
+              then "capture_queue_counter_unverified"
+          elif counter_status($earlier.truncated_frames; $later.truncated_frames) != "unchanged"
+              then "truncation_counter_unverified"
+          else null end;
     def journal_contiguous($earlier; $later):
         ($earlier.journal_writer | id) and $earlier.journal_writer == $later.journal_writer
         and ($earlier.journal_sequence | counter and . > 0)
@@ -216,12 +234,8 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         and (if ($earlier.journal_unconfirmed_events | counter) and ($later.journal_unconfirmed_events | counter)
              then $earlier.journal_unconfirmed_events == $later.journal_unconfirmed_events else true end);
     def pair($earlier; $later):
-        ($earlier | link_type) as $before_link | ($later | link_type) as $after_link |
-        if ($earlier | healthy) and ($later | healthy)
-            and ($before_link == null or $after_link == null or $before_link == $after_link)
-            and $earlier.healthy_capture_since == $later.healthy_capture_since
-            and $later.tick > $earlier.tick and $later.packets >= $earlier.packets
-            and no_capture_loss_between($earlier; $later)
+        interval_exclusion($earlier; $later) as $exclusion
+        | if $exclusion == null
         then counter_status($earlier.alert_save_failures; $later.alert_save_failures) as $saving
           | counter_status($earlier.alert_save_backlog_dropped; $later.alert_save_backlog_dropped) as $backlog
           | counter_status($earlier.journal_unconfirmed_events; $later.journal_unconfirmed_events) as $journal
@@ -234,7 +248,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
              save_counter_status:$saving,
              backlog_counter_status:$backlog,
              journal_counter_status:$journal, stable_alert_log:$stable_log, historical_alert_gap:($later.alert_sample_gap == true),
-             opening_rules:(if $ids == null then null else attribute_openings($later; $ids) end)} else null end;
+             opening_rules:(if $ids == null then null else attribute_openings($later; $ids) end)} else $exclusion end;
     if utf8bytelength > 2097152 then error("Journal exceeds the 2 MiB input limit") else . end
     | split("\n") | map(select(length > 0) | fromjson
         | if valid_record then . + {tick:(.updated_at | fromdateiso8601)} else error("Invalid triage journal record") end) as $all
@@ -246,6 +260,10 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         | if journal_contiguous($before; $after) then pair($before; $after)
           else "journal_discontinuity" end] as $pairs
     | ($pairs | map(objects)) as $healthy
+    | (([($sample | length) - 1,0] | max) - ($pairs | length)) as $interleaved
+    | (reduce ($pairs[] | strings) as $reason
+        ((if $interleaved > 0 then {interleaved_records:$interleaved} else {} end);
+         .[$reason] = ((.[$reason] // 0) + 1))) as $exclusion_reasons
     | ($healthy | map(select(.opening_rules != null))) as $comparable
     | ([$comparable[].packets] | add // 0) as $measured_packets
     | [$comparable[].opening_rules[]] as $openings
@@ -264,6 +282,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
        first_record_at:$sample[0].updated_at,last_record_at:$sample[-1].updated_at,
        scoped_records:($sample | length),
        healthy_intervals:($healthy | length), excluded_intervals:([($sample | length) - 1,0] | max) - ($healthy | length),
+       excluded_interval_reasons:$exclusion_reasons,
        journal_discontinuities:([$pairs[] | select(. == "journal_discontinuity")] | length),
        healthy_seconds:([$healthy[].seconds] | add // 0), healthy_packets:([$healthy[].packets] | add // 0),
        dns_capacity_coverage:dns_capacity_summary($healthy),
