@@ -94,6 +94,32 @@ fn exact_alert_lookup_reaches_rotated_history_and_rejects_scope_collisions() {
     assert_eq!(report["alerts"][0]["disposition"], "Benign");
     assert_eq!(report["integrity"]["stopped_at_limit"], true);
 
+    let active_size = file.metadata().unwrap().len();
+    let bounded = |id, bytes: u64| {
+        let output = run(&["--session", "session-a", "--capture-id", "capture-a",
+            "--alert-id", id, "--report-integrity", "--scan-bytes", &bytes.to_string()]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let partial = bounded("1", active_size);
+    assert_eq!(partial["alerts"], json!([]));
+    assert_eq!(partial["integrity"]["stopped_at_scan_budget"], true);
+    assert_eq!(partial["integrity"]["stopped_at_limit"], false);
+
+    let total_size = active_size + earlier.metadata().unwrap().len();
+    let rotated = bounded("1", total_size);
+    assert_eq!(rotated["alerts"], report["alerts"]);
+    assert_ne!(rotated["integrity"]["stopped_at_scan_budget"], true);
+    let complete_miss = bounded("99", total_size);
+    assert_eq!(complete_miss["alerts"], json!([]));
+    assert_ne!(complete_miss["integrity"]["stopped_at_scan_budget"], true);
+    assert_eq!(complete_miss["integrity"]["stopped_at_limit"], false);
+
+    let without_integrity = run(&["--session", "session-a", "--capture-id", "capture-a",
+        "--alert-id", "1", "--scan-bytes", "512"]);
+    assert!(!without_integrity.status.success());
+    assert!(String::from_utf8_lossy(&without_integrity.stderr).contains("requires --report-integrity"));
+
     let missing = run(&["--session", "session-a", "--capture-id", "capture-a", "--alert-id", "99"]);
     assert!(missing.status.success(), "{}", String::from_utf8_lossy(&missing.stderr));
     assert_eq!(serde_json::from_slice::<Value>(&missing.stdout).unwrap(), json!([]));

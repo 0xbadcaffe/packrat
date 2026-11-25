@@ -183,9 +183,10 @@ pub fn exact_alert_report(
     session: &str,
     capture: &str,
     alert_id: u64,
+    scan_bytes: Option<std::num::NonZeroU64>,
 ) -> Result<AlertHistoryReport> {
     ensure!(alert_id != 0, "Alert ID must be positive");
-    filtered_alerts_report(previous, active, Some(session), Some(capture), &[alert_id..=alert_id], 1, None)
+    filtered_alerts_report(previous, active, Some(session), Some(capture), &[alert_id..=alert_id], 1, scan_bytes)
 }
 
 pub fn alert_ranges_report(

@@ -285,8 +285,8 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
     if evidence_archive.is_some() || verify_triggers || match_cited_flows || recover_candidate_triggers || require_verified_path {
         return Err("Related-alert evidence options require --related-to".into());
     }
-    if scan_bytes.is_some() && (!report_integrity || alert_id.is_some()) {
-        return Err("--scan-bytes requires --report-integrity and cannot be combined with --alert-id".into());
+    if scan_bytes.is_some() && !report_integrity {
+        return Err("--scan-bytes requires --report-integrity".into());
     }
     let log = std::path::Path::new(&log);
     let report = if let Some(id) = alert_id {
@@ -295,7 +295,7 @@ fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std
         }
         exact_alert_report(&previous, log,
             session.as_deref().ok_or("--alert-id requires --session")?,
-            capture.as_deref().ok_or("--alert-id requires --capture-id")?, id)?
+            capture.as_deref().ok_or("--alert-id requires --capture-id")?, id, scan_bytes)?
     } else if !ranges.is_empty() {
         if !report_integrity {
             return Err("--alert-range requires --report-integrity".into());
