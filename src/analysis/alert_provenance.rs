@@ -117,7 +117,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Compare all three claims with switch learning, DHCP leases, and failover logs; check whether endpoint neighbor entries actually changed.",
         ),
         (
-            "IDS", "Invalid IPv6 neighbor discovery hop limit", "ipv6.ndp_invalid_hop_limit", 2, DirectObservation,
+            "IDS", "Invalid IPv6 neighbor discovery hop limit", "ipv6.ndp_invalid_hop_limit", 3, DirectObservation,
             "Verify the IPv6 hop limit at the original link and check router configuration and endpoint logs; the observed packet does not prove a neighbor cache or route changed.",
         ),
         (

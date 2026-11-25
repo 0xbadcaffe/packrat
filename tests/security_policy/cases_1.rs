@@ -402,7 +402,7 @@ fn detects_invalid_ipv6_neighbor_discovery_and_binding_change() {
     let target = [0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5];
     let source = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let mut security = SecurityEngine::default();
-    security.update(&ipv6_control_packet(
+    security.update(&checksummed_ipv6_control_packet(
         1,
         [0, 1, 2, 3, 4, 5],
         source,

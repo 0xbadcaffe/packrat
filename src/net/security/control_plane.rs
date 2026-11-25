@@ -119,6 +119,7 @@ impl SecurityEngine {
         if inspection.hop_limit != 255
             && inspection.complete && !inspection.fragmented && inspection.extension_count <= 32
             && let Some(message) = ndp_message_name(inspection.transport)
+            && icmpv6_checksum_valid(&inspection)
         {
             let scope = scan_scope(pkt);
             let source = Ipv6Addr::from(inspection.source);
