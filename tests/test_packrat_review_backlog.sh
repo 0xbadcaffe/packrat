@@ -176,12 +176,23 @@ jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${
       elif $mode == "malformed_timing" then .directional_flows[0].cited_timing="private time"
       elif ($mode | startswith("connection_")) then
           .directional_flows=[
-              {protocol:"tcp",evidence_frames:1,contains_trigger_frame:true,reverse_evidence_frames:1,source:"private client",
+              {protocol:"tcp",evidence_frames:1,contains_trigger_frame:true,reverse_evidence_frames:1,
+                   source:"192.0.2.1:22222",destination:"192.0.2.2:443",section_id:0,interface_id:1,
+                   vlan_stack:[{tpid:34984,vid:20},{tpid:33024,vid:30}],
                    frames:[{frame_number:4,status:"complete"}]},
-              {protocol:"tcp",evidence_frames:1,contains_trigger_frame:false,reverse_evidence_frames:1,source:"private server",
+              {protocol:"tcp",evidence_frames:1,contains_trigger_frame:false,reverse_evidence_frames:1,
+                   destination:"192.0.2.1:22222",source:"192.0.2.2:443",section_id:0,interface_id:1,
+                   vlan_stack:[{tpid:34984,vid:20},{tpid:33024,vid:30}],
                    frames:[{frame_number:3,status:"complete"}]}]
           | .udp_dns_reply_candidates=[]
-          | if $mode == "connection_other" then .directional_flows[0].reverse_evidence_frames=0
+          | if $mode == "connection_other" then
+              .directional_flows[1].interface_id=2 | .directional_flows[].reverse_evidence_frames=0
+            elif $mode == "connection_vlan_other" then
+              .directional_flows[1].vlan_stack[0].tpid=33024 | .directional_flows[].reverse_evidence_frames=0
+            elif $mode == "connection_wrong_vlan_reply" then .directional_flows[1].vlan_stack[0].tpid=33024
+            elif $mode == "connection_wrong_order" then .directional_flows[1].vlan_stack |= reverse
+            elif $mode == "connection_wrong_trigger" then .directional_flows |= map(.contains_trigger_frame |= not)
+            elif $mode == "connection_missing_path" then del(.directional_flows[1].interface_id)
             elif $mode == "connection_duplicate" then .directional_flows[1].contains_trigger_frame=true
             elif $mode == "connection_bad_count" then .directional_flows[0].reverse_evidence_frames=2
             elif $mode == "connection_mismatch" then .trigger_tuple_status="differs_from_wire"
@@ -284,20 +295,23 @@ TEST_MODE=legacy_tuple FLOW_MODE=connection_pair run_review --flow-context | jq 
     .findings[0].flow_context | .trigger_tuple_status=="snapshot_unverified" and .trigger_connection_status=="reported"' >/dev/null
 FLOW_MODE=legacy_tuple run_review --flow-context | jq -e '
     .findings[0] | .flow_context_status=="checked" and .flow_context.trigger_tuple_status=="snapshot_unverified"' >/dev/null
-for mode in connection_pair connection_other connection_mismatch; do
+for mode in connection_pair connection_other connection_vlan_other connection_mismatch; do
     FLOW_MODE=$mode run_review --flow-context | jq -e --arg mode "$mode" '
         .findings[0].flow_context | .trigger_connection_status=="reported"
         and .cited_trigger_connection=={same_direction_frames:1,
-            reverse_direction_frames:(if $mode=="connection_other" then 0 else 1 end),
-            other_flow_frames:(if $mode=="connection_other" then 1 else 0 end)}
+            reverse_direction_frames:(if $mode|IN("connection_other","connection_vlan_other") then 0 else 1 end),
+            other_flow_frames:(if $mode|IN("connection_other","connection_vlan_other") then 1 else 0 end)}
         and (.trigger_tuple_status=="differs_from_wire") == ($mode=="connection_mismatch")
-        and (tostring | contains("private") | not)' >/dev/null
+        and (tostring | (contains("private") or contains("192.0.2.")) | not)' >/dev/null
 done
-for mode in connection_duplicate connection_bad_count; do
+for mode in connection_duplicate connection_bad_count connection_wrong_trigger connection_wrong_vlan_reply connection_wrong_order; do
     FLOW_MODE=$mode run_review --flow-context | jq -e '
         .findings[0].flow_context | .trigger_connection_status=="invalid"
         and (has("cited_trigger_connection") | not)' >/dev/null
 done
+FLOW_MODE=connection_missing_path run_review --flow-context | jq -e '
+    .findings[0].flow_context | .trigger_connection_status=="path_unverified"
+    and (has("cited_trigger_connection") | not)' >/dev/null
 FLOW_MODE=dns_unavailable run_review --flow-context | jq -e '
     .findings[0].flow_context | .udp_dns_replies_with_query_candidates==0
     and .udp_dns_timing_status=="reported" and .udp_dns_reply_timestamps.unavailable==1' >/dev/null

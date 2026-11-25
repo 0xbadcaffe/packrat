@@ -211,22 +211,40 @@ check_flow_context() {
                  elif .trigger_tuple_status == "trigger_header_unavailable" then
                     .trigger_frame.transport_header_observed != true
                  else true end);
+        def capture_index: type == "number" and . >= 0 and . <= 4294967295 and floor == .;
+        def endpoint:
+            type == "string" and length <= 96 and test("\\A[0-9a-fA-F:.%\\[\\]]+\\z");
+        def valid_direction_key:
+            (.section_id | capture_index) and (.interface_id | capture_index)
+            and (.source | endpoint) and (.destination | endpoint)
+            and (.vlan_stack | type == "array" and length <= 16 and all(.[]; type == "object"
+                and (.tpid | IN(33024,34984))
+                and (.vid | type == "number" and . >= 0 and . <= 4095 and floor == .)));
+        def direction_key:
+            {section_id,interface_id,protocol,source,destination,vlan_stack:(.vlan_stack | map({tpid,vid}))};
         def trigger_connection($assigned):
             .directional_flows as $rows
+            | .trigger_frame.frame_number as $frame
             | [$rows[] | select(.contains_trigger_frame == true)] as $triggers
             | if .trigger_frame.transport_header_observed != true then
                 {trigger_connection_status:(if $triggers == [] then "no_trigger_header" else "invalid" end)}
               elif all($rows[]; (has("contains_trigger_frame") or has("reverse_evidence_frames")) | not) then
                 {trigger_connection_status:"not_reported"}
               elif ($triggers | length) != 1 or any($rows[];
-                   (.contains_trigger_frame | type) != "boolean" or (.reverse_evidence_frames | count | not)) then
+                   (.reverse_evidence_frames | count | not)
+                   or .contains_trigger_frame != any(.frames[]; .frame_number == $frame)) then
                 {trigger_connection_status:"invalid"}
+              elif any($rows[]; valid_direction_key | not) then {trigger_connection_status:"path_unverified"}
+              elif ($rows | map(direction_key) | length != (unique | length)) then {trigger_connection_status:"invalid"}
               else $triggers[0] as $trigger
-                | ($trigger.evidence_frames + $trigger.reverse_evidence_frames) as $linked
-                | if $linked > $assigned then {trigger_connection_status:"invalid"}
+                | ($trigger | direction_key) as $key
+                | ($key | .source = $key.destination | .destination = $key.source) as $reverse
+                | (if $key == $reverse then 0 else
+                    [$rows[] | select(direction_key == $reverse) | .evidence_frames] | add // 0 end) as $reverse_frames
+                | if $reverse_frames != $trigger.reverse_evidence_frames then {trigger_connection_status:"invalid"}
                   else {trigger_connection_status:"reported",cited_trigger_connection:{
-                    same_direction_frames:$trigger.evidence_frames,reverse_direction_frames:$trigger.reverse_evidence_frames,
-                    other_flow_frames:($assigned - $linked)}} end
+                    same_direction_frames:$trigger.evidence_frames,reverse_direction_frames:$reverse_frames,
+                    other_flow_frames:($assigned - $trigger.evidence_frames - $reverse_frames)}} end
               end;
         select(length == 1) | .[0] | objects
         | select(.record_type == "alert_flow_summary" and
