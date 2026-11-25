@@ -12,6 +12,24 @@ cat > "$scratch/packrat-archive" <<'STUB'
 set -euo pipefail
 [[ ${*:1:11} == "--alerts $TEST_DIR/current.jsonl --session session-a --capture-id 00000000000000000000000000000001 --limit 512 --scan-bytes 8388608 --report-integrity" ]]
 shift 11
+if [[ ${TEST_MODE:-} == result-cap-* ]]; then
+    scope='{"capture_id":"00000000000000000000000000000001","session_id":"session-a","severity":"HIGH","detail":"private payload"}'
+    if [[ $* == "--alert-range 1..9007199254740991 --previous-log $TEST_DIR/old.jsonl" ]]; then
+        jq -cn --argjson scope "$scope" '{alerts:[range(100;612) | $scope + {alert_id:.}],
+            integrity:{invalid_records:0,oversized_records:0,stopped_at_limit:true}}'
+    else
+        [[ $* == "--alert-range 7..7 --alert-range 8..8 --previous-log $TEST_DIR/old.jsonl" ]]
+        [[ $TEST_MODE != result-cap-no-retry ]] || { touch -- "$TEST_DIR/unexpected-retry"; exit 2; }
+        [[ $TEST_MODE != result-cap-unavailable ]] || exit 2
+        if [[ $TEST_MODE == result-cap-race ]]; then printf 'late record\n' >>"$TEST_DIR/old.jsonl"; fi
+        jq -cn --argjson scope "$scope" --arg mode "$TEST_MODE" '
+            {alerts:[$scope + {alert_id:7}],
+             integrity:{invalid_records:0,oversized_records:0,stopped_at_limit:false,
+                        stopped_at_scan_budget:($mode=="result-cap-partial")}}
+            | if $mode=="result-cap-wrong-scope" then .alerts[0].session_id="another-session" else . end'
+    fi
+    exit
+fi
 if [[ ${TEST_MODE:-} == range-cap ]]; then
     [[ $# == 130 && $2 == 2..2 && ${128} == 254..254 && ${129} == --previous-log && ${130} == "$TEST_DIR/old.jsonl" ]]
     for (( index=2; index<=128; index+=2 )); do
@@ -85,6 +103,28 @@ TEST_MODE=unknown-evidence run_gap | jq -e '
         and .evidence_frame_set_sha256==null and .next_evidence_step=="inspect_saved_alert"' >/dev/null
 jq '.unobserved_alert_id_ranges = [{first_id:1,last_id:9007199254740991}]' "$scratch/report" > "$scratch/wide"
 run_gap "$scratch/wide" | jq -e '.ranges[0].not_found_in_scan == 9007199254740988' >/dev/null
+jq '.missing_previously_observed_alert_ids=[7,8]' "$scratch/wide" >"$scratch/result-cap"
+TEST_MODE=result-cap-complete run_gap "$scratch/result-cap" | jq -e '
+    .priority_lookup_status=="complete" and .saved_log_scan_complete==false
+    and .previously_observed_reconciliation=={recovered_alert_ids:[7],not_in_supplied_logs:[8],unverified_alert_ids:[]}
+    and (.recovered_alerts | length)==512 and .recovered_alerts[0].alert_id==7 and .recovered_alerts_omitted==1
+    and .recovered_alerts[1].alert_id==101 and .recovered_alerts[-1].alert_id==611
+    and .ranges[0].found==513 and .ranges[0].remaining_status=="unverified"
+    and (tostring | contains("private") | not)' >/dev/null
+TEST_MODE=result-cap-partial run_gap "$scratch/result-cap" | jq -e '
+    .priority_lookup_status=="partial"
+    and .previously_observed_reconciliation=={recovered_alert_ids:[7],not_in_supplied_logs:[],unverified_alert_ids:[8]}' >/dev/null
+for mode in result-cap-wrong-scope result-cap-unavailable; do
+    TEST_MODE=$mode run_gap "$scratch/result-cap" | jq -e '
+        .priority_lookup_status=="unavailable" and .recovered_alerts_omitted==0 and .recovered_alerts[0].alert_id==100
+        and .previously_observed_reconciliation=={recovered_alert_ids:[],not_in_supplied_logs:[],unverified_alert_ids:[7,8]}' >/dev/null
+done
+jq '.missing_previously_observed_alert_ids=[100]' "$scratch/wide" >"$scratch/result-cap-already-found"
+TEST_MODE=result-cap-no-retry run_gap "$scratch/result-cap-already-found" | jq -e '
+    .priority_lookup_status=="not_needed" and .previously_observed_reconciliation.recovered_alert_ids==[100]' >/dev/null
+[[ ! -e $scratch/unexpected-retry ]]
+if TEST_MODE=result-cap-race run_gap "$scratch/result-cap" >"$scratch/result" 2>/dev/null; then exit 1; fi
+[[ ! -s $scratch/result ]]
 
 for mode in wrong-scope out-of-range duplicate raced failed; do
     if TEST_MODE=$mode run_gap >"$scratch/result" 2>/dev/null; then exit 1; fi
