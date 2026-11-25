@@ -35,8 +35,12 @@ fn udp(no: u64, reply: bool, resolver: &str, vlan: u8, timestamp: f64) -> Packet
 }
 
 fn start_app(archive_path: &std::path::Path, rules: Vec<String>) -> App {
+    start_app_with_limits(archive_path, rules, ArchiveLimits::default())
+}
+
+fn start_app_with_limits(archive_path: &std::path::Path, rules: Vec<String>, limits: ArchiveLimits) -> App {
     let mut app = App::new_for_test();
-    let archive = ArchiveWorker::open_alert_evidence(archive_path, ArchiveLimits::default()).unwrap();
+    let archive = ArchiveWorker::open_alert_evidence(archive_path, limits).unwrap();
     app.set_packet_archive_with_rules(archive, rules).unwrap();
     app.start_background_analysis().unwrap();
     app
@@ -54,26 +58,69 @@ fn finish_app(app: &mut App, rule: &str, expected: &[u64]) -> String {
     alert.capture_id.unwrap()
 }
 
-#[test]
-fn competing_udp_dns_archives_query_and_both_replies_after_rollover() {
+#[rstest::rstest]
+#[case::complete(3, false)]
+#[case::reply_missing(2, true)]
+fn competing_udp_dns_opens_matching_archived_packets_after_rollover(#[case] capacity: u64, #[case] missing: bool) {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use packrat_tui::{app::SecuritySubTab, event, tabs::Tab, ui};
+    use ratatui::{Terminal, backend::TestBackend};
+
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("archive");
-    let mut app = start_app(&path, Vec::new());
+    let limits = ArchiveLimits { max_frames: capacity, ..ArchiveLimits::default() };
+    let mut app = start_app_with_limits(&path, Vec::new(), limits);
     for (no, reply, vlan) in [(1, false, 10), (2, false, 10), (3, true, 10), (4, false, 20), (5, true, 20)] {
         app.inject_packet(udp(no, reply, "10.0.0.53", vlan, no as f64));
     }
     drain(&mut app);
     let trigger = noise(&mut app, 6, 6.0);
-    app.inject_packet(udp(trigger, true, "10.0.0.54", 10, 7.0));
+    let competing_reply = udp(trigger, true, "10.0.0.54", 10, 7.0);
+    app.inject_packet(competing_reply.clone());
     let scope = finish_app(&mut app, "dns.competing_responders", &[1, 3, trigger]);
 
     let mut archive = PacketArchive::open_readonly(&path).unwrap();
-    assert_eq!(archive.count().unwrap(), 3);
-    for frame in [1, 3, trigger] {
+    assert_eq!(archive.count().unwrap(), capacity);
+    for frame in [1, trigger] {
         assert!(archive.packet_for_capture(&scope, frame).unwrap().is_some());
     }
+    assert_eq!(archive.packet_for_capture(&scope, 3).unwrap().is_none(), missing);
     for unrelated in [2, 4, 5] {
         assert!(archive.packet_for_capture(&scope, unrelated).unwrap().is_none());
+    }
+
+    app.packets.clear();
+    app.worklist = Default::default();
+    let press = |app: &mut App, code, modifiers| {
+        assert!(!event::handle(app, Event::Key(KeyEvent::new(code, modifiers))));
+    };
+    assert!(app.alert_overlay_open);
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+    assert!(!app.alert_overlay_open);
+    app.active_tab = Tab::Security;
+    app.security_tab = SecuritySubTab::Alerts;
+    app.configure_core(|core| {
+        let center = &mut core.alert_center;
+        center.selected = center.visible_indices().iter().position(|&index| {
+            center.items[index].provenance.as_ref().is_some_and(|p| p.rule_id == "dns.competing_responders")
+        }).expect("DNS alert must be selectable");
+    });
+    press(&mut app, KeyCode::Char('V'), KeyModifiers::SHIFT);
+    assert_eq!(app.active_tab, Tab::Investigate, "{:?}", app.status_msg);
+    let selected = app.active_investigation_packet().expect("open the competing reply first");
+    assert_eq!((selected.no, &selected.bytes), (trigger, &competing_reply.bytes));
+    let expected = if missing { vec![1, trigger] } else { vec![1, 3, trigger] };
+    assert_eq!(app.worklist.packet_nos(), expected);
+
+    app.active_tab = Tab::Security;
+    let mut terminal = Terminal::new(TestBackend::new(140, 32)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
+    let screen = terminal.backend().to_string();
+    if missing {
+        assert!(screen.contains("2/3 retained") && screen.contains("1 not found at last archive check"), "{screen}");
+    } else {
+        assert!(screen.contains("3/3 retained"), "{screen}");
     }
 }
 
