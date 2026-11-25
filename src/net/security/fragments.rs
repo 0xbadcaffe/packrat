@@ -373,7 +373,7 @@ impl SecurityEngine {
             self.http_headers.remove(&(scope, segment.key.clone(), false));
             self.start_periodic_tcp_connection(pkt, scope);
         }
-        self.check_http_request_smuggling(pkt, scope, &segment);
+        self.check_http_request_smuggling(pkt, scope, &segment, archive_rules.is_some());
         payload_observation
     }
 }

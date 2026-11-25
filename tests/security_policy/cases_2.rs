@@ -455,10 +455,12 @@ fn detects_http_request_smuggling_framing_ambiguities() {
     }
 }
 
+pub(super) const HTTP_SPLIT_FIRST: &[u8] = b"POST /upload HTTP/1.1\r\nHost: example\r\nContent-Length: 5\r\n";
+pub(super) const HTTP_SPLIT_LAST: &[u8] = b"Transfer-Encoding: chunked\r\n\r\n";
+
 #[test]
 fn accumulates_split_http_headers_and_allows_unambiguous_framing() {
-    let first = b"POST /upload HTTP/1.1\r\nHost: example\r\nContent-Length: 5\r\n";
-    let second = b"Transfer-Encoding: chunked\r\n\r\n";
+    let (first, second) = (HTTP_SPLIT_FIRST, HTTP_SPLIT_LAST);
     let mut split = SecurityEngine::default();
     split.update(&http_packet(1, 100, first));
     assert!(

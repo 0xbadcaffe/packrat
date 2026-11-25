@@ -62,6 +62,7 @@ impl SecurityEngine {
             ipv6_fragment_evidence: Default::default(),
             ipv6_reassembled: 0,
             http_headers: HashMap::new(),
+            http_header_evidence: Default::default(),
             dns_transactions: DnsTransactionTracker::default(),
             dns_packet_evidence: Default::default(),
             cred_hit_count: 0,
@@ -111,6 +112,7 @@ impl SecurityEngine {
         self.ipv6_fragment_evidence = Default::default();
         self.ipv6_reassembled = 0;
         self.http_headers.clear();
+        self.http_header_evidence = Default::default();
         self.dns_transactions.clear();
         self.dns_packet_evidence = Default::default();
         self.cred_hit_count = 0;

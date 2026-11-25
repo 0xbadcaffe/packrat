@@ -186,7 +186,7 @@ impl SecurityEngine {
         }
     }
 
-    pub(super) fn check_http_request_smuggling(&mut self, pkt: &Packet, scope: ScanScope, segment: &TcpSegment<'_>) {
+    pub(super) fn check_http_request_smuggling(&mut self, pkt: &Packet, scope: ScanScope, segment: &TcpSegment<'_>, retain: bool) {
         let (source, destination) = if segment.from_a {
             (segment.key.endpoint_a, segment.key.endpoint_b)
         } else {
@@ -233,6 +233,9 @@ impl SecurityEngine {
         if header_end.is_none() && state.bytes.len() < 32_768 {
             if state.frames.len() < crate::analysis::alert_center::MAX_ALERT_PACKET_REFS {
                 state.frames.push(pkt.no);
+                if retain {
+                    self.http_header_evidence.remember(pkt);
+                }
             } else {
                 state.frame_refs_truncated = true;
             }
@@ -243,6 +246,12 @@ impl SecurityEngine {
         let frames = std::mem::take(&mut state.frames);
         let limitation = if state.frame_refs_truncated { "; earlier frame references capped" } else { "" };
         if let Some(reason) = header_end.and_then(|end| http_smuggling_reason(&bytes[..end])) {
+            if retain {
+                let window_end = state.last_seen;
+                self.findings.retained_evidence.extend(frames.iter().filter_map(|&frame| {
+                    self.http_header_evidence.supporting_packet_at(pkt, frame, window_end).cloned()
+                }));
+            }
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,

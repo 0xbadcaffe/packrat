@@ -205,6 +205,7 @@ pub struct SecurityEngine {
     ipv6_fragment_evidence: crate::net::recent_evidence::RecentEvidence<1024, 120>,
     pub ipv6_reassembled: u64,
     http_headers: HashMap<(ScanScope, TcpFlowKey, bool), HttpHeaderState>,
+    http_header_evidence: crate::net::recent_evidence::RecentEvidence<512, 30>,
     dns_transactions: DnsTransactionTracker,
     // Covers the pending-query lifetime plus the reply comparison window.
     dns_packet_evidence: crate::net::recent_evidence::RecentEvidence<2048, 70>,
