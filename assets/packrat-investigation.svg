@@ -1,0 +1,218 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1036 510" width="1036" height="510" xml:space="preserve" role="img">
+  <title>Investigation: DNS packet headers and evidence tray</title>
+  <desc>Captured from Packrat 0.4.0 running the built-in simulation.</desc>
+  <rect width="100%" height="100%" rx="6" fill="#1c1c1c"/>
+  <rect x="12.0" y="12" width="82.8" height="18" fill="rgb(36,36,36)"/>
+  <rect x="94.8" y="12" width="607.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="702.0" y="12" width="119.6" height="18" fill="rgb(36,36,36)"/>
+  <rect x="821.6" y="12" width="92.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="913.6" y="12" width="101.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="30" width="82.8" height="18" fill="rgb(36,36,36)"/>
+  <rect x="94.8" y="30" width="929.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="48" width="1012.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="66" width="9.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="21.2" y="66" width="18.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="39.6" y="66" width="92.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="131.6" y="66" width="138.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="269.6" y="66" width="27.6" height="18" fill="rgb(36,36,36)"/>
+  <rect x="297.2" y="66" width="18.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="315.6" y="66" width="708.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="84" width="1012.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="102" width="1012.0" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="120" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="120" width="542.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="564.0" y="120" width="450.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="120" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="138" width="1012.0" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="156" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="156" width="184.0" height="18" fill="rgb(28,28,28)"/>
+  <rect x="205.2" y="156" width="92.0" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="156" width="561.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="858.4" y="156" width="165.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="174" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="174" width="257.6" height="18" fill="rgb(95,215,215)"/>
+  <rect x="278.8" y="174" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="174" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="174" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="192" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="192" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="192" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="192" width="717.6" height="18" fill="rgb(95,215,215)"/>
+  <rect x="1014.8" y="192" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="210" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="210" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="210" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="210" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="210" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="228" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="228" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="228" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="228" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="228" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="246" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="246" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="246" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="246" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="246" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="264" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="264" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="264" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="264" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="264" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="282" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="282" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="282" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="282" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="282" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="300" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="300" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="300" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="300" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="300" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="318" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="318" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="318" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="318" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="318" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="336" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="336" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="336" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="336" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="336" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="354" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="354" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="354" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="354" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="354" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="372" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="372" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="372" width="745.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="390" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="390" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="390" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="390" width="147.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="444.4" y="390" width="579.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="408" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="408" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="408" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="408" width="110.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="407.6" y="408" width="607.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="408" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="426" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="426" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="426" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="426" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="426" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="444" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="444" width="257.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="278.8" y="444" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="297.2" y="444" width="717.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="444" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="462" width="1012.0" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="480" width="9.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="21.2" y="480" width="82.8" height="18" fill="rgb(36,36,36)"/>
+  <rect x="104.0" y="480" width="312.8" height="18" fill="rgb(36,36,36)"/>
+  <rect x="416.8" y="480" width="92.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="508.8" y="480" width="64.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="573.2" y="480" width="18.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="591.6" y="480" width="377.2" height="18" fill="rgb(36,36,36)"/>
+  <g font-family="DejaVu Sans Mono, Consolas, monospace" font-size="15" style="white-space: pre">
+  <text x="21.2" y="26" fill="rgb(215,175,0)" font-weight="700" textLength="64.4" lengthAdjust="spacingAndGlyphs">packrat</text>
+  <text x="94.8" y="26" fill="rgb(90,90,90)" textLength="607.2" lengthAdjust="spacingAndGlyphs">─ packet analyzer&#160;&#160;○ idle&#160;&#160;iface: simulated&#160;&#160;1184 pkts&#160;&#160;1184 total</text>
+  <text x="720.4" y="26" fill="rgb(215,95,95)" font-weight="700" textLength="101.2" lengthAdjust="spacingAndGlyphs">⚠ 28 alerts</text>
+  <text x="840.0" y="26" fill="rgb(215,135,95)" font-weight="700" textLength="73.6" lengthAdjust="spacingAndGlyphs">☢ 64 IOC</text>
+  <text x="932.0" y="26" fill="rgb(215,175,0)" font-weight="700" textLength="82.8" lengthAdjust="spacingAndGlyphs">⚡ 54 rule</text>
+  <text x="21.2" y="44" fill="rgb(154,154,154)" textLength="64.4" lengthAdjust="spacingAndGlyphs">Filter:</text>
+  <text x="94.8" y="44" fill="rgb(90,90,90)" textLength="929.2" lengthAdjust="spacingAndGlyphs">&lt;press / for packet inspection filter: tcp, ip.src==x, dns and port==53&gt;&#160;&#160;[L] load pcap&#160;&#160;[B] baseline</text>
+  <text x="21.2" y="62" fill="rgb(154,154,154)" textLength="552.0" lengthAdjust="spacingAndGlyphs">Investigation &gt; Investigate&#160;&#160;[Tab/F2 views]&#160;&#160;[Alt+Left back]</text>
+  <text x="21.2" y="80" fill="rgb(215,175,0)">1</text>
+  <text x="39.6" y="80" fill="rgb(154,154,154)" textLength="82.8" lengthAdjust="spacingAndGlyphs">Traffic │</text>
+  <text x="131.6" y="80" fill="rgb(95,215,215)" font-weight="700" textLength="138.0" lengthAdjust="spacingAndGlyphs">2 Investigation</text>
+  <text x="278.8" y="80" fill="rgb(154,154,154)">│</text>
+  <text x="297.2" y="80" fill="rgb(215,175,0)">3</text>
+  <text x="315.6" y="80" fill="rgb(154,154,154)" textLength="36.8" lengthAdjust="spacingAndGlyphs">Case</text>
+  <text x="12.0" y="98" fill="rgb(68,68,68)" textLength="1012.0" lengthAdjust="spacingAndGlyphs">──────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+  <text x="12.0" y="116" fill="rgb(68,68,68)" textLength="1012.0" lengthAdjust="spacingAndGlyphs">┌────────────────────────────────────────────────────────────────────────────────────────────────────────────┐</text>
+  <text x="12.0" y="134" fill="rgb(68,68,68)">│</text>
+  <text x="30.4" y="134" fill="rgb(95,215,215)" font-weight="700" textLength="524.4" lengthAdjust="spacingAndGlyphs">Packet #3&#160;&#160;DNS&#160;&#160;192.168.1.50 -&gt; 8.8.8.8&#160;&#160;len=74&#160;&#160;Tray 1/1</text>
+  <text x="582.4" y="134" fill="rgb(90,90,90)" textLength="432.4" lengthAdjust="spacingAndGlyphs">Screen: Headers&#160;&#160;[[/]] screen&#160;&#160;n/p item&#160;&#160;w tray</text>
+  <text x="1014.8" y="134" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="152" fill="rgb(68,68,68)" textLength="1012.0" lengthAdjust="spacingAndGlyphs">└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</text>
+  <text x="12.0" y="170" fill="rgb(68,68,68)">┌</text>
+  <text x="30.4" y="170" fill="rgb(215,175,0)" font-weight="700" textLength="165.6" lengthAdjust="spacingAndGlyphs">Investigation Tray</text>
+  <text x="205.2" y="170" fill="rgb(68,68,68)" textLength="92.0" lengthAdjust="spacingAndGlyphs">────────┐┌</text>
+  <text x="306.4" y="170" fill="rgb(135,215,0)" font-weight="700" textLength="542.8" lengthAdjust="spacingAndGlyphs">Headers&#160;&#160;/ search&#160;&#160;j/k move&#160;&#160;Enter bytes&#160;&#160;f filter&#160;&#160;c clear</text>
+  <text x="858.4" y="170" fill="rgb(68,68,68)" textLength="165.6" lengthAdjust="spacingAndGlyphs">─────────────────┐</text>
+  <text x="12.0" y="188" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="188" fill="rgb(28,28,28)" font-weight="700" textLength="257.6" lengthAdjust="spacingAndGlyphs">&gt; #3 DNS 192.168… -&gt; 8.8.8.8</text>
+  <text x="278.8" y="188" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="188" fill="rgb(154,154,154)" font-weight="700" textLength="625.6" lengthAdjust="spacingAndGlyphs">Layer&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Path&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Field&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Value</text>
+  <text x="1014.8" y="188" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="206" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="206" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="206" fill="rgb(28,28,28)" font-weight="700" textLength="588.8" lengthAdjust="spacingAndGlyphs">Frame&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;frame.number&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Frame Number&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;3</text>
+  <text x="1014.8" y="206" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="224" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="224" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="224" fill="rgb(212,212,212)" textLength="717.6" lengthAdjust="spacingAndGlyphs">Frame&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;frame.time&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Capture Time&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;1.100000s (lega</text>
+  <text x="1014.8" y="224" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="242" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="242" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="242" fill="rgb(212,212,212)" textLength="598.0" lengthAdjust="spacingAndGlyphs">Frame&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;frame.len&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Wire Length&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;74</text>
+  <text x="1014.8" y="242" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="260" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="260" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="260" fill="rgb(212,212,212)" textLength="607.2" lengthAdjust="spacingAndGlyphs">Frame&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;proto&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Protocol&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;DNS</text>
+  <text x="1014.8" y="260" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="278" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="278" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="278" fill="rgb(212,212,212)" textLength="717.6" lengthAdjust="spacingAndGlyphs">Ethernet&#160;&#160;&#160;&#160;&#160;eth.dst&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Destination MAC&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;ff:ff:ff:ff:ff:</text>
+  <text x="1014.8" y="278" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="296" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="296" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="296" fill="rgb(212,212,212)" textLength="717.6" lengthAdjust="spacingAndGlyphs">Ethernet&#160;&#160;&#160;&#160;&#160;eth.src&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Source MAC&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;00:1a:2b:3c:4d:</text>
+  <text x="1014.8" y="296" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="314" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="314" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="314" fill="rgb(212,212,212)" textLength="634.8" lengthAdjust="spacingAndGlyphs">Ethernet&#160;&#160;&#160;&#160;&#160;eth.type&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;EtherType&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;0x0800</text>
+  <text x="1014.8" y="314" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="332" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="332" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="332" fill="rgb(212,212,212)" textLength="588.8" lengthAdjust="spacingAndGlyphs">IPv4&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;ip.version&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Version&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;4</text>
+  <text x="1014.8" y="332" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="350" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="350" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="350" fill="rgb(212,212,212)" textLength="598.0" lengthAdjust="spacingAndGlyphs">IPv4&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;ip.hdr_len&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Header Length&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;20</text>
+  <text x="1014.8" y="350" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="368" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="368" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="368" fill="rgb(212,212,212)" textLength="588.8" lengthAdjust="spacingAndGlyphs">IPv4&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;ip.len&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;Total Length&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;0</text>
+  <text x="1014.8" y="368" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="386" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="386" fill="rgb(68,68,68)" textLength="745.2" lengthAdjust="spacingAndGlyphs">│└──────────────────────────────────────────────────────────────────────────────┘</text>
+  <text x="12.0" y="404" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="404" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">│┌</text>
+  <text x="306.4" y="404" fill="rgb(135,215,0)" font-weight="700" textLength="128.8" lengthAdjust="spacingAndGlyphs">Selected Field</text>
+  <text x="444.4" y="404" fill="rgb(68,68,68)" textLength="579.6" lengthAdjust="spacingAndGlyphs">──────────────────────────────────────────────────────────────┐</text>
+  <text x="12.0" y="422" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="422" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="422" fill="rgb(95,215,215)" font-weight="700" textLength="110.4" lengthAdjust="spacingAndGlyphs">frame.number</text>
+  <text x="426.0" y="422" fill="#d4d4d4" textLength="110.4" lengthAdjust="spacingAndGlyphs">Frame Number</text>
+  <text x="1014.8" y="422" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="440" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="440" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="440" fill="#d4d4d4" textLength="211.6" lengthAdjust="spacingAndGlyphs">Layer: Frame&#160;&#160;&#160;Value: 3</text>
+  <text x="1014.8" y="440" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="458" fill="rgb(68,68,68)">│</text>
+  <text x="278.8" y="458" fill="rgb(68,68,68)" textLength="18.4" lengthAdjust="spacingAndGlyphs">││</text>
+  <text x="297.2" y="458" fill="#d4d4d4" textLength="653.2" lengthAdjust="spacingAndGlyphs">offset unknown&#160;&#160;&#160;Use / to search paths or values, f to filter supported</text>
+  <text x="1014.8" y="458" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="476" fill="rgb(68,68,68)" textLength="1012.0" lengthAdjust="spacingAndGlyphs">└────────────────────────────┘└──────────────────────────────────────────────────────────────────────────────┘</text>
+  <text x="21.2" y="494" fill="rgb(90,90,90)" textLength="73.6" lengthAdjust="spacingAndGlyphs">○ IDLE │</text>
+  <text x="104.0" y="494" fill="rgb(154,154,154)" textLength="303.6" lengthAdjust="spacingAndGlyphs">pkts:1184 total:1184 bytes:772.4K</text>
+  <text x="416.8" y="494" fill="rgb(135,215,0)" textLength="82.8" lengthAdjust="spacingAndGlyphs">rate:15/s</text>
+  <text x="508.8" y="494" fill="rgb(215,95,95)" font-weight="700" textLength="55.2" lengthAdjust="spacingAndGlyphs">│ ⚠ 28</text>
+  <text x="573.2" y="494" fill="rgb(90,90,90)">│</text>
+  <text x="591.6" y="494" fill="rgb(215,175,0)" font-weight="700" textLength="368.0" lengthAdjust="spacingAndGlyphs">│ Pinned Packet #3 to investigation tray</text>
+  </g>
+</svg>

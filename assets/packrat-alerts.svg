@@ -1,0 +1,191 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1036 510" width="1036" height="510" xml:space="preserve" role="img">
+  <title>Alert Center: findings and review state</title>
+  <desc>Captured from Packrat 0.4.0 running the built-in simulation.</desc>
+  <rect width="100%" height="100%" rx="6" fill="#1c1c1c"/>
+  <rect x="12.0" y="12" width="82.8" height="18" fill="rgb(36,36,36)"/>
+  <rect x="94.8" y="12" width="607.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="702.0" y="12" width="119.6" height="18" fill="rgb(36,36,36)"/>
+  <rect x="821.6" y="12" width="92.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="913.6" y="12" width="101.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="30" width="82.8" height="18" fill="rgb(36,36,36)"/>
+  <rect x="94.8" y="30" width="929.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="48" width="1012.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="66" width="9.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="21.2" y="66" width="82.8" height="18" fill="rgb(36,36,36)"/>
+  <rect x="104.0" y="66" width="27.6" height="18" fill="rgb(36,36,36)"/>
+  <rect x="131.6" y="66" width="18.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="150.0" y="66" width="147.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="297.2" y="66" width="18.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="315.6" y="66" width="708.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="84" width="1012.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="102" width="101.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="113.2" y="102" width="110.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="223.6" y="102" width="414.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="637.6" y="102" width="386.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="120" width="1012.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="12.0" y="138" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="138" width="588.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="610.0" y="138" width="414.0" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="156" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="156" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="39.6" y="156" width="46.0" height="18" fill="rgb(28,28,28)"/>
+  <rect x="85.6" y="156" width="27.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="113.2" y="156" width="55.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="168.4" y="156" width="73.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="242.0" y="156" width="27.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="269.6" y="156" width="46.0" height="18" fill="rgb(28,28,28)"/>
+  <rect x="315.6" y="156" width="64.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="380.0" y="156" width="36.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="416.8" y="156" width="27.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="444.4" y="156" width="73.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="518.0" y="156" width="18.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="536.4" y="156" width="55.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="591.6" y="156" width="64.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="656.0" y="156" width="64.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="720.4" y="156" width="294.4" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="156" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="174" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="174" width="147.2" height="18" fill="rgb(0,95,95)"/>
+  <rect x="168.4" y="174" width="27.6" height="18" fill="rgb(0,95,95)"/>
+  <rect x="196.0" y="174" width="818.8" height="18" fill="rgb(0,95,95)"/>
+  <rect x="1014.8" y="174" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="192" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="192" width="147.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="168.4" y="192" width="27.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="196.0" y="192" width="818.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="192" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="210" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="210" width="147.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="168.4" y="210" width="27.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="196.0" y="210" width="818.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="210" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="228" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="228" width="147.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="168.4" y="228" width="27.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="196.0" y="228" width="818.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="228" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="246" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="246" width="147.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="168.4" y="246" width="27.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="196.0" y="246" width="818.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="246" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="264" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="264" width="147.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="168.4" y="264" width="27.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="196.0" y="264" width="818.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="264" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="282" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="21.2" y="282" width="147.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="168.4" y="282" width="27.6" height="18" fill="rgb(28,28,28)"/>
+  <rect x="196.0" y="282" width="818.8" height="18" fill="rgb(28,28,28)"/>
+  <rect x="1014.8" y="282" width="9.2" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="300" width="1012.0" height="18" fill="rgb(28,28,28)"/>
+  <rect x="12.0" y="480" width="9.2" height="18" fill="rgb(36,36,36)"/>
+  <rect x="21.2" y="480" width="82.8" height="18" fill="rgb(36,36,36)"/>
+  <rect x="104.0" y="480" width="312.8" height="18" fill="rgb(36,36,36)"/>
+  <rect x="416.8" y="480" width="92.0" height="18" fill="rgb(36,36,36)"/>
+  <rect x="508.8" y="480" width="64.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="573.2" y="480" width="18.4" height="18" fill="rgb(36,36,36)"/>
+  <rect x="591.6" y="480" width="377.2" height="18" fill="rgb(36,36,36)"/>
+  <g font-family="DejaVu Sans Mono, Consolas, monospace" font-size="15" style="white-space: pre">
+  <text x="21.2" y="26" fill="rgb(215,175,0)" font-weight="700" textLength="64.4" lengthAdjust="spacingAndGlyphs">packrat</text>
+  <text x="94.8" y="26" fill="rgb(90,90,90)" textLength="607.2" lengthAdjust="spacingAndGlyphs">─ packet analyzer&#160;&#160;○ idle&#160;&#160;iface: simulated&#160;&#160;1184 pkts&#160;&#160;1184 total</text>
+  <text x="720.4" y="26" fill="rgb(215,95,95)" font-weight="700" textLength="101.2" lengthAdjust="spacingAndGlyphs">⚠ 28 alerts</text>
+  <text x="840.0" y="26" fill="rgb(215,135,95)" font-weight="700" textLength="73.6" lengthAdjust="spacingAndGlyphs">☢ 64 IOC</text>
+  <text x="932.0" y="26" fill="rgb(215,175,0)" font-weight="700" textLength="82.8" lengthAdjust="spacingAndGlyphs">⚡ 54 rule</text>
+  <text x="21.2" y="44" fill="rgb(154,154,154)" textLength="64.4" lengthAdjust="spacingAndGlyphs">Filter:</text>
+  <text x="94.8" y="44" fill="rgb(90,90,90)" textLength="929.2" lengthAdjust="spacingAndGlyphs">&lt;press / for packet inspection filter: tcp, ip.src==x, dns and port==53&gt;&#160;&#160;[L] load pcap&#160;&#160;[B] baseline</text>
+  <text x="21.2" y="62" fill="rgb(154,154,154)" textLength="469.2" lengthAdjust="spacingAndGlyphs">Traffic &gt; Security&#160;&#160;[Tab/F2 views]&#160;&#160;[Alt+Left back]</text>
+  <text x="21.2" y="80" fill="rgb(95,215,215)" font-weight="700" textLength="82.8" lengthAdjust="spacingAndGlyphs">1 Traffic</text>
+  <text x="113.2" y="80" fill="rgb(154,154,154)">│</text>
+  <text x="131.6" y="80" fill="rgb(215,175,0)">2</text>
+  <text x="150.0" y="80" fill="rgb(154,154,154)" textLength="138.0" lengthAdjust="spacingAndGlyphs">Investigation │</text>
+  <text x="297.2" y="80" fill="rgb(215,175,0)">3</text>
+  <text x="315.6" y="80" fill="rgb(154,154,154)" textLength="36.8" lengthAdjust="spacingAndGlyphs">Case</text>
+  <text x="12.0" y="98" fill="rgb(68,68,68)" textLength="1012.0" lengthAdjust="spacingAndGlyphs">──────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+  <text x="21.2" y="116" fill="rgb(90,90,90)" textLength="82.8" lengthAdjust="spacingAndGlyphs">Defense /</text>
+  <text x="113.2" y="116" fill="rgb(215,175,0)" font-weight="700" textLength="110.4" lengthAdjust="spacingAndGlyphs">Alert Center</text>
+  <text x="251.2" y="116" fill="rgb(154,154,154)" textLength="386.4" lengthAdjust="spacingAndGlyphs">[ / ] operational views&#160;&#160;&#160;[a] alert center</text>
+  <text x="12.0" y="152" fill="rgb(68,68,68)">┌</text>
+  <text x="30.4" y="152" fill="rgb(154,154,154)" textLength="570.4" lengthAdjust="spacingAndGlyphs">Alert Center | F: All | f: All | 32 findings | automation: Off</text>
+  <text x="610.0" y="152" fill="rgb(68,68,68)" textLength="414.0" lengthAdjust="spacingAndGlyphs">────────────────────────────────────────────┐</text>
+  <text x="12.0" y="170" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="170" fill="rgb(90,90,90)" font-weight="700" textLength="18.4" lengthAdjust="spacingAndGlyphs">ID</text>
+  <text x="85.6" y="170" fill="rgb(90,90,90)" font-weight="700" textLength="27.6" lengthAdjust="spacingAndGlyphs">Pkt</text>
+  <text x="168.4" y="170" fill="rgb(90,90,90)" font-weight="700" textLength="73.6" lengthAdjust="spacingAndGlyphs">Severity</text>
+  <text x="269.6" y="170" fill="rgb(90,90,90)" font-weight="700" textLength="46.0" lengthAdjust="spacingAndGlyphs">State</text>
+  <text x="380.0" y="170" fill="rgb(90,90,90)" font-weight="700" textLength="36.8" lengthAdjust="spacingAndGlyphs">Hits</text>
+  <text x="444.4" y="170" fill="rgb(90,90,90)" font-weight="700" textLength="73.6" lengthAdjust="spacingAndGlyphs">Priority</text>
+  <text x="536.4" y="170" fill="rgb(90,90,90)" font-weight="700" textLength="55.2" lengthAdjust="spacingAndGlyphs">Source</text>
+  <text x="656.0" y="170" fill="rgb(90,90,90)" font-weight="700" textLength="64.4" lengthAdjust="spacingAndGlyphs">Finding</text>
+  <text x="1014.8" y="170" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="188" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="188" fill="#d4d4d4" font-weight="700" textLength="92.0" lengthAdjust="spacingAndGlyphs">1&#160;&#160;&#160;&#160;&#160;&#160;279</text>
+  <text x="168.4" y="188" fill="rgb(135,215,0)" font-weight="700" textLength="27.6" lengthAdjust="spacingAndGlyphs">LOW</text>
+  <text x="269.6" y="188" fill="#d4d4d4" font-weight="700" textLength="634.8" lengthAdjust="spacingAndGlyphs">NEW&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;1&#160;&#160;&#160;&#160;&#160;&#160;20&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;RULE&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;OT Protocol Access (Modbus)</text>
+  <text x="1014.8" y="188" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="206" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="206" fill="#d4d4d4" textLength="92.0" lengthAdjust="spacingAndGlyphs">2&#160;&#160;&#160;&#160;&#160;&#160;292</text>
+  <text x="168.4" y="206" fill="rgb(135,215,0)" textLength="27.6" lengthAdjust="spacingAndGlyphs">LOW</text>
+  <text x="269.6" y="206" fill="#d4d4d4" textLength="634.8" lengthAdjust="spacingAndGlyphs">NEW&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;1&#160;&#160;&#160;&#160;&#160;&#160;20&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;RULE&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;OT Protocol Access (Modbus)</text>
+  <text x="1014.8" y="206" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="224" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="224" fill="#d4d4d4" textLength="92.0" lengthAdjust="spacingAndGlyphs">3&#160;&#160;&#160;&#160;&#160;&#160;300</text>
+  <text x="168.4" y="224" fill="rgb(135,215,0)" textLength="27.6" lengthAdjust="spacingAndGlyphs">LOW</text>
+  <text x="269.6" y="224" fill="#d4d4d4" textLength="634.8" lengthAdjust="spacingAndGlyphs">NEW&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;1&#160;&#160;&#160;&#160;&#160;&#160;20&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;RULE&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;OT Protocol Access (Modbus)</text>
+  <text x="1014.8" y="224" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="242" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="242" fill="#d4d4d4" textLength="92.0" lengthAdjust="spacingAndGlyphs">4&#160;&#160;&#160;&#160;&#160;&#160;332</text>
+  <text x="168.4" y="242" fill="rgb(135,215,0)" textLength="27.6" lengthAdjust="spacingAndGlyphs">LOW</text>
+  <text x="269.6" y="242" fill="#d4d4d4" textLength="634.8" lengthAdjust="spacingAndGlyphs">NEW&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;1&#160;&#160;&#160;&#160;&#160;&#160;20&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;RULE&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;OT Protocol Access (Modbus)</text>
+  <text x="1014.8" y="242" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="260" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="260" fill="#d4d4d4" textLength="92.0" lengthAdjust="spacingAndGlyphs">5&#160;&#160;&#160;&#160;&#160;&#160;354</text>
+  <text x="168.4" y="260" fill="rgb(135,215,0)" textLength="27.6" lengthAdjust="spacingAndGlyphs">LOW</text>
+  <text x="269.6" y="260" fill="#d4d4d4" textLength="634.8" lengthAdjust="spacingAndGlyphs">NEW&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;1&#160;&#160;&#160;&#160;&#160;&#160;20&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;RULE&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;OT Protocol Access (Modbus)</text>
+  <text x="1014.8" y="260" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="278" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="278" fill="#d4d4d4" textLength="92.0" lengthAdjust="spacingAndGlyphs">6&#160;&#160;&#160;&#160;&#160;&#160;364</text>
+  <text x="168.4" y="278" fill="rgb(135,215,0)" textLength="27.6" lengthAdjust="spacingAndGlyphs">LOW</text>
+  <text x="269.6" y="278" fill="#d4d4d4" textLength="634.8" lengthAdjust="spacingAndGlyphs">NEW&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;1&#160;&#160;&#160;&#160;&#160;&#160;20&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;RULE&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;OT Protocol Access (Modbus)</text>
+  <text x="1014.8" y="278" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="296" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="296" fill="#d4d4d4" textLength="92.0" lengthAdjust="spacingAndGlyphs">7&#160;&#160;&#160;&#160;&#160;&#160;373</text>
+  <text x="168.4" y="296" fill="rgb(135,215,0)" textLength="27.6" lengthAdjust="spacingAndGlyphs">LOW</text>
+  <text x="269.6" y="296" fill="#d4d4d4" textLength="634.8" lengthAdjust="spacingAndGlyphs">NEW&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;1&#160;&#160;&#160;&#160;&#160;&#160;20&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;RULE&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;OT Protocol Access (Modbus)</text>
+  <text x="1014.8" y="296" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="314" fill="rgb(68,68,68)" textLength="1012.0" lengthAdjust="spacingAndGlyphs">└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</text>
+  <text x="12.0" y="332" fill="rgb(68,68,68)">┌</text>
+  <text x="30.4" y="332" fill="rgb(154,154,154)" textLength="147.2" lengthAdjust="spacingAndGlyphs">Selected Finding</text>
+  <text x="186.8" y="332" fill="rgb(68,68,68)" textLength="837.2" lengthAdjust="spacingAndGlyphs">──────────────────────────────────────────────────────────────────────────────────────────┐</text>
+  <text x="12.0" y="350" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="350" fill="rgb(95,215,215)" font-weight="700" textLength="312.8" lengthAdjust="spacingAndGlyphs">RULE / OT Protocol Access (Modbus)</text>
+  <text x="352.4" y="350" fill="rgb(90,90,90)" textLength="312.8" lengthAdjust="spacingAndGlyphs">1 hits, 1 packet refs (#279..#279)</text>
+  <text x="1014.8" y="350" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="368" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="368" fill="rgb(90,90,90)" textLength="257.6" lengthAdjust="spacingAndGlyphs">Rule provenance not recorded</text>
+  <text x="1014.8" y="368" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="386" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="386" fill="rgb(154,154,154)" textLength="432.4" lengthAdjust="spacingAndGlyphs">Capture time: first 7.184654 s, last 7.184654 s</text>
+  <text x="1014.8" y="386" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="404" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="404" fill="rgb(212,212,212)" textLength="496.8" lengthAdjust="spacingAndGlyphs">Modbus FC3 register read — verify source is authorised</text>
+  <text x="1014.8" y="404" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="422" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="422" fill="rgb(154,154,154)" textLength="358.8" lengthAdjust="spacingAndGlyphs">1/1 retained; 1 capture lengths unknown</text>
+  <text x="1014.8" y="422" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="440" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="440" fill="rgb(215,175,0)" textLength="542.8" lengthAdjust="spacingAndGlyphs">No automated recommendation; inspect and classify manually.</text>
+  <text x="1014.8" y="440" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="458" fill="rgb(68,68,68)">│</text>
+  <text x="21.2" y="458" fill="rgb(154,154,154)" textLength="690.0" lengthAdjust="spacingAndGlyphs">V inspect&#160;&#160;E export case&#160;&#160;m pin&#160;&#160;Enter review&#160;&#160;C confirm&#160;&#160;z benign&#160;&#160;x close</text>
+  <text x="1014.8" y="458" fill="rgb(68,68,68)">│</text>
+  <text x="12.0" y="476" fill="rgb(68,68,68)" textLength="1012.0" lengthAdjust="spacingAndGlyphs">└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</text>
+  <text x="21.2" y="494" fill="rgb(90,90,90)" textLength="73.6" lengthAdjust="spacingAndGlyphs">○ IDLE │</text>
+  <text x="104.0" y="494" fill="rgb(154,154,154)" textLength="303.6" lengthAdjust="spacingAndGlyphs">pkts:1184 total:1184 bytes:772.4K</text>
+  <text x="416.8" y="494" fill="rgb(135,215,0)" textLength="82.8" lengthAdjust="spacingAndGlyphs">rate:15/s</text>
+  <text x="508.8" y="494" fill="rgb(215,95,95)" font-weight="700" textLength="55.2" lengthAdjust="spacingAndGlyphs">│ ⚠ 28</text>
+  <text x="573.2" y="494" fill="rgb(90,90,90)">│</text>
+  <text x="591.6" y="494" fill="rgb(215,175,0)" font-weight="700" textLength="368.0" lengthAdjust="spacingAndGlyphs">│ Pinned Packet #3 to investigation tray</text>
+  </g>
+</svg>

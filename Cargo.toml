@@ -22,7 +22,7 @@ include = [
     "README.md",
     "BUILD.md",
     "LICENSE",
-    "assets/packrat-screenshot.svg",
+    "assets/*.svg",
     ".cargo/config.toml.example",
 ]
 

@@ -1,21 +1,24 @@
 # 🐀 PACKRAT
 
+**A keyboard-first network analyzer for packet inspection, incident triage, and evidence review.**
 
-**Terminal-native deep packet inspection, deterministic penetration detection,
-and evidence-driven network response.**
+Follow a finding from the alert that flagged it to the original packets, decoded
+headers, reconstructed conversation, and exported case. Packrat runs in a local
+terminal or over SSH. Its detections use inspectable protocol logic, correlation
+windows, IOC/YARA matches, and operator-authored rules.
 
-Packrat carries the same investigation context
-from live traffic into decoded headers, reconstructed conversations, correlated
-security findings, retained evidence, and controlled containment. The workflow
-is keyboard-first and works on local consoles or remote shells.
+![Packrat Traffic workspace with a simulated packet list, protocol tree, and hex dump](assets/packrat-screenshot.svg)
 
-Every finding, priority, recommendation,
-and response gate comes from inspectable protocol logic, deterministic windows,
-IOC/YARA matches, or operator-authored rules.
+<details>
+<summary>Investigation workspace and Alert Center</summary>
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/0xbadcaffe/packrat/master/assets/packrat-screenshot.svg" alt="Packrat terminal network analysis interface" />
-</p>
+![Investigation tray and searchable header fields for a simulated DNS packet](assets/packrat-investigation.svg)
+
+![Alert Center showing findings, severity, disposition, and hit counts from simulation](assets/packrat-alerts.svg)
+
+</details>
+
+Screenshots use the built-in simulation, not live traffic.
 
 ## Workflow:
 
@@ -49,7 +52,7 @@ selected artifact or stopping capture.
 | **Understand encryption** | TLS/DTLS/QUIC metadata, JA3/JA3S/JA4/RatQ context, key-log and authenticated helper hooks |
 | **Detect** | Stateful IDS, scans, spoofing, DHCP/DNS abuse, HTTP smuggling, industrial-policy violations, credential exposure |
 | **Correlate** | Unified Alert Center, IOC/YARA/rule findings, host and service graph, explainable risk scoring |
-| **Preserve** | Retained attacker traffic, notebook, project state, PCAP/JSON/NDJSON evidence, case export |
+| **Preserve** | Capture-scoped alert evidence, bounded selective archives, notebook, portable projects and PCAPNG case exports |
 | **Respond** | Monitor, preview, approved manual, or policy-gated automatic Linux nftables containment |
 
 ## Simulation Mode
@@ -57,7 +60,7 @@ selected artifact or stopping capture.
 Simulation is explicit and needs no packet-capture library:
 
 ```bash
-cargo build --release
+cargo build --locked --release --bin packrat
 ./target/release/packrat --simulation
 ```
 
@@ -67,7 +70,7 @@ Live capture is the default runtime mode and requires the `real-capture` build
 feature plus libpcap or Npcap:
 
 ```bash
-cargo build --release --features real-capture
+cargo build --locked --release --features real-capture
 sudo ./target/release/packrat
 ```
 
@@ -86,27 +89,30 @@ eBPF socket attribution, and troubleshooting instructions.
 
 ## Operator Workflow
 
-Packrat groups the interface into five workspaces:
+Packrat groups the interface into three workspaces:
 
 | Key | Workspace | Primary views |
 |---|---|---|
-| `1` | **Traffic** | Packets, flows, hosts, encrypted sessions |
-| `2` | **Inspect** | Investigation tray, analysis, strings, workbench, objects, diff |
-| `3` | **Defense** | Alert Center, specialist detectors, rules, operator graph |
-| `4` | **Actions** | Scanner, traceroute, packet craft |
-| `5` | **Case** | Notebook and event history |
+| `1` | **Traffic** | Packets, flows, hosts, TLS analysis, Security and Alert Center |
+| `2` | **Investigation** | Investigation tray, analysis, strings, visualization, workbench, objects, diff, evidence graph |
+| `3` | **Case** | Notebook, runtime timeline, local rules, and network utilities |
 
 Core controls:
 
 | Key | Action |
 |---|---|
 | `Tab` / `F2` | Open the current workspace's view drawer |
+| `End`, then `Enter` in the drawer | Open About and see the installed build's version |
 | `Esc` | Close a window or return to the workspace home |
 | `Alt+Left` | Return to the previous screen |
 | `Ctrl+P` / `?` | Search packets, hosts, and findings |
 | `m` / `M` | Pin selected evidence or current context to the investigation tray |
+| `Enter` on a packet | Open the selected packet in Investigation |
+| `[` / `]` and `n` / `p` in Investigation | Change views without losing the packet, or move to another packet in the tray |
+| `S`, then `a` | Open Alert Center |
+| `V` / `E` in Alert Center | Investigate cited packets or export a scoped case |
 | `,` | Open persistent Preferences |
-| `h` | Open the scrollable keyboard reference |
+| `h` from the packet list | Open the scrollable keyboard reference |
 | `X` | Export the current case bundle |
 | `!` | Revoke active Guard blocks and force monitor mode |
 
@@ -114,9 +120,16 @@ Core controls:
 
 The Alert Center correlates recurring detector output into findings instead of
 flooding the operator with one row per packet. Each finding retains occurrence
-count, first and last packet evidence, severity, source, recommendation, and an
-analyst state and optional review recommendation: New, Reviewing, Confirmed,
-Benign, Contained, or Closed.
+count, first and last observation times, severity, supporting frames, and analyst
+disposition. Findings with rule provenance also show revision, confidence, and a
+suggested verification step. In Alert Center, `Enter` starts review, `z` marks
+benign, and `C` confirms a finding.
+
+Investigating an alert opens the triggering packet when available and adds its
+supporting packets to the tray. Evidence is resolved against the original
+capture, including the optional archive after the live buffer rolls over.
+Missing, truncated, and unreadable frames are reported explicitly. A finding
+is a lead, not proof of compromise.
 
 Watch and Triage modes can pin urgent findings and add fixed, source-specific
 review guidance. They never modify firewall policy. TrafficLatch containment is
@@ -127,6 +140,13 @@ response or two independent critical detectors for the same attacker and
 target. Blocks have short expirations, protected addresses are rejected, active
 actions are bounded, and all decisions are audited. The global kill switch
 attempts immediate revocation and records any failed revocation until expiry.
+
+## Offline Analysis and Monitoring
+
+- `packrat-analyze --alerts-only capture.pcapng` emits deterministic NDJSON without opening the TUI or changing firewall state. Labeled replay suites can compare alert counts, opening frames, cited evidence, and classifications against a previous analyzer.
+- `packrat-archive` inspects saved alerts by capture and session, reports evidence availability and first-review timing, and exports scoped cases. Open a saved case with `packrat --project case.json`.
+- `--archive-alert-evidence PATH` retains referenced high and critical alert packets in a bounded archive. Use `--archive-evidence-rule RULE_ID` to opt additional rules into retention. Archived packets and portable cases can contain payloads; treat them as sensitive evidence.
+- The health and triage watchers report capture loss, alert persistence failures, archive capacity, stale monitoring, and evidence-check failures. Routine watcher summaries do not include packet payloads.
 
 ## Extensibility
 
@@ -143,6 +163,7 @@ attempts immediate revocation and records any failed revocation until expiry.
 
 | Cargo feature | Default | Purpose |
 |---|---:|---|
+| `terminal-ui` | Yes | Build the terminal interface; disable default features for headless tools |
 | `real-capture` | No | Enable libpcap/Npcap capture and the capture helper |
 | `ebpf-sockets` | No | Build the Linux Aya eBPF socket collector |
 
