@@ -288,12 +288,15 @@ fn backlog_review_counts_correlated_dns_from_real_archive_and_rotated_log() {
         "{finding}"
     );
     assert_eq!(finding["flow_context_status"], "checked");
+    // Five complete DNS payloads of 34 bytes each; the non-IP and missing frames contribute none.
     assert_eq!(
         finding["flow_context"],
         json!({"directional_flows":4,"tcp_syn_ack_matches":0,"udp_dns_replies":2,
                "tcp_syn_ack_with_later_ack_candidates":0,"tcp_syn_ack_without_later_ack_candidates":0,
                "tcp_syn_ack_ambiguous_candidates":0,"tcp_flag_status":"no_tcp_headers",
                "retained_flow_frames":5,"retained_frames_without_flow":1,
+               "cited_payload_status":"reported",
+               "cited_payload_bytes":{"captured":170,"declared":170,"declared_not_captured":0},
                "trigger_frame_status":"complete","trigger_transport_header_observed":false,
                "trigger_tuple_status":"not_recorded",
                "trigger_connection_status":"no_trigger_header",
