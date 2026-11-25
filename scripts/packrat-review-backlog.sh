@@ -4,8 +4,9 @@ set -euo pipefail
 export LC_ALL=C
 
 usage() {
-    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--socket-context FILE] [--flow-context] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
+    printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--snapshot-token SHA256] [--socket-context FILE] [--flow-context] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
         'Review five scoped High/Critical alerts per page, or a named rule at any severity. Use immutable logs across pages.' \
+        'Pass the previous review_snapshot_token on later pages to reject changed logs or filters.' \
         'With --socket-context, report verified socket evidence availability without process or endpoint details.' \
         'With --flow-context, report cited transport-header coverage, initial SYN fan-out, and candidate TCP and UDP DNS links without disclosing endpoints.' \
         'Flow context requires the same cited frame numbers and availability as the evidence check.' \
@@ -19,7 +20,7 @@ usage() {
 }
 
 if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
-offset=0 rule='' session_scope='' capture_scope='' socket_file='' index_args=() flow_context=false
+offset=0 rule='' session_scope='' capture_scope='' socket_file='' expected_token='' index_args=() flow_context=false
 if [[ ${1-} == --review-scope ]]; then
     session_scope=${2-} capture_scope=${3-}
     [[ $session_scope =~ ^[A-Za-z0-9_-]{1,128}$ && $capture_scope =~ ^[0-9a-f]{32}$ ]] || { usage >&2; exit 2; }
@@ -36,6 +37,11 @@ if [[ ${1-} == --review-offset ]]; then
     offset=${2-}
     if [[ ! $offset =~ ^(0|[1-9][0-9]{0,2})$ ]] || (( offset >= 512 )); then usage >&2; exit 2; fi
     index_args+=(--review-offset "$offset")
+    shift 2
+fi
+if [[ ${1-} == --snapshot-token ]]; then
+    expected_token=${2-}
+    [[ $expected_token =~ ^[0-9a-f]{64}$ ]] || { usage >&2; exit 2; }
     shift 2
 fi
 if [[ ${1-} == --socket-context ]]; then
@@ -59,6 +65,22 @@ if [[ -f $bin/packrat-triage.sh ]]; then triage="$bin/packrat-triage.sh"; fi
 unset PACKRAT_TRIAGE_PROJECT PACKRAT_TRIAGE_EVIDENCE_ALERT_ID PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE
 export PACKRAT_TRIAGE_AUTO_EVIDENCE=0 PACKRAT_TRIAGE_ARCHIVE="$archive"
 deadline=$((SECONDS + budget))
+
+review_snapshot_token() {
+    local log sum
+    sum=$({
+        printf '%s\0' 'packrat-backlog-snapshot-v1' "$session_scope" "$capture_scope" "$rule"
+        for log in "$@"; do
+            [[ -f $log ]] && TZ=UTC0 stat -L --format='%d:%i:%s:%y:%z' -- "$log" || return 1
+        done
+    } | sha256sum) || return 1
+    printf '%s\n' "${sum%% *}"
+}
+snapshot=$(review_snapshot_token "$@") || { printf '%s\n' 'Expected regular saved alert logs.' >&2; exit 2; }
+if [[ -n $expected_token && $expected_token != "$snapshot" ]]; then
+    printf '%s\n' 'Saved alert snapshot or review filters changed; restart at the first page.' >&2
+    exit 1
+fi
 
 triage_with_budget() {
     local remaining=$1
@@ -461,5 +483,9 @@ while IFS= read -r candidate; do
     ' <<< "$results")
 done < <(jq -c '.review_shortlist[]' <<< "$index")
 
-jq -ce --argjson results "$results" 'del(.review_shortlist) + {
-    record_type:"saved_alert_evidence_review", findings:$results}' <<< "$index"
+if ! latest=$(review_snapshot_token "$@") || [[ $latest != "$snapshot" ]]; then
+    printf '%s\n' 'Saved alert logs changed during review; retry from a stable snapshot.' >&2
+    exit 1
+fi
+jq -ce --argjson results "$results" --arg token "$snapshot" 'del(.review_shortlist) + {
+    record_type:"saved_alert_evidence_review", review_snapshot_token:$token, findings:$results}' <<< "$index"

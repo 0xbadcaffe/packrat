@@ -34,6 +34,7 @@ if [[ $1 == --list-saved ]]; then
     if [[ $1 == --review-rule ]]; then rule=$2; shift 2; fi
     if [[ $1 == --review-offset ]]; then offset=$2; shift 2; fi
     [[ $# == 2 && $1 == "$TEST_DIR/alerts.jsonl" && $2 == "$TEST_DIR/previous.jsonl" ]]
+    if [[ ${TEST_MODE:-normal} == index_race ]]; then printf 'new record\n' >>"$1"; fi
     jq -nc --arg session "$session" --arg capture "$capture" --argjson base "$base" --arg mode "${TEST_MODE:-normal}" --argjson offset "$offset" --arg rule "$rule" \
         --arg selected_session "$review_session" --arg selected_capture "$review_capture" '
         (if $mode == "empty" then 0 elif $rule != "" then 1 else 7 end) as $eligible |
@@ -66,6 +67,7 @@ fi
 [[ $1 == --saved-alert && $2 == "$session" && $3 == "$capture" &&
     $5 == "$TEST_DIR/alerts.jsonl" && $6 == "$TEST_DIR/previous.jsonl" ]]
 printf '%s\n' "$4" >> "$TEST_DIR/checks"
+if [[ ${TEST_MODE:-normal} == evidence_race && $4 == 3 ]]; then printf 'late record\n' >>"$6"; fi
 if [[ ${TEST_MODE:-normal} == timed ]]; then sleep 20; fi
 counts=null
 case $4 in
@@ -415,6 +417,22 @@ TEST_MODE=bounded run_review --review-offset 5 | jq -e '
     .review_offset == 5 and .next_review_offset == null and (.sample_scan_complete | not)
     and [.findings[].alert_id] == [6,7] and all(.findings[]; .packet_evidence_status == "partial")' >/dev/null
 [[ $(cat "$dir/checks") == $'6\n7' ]]
+token=$(run_review | jq -er '.review_snapshot_token | select(test("^[0-9a-f]{64}$"))')
+: > "$dir/checks"
+TZ=EST5 run_review --review-offset 5 --snapshot-token "$token" | jq -e --arg token "$token" '
+    .review_snapshot_token==$token and [.findings[].alert_id]==[6,7]' >/dev/null
+[[ $(cat "$dir/checks") == $'6\n7' ]]
+: > "$dir/checks"
+if run_review --review-rule other.rule --snapshot-token "$token" >"$dir/output" 2>/dev/null; then exit 1; fi
+[[ ! -s $dir/output && ! -s $dir/checks ]]
+printf 'later record\n' >>"$dir/previous.jsonl"
+if run_review --review-offset 5 --snapshot-token "$token" >"$dir/output" 2>/dev/null; then exit 1; fi
+[[ ! -s $dir/output && ! -s $dir/checks ]]
+for mode in index_race evidence_race; do
+    if TEST_MODE=$mode run_review >"$dir/output" 2>"$dir/error"; then exit 1; fi
+    [[ ! -s $dir/output ]]
+    grep -Fq 'logs changed during review' "$dir/error"
+done
 : > "$dir/checks"
 run_review --review-offset 10 | jq -e '.sample_scan_complete and .findings == []' >/dev/null
 [[ ! -s $dir/checks ]]
