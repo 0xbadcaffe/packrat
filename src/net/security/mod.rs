@@ -8,8 +8,11 @@ use crate::analysis::ipv6_fragments::{Ipv6FragmentOutcome, Ipv6FragmentReassembl
 use crate::net::inspector::shannon_entropy;
 use crate::net::packet::Packet;
 use crate::net::parser::ethernet_network_header;
+use lru::LruCache;
 use std::collections::{HashMap, HashSet};
+use std::hash::RandomState;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::num::NonZeroUsize;
 
 // ─── Byte helpers ─────────────────────────────────────────────────────────────
 
@@ -176,7 +179,7 @@ pub struct SecurityEngine {
     // Internal state
     ip_to_mac: HashMap<(ScanScope, std::net::Ipv4Addr), ArpClaimHistory>,
     arp_evidence: crate::net::recent_evidence::RecentEvidence<2048, 300>,
-    os_by_ip: HashMap<String, &'static str>,
+    os_by_ip: LruCache<String, &'static str, RandomState>,
     bf_windows: HashMap<BfKey, BfWindow>,
     auth_sample_evidence: crate::net::recent_evidence::RecentEvidence<2048, 60>,
     dns_tunnel: dns::DnsTunnelTracker,

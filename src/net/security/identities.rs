@@ -158,7 +158,7 @@ impl SecurityEngine {
         let window = u16_be_at(&pkt.bytes, 48);
 
         // Already fingerprinted this src IP?
-        if self.os_by_ip.contains_key(&pkt.src) {
+        if self.os_by_ip.contains(&pkt.src) {
             return;
         }
 
@@ -175,7 +175,7 @@ impl SecurityEngine {
             _ => return, // Not enough signal
         };
 
-        self.os_by_ip.insert(pkt.src.clone(), os);
+        self.os_by_ip.put(pkt.src.clone(), os);
         if self.os_guesses.len() >= MAX_ENTRIES {
             self.os_guesses.remove(0);
         }

@@ -31,7 +31,7 @@ impl SecurityEngine {
             dns_suspects: Vec::new(),
             ip_to_mac: HashMap::new(),
             arp_evidence: Default::default(),
-            os_by_ip: HashMap::new(),
+            os_by_ip: LruCache::with_hasher(NonZeroUsize::new(MAX_ENTRIES).unwrap(), RandomState::new()),
             bf_windows: HashMap::new(),
             auth_sample_evidence: Default::default(),
             dns_tunnel: Default::default(),
@@ -118,7 +118,7 @@ impl SecurityEngine {
 
     /// Look up the OS guess for a given IP (if fingerprinted).
     pub fn os_guess_for(&self, ip: &str) -> Option<&'static str> {
-        self.os_by_ip.get(ip).copied()
+        self.os_by_ip.peek(ip).copied()
     }
 
     pub fn alert_count(&self) -> usize {
