@@ -11,6 +11,7 @@ usage() {
         'Override with PACKRAT_BASELINE_MIN_SECONDS and PACKRAT_BASELINE_MIN_PACKETS.' \
         'Per-rule deltas require the same single revision to be observed in both windows.' \
         'Known different or mixed capture link types prevent rate comparison.' \
+        'Archive policy changes are reported separately from alert rates and do not prove frame availability.' \
         'Observed alert openings do not measure detector accuracy or total network activity.'
 }
 
@@ -25,6 +26,17 @@ read_baseline() {
             .capture_link | objects | {status,link_type}
             | select(if .status == "verified" then (.link_type | count and . <= 65535)
                      else (.status | IN("mixed","unverified")) and .link_type == null end);
+        def archive_policy:
+            .scoped_records as $records | .archive_policy_coverage | objects
+            | {status,mode,opt_in_rule_ids,unverified_records,paused_records}
+            | select(all([.unverified_records,.paused_records][]; count and . <= $records)
+                and (if .status == "verified" then .unverified_records == 0 and $records > 0
+                    and (if .mode == "alert_evidence" then (.opt_in_rule_ids | type == "array" and length <= 16
+                             and . == unique and all(.[]; type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z")))
+                         elif .mode == "all_packets" then .opt_in_rule_ids == null
+                         else .mode == "disabled" and .opt_in_rule_ids == null and .paused_records == 0 end)
+                  else (.status | IN("mixed","unverified")) and .mode == null and .opt_in_rule_ids == null
+                    and (if .status == "mixed" then $records - .unverified_records >= 2 else true end) end));
         def dns_capacity_summary:
             . as $coverage | .dns_capacity_coverage | objects
             | {no_decline_intervals,decline_intervals,unverified_intervals,no_decline_packets,no_decline_seconds,
@@ -127,6 +139,7 @@ read_baseline() {
                 and $c.healthy_seconds <= $times[1] - $times[0] then
                   {interface:$b.interface,scope:$b.scope,capture_run_id:$b.capture_run_id,sha256:$b.sha256,
                    capture_link:($c | capture_link // null),
+                   archive_policy_coverage:($c | archive_policy // null),
                    coverage_policy:(if $c.coverage_policy | IN("capture_loss_counters_v1","continuous_journal_v2","continuous_journal_v3","continuous_journal_v4","continuous_journal_v5","continuous_journal_v6") or verified_rate_policy then $c.coverage_policy else null end),
                    journal_tail_unconfirmed_events:($c.journal_tail_unconfirmed_events | if count then . else null end),
                    alert_journal_counter_unverified_intervals:($c.alert_journal_counter_unverified_intervals | if count then . else null end),
@@ -224,6 +237,11 @@ printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --arg
        elif $before.capture_link.status == "verified" and $after.capture_link.status == "verified" then
            if $before.capture_link.link_type == $after.capture_link.link_type then "matched" else "different" end
        else "unverified" end) as $link_status
+    | ($before.archive_policy_coverage) as $old_policy | ($after.archive_policy_coverage) as $new_policy
+    | (if $old_policy.status == "mixed" or $new_policy.status == "mixed" then "mixed"
+       elif $old_policy.status == "verified" and $new_policy.status == "verified" then
+           if ($old_policy | {mode,opt_in_rule_ids}) == ($new_policy | {mode,opt_in_rule_ids}) then "matched" else "different" end
+       else "unverified" end) as $archive_policy_status
     | if $shared and ($before.scope != $after.scope or $before.capture_run_id != $after.capture_run_id
              or $before.interface != $after.interface or ($same_build | not)) then
         error("Conflicting metadata for the same capture")
@@ -252,6 +270,7 @@ printf '%s\n' "$before" "$after" | jq -cs --argjson seconds "$min_seconds" --arg
            else "partially_comparable" end) as $rule_status
         | {record_type:"capture_build_comparison",status:$status,same_build:$same_build,
            capture_link_comparison:$link_status,
+           archive_policy_comparison:$archive_policy_status,
            before:$before,after:$after,comparison_minimums:{seconds:$seconds,packets:$packets},
            rule_rate_status:$rule_status,
            rule_rate_deltas:$rules.deltas,rule_rate_unpaired:$rules.unpaired,

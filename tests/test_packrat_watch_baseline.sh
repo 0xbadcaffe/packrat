@@ -29,6 +29,24 @@ jq '.build.scope = {capture_id:"b",session_id:"two"} | .coverage.scope = .build.
     | .coverage.observed_openings = 0' "$before" > "$after"
 
 unset PACKRAT_BASELINE_MIN_SECONDS PACKRAT_BASELINE_MIN_PACKETS
+jq '.coverage.archive_policy_coverage={status:"verified",mode:"alert_evidence",opt_in_rule_ids:["dns.unmatched_response"],
+    paused_records:0,unverified_records:0,path:"private"}' "$before" > "$tmp/archived-before"
+jq '.coverage.archive_policy_coverage={status:"verified",mode:"all_packets",opt_in_rule_ids:null,
+    paused_records:0,unverified_records:0}' "$after" > "$tmp/archived-after"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/archived-before" "$tmp/archived-after" | jq -e '
+    .status=="separate_capture_windows" and .archive_policy_comparison=="different"
+    and .before.archive_policy_coverage.mode=="alert_evidence" and .after.archive_policy_coverage.mode=="all_packets"
+    and (.before.archive_policy_coverage | has("path") | not) and .observed_rate_delta_per_10000_packets==-5' >/dev/null
+jq '.coverage.archive_policy_coverage |= (.mode="alert_evidence" | .opt_in_rule_ids=["dns.unmatched_response"])' \
+    "$tmp/archived-after" > "$fixture"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/archived-before" "$fixture" | jq -e '
+    .archive_policy_comparison=="matched" and .observed_rate_delta_per_10000_packets==-5' >/dev/null
+jq '.coverage.archive_policy_coverage |= (.mode=null | .status="mixed")' "$tmp/archived-after" > "$fixture"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/archived-before" "$fixture" | jq -e '
+    .archive_policy_comparison=="mixed" and .observed_rate_delta_per_10000_packets==-5' >/dev/null
+jq '.coverage.archive_policy_coverage.paused_records=3' "$tmp/archived-after" > "$fixture"
+PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/archived-before" "$fixture" | jq -e '
+    .archive_policy_comparison=="unverified" and .after.archive_policy_coverage==null' >/dev/null
 jq '.coverage.capture_link={status:"verified",link_type:1,detail:"private"}' "$before" > "$tmp/link-before"
 jq '.coverage.capture_link={status:"verified",link_type:113}' "$after" > "$tmp/link-after"
 PACKRAT_BASELINE_MIN_SECONDS=60 bash "$tool" "$tmp/link-before" "$tmp/link-after" | jq -e '

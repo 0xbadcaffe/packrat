@@ -26,6 +26,7 @@ bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
     and .journal_discontinuities==0 and .journal_tail_unconfirmed_events==0 and .alert_journal_counter_unverified_intervals==0
     and .alert_log_snapshot_unverified_intervals==0
     and .capture_link=={status:"unverified",link_type:null}
+    and .archive_policy_coverage=={status:"unverified",mode:null,opt_in_rule_ids:null,unverified_records:6,paused_records:0}
     and .healthy_seconds==180 and .healthy_packets==80 and .alert_comparable_intervals==2
     and .alert_comparable_packets==60 and .alert_comparable_seconds==120 and .observed_openings==2
     and .opening_rule_breakdown=={rules:[],unattributed_openings:2,omitted_rule_openings:0}
@@ -43,6 +44,27 @@ jq -sc '.[0:4][] | .link_type=(if .journal_sequence < 3 then 1 else 113 end)' <<
     and .alert_comparable_packets==25 and .observed_openings==0' >/dev/null
 jq -sc '.[0:4][] | .link_type=(if .journal_sequence==3 then -1 else 1 end)' <<< "$sample" | bash "$coverage" | jq -e '
     .capture_link=={status:"unverified",link_type:null} and .healthy_intervals==3 and .observed_openings==2' >/dev/null
+archived_sample=$(jq -sc '.[0:4][] | . + {archive:"enabled",archive_mode:"alert_evidence",
+    archive_rule_ids:["tcp.payload_after_observed_reset","dns.unmatched_response"]}' <<< "$sample")
+bash "$coverage" <<< "$archived_sample" | jq -e '
+    .archive_policy_coverage=={status:"verified",mode:"alert_evidence",unverified_records:0,paused_records:0,
+        opt_in_rule_ids:["dns.unmatched_response","tcp.payload_after_observed_reset"]}
+    and .observed_openings==2 and .alert_comparable_packets==60' >/dev/null
+jq -c '.archive="disabled" | .archive_mode="disabled" | .archive_rule_ids=null' <<< "$archived_sample" |
+    bash "$coverage" | jq -e '
+        .archive_policy_coverage=={status:"verified",mode:"disabled",opt_in_rule_ids:null,unverified_records:0,paused_records:0}
+        and .observed_openings==2' >/dev/null
+jq -sc '.[0],(.[1] | .status="degraded" | .archive="paused"),.[2:][]' <<< "$archived_sample" | bash "$coverage" | jq -e '
+    .archive_policy_coverage.status=="verified" and .archive_policy_coverage.paused_records==1' >/dev/null
+jq -sc '.[0],(.[1] | .archive_mode="all_packets" | .archive_rule_ids=null),.[2:][]' <<< "$archived_sample" |
+    bash "$coverage" | jq -e '
+        .archive_policy_coverage=={status:"mixed",mode:null,opt_in_rule_ids:null,unverified_records:0,paused_records:0}
+        and .observed_openings==2' >/dev/null
+for patch in '.archive_rule_ids=["private label"]' '.archive_rule_ids=["dns.unmatched_response","dns.unmatched_response"]' \
+    '.archive="unknown"' 'del(.archive_mode)'; do
+    jq -sc ".[0],(.[1] | $patch),.[2:][]" <<< "$archived_sample" | bash "$coverage" | jq -e '
+        .archive_policy_coverage=={status:"unverified",mode:null,opt_in_rule_ids:null,unverified_records:1,paused_records:0}' >/dev/null
+done
 bash "$coverage" --capture-id a --session a-1 <<< "$sample" | jq -e '
     .dns_capacity_coverage == {no_decline_intervals:0,decline_intervals:0,unverified_intervals:3,
         no_decline_packets:0,no_decline_seconds:0,observed_declines:null}

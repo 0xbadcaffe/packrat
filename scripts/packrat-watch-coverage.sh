@@ -8,6 +8,7 @@ usage() {
         'Reads retained journal records from stdin; defaults to the last observed capture scope.' \
         'Rates describe retained intervals with known coverage, not all traffic or all alerts.' \
         'DNS capacity compares cumulative counters at eligible interval endpoints; missing or regressed counters are unverified.' \
+        'Archive policy and pause counts describe bounded journal samples, not per-frame availability.' \
         'Alert rates require decodable capture and a valid saved-alert log at both endpoints.' \
         'Alert rates exclude intervals whose endpoint alert log grew during the review or was not checked for growth.' \
         'Alert rates require known, unchanged save-failure and retry-buffer drop counters.' \
@@ -40,6 +41,27 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
         | if ($known | length) > 1 then {status:"mixed",link_type:null}
           elif $known == [] or ($types | index(null)) != null then {status:"unverified",link_type:null}
           else {status:"verified",link_type:$known[0]} end;
+    def archive_visible: .status | IN("current","degraded");
+    def archive_rule_ids:
+        type == "array" and length <= 16 and length == (unique | length)
+        and all(.[]; type == "string" and test("\\A[a-z0-9][a-z0-9_.-]{0,127}\\z"));
+    def archive_policy:
+        if archive_visible and .archive == "disabled" and .archive_mode == "disabled" and .archive_rule_ids == null
+        then {mode:"disabled",opt_in_rule_ids:null}
+        elif archive_visible and (.archive | IN("enabled","paused")) then
+            if .archive_mode == "all_packets" and .archive_rule_ids == null then {mode:"all_packets",opt_in_rule_ids:null}
+            elif .archive_mode == "alert_evidence" and (.archive_rule_ids | archive_rule_ids)
+            then {mode:"alert_evidence",opt_in_rule_ids:(.archive_rule_ids | sort)}
+            else null end
+        else null end;
+    def archive_policy_summary($sample):
+        [$sample[] | archive_policy] as $policies
+        | ($policies | map(objects) | unique) as $known
+        | ([$policies[] | select(. == null)] | length) as $unknown
+        | (if ($known | length) > 1 then {status:"mixed",mode:null,opt_in_rule_ids:null}
+           elif $known == [] or $unknown > 0 then {status:"unverified",mode:null,opt_in_rule_ids:null}
+           else {status:"verified"} + $known[0] end)
+          + {unverified_records:$unknown,paused_records:([$sample[] | select(archive_visible and .archive=="paused")] | length)};
     def valid_record:
         type == "object" and .record_type == "capture_triage_watch"
         and (.status | id) and (.updated_at | type == "string" and test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z"));
@@ -237,6 +259,7 @@ head -c 2097153 | jq -Rces --arg capture "$capture" --arg session "$session" '
                elif ($healthy | length) == 0 then "insufficient_coverage" else "sampled" end),
        scope:$key, journal_tail_status:$all[-1].status,
        capture_link:capture_link_summary($sample),
+       archive_policy_coverage:archive_policy_summary($sample),
        journal_tail_unconfirmed_events:($all[-1].journal_unconfirmed_events | if counter then . else null end),
        first_record_at:$sample[0].updated_at,last_record_at:$sample[-1].updated_at,
        scoped_records:($sample | length),
