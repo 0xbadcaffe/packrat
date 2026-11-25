@@ -152,6 +152,13 @@ fn project_alert_status_checks_only_unique_scoped_pins_against_the_log() {
     project_store::create(&project, &project_path).unwrap();
     let before = std::fs::read(&project_path).unwrap();
 
+    let bounded = Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
+        .arg("--project-alert-status").arg(&project_path).arg(&log)
+        .args(["s", "capture-a", "1", "--scan-bytes", "1", "--previous-log"]).arg(&previous)
+        .output().unwrap();
+    assert!(!bounded.status.success() && bounded.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&bounded.stderr).contains("reached the scan byte limit"));
+
     let status = |capture| Command::new(env!("CARGO_BIN_EXE_packrat-archive"))
         .arg("--project-alert-status").arg(&project_path).arg(&log)
         .args(["s", capture, "1", "--previous-log"]).arg(&previous).output().unwrap();

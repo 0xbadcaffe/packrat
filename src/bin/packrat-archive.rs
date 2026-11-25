@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         println!("       packrat-archive DIRECTORY --alert-project ALERT_LOG SESSION_ID ALERT_ID OUTPUT_JSON --capture-id CAPTURE_ID [--previous-log PATH]...\nOpen the resulting JSON with packrat --project OUTPUT_JSON. It contains packet bytes.\nAlert evidence bundles count all omitted frames as missing and identify unreadable and unknown-length frames separately.");
         println!("With --verify-evidence and --archive, an omission-only bundle reports zero verified archive frames and no capture digest.");
+        println!("Archive and project alert status, packet metadata, flow summary, and export commands accept --scan-bytes BYTES with an explicit capture ID. An incomplete search is reported separately from an alert not found.");
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
         println!("Project alert status distinguishes current pins from recorded export outcomes. Status and export reject a conflicting recorded session for the same capture and alert ID; this does not independently verify source provenance.");
         println!("       packrat-archive DIRECTORY --alert-flow-summary ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nGroups cited frames by TCP/UDP direction and reports capture-time gaps and unassigned references without exporting packet bytes. Gaps between cited frames do not establish full-flow cadence.");
@@ -88,18 +89,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
             let mut capture_filter = None;
+            let mut scan_budget = None;
             let mut previous = Vec::new();
             while let Some(option) = args.next() {
                 let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
                     .ok_or_else(|| format!("{option} requires a value"))?;
                 match option.as_str() {
                     "--capture-id" if capture_filter.is_none() => capture_filter = Some(value),
+                    "--scan-bytes" if scan_budget.is_none() => scan_budget = Some(value.parse()?),
                     "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(PathBuf::from(value)),
                     "--previous-log" => return Err("Too many previous alert logs".into()),
                     _ => return Err(format!("Unknown or repeated alert option: {option}").into()),
                 }
             }
-            let logs = AlertLogs::new(std::path::Path::new(&log), &previous)?;
+            let logs = AlertLogs::new(std::path::Path::new(&log), &previous)?.with_scan_budget(scan_budget);
             let scope = capture_filter.as_deref();
             if let Some(output) = output {
                 let output = std::path::Path::new(&output);
@@ -191,15 +194,17 @@ fn project_alert(
         None
     };
     let mut previous = Vec::new();
+    let mut scan_budget = None;
     while let Some(flag) = args.next() {
-        if flag != "--previous-log" || previous.len() == MAX_PREVIOUS_LOGS {
-            return Err(format!("Unexpected or excessive project alert option: {flag}").into());
-        }
         let value = args.next().filter(|value| !value.is_empty() && !value.starts_with("--"))
-            .ok_or("--previous-log requires a value")?;
-        previous.push(PathBuf::from(value));
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        match flag.as_str() {
+            "--previous-log" if previous.len() < MAX_PREVIOUS_LOGS => previous.push(PathBuf::from(value)),
+            "--scan-bytes" if scan_budget.is_none() => scan_budget = Some(value.parse()?),
+            _ => return Err(format!("Unexpected, repeated, or excessive project alert option: {flag}").into()),
+        }
     }
-    let logs = AlertLogs::new(Path::new(&log), &previous)?;
+    let logs = AlertLogs::new(Path::new(&log), &previous)?.with_scan_budget(scan_budget);
     let project = Path::new(&project);
     if let Some(output) = output {
         let summary = export_project_alert_evidence(project, logs, &session, id, &capture, Path::new(&output))?;

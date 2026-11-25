@@ -436,11 +436,14 @@ fn latest_alert(log: &Path, session_id: &str, alert_id: u64, capture_filter: Opt
 }
 
 fn latest_alert_in_logs(logs: AlertLogs<'_>, session_id: &str, alert_id: u64, capture_filter: Option<&str>) -> Result<AlertItem> {
+    let mut remaining = logs.scan_budget.map(std::num::NonZeroU64::get);
+    ensure!(remaining.is_none() || capture_filter.is_some(), "Bounded evidence lookup requires --capture-id");
     let mut line = Vec::new();
     let mut selected: Option<AlertItem> = None;
     for (path, file) in logs.open_newest()? {
-        let mut reader = ReverseAlertLines::new(file)
+        let mut reader = ReverseAlertLines::with_budget(file, remaining)
             .with_context(|| format!("Stat alert log {}", path.display()))?;
+        let file_bytes = reader.offset;
         while reader.next(&mut line).with_context(|| format!("Read alert log {}", path.display()))? {
             let Some(row) = ExistingAlertRecord::decode(&line) else { continue };
             if row.session_id == session_id && row.alert.id == alert_id
@@ -456,6 +459,8 @@ fn latest_alert_in_logs(logs: AlertLogs<'_>, session_id: &str, alert_id: u64, ca
                 selected.get_or_insert(row.alert);
             }
         }
+        ensure!(reader.start == 0, "Alert evidence lookup reached the scan byte limit before finding a match");
+        remaining = remaining.map(|budget| budget.saturating_sub(file_bytes));
     }
     selected.ok_or_else(|| anyhow!("No matching alert in the specified session"))
 }

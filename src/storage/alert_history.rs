@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
+use std::num::NonZeroU64;
 use std::{collections::HashSet, fs::File, io::{Read, Seek, SeekFrom}, ops::RangeInclusive, path::{Path, PathBuf}};
 
 use crate::analysis::alert_center::{AlertDisposition, AlertFlow, CREDENTIAL_ALERT_DETAIL, MAX_ALERT_PACKET_REFS};
@@ -17,12 +18,18 @@ pub const MAX_ALERT_ID_RANGES: usize = 64;
 pub struct AlertLogs<'a> {
     active: &'a Path,
     previous: &'a [PathBuf],
+    pub(super) scan_budget: Option<NonZeroU64>,
 }
 
 impl<'a> AlertLogs<'a> {
     pub fn new(active: &'a Path, previous: &'a [PathBuf]) -> Result<Self> {
         ensure!(previous.len() <= MAX_PREVIOUS_LOGS, "Too many previous alert logs");
-        Ok(Self { active, previous })
+        Ok(Self { active, previous, scan_budget: None })
+    }
+
+    pub fn with_scan_budget(mut self, budget: Option<NonZeroU64>) -> Self {
+        self.scan_budget = budget;
+        self
     }
 
     pub(super) fn open_newest(&self) -> Result<Vec<(&'a Path, File)>> {
@@ -339,8 +346,8 @@ const READ_CHUNK: usize = 64 * 1024;
 pub(super) struct ReverseAlertLines {
     file: File,
     chunk: Vec<u8>,
-    offset: u64,
-    start: u64,
+    pub(super) offset: u64,
+    pub(super) start: u64,
     start_on_boundary: bool,
     end: usize,
     terminated: bool,
@@ -352,7 +359,7 @@ impl ReverseAlertLines {
         Self::with_budget(file, None)
     }
 
-    fn with_budget(mut file: File, scan_bytes: Option<u64>) -> std::io::Result<Self> {
+    pub(super) fn with_budget(mut file: File, scan_bytes: Option<u64>) -> std::io::Result<Self> {
         let metadata = file.metadata()?;
         if !metadata.is_file() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Not a regular alert log"));
