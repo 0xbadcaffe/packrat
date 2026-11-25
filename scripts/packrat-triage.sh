@@ -161,7 +161,7 @@ report() {
             elif . == "not_selected_by_current_policy" then "locate_original_capture_or_corroborate_with_host_logs"
             elif . == "no_references" then "corroborate_with_host_or_service_logs"
             elif . == "check_failed" or . == "changed_during_review" or . == "check_timed_out" or . == "check_deferred" then "retry_evidence_check"
-            else "verify_frame_availability" end;
+            elif . == "scan_budget_exhausted" then "retry_exact_lookup_with_larger_scan_budget" else "verify_frame_availability" end;
         def with_evidence($checks; $policy):
             .alert_id as $id | (first($checks[] | select(.alert_id == $id)) // null) as $evidence
             | (if $evidence.status == "checked" then $evidence.frames | group_by(.status)
@@ -174,7 +174,7 @@ report() {
                    and (.rule_id as $rule | $policy | index($rule) == null)
                then "not_selected_by_current_policy"
                else (($evidence.status // "") | {alert_evidence_changed:"changed_during_review",unavailable:"check_failed",
-                     evidence_frame_set_mismatch:"check_failed",
+                     evidence_frame_set_mismatch:"check_failed",scan_budget_exhausted:"scan_budget_exhausted",
                      timed_out:"check_timed_out",deferred:"check_deferred"}[.] // "not_checked") end) as $availability
             | . + {packet_evidence_status:$availability,evidence_availability:$counts,
                  next_evidence_step:(if $counts.unreadable then "check_archive_integrity"
@@ -432,7 +432,7 @@ for evidence_id in "${evidence_ids[@]}"; do
     if (( remaining > 0 )); then
         check_status=''
         check=$(check_evidence "$alert_log" "$remaining") || case $? in
-            124|137) check_status=timed_out ;; *) check_status=unavailable ;; esac
+            3) check_status=scan_budget_exhausted ;; 124|137) check_status=timed_out ;; *) check_status=unavailable ;; esac
     fi
     if [[ -n $check_status ]]; then
         check=$(jq -cn --argjson id "$evidence_id" --arg status "$check_status" '{status:$status,alert_id:$id,frames:null}')

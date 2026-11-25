@@ -1,8 +1,32 @@
 use packrat_tui::storage::packet_archive::PacketArchive;
 use packrat_tui::storage::alert_history::{AlertLogs, MAX_PREVIOUS_LOGS};
+use packrat_tui::storage::alert_evidence::EvidenceScanLimit;
 use std::path::PathBuf;
+use std::process::ExitCode;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) if error.is::<EvidenceScanLimit>() => {
+            eprintln!("Error: {error}");
+            ExitCode::from(3)
+        }
+        Err(error) => {
+            eprintln!("Error: {error:?}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_evidence(result: anyhow::Result<impl serde::Serialize>) -> Result<(), Box<dyn std::error::Error>> {
+    let report = result.map_err(|error| -> Box<dyn std::error::Error> {
+        if error.is::<EvidenceScanLimit>() { Box::new(EvidenceScanLimit) } else { error.into() }
+    })?;
+    println!("{}", serde_json::to_string(&report)?);
+    Ok(())
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let Some(path) = args
         .next()
@@ -13,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         println!("       packrat-archive DIRECTORY --alert-project ALERT_LOG SESSION_ID ALERT_ID OUTPUT_JSON --capture-id CAPTURE_ID [--previous-log PATH]...\nOpen the resulting JSON with packrat --project OUTPUT_JSON. It contains packet bytes.\nAlert evidence bundles count all omitted frames as missing and identify unreadable and unknown-length frames separately.");
         println!("With --verify-evidence and --archive, an omission-only bundle reports zero verified archive frames and no capture digest.");
-        println!("Archive and project alert status, packet metadata, flow summary, and export commands accept --scan-bytes BYTES with an explicit capture ID. An incomplete search is reported separately from an alert not found.");
+        println!("Archive and project alert status, packet metadata, flow summary, and export commands accept --scan-bytes BYTES with an explicit capture ID. An incomplete search exits with status 3, distinct from an alert not found.");
         println!("       packrat-archive DIRECTORY --alert-packet-metadata ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nReports saved frame availability and headers without packet payloads, comments, or decoded application content.");
         println!("Project alert status distinguishes current pins from recorded export outcomes. Status and export reject a conflicting recorded session for the same capture and alert ID; this does not independently verify source provenance.");
         println!("       packrat-archive DIRECTORY --alert-flow-summary ALERT_LOG SESSION_ID ALERT_ID --capture-id CAPTURE_ID [--previous-log PATH]...\nGroups cited frames by TCP/UDP direction and reports capture-time gaps and unassigned references without exporting packet bytes. Gaps between cited frames do not establish full-flow cadence.");
@@ -108,21 +132,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let output = std::path::Path::new(&output);
                 if flag == "--alert-project" {
                     let capture = scope.ok_or("--alert-project requires --capture-id")?;
-                    let summary = create_alert_project(&mut archive, logs, &session, capture, id, output)?;
-                    println!("{}", serde_json::to_string(&summary)?);
+                    print_evidence(create_alert_project(&mut archive, logs, &session, capture, id, output))?;
                 } else {
-                    let summary = export_alert_evidence_across_logs(&mut archive, logs, &session, id, scope, output)?;
-                    println!("{}", serde_json::to_string(&summary)?);
+                    print_evidence(export_alert_evidence_across_logs(&mut archive, logs, &session, id, scope, output))?;
                 }
             } else if flag == "--alert-flow-summary" {
                 let capture = scope.ok_or("--alert-flow-summary requires --capture-id")?;
-                println!("{}", serde_json::to_string(&alert_flow_summary(&mut archive, logs, &session, capture, id)?)?);
+                print_evidence(alert_flow_summary(&mut archive, logs, &session, capture, id))?;
             } else if flag == "--alert-packet-metadata" {
                 let capture = scope.ok_or("--alert-packet-metadata requires --capture-id")?;
-                println!("{}", serde_json::to_string(&alert_packet_metadata(&mut archive, logs, &session, capture, id)?)?);
+                print_evidence(alert_packet_metadata(&mut archive, logs, &session, capture, id))?;
             } else {
-                let status = alert_evidence_across_logs(&mut archive, logs, &session, id, scope)?;
-                println!("{}", serde_json::to_string(&status)?);
+                print_evidence(alert_evidence_across_logs(&mut archive, logs, &session, id, scope))?;
             }
         }
         Some(flag) if flag == "--capture-frame" => {
@@ -207,13 +228,10 @@ fn project_alert(
     let logs = AlertLogs::new(Path::new(&log), &previous)?.with_scan_budget(scan_budget);
     let project = Path::new(&project);
     if let Some(output) = output {
-        let summary = export_project_alert_evidence(project, logs, &session, id, &capture, Path::new(&output))?;
-        println!("{}", serde_json::to_string(&summary)?);
+        print_evidence(export_project_alert_evidence(project, logs, &session, id, &capture, Path::new(&output)))
     } else {
-        let status = project_alert_evidence(project, logs, &session, id, &capture)?;
-        println!("{}", serde_json::to_string(&status)?);
+        print_evidence(project_alert_evidence(project, logs, &session, id, &capture))
     }
-    Ok(())
 }
 
 fn list_alerts(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {

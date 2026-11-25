@@ -27,6 +27,7 @@ mock_archive() {
             [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 $id --capture-id 00000000000000000000000000000001$budget${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
         fi
         [[ $id != "${PACKRAT_TEST_EVIDENCE_FAIL_ID:-}" ]] || return 2
+        [[ ${PACKRAT_TEST_EVIDENCE_SCAN_LIMIT:-0} != 1 ]] || return 3
         if [[ ${PACKRAT_TEST_EVIDENCE_RESTART:-0} == 1 ]]; then
             jq -c '.capture_id = "00000000000000000000000000000002"' "$PACKRAT_TEST_STATE" >"$PACKRAT_TEST_STATE.next"
             mv -- "$PACKRAT_TEST_STATE.next" "$PACKRAT_TEST_STATE"

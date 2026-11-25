@@ -29,6 +29,16 @@ pub use verify::{VerifiedEvidence, verify_alert_evidence, verify_archived_alert_
 const MANIFEST: &str = "manifest.json";
 const PCAP: &str = "evidence.pcapng";
 
+#[derive(Debug)]
+pub struct EvidenceScanLimit;
+
+impl std::fmt::Display for EvidenceScanLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Alert evidence lookup reached the scan byte limit before finding a match")
+    }
+}
+impl std::error::Error for EvidenceScanLimit {}
+
 #[derive(Serialize)]
 pub struct EvidenceExportSummary {
     pub recovered_frames: usize,
@@ -459,7 +469,7 @@ fn latest_alert_in_logs(logs: AlertLogs<'_>, session_id: &str, alert_id: u64, ca
                 selected.get_or_insert(row.alert);
             }
         }
-        ensure!(reader.start == 0, "Alert evidence lookup reached the scan byte limit before finding a match");
+        if reader.start != 0 { return Err(EvidenceScanLimit.into()); }
         remaining = remaining.map(|budget| budget.saturating_sub(file_bytes));
     }
     selected.ok_or_else(|| anyhow!("No matching alert in the specified session"))

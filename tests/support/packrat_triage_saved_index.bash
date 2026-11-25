@@ -122,3 +122,11 @@ for evidence_source in archive project; do
         jq -e '.status == "saved" and .evidence_status.status == "checked" and .previous_logs == 1' <<< "$result" >/dev/null
     )
 done
+status=0
+result=$(PACKRAT_TRIAGE_EXACT_SCAN_BYTES=1024 PACKRAT_TEST_EXPECT_SCAN_BYTES=1024 \
+    PACKRAT_TEST_EVIDENCE_SCAN_LIMIT=1 PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" \
+    saved_alert 42 "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 2 ]]
+jq -e '.status == "saved" and .evidence_status == {status:"scan_budget_exhausted",alert_id:42,frames:null}
+    and .alerts[0].packet_evidence_status == "scan_budget_exhausted"
+    and .alerts[0].next_evidence_step == "retry_exact_lookup_with_larger_scan_budget"' <<< "$result" >/dev/null

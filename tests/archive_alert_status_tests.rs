@@ -156,7 +156,8 @@ fn project_alert_status_checks_only_unique_scoped_pins_against_the_log() {
         .arg("--project-alert-status").arg(&project_path).arg(&log)
         .args(["s", "capture-a", "1", "--scan-bytes", "1", "--previous-log"]).arg(&previous)
         .output().unwrap();
-    assert!(!bounded.status.success() && bounded.stdout.is_empty());
+    assert_eq!(bounded.status.code(), Some(3));
+    assert!(bounded.stdout.is_empty());
     assert!(String::from_utf8_lossy(&bounded.stderr).contains("reached the scan byte limit"));
 
     let status = |capture| Command::new(env!("CARGO_BIN_EXE_packrat-archive"))

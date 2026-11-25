@@ -98,10 +98,10 @@ check_flow_context() {
     for log in "$@"; do previous+=(--previous-log "$log"); done
     raw=$(timeout --kill-after=1s "${remaining}s" packrat-archive "$archive" --alert-flow-summary \
         "$active" "$session" "$alert" --capture-id "$capture" --scan-bytes "$scan_bytes" "${previous[@]}" | head -c 1048577) || rc=$?
-    if (( rc == 124 || rc == 137 )); then
-        printf '%s\n' '{"flow_context_status":"check_timed_out"}'
-        return
-    fi
+    case $rc in
+        3) printf '%s\n' '{"flow_context_status":"scan_budget_exhausted"}'; return ;;
+        124|137) printf '%s\n' '{"flow_context_status":"check_timed_out"}'; return ;;
+    esac
     (( rc == 0 && ${#raw} <= 1048576 )) || return 1
     jq -ces --argjson selected "$selected" --argjson verified "$reply" '
         def frame: type == "number" and . >= 1 and . <= 9007199254740991 and floor == .;

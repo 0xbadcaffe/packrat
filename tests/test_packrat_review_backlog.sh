@@ -129,6 +129,7 @@ set -euo pipefail
     $3 == "$TEST_DIR/alerts.jsonl" && $4 == session-a &&
     $6 == --capture-id && $7 == 00000000000000000000000000000001 &&
     $8 == --scan-bytes && $9 == 8388608 && ${10} == --previous-log && ${11} == "$TEST_DIR/previous.jsonl" ]]
+[[ ${FLOW_MODE:-} != scan_budget_exhausted ]] || exit 3
 printf '%s\n' "$5" >> "$TEST_DIR/flow-checks"
 jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${FLOW_MODE:-normal}" '
     def exchange($protocol):
@@ -280,6 +281,9 @@ run_review | jq -e '
     and (tostring | contains("private") | not) and all(.findings[]; has("evidence_frame_set_sha256") | not)' >/dev/null
 [[ $(wc -l < "$dir/checks") == 5 ]]
 [[ ! -e $dir/flow-checks ]]
+FLOW_MODE=scan_budget_exhausted run_review --flow-context | jq -e '
+    .findings[0] | .packet_evidence_status == "complete" and .flow_context_status == "scan_budget_exhausted"
+    and (has("flow_context") | not)' >/dev/null
 TEST_MODE=scan_exhausted run_review | jq -e '
     .findings[3] | .packet_evidence_status == "scan_budget_exhausted"
     and .next_evidence_step == "retry_exact_lookup_with_larger_scan_budget"' >/dev/null

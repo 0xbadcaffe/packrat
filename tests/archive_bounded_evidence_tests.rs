@@ -37,7 +37,8 @@ fn evidence_lookup_shares_its_budget_across_logs_and_distinguishes_misses() {
     for action in ["--alert-status", "--alert-flow-summary", "--alert-evidence"] {
         let result = command(action, "1").args(["--capture-id", "capture-a", "--scan-bytes", &budget])
             .output().unwrap();
-        assert!(!result.status.success() && result.stdout.is_empty());
+        assert_eq!(result.status.code(), Some(3));
+        assert!(result.stdout.is_empty());
         assert!(String::from_utf8_lossy(&result.stderr).contains("reached the scan byte limit"));
     }
     assert!(!output.exists());
@@ -51,7 +52,7 @@ fn evidence_lookup_shares_its_budget_across_logs_and_distinguishes_misses() {
 
     let missing = command("--alert-status", "2").args(["--capture-id", "capture-a", "--scan-bytes", &total])
         .output().unwrap();
-    assert!(!missing.status.success());
+    assert_eq!(missing.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&missing.stderr).contains("No matching alert"));
     let unscoped = command("--alert-status", "1").args(["--scan-bytes", &budget]).output().unwrap();
     assert!(!unscoped.status.success());
