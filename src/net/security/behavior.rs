@@ -282,13 +282,20 @@ impl SecurityEngine {
                     self.findings.retained_evidence.extend(state.entropy_frames.iter()
                         .filter(|sample| sample.frame != pkt.no).filter_map(|sample| sample.evidence.as_deref().cloned()));
                 }
+                let mut sample_ports: HashSet<_> = state.entropy_frames.iter()
+                    .filter_map(|sample| sample.client_port).collect();
+                let trigger_sampled = state.entropy_frames.iter().any(|sample| sample.frame == pkt.no);
+                if !trigger_sampled && let Some(port) = client_port {
+                    sample_ports.insert(port);
+                }
+                let sample_count = state.entropy_frames.len() + usize::from(!trigger_sampled);
                 alerts.push((
                     "High-entropy outbound transfer",
                     Severity::Medium,
                     format!(
-                        "{} to {}: {} high-entropy outbound transport payload bytes out of {} in the rolling hour, aggregated across client ports to service port {}; attached flow describes the trigger packet only; encryption or compression is possible, and exfiltration is unverified",
+                        "{} to {}: {} high-entropy outbound transport payload bytes out of {} in the rolling hour, aggregated across client ports to service port {}; distinct client ports in cited frames: {} ({sample_count} frames, not a count of all connections); any attached flow describes the trigger packet only; encryption or compression is possible, and exfiltration is unverified",
                         pkt.src, pkt.dst, state.high_entropy_bytes, state.outbound_payload_bytes,
-                        pkt.dst_port.unwrap_or(0)
+                        pkt.dst_port.unwrap_or(0), sample_ports.len()
                     ),
                     state.entropy_frames.iter().map(|sample| sample.frame).collect::<Vec<_>>(),
                     pkt.no,

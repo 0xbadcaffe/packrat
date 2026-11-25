@@ -104,6 +104,7 @@ fn repeated_tcp_bytes_do_not_accumulate_outbound_evidence(#[case] resegmented: b
     assert_eq!(alert.packet_refs, [1, 36, 37, 38, 39]);
     assert_eq!(alert.severity, "MEDIUM");
     assert!(alert.detail.contains("exfiltration is unverified"));
+    assert!(alert.detail.contains("distinct client ports in cited frames: 1 (5 frames"));
     let volume = core.alert_center.items.iter().find(|alert| alert.title == "Large asymmetric outbound transfer").unwrap();
     assert_eq!(volume.packet_refs, (44..=51).collect::<Vec<_>>());
     assert_eq!(volume.first_packet, 51);
@@ -177,6 +178,7 @@ fn entropy_report_distinguishes_service_totals_from_the_trigger_connection() {
     assert_eq!(alert.flow.unwrap().source.port(), 40_006);
     assert!(alert.detail.contains("300000 high-entropy outbound transport payload bytes out of 320000"));
     assert!(alert.detail.contains("aggregated across client ports"));
+    assert!(alert.detail.contains("distinct client ports in cited frames: 5 (5 frames, not a count of all connections)"));
     assert!(alert.detail.contains("flow describes the trigger packet only"));
 }
 
