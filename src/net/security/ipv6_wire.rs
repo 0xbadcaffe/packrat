@@ -103,6 +103,7 @@ pub(super) fn parse_ipv6_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
         packet.declared_transport_len,
         Ipv6Addr::from(packet.source).into(),
         Ipv6Addr::from(packet.destination).into(),
+        packet.hop_limit,
     )
 }
 

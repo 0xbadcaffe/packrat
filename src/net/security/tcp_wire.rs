@@ -5,6 +5,7 @@ pub(super) fn parse_tcp_transport(
     declared_len: usize,
     source: IpAddr,
     destination: IpAddr,
+    hop_limit: u8,
 ) -> Option<TcpFrame<'_>> {
     let captured = &transport[..transport.len().min(declared_len)];
     let malformed = |reason| Some(TcpFrame::Malformed {
@@ -40,6 +41,8 @@ pub(super) fn parse_tcp_transport(
         sequence: u32::from_be_bytes([captured[4], captured[5], captured[6], captured[7]]),
         acknowledgement: u32::from_be_bytes([captured[8], captured[9], captured[10], captured[11]]),
         flags: captured[13],
+        hop_limit,
+        window: u16_be_at(captured, 14),
         complete: captured.len() == declared_len,
         payload: &captured[header_len.min(captured.len())..],
     }))

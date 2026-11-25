@@ -186,6 +186,8 @@ impl SecurityEngine {
                     pkt.src, pkt.dst
                 ),
             });
+        } else if segment.complete && segment.flags & SYN != 0 {
+            self.check_os_fingerprint(pkt, &segment);
         }
 
         if !segment.complete {

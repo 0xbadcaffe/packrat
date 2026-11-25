@@ -130,6 +130,8 @@ pub(super) struct TcpSegment<'a> {
     pub(super) sequence: u32,
     pub(super) acknowledgement: u32,
     pub(super) flags: u8,
+    pub(super) hop_limit: u8,
+    pub(super) window: u16,
     pub(super) complete: bool,
     pub(super) payload: &'a [u8],
 }

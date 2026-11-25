@@ -82,6 +82,7 @@ pub(super) fn parse_ipv4_tcp_frame(raw: &[u8]) -> Option<TcpFrame<'_>> {
         total_len.checked_sub(ip_header_len)?,
         Ipv4Addr::from(src).into(),
         Ipv4Addr::from(dst).into(),
+        raw[ip_offset + 8],
     )
 }
 

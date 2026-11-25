@@ -149,18 +149,16 @@ impl SecurityEngine {
 
     // ─── OS Fingerprinting ───────────────────────────────────────────────────
 
-    pub(super) fn check_os_fingerprint(&mut self, pkt: &Packet) {
-        // Only TCP packets with sufficient bytes
-        if !pkt.protocol.eq_ignore_ascii_case("TCP") || pkt.bytes.len() < 50 {
+    pub(super) fn check_os_fingerprint(&mut self, pkt: &Packet, segment: &TcpSegment<'_>) {
+        let source = if segment.from_a { segment.key.endpoint_a } else { segment.key.endpoint_b };
+        let IpAddr::V4(source) = source.ip() else { return };
+        if source.is_unspecified() || source.is_multicast() || source.is_broadcast()
+            || self.os_by_ip.contains(&pkt.src) || pkt.src.parse::<Ipv4Addr>().ok() != Some(source)
+        {
             return;
         }
-        let ttl = byte_at(&pkt.bytes, 22);
-        let window = u16_be_at(&pkt.bytes, 48);
-
-        // Already fingerprinted this src IP?
-        if self.os_by_ip.contains(&pkt.src) {
-            return;
-        }
+        let ttl = segment.hop_limit;
+        let window = segment.window;
 
         let os: &'static str = match (ttl, window) {
             (64, 5840) => "Linux 2.x",

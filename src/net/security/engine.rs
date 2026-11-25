@@ -177,7 +177,6 @@ impl SecurityEngine {
         self.check_dns_transaction_integrity(pkt, &dns, archive_rules);
         self.check_ids(pkt);
         self.check_arp(pkt, archive_rules);
-        self.check_os_fingerprint(pkt);
         self.check_vuln(pkt);
         self.check_ftp_control(pkt);
         self.check_brute_force(pkt, http_auth, archive_rules);

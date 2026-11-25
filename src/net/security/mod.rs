@@ -17,11 +17,6 @@ use std::num::NonZeroUsize;
 // ─── Byte helpers ─────────────────────────────────────────────────────────────
 
 #[inline]
-fn byte_at(b: &[u8], off: usize) -> u8 {
-    b.get(off).copied().unwrap_or(0)
-}
-
-#[inline]
 fn u16_be_at(b: &[u8], off: usize) -> u16 {
     if b.len() >= off + 2 {
         u16::from_be_bytes([b[off], b[off + 1]])
