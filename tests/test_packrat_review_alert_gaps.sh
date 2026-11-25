@@ -90,6 +90,21 @@ run_gap "$scratch/with-disappeared" | jq -e '
     and [.ranges[] | [.first_id,.last_id,.found]] == [[5,9,2],[20,20,0]]' >/dev/null
 TEST_MODE=bounded run_gap "$scratch/with-disappeared" | jq -e '
     .previously_observed_reconciliation == {recovered_alert_ids:[8],not_in_supplied_logs:[],unverified_alert_ids:[9]}' >/dev/null
+jq '.previously_observed_gap_status={
+    outstanding:{alert_ids:[9],truncated:false,extra:"private detail"},reobserved:{alert_ids:[8],truncated:false},extra:"private"}' \
+    "$scratch/with-disappeared" > "$scratch/outstanding"
+run_gap "$scratch/outstanding" | jq -e '
+    .priority_alert_ids==[9] and .missing_previously_observed_alert_ids==[8,9]
+    and .previously_observed_gap_status.reobserved.alert_ids==[8]
+    and .previously_observed_reconciliation=={recovered_alert_ids:[],not_in_supplied_logs:[9],unverified_alert_ids:[]}
+    and (.previously_observed_gap_status | tostring | contains("private") | not)' >/dev/null
+for patch in '.previously_observed_gap_status.outstanding.alert_ids=[8]' \
+    '.previously_observed_gap_status.reobserved.alert_ids=[7]' \
+    '.previously_observed_gap_status.outstanding.truncated=true'; do
+    jq "$patch" "$scratch/outstanding" > "$scratch/invalid-group"
+    if run_gap "$scratch/invalid-group" >"$scratch/result" 2>/dev/null; then exit 1; fi
+    [[ ! -s $scratch/result ]]
+done
 jq '.unobserved_alert_id_ranges = [range(1;65)*4 | {first_id:.,last_id:.}]
     | .missing_previously_observed_alert_ids = [range(1;65)*4 - 2]' "$scratch/report" >"$scratch/combined-cap"
 TEST_MODE=range-cap run_gap "$scratch/combined-cap" | jq -e '

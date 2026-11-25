@@ -6,7 +6,7 @@ export LC_ALL=C
 usage() {
     printf '%s\n' 'Usage: packrat-review-alert-gaps.sh COVERAGE.json ALERT_LOG [PREVIOUS_LOG ...]' \
         'Reads up to 8 MiB per lookup and reports up to 512 saved alerts. Supply previous logs oldest first.' \
-        'Prioritizes previously observed IDs that disappeared from the watcher sample when the range budget is reached.' \
+        'Prioritizes outstanding previously observed IDs; older reports use the historical disappearance list.' \
         'If the broad lookup fills, retry outstanding known IDs in a second lookup under the same deadline.' \
         'Absence refers only to the supplied logs, never to uncaptured or unpersisted traffic.'
 }
@@ -15,6 +15,14 @@ if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
 if (( $# < 2 || $# > 10 )) || [[ ! -f $1 ]]; then usage >&2; exit 2; fi
 requested=$(head -c 65537 -- "$1" | jq -Rces '
     def id: type == "number" and . >= 1 and . <= 9007199254740991 and floor == .;
+    def id_list: type == "array" and length <= 64 and all(.[]; id);
+    def gap_group:
+        type == "object" and (.alert_ids | id_list and . == unique)
+        and (.truncated | type == "boolean") and (.truncated == false or (.alert_ids | length) == 64);
+    def valid_gap_status:
+        type == "object"
+        and (.outstanding | gap_group) and (.reobserved | gap_group)
+        and (.outstanding.alert_ids as $a | .reobserved.alert_ids as $b | ($a - $b) == $a);
     select(utf8bytelength <= 65536) | fromjson | objects
     | select(.record_type == "capture_coverage_report"
         and (.scope.capture_id | type == "string" and test("\\A[0-9a-f]{32}\\z"))
@@ -24,19 +32,31 @@ requested=$(head -c 65537 -- "$1" | jq -Rces '
         and ((has("missing_previously_observed_alert_ids_truncated") | not)
              or (.missing_previously_observed_alert_ids_truncated | type == "boolean"))
         and ((has("missing_previously_observed_alert_ids") | not)
-             or (.missing_previously_observed_alert_ids | type == "array" and length <= 64 and all(.[]; id)))
+             or (.missing_previously_observed_alert_ids | id_list))
+        and ((has("previously_observed_gap_status") | not) or (.previously_observed_gap_status | valid_gap_status))
         and (.unobserved_alert_id_ranges | type == "array" and length <= 64
              and all(.[]; type == "object" and (.first_id | id) and (.last_id | id) and .first_id <= .last_id)))
-    | ((.missing_previously_observed_alert_ids // []) | unique) as $missing
+    | ((.missing_previously_observed_alert_ids // []) | unique) as $historical
+    | (if has("previously_observed_gap_status") then
+          .previously_observed_gap_status | {outstanding:(.outstanding | {alert_ids,truncated}),
+                                             reobserved:(.reobserved | {alert_ids,truncated})}
+       else null end) as $gap_status
+    | select($gap_status == null or .missing_previously_observed_alert_ids_truncated == true
+        or (($gap_status.outstanding.truncated or $gap_status.reobserved.truncated) | not)
+           and (($gap_status.outstanding.alert_ids + $gap_status.reobserved.alert_ids | sort) == $historical))
+    | (if $gap_status != null then $gap_status.outstanding.alert_ids else $historical end) as $missing
+    | (if $gap_status != null then $gap_status.outstanding.truncated
+       else (.missing_previously_observed_alert_ids_truncated // false) end) as $priority_truncated
     | {scope:(.scope | {capture_id,session_id}),alert_sample_gap_reported,unobserved_alert_id_ranges_truncated,
-       missing_previously_observed_alert_ids:$missing,
+       missing_previously_observed_alert_ids:$historical,
        missing_previously_observed_alert_ids_truncated:(.missing_previously_observed_alert_ids_truncated // false),
+       previously_observed_gap_status:$gap_status,priority_alert_ids:$missing,priority_alert_ids_truncated:$priority_truncated,
        ranges:((.unobserved_alert_id_ranges | map({first_id,last_id})) + ($missing | map({first_id:.,last_id:.})) | sort_by([.first_id,.last_id])
            | reduce .[] as $range ([];
                if length > 0 and .[-1].last_id + 1 >= $range.first_id then
                    .[-1].last_id = ([.[-1].last_id,$range.last_id] | max)
                else . + [$range] end))}
-    | .request_ranges_truncated = (.unobserved_alert_id_ranges_truncated or .missing_previously_observed_alert_ids_truncated
+    | .request_ranges_truncated = (.unobserved_alert_id_ranges_truncated or .priority_alert_ids_truncated
         or (.ranges | length > 64))
     | .ranges |= (sort_by(. as $range |
         [(if any($missing[]; . >= $range.first_id and . <= $range.last_id) then 0 else 1 end),$range.first_id])
@@ -119,7 +139,7 @@ history=$(read_history "$((deadline - SECONDS))" "$ranges") || {
 priority=null priority_status=not_needed
 if jq -e '.integrity.stopped_at_limit' <<< "$history" >/dev/null; then
     priority_ranges=$(printf '%s\n' "$requested" "$history" | jq -cs '
-        (.[0].missing_previously_observed_alert_ids - [.[1].recovered[].alert_id])
+        (.[0].priority_alert_ids - [.[1].recovered[].alert_id])
         | map({first_id:.,last_id:.})')
     if [[ $priority_ranges != '[]' ]]; then
         priority_status=unavailable
@@ -136,7 +156,7 @@ fi
 printf '%s\n' "$requested" "$history" "$priority" | jq -ces --arg priority_status "$priority_status" '
     def in_ranges($ranges; $id): any($ranges[]; $id >= .first_id and $id <= .last_id);
     select(length == 3) | .[0] as $input | .[1] as $history | .[2] as $priority
-    | $input.missing_previously_observed_alert_ids as $known
+    | $input.priority_alert_ids as $known
     | $history.complete as $complete
     | ($history.recovered + ($priority.recovered // []) | sort_by(.alert_id)) as $recovered
     | ($recovered | map(.alert_id)) as $recovered_ids
@@ -150,7 +170,7 @@ printf '%s\n' "$requested" "$history" "$priority" | jq -ces --arg priority_statu
         priority_lookup_status:$priority_status,recovered_alerts:$returned,
         recovered_alerts_omitted:(($recovered | length) - ($returned | length)),
         previously_observed_reconciliation:{
-            recovered_alert_ids:($input.missing_previously_observed_alert_ids - $missing),
+            recovered_alert_ids:($known - $missing),
             not_in_supplied_logs:$absent,unverified_alert_ids:($missing - $absent)},
         ranges:[$input.ranges[] | . as $range
             | ([$recovered[].alert_id | select(. >= $range.first_id and . <= $range.last_id)] | length) as $found
