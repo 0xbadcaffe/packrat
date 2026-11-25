@@ -414,7 +414,7 @@ while IFS= read -r candidate; do
     verdict='null' status=check_deferred
     if (( remaining > 0 )); then
         rc=0
-        raw=$(PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE="$socket_file" \
+        raw=$(PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE="$socket_file" PACKRAT_TRIAGE_EXACT_SCAN_BYTES=8388608 \
             triage_with_budget "$remaining" --saved-alert "$session" "$capture" "$alert" "$@") || rc=$?
         status=check_failed
         if (( rc == 124 || rc == 137 )); then status=check_timed_out; fi
@@ -446,6 +446,9 @@ while IFS= read -r candidate; do
                 | .evidence_status as $receipt
                 | if .status == "saved_alert_not_observed" then
                     {packet_evidence_status:"changed_during_review",next_evidence_step:"refresh_saved_index"}
+                  elif .status == "saved_log_degraded" and .alert_log_integrity.stopped_at_scan_budget == true
+                      and .alerts == [] and .scope == ($selected | {session_id,capture_id,alert_id}) then
+                    {packet_evidence_status:"scan_budget_exhausted",next_evidence_step:"retry_exact_lookup_with_larger_scan_budget"}
                   elif .status == "saved" and (.alerts | type == "array" and length == 1) then .alerts[0]
                     | if (({session_id,capture_id,alert_id,rule_id,revision,confidence,severity,disposition,
                             last_seen,evidence_frame_count,evidence_frame_set_sha256}

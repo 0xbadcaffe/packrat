@@ -10,7 +10,7 @@ export PACKRAT_TEST_STATE="$health"
 export PACKRAT_TEST_DEFAULT_DIGEST=8c7654ecfd7b0b623b803e2f4e02ad1cc84278efdfcd7c4c9208edd81f17e115
 touch -- "$PACKRAT_TEST_LOG" "$scratch/other.jsonl"
 unset PACKRAT_TRIAGE_MAX_AGE PACKRAT_TRIAGE_READ_TIMEOUT PACKRAT_TRIAGE_ARCHIVE PACKRAT_TRIAGE_EVIDENCE_ALERT_ID
-unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE PACKRAT_TRIAGE_AUTO_EVIDENCE PACKRAT_TRIAGE_PROJECT
+unset PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE PACKRAT_TRIAGE_AUTO_EVIDENCE PACKRAT_TRIAGE_PROJECT PACKRAT_TRIAGE_EXACT_SCAN_BYTES
 date() {
     [[ $* == '-u +%s' ]] || return 2
     printf '%s\n' 1700000000
@@ -18,6 +18,7 @@ date() {
 mock_archive() {
     printf '%s\n' called >"$PACKRAT_TEST_CALL"
     if [[ ${2-} == --alert-status || ${1-} == --project-alert-status ]]; then
+        [[ ${PACKRAT_TEST_EXPECT_SCAN_BYTES:-} != 128 ]] || { touch "$PACKRAT_TEST_CALL.evidence"; return 2; }
         local id=42
         if [[ $1 == --project-alert-status ]]; then
             [[ $2 == "$PACKRAT_TRIAGE_PROJECT" && $3 == "$PACKRAT_TEST_LOG" &&
@@ -46,7 +47,8 @@ mock_archive() {
     if [[ ${PACKRAT_TEST_INDEX:-0} == 1 ]]; then scope=${PACKRAT_TEST_INDEX_SCOPE:-}; fi
     if [[ -n ${PACKRAT_TEST_TARGET:-} ]]; then selector="--alert-id $PACKRAT_TEST_TARGET"; fi
     if [[ ${PACKRAT_TEST_INDEX:-0} == 1 && $* != *" --scan-bytes 8388608 --report-integrity"* ]]; then return 2; fi
-    if [[ $* == *" --scan-bytes 8388608 --report-integrity"* ]]; then selector+=' --scan-bytes 8388608'; elif [[ ${PACKRAT_TEST_SCAN_STOPPED:-false} == true ]]; then return 2; fi
+    local scan_bytes=${PACKRAT_TEST_EXPECT_SCAN_BYTES:-8388608}
+    if [[ $* == *" --scan-bytes $scan_bytes --report-integrity"* ]]; then selector+=" --scan-bytes $scan_bytes"; elif [[ ${PACKRAT_TEST_SCAN_STOPPED:-false} == true ]]; then return 2; fi
     [[ $* == "--alerts $PACKRAT_TEST_LOG$scope $selector --report-integrity${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
     if [[ ${PACKRAT_TEST_LOG_ERROR:-0} == 1 ]]; then return 1; fi
     if [[ ${PACKRAT_TEST_SCOPE_RACE:-0} == 1 ]]; then
@@ -443,6 +445,17 @@ status=0
 result=$(PACKRAT_TEST_ALERT_COUNT=0 saved_alert 99 "$PACKRAT_TEST_LOG") || status=$?
 [[ $status == 1 ]]
 jq -e '.status == "saved_alert_not_observed" and .scope.alert_id == 99 and .alerts == []' <<< "$result" >/dev/null
+status=0
+result=$(PACKRAT_TEST_ALERT_COUNT=0 PACKRAT_TEST_SCAN_STOPPED=true PACKRAT_TEST_EXPECT_SCAN_BYTES=128 \
+    PACKRAT_TRIAGE_EXACT_SCAN_BYTES=128 PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" \
+    saved_alert 99 "$PACKRAT_TEST_LOG") || status=$?
+[[ $status == 1 && ! -e $PACKRAT_TEST_CALL.evidence ]]
+jq -e '.status == "saved_log_degraded" and .scope.alert_id == 99 and .alerts == []
+    and .alert_log_integrity.stopped_at_scan_budget
+    and .evidence_status == {status:"outside_history_scan",alert_id:99,frames:null}' <<< "$result" >/dev/null
+status=0
+PACKRAT_TRIAGE_EXACT_SCAN_BYTES=0 saved_alert 99 "$PACKRAT_TEST_LOG" >/dev/null 2>&1 || status=$?
+[[ $status == 2 ]]
 status=0
 result=$(saved_alert 99 "$PACKRAT_TEST_LOG") || status=$?
 [[ $status == 2 ]]

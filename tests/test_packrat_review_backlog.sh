@@ -65,7 +65,7 @@ if [[ $1 == --list-saved ]]; then
     exit
 fi
 [[ $1 == --saved-alert && $2 == "$session" && $3 == "$capture" &&
-    $5 == "$TEST_DIR/alerts.jsonl" && $6 == "$TEST_DIR/previous.jsonl" ]]
+    $5 == "$TEST_DIR/alerts.jsonl" && $6 == "$TEST_DIR/previous.jsonl" && $PACKRAT_TRIAGE_EXACT_SCAN_BYTES == 8388608 ]]
 printf '%s\n' "$4" >> "$TEST_DIR/checks"
 if [[ ${TEST_MODE:-normal} == evidence_race && $4 == 3 ]]; then printf 'late record\n' >>"$6"; fi
 if [[ ${TEST_MODE:-normal} == timed ]]; then sleep 20; fi
@@ -74,7 +74,13 @@ case $4 in
     1) status=complete step=inspect_retained_frames counts='{"complete":2}' ;;
     2) status=unavailable step=check_archive_integrity counts='{"missing":1,"unreadable":1}' ;;
     3) status=complete step=inspect_retained_frames counts='{"complete":2}'; base=$(jq '.evidence_frame_set_sha256=("a"*64)' <<< "$base") ;;
-    4) printf '%s\n' '{"record_type":"capture_triage","mode":"saved","status":"saved_alert_not_observed"}'; exit 1 ;;
+    4) if [[ ${TEST_MODE:-normal} == scan_exhausted ]]; then
+           jq -cn --arg session "$session" --arg capture "$capture" --argjson id "$4" '
+               {record_type:"capture_triage",mode:"saved",status:"saved_log_degraded",alerts:[],
+                scope:{session_id:$session,capture_id:$capture,alert_id:$id},
+                alert_log_integrity:{stopped_at_scan_budget:true}}'
+       else printf '%s\n' '{"record_type":"capture_triage","mode":"saved","status":"saved_alert_not_observed"}'; fi
+       exit 1 ;;
     5) status=check_failed step=retry_evidence_check ;;
     6|7) status=partial step=inspect_retained_and_recover_missing_frames counts='{"truncated":1,"missing":1}' ;;
 esac
@@ -274,6 +280,9 @@ run_review | jq -e '
     and (tostring | contains("private") | not) and all(.findings[]; has("evidence_frame_set_sha256") | not)' >/dev/null
 [[ $(wc -l < "$dir/checks") == 5 ]]
 [[ ! -e $dir/flow-checks ]]
+TEST_MODE=scan_exhausted run_review | jq -e '
+    .findings[3] | .packet_evidence_status == "scan_budget_exhausted"
+    and .next_evidence_step == "retry_exact_lookup_with_larger_scan_budget"' >/dev/null
 run_review --flow-context | jq -e '
     [.findings[].flow_context_status] == ["checked","not_checked","not_checked","not_checked","not_checked"]
     and .findings[0].flow_context == {directional_flows:1,tcp_syn_ack_matches:0,udp_dns_replies:1,

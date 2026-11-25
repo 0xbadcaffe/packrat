@@ -9,6 +9,7 @@ usage() {
         'Live triage and saved backlog indexing scan up to 8 MiB and report when the budget limits coverage.' \
         '--saved does not consult live health; an unmatched scope reports saved_scope_not_observed.' \
         '--saved-alert looks up one alert beyond the recent sample; a missing match reports saved_alert_not_observed.' \
+        'PACKRAT_TRIAGE_EXACT_SCAN_BYTES optionally bounds --saved-alert; an incomplete lookup reports saved_log_degraded.' \
         '--list-saved ranks five scoped priority findings per page, or only a named rule at any severity. Use immutable logs across pages.' \
         'review_queue lists up to five unresolved CRITICAL or HIGH alerts (New, Reviewing, or Confirmed), even outside the recent list.' \
         'Alert log integrity counts apply only to records scanned, including records outside the capture scope.' \
@@ -61,6 +62,11 @@ if [[ $mode == live || $mode == list_saved ]]; then limit_args+=(--scan-bytes 83
 if [[ -n $target_alert ]]; then
     alert_limit=1 query_limit=1
     limit_args=(--alert-id "$target_alert")
+    if [[ ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-} =~ ^[1-9][0-9]{0,14}$ ]]; then
+        limit_args+=(--scan-bytes "$PACKRAT_TRIAGE_EXACT_SCAN_BYTES")
+    elif [[ -n ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-} ]]; then
+        printf '%s\n' 'PACKRAT_TRIAGE_EXACT_SCAN_BYTES must be a positive byte count of up to 15 digits.' >&2; exit 2
+    fi
 fi
 previous_logs=("$@") previous_args=()
 for log in "${previous_logs[@]}"; do
