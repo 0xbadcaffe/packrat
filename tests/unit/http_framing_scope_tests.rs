@@ -101,6 +101,43 @@ fn reaching_the_header_limit_releases_the_sample() {
     assert!(engine.ids_alerts.is_empty());
 }
 
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn new_connection_rearms_only_its_own_header_sampler(#[case] old_complete: bool) {
+    let data = b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    let syn = |no, time, sequence| {
+        let mut packet = at_sequence(request_frame(no, time, 1, 0x8100, 10, 80, b""), sequence);
+        packet.bytes[51] = 0x02;
+        packet
+    };
+    let own = |no, bytes: &[u8], sequence| {
+        at_sequence(request_frame(no, no as f64, 1, 0x8100, 10, 80, bytes), sequence)
+    };
+    let mut engine = SecurityEngine::new();
+    engine.update(&syn(1, 1.0, 100));
+    let initial = own(2, if old_complete { data } else { &data[..data.len() - 2] }, 101);
+    let other = request_frame(3, 3.0, 1, 0x8100, 20, 80, data);
+    engine.update(&initial);
+    engine.update(&other);
+    let own_scope = scan_scope(&initial);
+    let sampler = |engine: &SecurityEngine| engine.http_headers.iter()
+        .find_map(|((scope, _, _), state)| (*scope == own_scope).then_some(state.complete));
+    assert_eq!(sampler(&engine), Some(old_complete));
+    engine.update(&syn(4, 4.0, 100));
+    engine.update(&syn(5, 0.5, 200));
+    assert_eq!(sampler(&engine), Some(old_complete));
+    assert_eq!(engine.http_headers.len(), 2);
+
+    engine.update(&syn(6, 6.0, 500));
+    assert_eq!(sampler(&engine), None);
+    assert_eq!(engine.http_headers.len(), 1);
+    assert!(engine.http_headers.values().next().unwrap().complete);
+    engine.update(&own(7, data, 501));
+    assert_eq!(sampler(&engine), Some(true));
+    assert!(engine.ids_alerts.is_empty());
+}
+
 #[test]
 fn header_buffer_uses_wire_port_and_ignores_truncated_segments() {
     let data = b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";

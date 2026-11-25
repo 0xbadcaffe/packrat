@@ -369,6 +369,8 @@ impl SecurityEngine {
             });
         }
         if started_connection {
+            self.http_headers.remove(&(scope, segment.key.clone(), true));
+            self.http_headers.remove(&(scope, segment.key, false));
             self.start_periodic_tcp_connection(pkt, scope);
         }
         payload_observation
