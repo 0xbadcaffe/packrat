@@ -98,11 +98,15 @@ pub(super) fn http_smuggling_reason(header: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(header);
     let mut lines = text.split('\n');
     let request_line = lines.next()?.trim_end_matches('\r');
-    let method = request_line.split_whitespace().next()?;
+    let mut fields = request_line.split_ascii_whitespace();
+    let (method, target, version) = (fields.next()?, fields.next()?, fields.next()?);
     if !matches!(
         method,
         "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | "CONNECT" | "TRACE"
-    ) {
+    ) || !matches!(version, "HTTP/1.0" | "HTTP/1.1")
+        || fields.next().is_some()
+        || !target.bytes().all(|byte| byte.is_ascii_graphic())
+    {
         return None;
     }
 
