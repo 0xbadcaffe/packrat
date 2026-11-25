@@ -19,7 +19,7 @@ state="$scratch/latest.json"
 report="$scratch/report.json"
 check_status() {
     local file=$1 expected_status=$2 expected_code=$3 response rc=0
-    response=$(bash "$watch" --check "$file") || rc=$?
+    response=$(timeout --kill-after=1s 5s bash "$watch" --check "$file") || rc=$?
     [[ $rc == "$expected_code" ]]
     jq -e --arg status "$expected_status" '.status==$status' <<< "$response" >/dev/null
 }
@@ -52,6 +52,11 @@ medium='[{"alert_id":9,"severity":"MEDIUM","rule_id":"test.medium","revision":65
 live current 12 "$queue" "$medium" | jq '.socket_context_status="available" | .health += {alert_save_failures:2,alert_save_backlog_dropped:0}' >"$report"
 bash "$watch" --once "$state" -- bash -c 'cat -- "$1"; exit 1' mock "$report" >"$scratch/output"
 cmp -s "$state" "$scratch/output"
+# Simulate a read that stalls after the path has passed validation.
+mkdir "$scratch/slow-bin"
+printf '%s\n' '#!/bin/bash' 'exec sleep 30' >"$scratch/slow-bin/head"
+chmod 700 "$scratch/slow-bin/head"
+PATH="$scratch/slow-bin:$PATH" check_status "$state" snapshot_invalid 2
 bash "$watch" --check "$state" | jq -e '.status=="current" and .socket_context_status=="available" and .alert_save_failures==2
     and .alert_save_backlog_dropped==0 and .capture_queue_full_packets==8 and .alert_log_scan_complete==true
     and .alert_log_advanced_during_review==false

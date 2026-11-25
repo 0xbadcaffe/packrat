@@ -182,7 +182,7 @@ check_snapshot() {
         return 2
     fi
     if [[ ! -r $state || ! -O $state ]] ||
-       ! raw=$(head -c 131073 -- "$state" 2>/dev/null) ||
+       ! raw=$(timeout --kill-after=1s 2s head -c 131073 -- "$state" 2>/dev/null) ||
        (( ${#raw} > 131072 )) ||
        ! result=$(jq -cse "$snapshot_validation"'
         select(length == 1) | .[0] | objects
