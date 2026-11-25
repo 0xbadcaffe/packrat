@@ -6,11 +6,12 @@ scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 export TEST_DIR=$scratch
 export PATH="$scratch:$PATH"
+unset PACKRAT_GAP_SCAN_BYTES
 touch -- "$scratch/current.jsonl" "$scratch/old.jsonl"
 cat > "$scratch/packrat-archive" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ ${*:1:11} == "--alerts $TEST_DIR/current.jsonl --session session-a --capture-id 00000000000000000000000000000001 --limit 512 --scan-bytes 8388608 --report-integrity" ]]
+[[ ${*:1:11} == "--alerts $TEST_DIR/current.jsonl --session session-a --capture-id 00000000000000000000000000000001 --limit 512 --scan-bytes ${TEST_SCAN_BYTES:-8388608} --report-integrity" ]]
 shift 11
 if [[ ${TEST_MODE:-} == result-cap-* ]]; then
     scope='{"capture_id":"00000000000000000000000000000001","session_id":"session-a","severity":"HIGH","detail":"private payload"}'
@@ -71,7 +72,7 @@ run_gap() {
     "$tool" "${1:-$scratch/report}" "$scratch/current.jsonl" "$scratch/old.jsonl"
 }
 run_gap | jq -e '
-    .record_type == "alert_gap_reconciliation" and .saved_log_scan_complete
+    .record_type == "alert_gap_reconciliation" and .saved_log_scan_complete and .alert_log_scan_bytes == 8388608
     and [.recovered_alerts[].alert_id] == [6,8] and .recovered_alerts[0].revision == 13
     and [.recovered_alerts[] | [.severity, .confidence, .evidence_frame_count, .evidence_frame_set_sha256, .next_evidence_step]] ==
         [["MEDIUM","correlated",2,("b"*64),"verify_frame_availability"],
@@ -79,6 +80,13 @@ run_gap | jq -e '
     and [.ranges[] | [.first_id,.last_id,.found,.not_found_in_scan,.remaining_status]] ==
         [[5,8,2,2,"not_in_supplied_logs"],[20,20,0,1,"not_in_supplied_logs"]]
     and (tostring | contains("private") | not) and (tostring | contains("packet_refs") | not)' >/dev/null
+PACKRAT_GAP_SCAN_BYTES=16777216 TEST_SCAN_BYTES=16777216 run_gap | jq -e '
+    .alert_log_scan_bytes == 16777216 and .saved_log_scan_complete and [.recovered_alerts[].alert_id] == [6,8]' >/dev/null
+for bad_budget in 0 08 67108865; do
+    status=0
+    PACKRAT_GAP_SCAN_BYTES=$bad_budget run_gap >/dev/null 2>&1 || status=$?
+    [[ $status == 2 ]]
+done
 TEST_MODE=bounded run_gap | jq -e '
     (.saved_log_scan_complete | not) and [.recovered_alerts[].alert_id] == [6,8]
     and all(.ranges[]; .remaining_status == "unverified")' >/dev/null
@@ -119,7 +127,8 @@ TEST_MODE=unknown-evidence run_gap | jq -e '
 jq '.unobserved_alert_id_ranges = [{first_id:1,last_id:9007199254740991}]' "$scratch/report" > "$scratch/wide"
 run_gap "$scratch/wide" | jq -e '.ranges[0].not_found_in_scan == 9007199254740988' >/dev/null
 jq '.missing_previously_observed_alert_ids=[7,8]' "$scratch/wide" >"$scratch/result-cap"
-TEST_MODE=result-cap-complete run_gap "$scratch/result-cap" | jq -e '
+PACKRAT_GAP_SCAN_BYTES=16777216 TEST_SCAN_BYTES=16777216 TEST_MODE=result-cap-complete run_gap "$scratch/result-cap" | jq -e '
+    select(.alert_log_scan_bytes == 16777216) |
     .priority_lookup_status=="complete" and .saved_log_scan_complete==false
     and .previously_observed_reconciliation=={recovered_alert_ids:[7],not_in_supplied_logs:[8],unverified_alert_ids:[]}
     and (.recovered_alerts | length)==512 and .recovered_alerts[0].alert_id==7 and .recovered_alerts_omitted==1

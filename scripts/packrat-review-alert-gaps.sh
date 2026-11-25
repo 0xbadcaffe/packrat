@@ -2,16 +2,20 @@
 # Reconcile watcher gap ranges against scoped saved alert metadata.
 set -euo pipefail
 export LC_ALL=C
+readonly scan_bytes=${PACKRAT_GAP_SCAN_BYTES:-8388608}
 
 usage() {
     printf '%s\n' 'Usage: packrat-review-alert-gaps.sh COVERAGE.json ALERT_LOG [PREVIOUS_LOG ...]' \
-        'Reads up to 8 MiB per lookup and reports up to 512 saved alerts. Supply previous logs oldest first.' \
+        'PACKRAT_GAP_SCAN_BYTES sets the per-lookup limit (default: 8 MiB, max: 64 MiB). Reports up to 512 alerts. Supply previous logs oldest first.' \
         'Prioritizes outstanding previously observed IDs; older reports use the historical disappearance list.' \
         'If the broad lookup fills, retry outstanding known IDs in a second lookup under the same deadline.' \
         'Absence refers only to the supplied logs, never to uncaptured or unpersisted traffic.'
 }
 
 if (( $# == 1 )) && [[ $1 == --help || $1 == -h ]]; then usage; exit 0; fi
+if [[ ! $scan_bytes =~ ^[1-9][0-9]{0,7}$ ]] || (( scan_bytes > 67108864 )); then
+    printf '%s\n' 'PACKRAT_GAP_SCAN_BYTES must be between 1 and 67108864 bytes.' >&2; exit 2
+fi
 if (( $# < 2 || $# > 10 )) || [[ ! -f $1 ]]; then usage >&2; exit 2; fi
 requested=$(head -c 65537 -- "$1" | jq -Rces '
     def id: type == "number" and . >= 1 and . <= 9007199254740991 and floor == .;
@@ -64,7 +68,7 @@ requested=$(head -c 65537 -- "$1" | jq -Rces '
 ') || { printf '%s\n' 'Invalid or unsupported coverage report.' >&2; exit 2; }
 shift
 if jq -e '.ranges == []' <<< "$requested" >/dev/null; then
-    jq -c '. + {record_type:"alert_gap_reconciliation",
+    jq -c --argjson scan_bytes "$scan_bytes" '. + {record_type:"alert_gap_reconciliation",alert_log_scan_bytes:$scan_bytes,
         status:(if .alert_sample_gap_reported or .request_ranges_truncated then "unlocated_gap" else "no_reported_ranges" end),
         saved_log_scan_complete:null,recovered_alerts:[],
         priority_lookup_status:"not_needed",recovered_alerts_omitted:0,
@@ -89,7 +93,7 @@ read_history() {
     range_list=$(jq -er '.[] | "\(.first_id)..\(.last_id)"' <<< "$ranges") || return 1
     while IFS= read -r range; do range_args+=(--alert-range "$range"); done <<< "$range_list"
     raw=$(timeout --kill-after=2s "${remaining}s" packrat-archive --alerts "${logs[0]}" \
-        --session "$session" --capture-id "$capture" --limit 512 --scan-bytes 8388608 \
+        --session "$session" --capture-id "$capture" --limit 512 --scan-bytes "$scan_bytes" \
         --report-integrity "${range_args[@]}" "${previous[@]}" | head -c 2097153) || return 1
     (( ${#raw} <= 2097152 )) || return 1
     jq -ces --arg session "$session" --arg capture "$capture" --argjson ranges "$ranges" '
@@ -153,7 +157,7 @@ if ! after=$(log_stamps) || [[ $before != "$after" ]]; then
     printf '%s\n' 'Saved log changed during lookup; retry from a stable snapshot.' >&2
     exit 1
 fi
-printf '%s\n' "$requested" "$history" "$priority" | jq -ces --arg priority_status "$priority_status" '
+printf '%s\n' "$requested" "$history" "$priority" | jq -ces --arg priority_status "$priority_status" --argjson scan_bytes "$scan_bytes" '
     def in_ranges($ranges; $id): any($ranges[]; $id >= .first_id and $id <= .last_id);
     select(length == 3) | .[0] as $input | .[1] as $history | .[2] as $priority
     | $input.priority_alert_ids as $known
@@ -166,7 +170,7 @@ printf '%s\n' "$requested" "$history" "$priority" | jq -ces --arg priority_statu
         | .[:512] | sort_by(.alert_id)) as $returned
     | $input + {
         record_type:"alert_gap_reconciliation",status:"reconciled",saved_log_scan_complete:$complete,
-        alert_log_integrity:$history.integrity,
+        alert_log_integrity:$history.integrity,alert_log_scan_bytes:$scan_bytes,
         priority_lookup_status:$priority_status,recovered_alerts:$returned,
         recovered_alerts_omitted:(($recovered | length) - ($returned | length)),
         previously_observed_reconciliation:{
