@@ -475,6 +475,7 @@ fi
 [[ $mode != live ]] || verify_watch_identity "$latest_identity" || exit 1
 log_advanced=false
 if (( latest_size > log_size )); then log_advanced=true; fi
+[[ $mode != saved || $log_advanced != true ]] || { report alert_log_changed; exit 1; }
 if [[ $mode == list_saved ]]; then
     index=$(report_saved_index)
     printf '%s\n' "$index"

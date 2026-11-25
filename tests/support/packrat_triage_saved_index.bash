@@ -99,3 +99,14 @@ result=$(PACKRAT_TEST_SCAN_STOPPED=true list_saved "$PACKRAT_TEST_LOG") || statu
 [[ $status == 1 ]]
 jq -e '.status=="saved_log_degraded" and .alert_log_integrity.stopped_at_scan_budget
     and (.sample_scan_complete | not) and .sampled_alerts==6 and (.captures | length)==2' <<< "$result" >/dev/null
+for query in exact_found exact_missing scope_missing; do
+    status=0
+    case $query in
+        exact_found) result=$(PACKRAT_TEST_LOG_RACE=append saved_alert 42 "$PACKRAT_TEST_LOG") || status=$? ;;
+        exact_missing) result=$(PACKRAT_TEST_LOG_RACE=append PACKRAT_TEST_ALERT_COUNT=0 saved_alert 99 "$PACKRAT_TEST_LOG") || status=$? ;;
+        scope_missing) result=$(PACKRAT_TEST_LOG_RACE=append PACKRAT_TEST_ALERT_COUNT=0 saved "$PACKRAT_TEST_LOG") || status=$? ;;
+    esac
+    [[ $status == 1 ]]
+    jq -e '.status == "alert_log_changed" and .alert_log_advanced_during_review == true
+        and .alerts == null and .evidence_status == null' <<< "$result" >/dev/null
+done
