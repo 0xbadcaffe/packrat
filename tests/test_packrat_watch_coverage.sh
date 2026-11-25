@@ -116,8 +116,23 @@ reverified=$(jq -sc '
 ' <<< "$sample")
 bash "$coverage" <<< "$reverified" | jq -e '
     .alert_sample_gap_reported and .missing_previously_observed_alert_ids==[3]
+    and .previously_observed_gap_status=={outstanding:{alert_ids:[3],truncated:false},reobserved:{alert_ids:[],truncated:false}}
     and .alert_comparable_intervals==1 and .alert_reverified_intervals==1 and .alert_comparable_packets==35
     and .observed_openings==1 and .opening_rule_breakdown.rules==[{rule_id:"dns.changed_answers",revision:15,openings:1}]' >/dev/null
+reappeared=$(jq -sc '.[0],.[1],(.[2] | .recent_alerts += [{alert_id:3}])' <<< "$reverified")
+bash "$coverage" <<< "$reappeared" | jq -e '
+    .alert_sample_gap_reported and .missing_previously_observed_alert_ids==[3]
+    and .previously_observed_gap_status=={outstanding:{alert_ids:[],truncated:false},reobserved:{alert_ids:[3],truncated:false}}' >/dev/null
+jq -sc '.[], (.[2] | .updated_at="2023-11-14T22:16:20Z" | .journal_sequence+=1
+    | .packets+=10 | .recent_alerts |= map(select(.alert_id!=3)))' <<< "$reappeared" | bash "$coverage" | jq -e '
+    .previously_observed_gap_status.outstanding.alert_ids==[3]
+    and .previously_observed_gap_status.reobserved.alert_ids==[]' >/dev/null
+for patch in '.updated_at="2023-11-14T22:13:19Z"' '.alert_log_advanced_during_review=true' \
+    '.status="triage_unavailable"' '.session_id="other"'; do
+    jq -sc ".[0],.[1],(.[2]|$patch)" <<< "$reappeared" | bash "$coverage" --capture-id a --session a-1 | jq -e '
+        .previously_observed_gap_status.outstanding.alert_ids==[3]
+        and .previously_observed_gap_status.reobserved.alert_ids==[]' >/dev/null
+done
 for patch in '.has_older_alerts=true' '.invalid_alert_rows=1' '.highest_observed_alert_id=6' \
     'del(.alert_sample_gap)' '.review_queue=[{alert_id:3}]' '.recent_alerts += [{alert_id:3}]' '.journal_sequence+=1'; do
     jq -sc ".[0],.[1],(.[2] | $patch)" <<< "$reverified" | bash "$coverage" | jq -e '
