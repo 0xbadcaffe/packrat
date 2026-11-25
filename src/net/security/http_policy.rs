@@ -3,6 +3,10 @@ use super::*;
 pub(super) const MAX_HTTP_HEADER_BYTES: usize = 16_384;
 pub(super) const MAX_HTTP_HEADERS: usize = 48;
 
+#[cfg(test)]
+#[path = "../../../tests/unit/http_header_boundary_tests.rs"]
+mod http_header_boundary_tests;
+
 pub(super) fn response_status(payload: &[u8]) -> Option<u16> {
     let mut headers = [httparse::EMPTY_HEADER; MAX_HTTP_HEADERS];
     let mut response = httparse::Response::new(&mut headers);
@@ -81,14 +85,13 @@ fn valid_basic_token(token: &[u8]) -> bool {
     separator && bits & ((1 << shift) - 1) == 0
 }
 
-pub(super) fn find_http_header_end(bytes: &[u8]) -> Option<usize> {
-    if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-        return Some(index + 4);
-    }
-    bytes
-        .windows(2)
-        .position(|window| window == b"\n\n")
-        .map(|index| index + 2)
+pub(super) fn find_http_header_end(bytes: &[u8], previous_len: usize) -> Option<usize> {
+    // The delimiter must end in newly appended bytes, even when it starts in the prefix.
+    memchr::memchr_iter(b'\n', bytes.get(previous_len..)?).find_map(|index| {
+        let end = previous_len + index + 1;
+        let prefix = &bytes[..end];
+        (prefix.ends_with(b"\r\n\r\n") || prefix.ends_with(b"\n\n")).then_some(end)
+    })
 }
 
 pub(super) fn http_smuggling_reason(header: &[u8]) -> Option<String> {

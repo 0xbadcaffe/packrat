@@ -229,11 +229,12 @@ impl SecurityEngine {
             return;
         }
         state.next_sequence = Some(sequence.wrapping_add(segment.payload.len() as u32));
-        let remaining = 32_768usize.saturating_sub(state.bytes.len());
+        let previous_len = state.bytes.len();
+        let remaining = 32_768usize.saturating_sub(previous_len);
         state
             .bytes
             .extend_from_slice(&segment.payload[..segment.payload.len().min(remaining)]);
-        let header_end = find_http_header_end(&state.bytes);
+        let header_end = find_http_header_end(&state.bytes, previous_len);
         if header_end.is_none() && state.bytes.len() < 32_768 {
             if state.frames.len() < crate::analysis::alert_center::MAX_ALERT_PACKET_REFS {
                 state.frames.push(pkt.no);

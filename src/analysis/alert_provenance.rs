@@ -77,7 +77,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Check the stated local reassembly rejection and related fragments. Confirm endpoint handling separately.",
         ),
         (
-            "IDS", "HTTP request smuggling ambiguity", "http.request_framing_ambiguity", 4, Heuristic,
+            "IDS", "HTTP request smuggling ambiguity", "http.request_framing_ambiguity", 5, Heuristic,
             "Compare retained headers with the full stream and with proxy and server logs. The finding does not establish divergent parsing or compromise.",
         ),
         (
