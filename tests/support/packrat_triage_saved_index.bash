@@ -110,3 +110,15 @@ for query in exact_found exact_missing scope_missing; do
     jq -e '.status == "alert_log_changed" and .alert_log_advanced_during_review == true
         and .alerts == null and .evidence_status == null' <<< "$result" >/dev/null
 done
+
+for evidence_source in archive project; do
+    (
+        export PACKRAT_TRIAGE_EXACT_SCAN_BYTES=1024 PACKRAT_TEST_EXPECT_SCAN_BYTES=1024 PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous"
+        if [[ $evidence_source == archive ]]; then
+            result=$(PACKRAT_TRIAGE_ARCHIVE="$scratch/archive space" saved_alert 42 "$PACKRAT_TEST_LOG" "$previous")
+        else
+            result=$(PACKRAT_TRIAGE_PROJECT="$scratch/case with spaces.json" saved_alert 42 "$PACKRAT_TEST_LOG" "$previous")
+        fi
+        jq -e '.status == "saved" and .evidence_status.status == "checked" and .previous_logs == 1' <<< "$result" >/dev/null
+    )
+done

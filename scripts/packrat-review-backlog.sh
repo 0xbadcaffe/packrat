@@ -2,6 +2,7 @@
 # Check saved findings against a packet archive without exporting frames.
 set -euo pipefail
 export LC_ALL=C
+readonly scan_bytes=8388608
 
 usage() {
     printf '%s\n' 'Usage: packrat-review-backlog.sh [--review-scope SESSION_ID CAPTURE_ID] [--review-rule RULE_ID] [--review-offset N] [--snapshot-token SHA256] [--socket-context FILE] [--flow-context] ARCHIVE ALERT_LOG [PREVIOUS_LOG ...]' \
@@ -96,7 +97,7 @@ check_flow_context() {
     local log
     for log in "$@"; do previous+=(--previous-log "$log"); done
     raw=$(timeout --kill-after=1s "${remaining}s" packrat-archive "$archive" --alert-flow-summary \
-        "$active" "$session" "$alert" --capture-id "$capture" "${previous[@]}" | head -c 1048577) || rc=$?
+        "$active" "$session" "$alert" --capture-id "$capture" --scan-bytes "$scan_bytes" "${previous[@]}" | head -c 1048577) || rc=$?
     if (( rc == 124 || rc == 137 )); then
         printf '%s\n' '{"flow_context_status":"check_timed_out"}'
         return
@@ -414,7 +415,7 @@ while IFS= read -r candidate; do
     verdict='null' status=check_deferred
     if (( remaining > 0 )); then
         rc=0
-        raw=$(PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE="$socket_file" PACKRAT_TRIAGE_EXACT_SCAN_BYTES=8388608 \
+        raw=$(PACKRAT_TRIAGE_SOCKET_CONTEXT_FILE="$socket_file" PACKRAT_TRIAGE_EXACT_SCAN_BYTES="$scan_bytes" \
             triage_with_budget "$remaining" --saved-alert "$session" "$capture" "$alert" "$@") || rc=$?
         status=check_failed
         if (( rc == 124 || rc == 137 )); then status=check_timed_out; fi

@@ -44,7 +44,7 @@ check_evidence() {
         return
     fi
     response=$(timeout --kill-after=2s "${2}s" packrat-archive \
-        "${evidence_args[@]}" "${previous_args[@]}" | head -c 65537) || return "$?"
+        "${evidence_args[@]}" "${scan_args[@]}" "${previous_args[@]}" | head -c 65537) || return "$?"
     (( ${#response} <= 65536 )) || return 1
     receipt=$(jq -cse --arg session "$session" --arg capture "$capture" --argjson id "$evidence_id" \
         --argjson expected "$expected" '

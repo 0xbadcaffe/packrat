@@ -21,7 +21,7 @@ export PACKRAT_TRIAGE_EVIDENCE_ALERT_ID=42
                 and (.next_evidence_step == "check_archive_integrity") == ($counts.unreadable != null)
         ' <<< "$result" >/dev/null
     done
-    result=$(bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
+    result=$(PACKRAT_TEST_SAVED=1 bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
     jq -e '.status == "saved" and .health == null and .evidence_status.status == "checked"
         and [.evidence_status.frames[].status] == ["truncated","missing"]' <<< "$result" >/dev/null
     status=0

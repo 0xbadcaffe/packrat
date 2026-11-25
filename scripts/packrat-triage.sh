@@ -57,13 +57,13 @@ else
     health_file=$1 alert_log=$2; shift 2
 fi
 alert_limit=50 query_limit=512
-limit_args=(--limit "$query_limit")
-if [[ $mode == live || $mode == list_saved ]]; then limit_args+=(--scan-bytes 8388608); fi
+limit_args=(--limit "$query_limit") scan_args=()
+if [[ $mode == live || $mode == list_saved ]]; then scan_args=(--scan-bytes 8388608); fi
 if [[ -n $target_alert ]]; then
     alert_limit=1 query_limit=1
     limit_args=(--alert-id "$target_alert")
     if [[ ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-} =~ ^[1-9][0-9]{0,14}$ ]]; then
-        limit_args+=(--scan-bytes "$PACKRAT_TRIAGE_EXACT_SCAN_BYTES")
+        scan_args=(--scan-bytes "$PACKRAT_TRIAGE_EXACT_SCAN_BYTES")
     elif [[ -n ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-} ]]; then
         printf '%s\n' 'PACKRAT_TRIAGE_EXACT_SCAN_BYTES must be a positive byte count of up to 15 digits.' >&2; exit 2
     fi
@@ -371,7 +371,7 @@ fi
 read_status=0
 raw_alerts=$(timeout --kill-after=2s "${read_timeout}s" packrat-archive \
     --alerts "$alert_log" "${scope_args[@]}" \
-    "${limit_args[@]}" --report-integrity "${previous_args[@]}") || read_status=$?
+    "${limit_args[@]}" "${scan_args[@]}" --report-integrity "${previous_args[@]}") || read_status=$?
 case $read_status in
     124) report alert_log_read_timeout; exit 2 ;;
     137) report alert_log_read_interrupted; exit 2 ;;

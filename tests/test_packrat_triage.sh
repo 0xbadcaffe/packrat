@@ -19,13 +19,12 @@ mock_archive() {
     printf '%s\n' called >"$PACKRAT_TEST_CALL"
     if [[ ${2-} == --alert-status || ${1-} == --project-alert-status ]]; then
         [[ ${PACKRAT_TEST_EXPECT_SCAN_BYTES:-} != 128 ]] || { touch "$PACKRAT_TEST_CALL.evidence"; return 2; }
-        local id=42
+        local id=42 budget=''; [[ ${PACKRAT_TEST_SAVED:-0} == 1 && -z ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-} ]] || budget=" --scan-bytes ${PACKRAT_TRIAGE_EXACT_SCAN_BYTES:-8388608}"
         if [[ $1 == --project-alert-status ]]; then
-            [[ $2 == "$PACKRAT_TRIAGE_PROJECT" && $3 == "$PACKRAT_TEST_LOG" &&
-               $4 == 1700000000-432 && $5 == 00000000000000000000000000000001 && $6 == 42 ]] || return 2
+            [[ $* == "--project-alert-status $PACKRAT_TRIAGE_PROJECT $PACKRAT_TEST_LOG 1700000000-432 00000000000000000000000000000001 42$budget${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
         else
             case ${PACKRAT_TEST_AUTO_QUEUE:-} in yes|many|vlan) id=$5 ;; esac
-            [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 $id --capture-id 00000000000000000000000000000001${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
+            [[ $* == "$PACKRAT_TRIAGE_ARCHIVE --alert-status $PACKRAT_TEST_LOG 1700000000-432 $id --capture-id 00000000000000000000000000000001$budget${PACKRAT_TEST_PREVIOUS_ARGS:-}" ]] || return 2
         fi
         [[ $id != "${PACKRAT_TEST_EVIDENCE_FAIL_ID:-}" ]] || return 2
         if [[ ${PACKRAT_TEST_EVIDENCE_RESTART:-0} == 1 ]]; then
@@ -197,7 +196,7 @@ source "$root/tests/support/triage_archive_check_cases.bash"
 printf '%s\n' "$sample" >"$health"
 (
     export PACKRAT_TRIAGE_PROJECT="$scratch/case with spaces.json"
-    result=$(bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
+    result=$(PACKRAT_TEST_SAVED=1 bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$PACKRAT_TEST_LOG")
     jq -e '.status == "saved" and .evidence_status.status == "checked"
         and [.evidence_status.frames[].status] == ["truncated","missing"]
         and (.evidence_status.frames[0] | has("bytes") | not)' <<< "$result" >/dev/null
@@ -421,10 +420,10 @@ for invalid in 'not JSON' "$sample"$'\n'"$sample" \
 done
 
 saved() {
-    bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$@"
+    PACKRAT_TEST_SAVED=1 bash "$triage" --saved 1700000000-432 00000000000000000000000000000001 "$@"
 }
 saved_alert() {
-    PACKRAT_TEST_TARGET="$1" bash "$triage" --saved-alert 1700000000-432 00000000000000000000000000000001 "$@"
+    PACKRAT_TEST_SAVED=1 PACKRAT_TEST_TARGET="$1" bash "$triage" --saved-alert 1700000000-432 00000000000000000000000000000001 "$@"
 }
 result=$(PACKRAT_TEST_PREVIOUS_ARGS=" --previous-log $previous" saved_alert 42 "$PACKRAT_TEST_LOG" "$previous")
 jq -e '.status == "saved" and .scope.alert_id == 42 and .alerts[0].alert_id == 42

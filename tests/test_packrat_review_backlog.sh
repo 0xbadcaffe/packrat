@@ -125,10 +125,10 @@ STUB
 cat > "$dir/packrat-archive" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ $# == 9 && $1 == "$TEST_DIR" && $2 == --alert-flow-summary &&
+[[ $# == 11 && $1 == "$TEST_DIR" && $2 == --alert-flow-summary &&
     $3 == "$TEST_DIR/alerts.jsonl" && $4 == session-a &&
     $6 == --capture-id && $7 == 00000000000000000000000000000001 &&
-    $8 == --previous-log && $9 == "$TEST_DIR/previous.jsonl" ]]
+    $8 == --scan-bytes && $9 == 8388608 && ${10} == --previous-log && ${11} == "$TEST_DIR/previous.jsonl" ]]
 printf '%s\n' "$5" >> "$TEST_DIR/flow-checks"
 jq -nc --arg session "$4" --argjson alert "$5" --arg capture "$7" --arg mode "${FLOW_MODE:-normal}" '
     def exchange($protocol):
