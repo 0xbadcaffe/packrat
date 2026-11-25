@@ -444,7 +444,7 @@ fn detects_invalid_and_flooded_router_advertisements() {
     let mut security = SecurityEngine::default();
     for index in 0..20_u64 {
         let mut packet =
-            ipv6_control_packet(index + 1, [0, 1, 2, 3, 4, 5], global_source, 255, &ra);
+            checksummed_ipv6_control_packet(index + 1, [0, 1, 2, 3, 4, 5], global_source, 255, &ra);
         packet.timestamp = index as f64 / 1000.0;
         security.update(&packet);
     }

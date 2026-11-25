@@ -121,7 +121,7 @@ pub(super) const RULES: &[RuleDefinition] = {
             "Verify the IPv6 hop limit at the original link and check router configuration and endpoint logs; the observed packet does not prove a neighbor cache or route changed.",
         ),
         (
-            "IDS", "Invalid IPv6 router advertisement source", "ipv6.ra_source_not_link_local", 2, DirectObservation,
+            "IDS", "Invalid IPv6 router advertisement source", "ipv6.ra_source_not_link_local", 3, DirectObservation,
             "Verify router interface configuration and check whether endpoints ignored the advertisement.",
         ),
         (

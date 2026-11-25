@@ -167,10 +167,10 @@ impl SecurityEngine {
         }
         let Some(mac) = ethernet_source_mac(&pkt.bytes)
             .filter(|address| *address != [0; 6] && address[0] & 1 == 0) else { return };
+        if !icmpv6_checksum_valid(inspection) { return; }
         let scope = scan_scope(pkt);
         let link_local = is_ipv6_link_local(&inspection.source);
         if link_local {
-            if !icmpv6_checksum_valid(inspection) { return; }
             let retain = archive_rules.is_some_and(|rules| rules.iter().any(|rule| rule == "ipv6.ra_router_link_change"));
             self.track_default_router_link(pkt, inspection.source, mac, u16::from_be_bytes([data[6], data[7]]), retain);
         }
@@ -195,7 +195,7 @@ impl SecurityEngine {
                         pkt_no: pkt.no,
                         signature: "Invalid IPv6 router advertisement source",
                         severity: Severity::Medium,
-                        detail: format!("Router Advertisement used non-link-local source {source}; endpoint acceptance unverified"),
+                        detail: format!("Checksum-valid Router Advertisement used non-link-local source {source}; endpoint acceptance unverified"),
                     },
                     related_packets: Vec::new(),
                     correlation_key: Some(format!("{scope:?}:{mac:?}:{source}")),

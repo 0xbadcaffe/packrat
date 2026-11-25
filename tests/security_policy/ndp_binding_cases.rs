@@ -238,3 +238,25 @@ fn ndp_binding_changes_accept_later_frames_at_the_same_time() {
     assert_eq!(alert.hit_count, 2);
     assert_eq!(alert.packet_refs, [1, 2, 3]);
 }
+#[test]
+fn corrupt_router_advertisement_does_not_alert_or_consume_source_suppression() {
+    const TITLE: &str = "Invalid IPv6 router advertisement source";
+    let source = "2001:db8::1".parse::<Ipv6Addr>().unwrap().octets();
+    let mac = [2, 1, 2, 3, 4, 5];
+    let mut ra = [0; 16];
+    ra[0] = 134;
+    let mut valid = checksummed_ipv6_control_packet(2, mac, source, 255, &ra);
+    valid.timestamp = 1.1;
+    let mut corrupt = valid.clone();
+    corrupt.no = 1;
+    corrupt.timestamp = 1.0;
+    corrupt.bytes[56] ^= 1;
+
+    let mut core = AnalysisCore::default();
+    core.analyze(&corrupt);
+    assert!(!core.alert_center.items.iter().any(|alert| alert.title == TITLE));
+    core.analyze(&valid);
+    let alert = core.alert_center.items.iter().find(|alert| alert.title == TITLE).unwrap();
+    assert_eq!(alert.packet_no, 2);
+    assert_eq!(alert.provenance.as_ref().unwrap().revision, 3);
+}
