@@ -29,6 +29,11 @@ fn request_frame(no: u64, time: f64, interface: u32, tpid: u16, vid: u16, port: 
     packet
 }
 
+fn at_sequence(mut packet: Packet, sequence: u32) -> Packet {
+    packet.bytes[42..46].copy_from_slice(&sequence.to_be_bytes());
+    packet
+}
+
 #[rstest::rstest]
 #[case(1, 0x8100, 20, 2.0)] // Different VLAN ID
 #[case(1, 0x88a8, 10, 2.0)] // Same ID, different tag type
@@ -52,9 +57,47 @@ fn benign_headers_with_identical_tuples_stay_on_their_paths(
     assert_ne!(scope_a, scope_b);
     assert_eq!(buffer(&engine, scope_a), (first.to_vec(), false));
     assert_eq!(buffer(&engine, scope_b), (end.to_vec(), false));
-    let end_a = request_frame(3, 3.0, 1, 0x8100, 10, 80, end);
+    let end_a = at_sequence(request_frame(3, 3.0, 1, 0x8100, 10, 80, end), first.len() as u32);
     engine.check_http_request_smuggling(&end_a);
-    assert_eq!(buffer(&engine, scope_a), ([first.as_slice(), end].concat(), true));
+    assert_eq!(buffer(&engine, scope_a), (Vec::new(), true));
+    assert!(engine.ids_alerts.is_empty());
+}
+
+#[test]
+fn header_sampler_skips_repeated_and_gapped_segments_and_accepts_sequence_wrap() {
+    let first = b"GET / HTTP/1.1\r\nHost: example.test\r\n";
+    let tail = b"\r\n";
+    let start = 0_u32.wrapping_sub(first.len() as u32);
+    let sample = |no, sequence, bytes: &[u8]| at_sequence(
+        request_frame(no, no as f64, 1, 0x8100, 10, 80, bytes), sequence,
+    );
+    let mut engine = SecurityEngine::new();
+    for packet in [sample(1, start, first), sample(2, start, first), sample(3, 5, tail)] {
+        engine.check_http_request_smuggling(&packet);
+    }
+    let state = engine.http_headers.values().next().unwrap();
+    assert_eq!(state.next_sequence, Some(0));
+    assert_eq!(state.bytes, first);
+    assert_eq!(state.frames, [1]);
+    assert!(!state.complete);
+
+    engine.check_http_request_smuggling(&sample(4, 0, tail));
+    let state = engine.http_headers.values().next().unwrap();
+    assert!(state.complete);
+    assert_eq!(state.bytes.capacity(), 0);
+    assert_eq!(state.frames.capacity(), 0);
+    assert!(engine.ids_alerts.is_empty());
+}
+
+#[test]
+fn reaching_the_header_limit_releases_the_sample() {
+    let mut engine = SecurityEngine::new();
+    let large_field = vec![b'a'; 32_768];
+    engine.check_http_request_smuggling(&request_frame(1, 1.0, 1, 0x8100, 10, 80, &large_field));
+    let state = engine.http_headers.values().next().unwrap();
+    assert!(state.complete);
+    assert_eq!(state.bytes.capacity(), 0);
+    assert_eq!(state.frames.capacity(), 0);
     assert!(engine.ids_alerts.is_empty());
 }
 

@@ -467,7 +467,11 @@ fn accumulates_split_http_headers_and_allows_unambiguous_framing() {
             .iter()
             .any(|alert| alert.signature == "HTTP request smuggling ambiguity")
     );
-    split.update(&http_packet(2, 100 + first.len() as u32, second));
+    let findings = split.inspect(&http_packet(2, 100 + first.len() as u32, second));
+    assert_eq!(
+        findings.ids.iter().find(|finding| finding.alert.signature == "HTTP request smuggling ambiguity")
+            .unwrap().related_packets, [1]
+    );
     assert!(
         split
             .ids_alerts

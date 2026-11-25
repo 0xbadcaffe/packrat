@@ -218,30 +218,43 @@ impl SecurityEngine {
         }
 
         let state = self.http_headers.entry(key).or_default();
-        state.last_seen = pkt.timestamp;
+        state.last_seen = if state.next_sequence.is_none() { pkt.timestamp } else { state.last_seen.max(pkt.timestamp) };
         if state.complete {
             return;
         }
+        // Inspect only the contiguous prefix. Gaps and retransmissions need
+        // stream reassembly rather than concatenating bytes in arrival order.
+        let sequence = segment.sequence.wrapping_add(u32::from(segment.flags & 0x02 != 0));
+        if state.next_sequence.is_some_and(|next| sequence != next) {
+            return;
+        }
+        state.next_sequence = Some(sequence.wrapping_add(segment.payload.len() as u32));
         let remaining = 32_768usize.saturating_sub(state.bytes.len());
         state
             .bytes
             .extend_from_slice(&segment.payload[..segment.payload.len().min(remaining)]);
-        let Some(header_end) = find_http_header_end(&state.bytes) else {
-            if state.bytes.len() >= 32_768 {
-                state.complete = true;
+        let header_end = find_http_header_end(&state.bytes);
+        if header_end.is_none() && state.bytes.len() < 32_768 {
+            if state.frames.len() < crate::analysis::alert_center::MAX_ALERT_PACKET_REFS {
+                state.frames.push(pkt.no);
+            } else {
+                state.frame_refs_truncated = true;
             }
             return;
-        };
+        }
         state.complete = true;
-        if let Some(reason) = http_smuggling_reason(&state.bytes[..header_end]) {
+        let bytes = std::mem::take(&mut state.bytes);
+        let frames = std::mem::take(&mut state.frames);
+        let limitation = if state.frame_refs_truncated { "; earlier frame references capped" } else { "" };
+        if let Some(reason) = header_end.and_then(|end| http_smuggling_reason(&bytes[..end])) {
             self.push_ids_finding(IdsFinding {
                 alert: IdsAlert {
                     pkt_no: pkt.no,
                     signature: "HTTP request smuggling ambiguity",
                     severity: Severity::Critical,
-                    detail: format!("{reason} from {source} to {destination}"),
+                    detail: format!("{reason} from {source} to {destination}{limitation}"),
                 },
-                related_packets: Vec::new(),
+                related_packets: frames,
                 correlation_key: Some(format!("{scope:?}:{source}>{destination}")),
             });
         }

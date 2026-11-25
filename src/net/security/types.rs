@@ -287,6 +287,9 @@ pub(super) struct DhcpMessage {
 #[derive(Debug, Default)]
 pub(super) struct HttpHeaderState {
     pub(super) bytes: Vec<u8>,
+    pub(super) frames: Vec<u64>,
+    pub(super) frame_refs_truncated: bool,
+    pub(super) next_sequence: Option<u32>,
     pub(super) last_seen: f64,
     pub(super) complete: bool,
 }
