@@ -138,14 +138,17 @@ async fn settings_enter_toggles_packet_following() {
 #[test]
 fn packet_following_keeps_selection_on_newest_match() {
     let mut app = App::new_for_test();
-    app.auto_scroll = true;
-    app.inject_packet(packet(1));
-    app.inject_packet(packet(2));
-    assert_eq!(app.selected, Some(1));
+    app.auto_scroll = packrat_tui::storage::theme_store::Preferences::default().auto_scroll;
+    app.capturing = true;
+    for no in 1..=2 {
+        app.ingest_packet(packet(no));
+        assert_eq!(app.selected_packet().unwrap().no, no);
+    }
 
     app.auto_scroll = false;
-    app.inject_packet(packet(3));
-    assert_eq!(app.selected, Some(1));
+    app.ingest_packet(packet(3));
+    assert_eq!(app.packet_counter, 3);
+    assert_eq!(app.selected_packet().unwrap().no, 2);
 }
 
 #[tokio::test]

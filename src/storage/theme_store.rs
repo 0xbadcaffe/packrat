@@ -16,7 +16,7 @@ pub const MAX_CAPTURE_TIMEOUT_MS: u64 = 1_000;
 pub struct Preferences {
     #[serde(default = "default_theme")]
     pub theme: String,
-    #[serde(default)]
+    #[serde(default = "default_auto_scroll")]
     pub auto_scroll: bool,
     #[serde(default)]
     pub alert_automation: usize,
@@ -36,7 +36,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             theme: default_theme(),
-            auto_scroll: false,
+            auto_scroll: default_auto_scroll(),
             alert_automation: 0,
             startup_workspace: 0,
             navigation_version: 1,
@@ -65,6 +65,7 @@ impl Preferences {
 }
 
 fn default_theme() -> String { "Dark Pro".into() }
+fn default_auto_scroll() -> bool { true }
 fn default_ui_refresh_ms() -> u64 { DEFAULT_UI_REFRESH_MS }
 fn default_capture_timeout_ms() -> u64 { DEFAULT_CAPTURE_TIMEOUT_MS }
 

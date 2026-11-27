@@ -14,7 +14,7 @@ use tokio::time;
 use packrat_tui::{analysis, app, event, storage, ui};
 
 use app::{App, CliAction};
-use packrat_tui::net::packet::Packet;
+use packrat_tui::{net::packet::Packet, tabs::Tab};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -138,13 +138,14 @@ async fn run_loop(
             redraw_period = configured_period;
             redraw_interval = time::interval(redraw_period);
         }
+        let previous_packet_count = app.packet_counter;
         app.poll_analysis();
         app.dispatch_capture(packet_rx, &mut pending_packet)
             .map_err(anyhow::Error::msg)?;
-        if redraw_pending {
-            if let Some(view) = app.try_view().map_err(anyhow::Error::msg)? {
-                terminal.draw(|f| ui::draw_view(f, &view))?;
-            }
+        redraw_pending |= app.active_tab == Tab::Packets
+            && app.packet_counter != previous_packet_count;
+        if redraw_pending && let Some(view) = app.try_view().map_err(anyhow::Error::msg)? {
+            terminal.draw(|f| ui::draw_view(f, &view))?;
             redraw_pending = false;
         }
 
