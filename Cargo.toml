@@ -1,6 +1,6 @@
 [package]
 name = "packrat-tui"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Terminal network analyzer, deep packet inspection, and penetration detection tool: live capture, IDS/IOC/YARA, TLS intelligence, PCAP diff, VLAN intelligence, and case export"
