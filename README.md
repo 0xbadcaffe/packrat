@@ -55,34 +55,72 @@ selected artifact or stopping capture.
 | **Preserve** | Capture-scoped alert evidence, bounded selective archives, notebook, portable projects and PCAPNG case exports |
 | **Respond** | Monitor, preview, approved manual, or policy-gated automatic Linux nftables containment |
 
-## Simulation Mode
+## Installation
 
-Simulation is explicit and needs no packet-capture library:
+Run the Cargo commands below from the repository root. Cargo installs the
+executables in `~/.cargo/bin` by default. Add that directory to your PATH if
+your shell cannot find `packrat`.
 
-```bash
-cargo build --locked --release --bin packrat
-./target/release/packrat --simulation
-```
+### Simulation
 
-## Live Capture Mode
-
-Live capture is the default runtime mode and requires the `real-capture` build
-feature plus libpcap or Npcap:
+Simulation uses built-in traffic and requires no packet-capture library.
 
 ```bash
-cargo build --locked --release --features real-capture
-sudo ./target/release/packrat
+cargo install --locked --path . --bin packrat
+packrat --simulation
 ```
 
-Packrat opens the interface selector. Use `j`/`k` and `Enter`. For a narrower
-privilege boundary on Linux, grant capture capability to the dedicated helper
-and keep the TUI unprivileged:
+### Live capture
+
+Live capture is the default runtime mode. Install libpcap or Npcap for your
+platform as described in [BUILD.md](BUILD.md), then enable the `real-capture`
+feature.
 
 ```bash
-sudo setcap cap_net_raw=eip target/release/packrat-capture-helper
-./target/release/packrat \
-  --capture-helper ./target/release/packrat-capture-helper
+cargo install --locked --path . --features real-capture \
+  --bin packrat --bin packrat-capture-helper
 ```
+
+#### Live capture without sudo on Linux
+
+Use sudo for the one-time setup. The dedicated helper gets `CAP_NET_RAW`, and
+the Packrat TUI runs as your regular user. The helper is owned by root and can
+be run by members of your primary group. Use a private group if capture access
+should be limited to your account.
+
+```bash
+helper=/usr/local/libexec/packrat/packrat-capture-helper
+sudo install -d -o root -g root -m 0755 /usr/local/libexec/packrat
+sudo install -o root -g "$(id -gn)" -m 0750 \
+  "$HOME/.cargo/bin/packrat-capture-helper" "$helper"
+sudo setcap cap_net_raw=ep "$helper"
+packrat --capture-helper "$helper"
+```
+
+In the interface selector, use `j` or `k` to choose an interface and press
+`Enter` to start capture. After updating Packrat, repeat the `sudo install`
+and `sudo setcap` commands to update the privileged copy.
+
+To use the helper whenever you run plain `packrat`, put the following launcher
+in `~/.local/bin/packrat` and make it executable with
+`chmod +x ~/.local/bin/packrat`.
+
+```sh
+#!/bin/sh
+packrat="$HOME/.cargo/bin/packrat"
+
+# Offline project review takes standalone arguments.
+for argument in "$@"; do
+    if [ "$argument" = "--project" ]; then
+        exec "$packrat" "$@"
+    fi
+done
+
+exec "$packrat" --capture-helper /usr/local/libexec/packrat/packrat-capture-helper "$@"
+```
+
+Put `~/.local/bin` ahead of `~/.cargo/bin` in your PATH. If Bash cached the
+original command location, run `hash -r`.
 
 See [BUILD.md](BUILD.md) for Linux, macOS, Windows/Npcap, cross-compilation,
 eBPF socket attribution, and troubleshooting instructions.
