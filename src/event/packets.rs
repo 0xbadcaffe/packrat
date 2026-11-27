@@ -109,7 +109,7 @@ pub(super) fn handle_display_filter(app: &mut App, key: KeyEvent) {
             app.filter.input.pop();
             app.rebuild_filtered();
         }
-        KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+        KeyCode::Char(c) => {
             let limit = crate::analysis::display_filter::MAX_DISPLAY_FILTER_BYTES;
             if app.filter.input.len() + c.len_utf8() <= limit {
                 app.filter.input.push(c);

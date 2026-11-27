@@ -139,13 +139,13 @@ pub(super) fn handle_notebook(app: &mut App, key: KeyEvent) {
             KeyCode::Backspace => {
                 app.notebook_search.pop();
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
                 let count = app.notebook.search(&app.notebook_search).len();
                 if count > 0 {
                     app.notebook_scroll = (app.notebook_scroll + 1).min(count - 1);
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 app.notebook_scroll = app.notebook_scroll.saturating_sub(1);
             }
             KeyCode::Char(c) => {

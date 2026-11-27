@@ -211,6 +211,23 @@ fn new_project_previews_the_full_name_and_keeps_an_existing_case() {
     assert_eq!(app.project_manager.active_field, PmField::Path);
 }
 
+#[test]
+fn project_open_path_accepts_q_as_its_first_character() {
+    use packrat_tui::ui::project_manager::PmTab;
+
+    let mut app = App::new_for_test();
+    event::handle(&mut app, shift('P'));
+    event::handle(&mut app, key(KeyCode::Tab));
+    for _ in 0..4 {
+        event::handle(&mut app, key(KeyCode::Tab));
+    }
+    assert_eq!(app.project_manager.tab, PmTab::Open);
+
+    assert!(!event::handle(&mut app, key(KeyCode::Char('q'))));
+    assert!(app.project_manager_open);
+    assert_eq!(app.project_manager.open_path, "q");
+}
+
 #[tokio::test]
 async fn help_key_opens_help() {
     let mut app = App::new_for_test();
@@ -306,10 +323,10 @@ async fn notebook_slash_enters_search() {
 async fn notebook_search_chars_accumulate() {
     let mut app = nb_app();
     app.notebook_searching = true;
-    event::handle(&mut app, key(KeyCode::Char('d')));
-    event::handle(&mut app, key(KeyCode::Char('n')));
-    event::handle(&mut app, key(KeyCode::Char('s')));
-    assert_eq!(app.notebook_search, "dns");
+    for character in "jack".chars() {
+        event::handle(&mut app, key(KeyCode::Char(character)));
+    }
+    assert_eq!(app.notebook_search, "jack");
 }
 
 #[tokio::test]

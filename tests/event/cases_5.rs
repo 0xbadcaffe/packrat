@@ -73,6 +73,8 @@ async fn stream_overlay_searches_and_navigates_matches() {
     for character in "admin".chars() {
         event::handle(&mut app, key(KeyCode::Char(character)));
     }
+    event::handle(&mut app, ctrl('p'));
+    assert_eq!(app.stream_overlay.as_ref().unwrap().search_query, "admin");
     event::handle(&mut app, key(KeyCode::Enter));
     assert_eq!(app.stream_overlay.as_ref().unwrap().matches.len(), 2);
     event::handle(&mut app, key(KeyCode::Char('n')));
@@ -96,6 +98,7 @@ async fn strings_search_chars_accumulate() {
 #[tokio::test]
 async fn strings_search_backspace_deletes() {
     let mut app = App::new_for_test();
+    app.active_tab = Tab::Strings;
     app.strings_search_active = true;
     app.strings_filter = "pass".to_string();
     event::handle(&mut app, key(KeyCode::Backspace));
@@ -105,6 +108,7 @@ async fn strings_search_backspace_deletes() {
 #[tokio::test]
 async fn strings_search_esc_clears_and_deactivates() {
     let mut app = App::new_for_test();
+    app.active_tab = Tab::Strings;
     app.strings_search_active = true;
     app.strings_filter = "pass".to_string();
     event::handle(&mut app, key(KeyCode::Esc));
@@ -319,10 +323,11 @@ async fn search_esc_closes_palette() {
 async fn search_query_accumulates() {
     let mut app = App::new_for_test();
     app.search_open = true;
-    event::handle(&mut app, key(KeyCode::Char('d')));
-    event::handle(&mut app, key(KeyCode::Char('n')));
-    event::handle(&mut app, key(KeyCode::Char('s')));
-    assert_eq!(app.search_query, "dns");
+    for character in "jack".chars() {
+        event::handle(&mut app, key(KeyCode::Char(character)));
+    }
+    event::handle(&mut app, ctrl('p'));
+    assert_eq!(app.search_query, "jack");
 }
 
 #[tokio::test]

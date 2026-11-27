@@ -135,13 +135,13 @@ pub(super) fn handle_search_palette(app: &mut App, key: KeyEvent) {
             app.search_jump();
         }
 
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Down => {
             let max = app.search_results.len().saturating_sub(1);
             if app.search_selected < max {
                 app.search_selected += 1;
             }
         }
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up => {
             app.search_selected = app.search_selected.saturating_sub(1);
         }
 

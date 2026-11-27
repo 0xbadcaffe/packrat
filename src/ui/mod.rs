@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::app::AppView as App;
@@ -42,7 +42,7 @@ pub fn draw_view(f: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(1), // titlebar
             Constraint::Length(1), // filter bar
-            Constraint::Length(3), // breadcrumb, workspaces, separator
+            Constraint::Length(3), // breadcrumb, navigation row, separator
             Constraint::Min(0),    // workspace
             Constraint::Length(1), // statusbar
         ])
@@ -177,31 +177,52 @@ fn draw_titlebar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
-    let workspace_tabs: Vec<Line> = (0..Workspace::COUNT).map(|index| {
-        let workspace = Workspace::from_index(index);
-        Line::from(vec![
-            Span::styled(format!("{} ", index + 1), Style::default().fg(C_YELLOW())),
-            Span::raw(workspace.label()),
-        ])
-    }).collect();
     let active_workspace = app.active_tab.workspace();
-    let tabs = Tabs::new(workspace_tabs)
-        .select(active_workspace.index())
-        .style(Style::default().fg(C_FG2()).bg(C_BG2()))
-        .highlight_style(Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD))
-        .divider("│")
-        .block(Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(C_BORDER()))
-            .title(Span::styled(
-                format!(
-                    " {} > {}  [Tab/F2 views]  [Alt+Left back] ",
-                    active_workspace.label(),
-                    app.active_tab.label(),
-                ),
-                Style::default().fg(C_FG2()),
-            )));
-    f.render_widget(tabs, area);
+    let block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(C_BORDER()))
+        .title(Span::styled(
+            format!(
+                " [F2 views] {} > {}  [Alt+Left back] ",
+                active_workspace.label(),
+                app.active_tab.label(),
+            ),
+            Style::default().fg(C_FG2()),
+        ));
+    let row = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut labels = Line::default();
+    let mut remaining = usize::from(row.width);
+    let dim = Style::default().fg(C_FG2());
+    let active = Style::default().fg(C_CYAN()).add_modifier(Modifier::BOLD);
+    for index in 0..Workspace::COUNT {
+        let workspace = Workspace::from_index(index);
+        let style = if workspace == active_workspace { active } else { dim };
+        let label = Span::styled(format!("{} {}", index + 1, workspace.label()), style);
+        if !append_nav_label(&mut labels, &mut remaining, if index == 0 { " " } else { " │ " }, label) {
+            break;
+        }
+    }
+    for (index, &view) in active_workspace.views().iter().enumerate() {
+        let style = if view == app.active_tab { active } else { dim };
+        let label = Span::styled(format!("Alt+{} {}", index + 1, view.label()), style);
+        if !append_nav_label(&mut labels, &mut remaining, if index == 0 { " ║ " } else { " │ " }, label) {
+            break;
+        }
+    }
+    f.render_widget(Paragraph::new(labels).style(Style::default().bg(C_BG2())), row);
+}
+
+fn append_nav_label(line: &mut Line<'static>, remaining: &mut usize, separator: &'static str, label: Span<'static>) -> bool {
+    let separator = Span::styled(separator, Style::default().fg(C_BORDER()));
+    let width = separator.width() + label.width();
+    if width > *remaining {
+        return false;
+    }
+    *remaining -= width;
+    line.spans.extend([separator, label]);
+    true
 }
 
 fn draw_workspace(f: &mut Frame, app: &App, area: Rect) {

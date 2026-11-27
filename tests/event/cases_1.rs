@@ -389,6 +389,35 @@ async fn q_does_not_quit_in_text_mode() {
     assert_eq!(app.notebook_input, "q");
 }
 
+#[test]
+fn editing_protocol_keeps_shortcuts_in_the_field_until_enter() {
+    let mut app = App::new_for_test();
+    app.active_tab = Tab::Craft;
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert!(app.craft.editing);
+    for _ in 0..app.craft.fields[0].value.len() {
+        event::handle(&mut app, key(KeyCode::Backspace));
+    }
+
+    for character in "UDP".chars() {
+        assert!(!event::handle(&mut app, shift(character)));
+    }
+    assert!(!event::handle(&mut app, ctrl('p')));
+    assert!(!event::handle(&mut app, ctrl('s')));
+    assert!(!event::handle(&mut app, alt(KeyCode::Char('x'))));
+    assert!(!event::handle(&mut app, key(KeyCode::Tab)));
+    assert_eq!(app.craft.fields[0].value, "UDP");
+    assert!(app.craft.editing);
+    assert!(!app.project_manager_open);
+    assert!(!app.search_open);
+    assert!(!app.view_menu_open);
+
+    event::handle(&mut app, key(KeyCode::Enter));
+    assert!(!app.craft.editing);
+    event::handle(&mut app, shift('P'));
+    assert!(app.project_manager_open);
+}
+
 #[tokio::test]
 async fn critical_detection_requires_review_and_retains_evidence_after_acknowledgement() {
     let mut app = App::new_for_test();

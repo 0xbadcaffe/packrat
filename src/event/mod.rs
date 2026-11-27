@@ -32,30 +32,42 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
-    // Only quit when not in a text-entry or modal mode — otherwise 'q' is a
-    // valid character or should close the overlay rather than quitting the app.
-    let in_text_mode = app.strings_search_active
+    let editing_tab = match app.active_tab {
+        Tab::Strings => app.strings_search_active,
+        Tab::Craft => app.craft.editing,
+        Tab::Security => app.security_tab == SecuritySubTab::Replay && app.replay_editing,
+        Tab::Scanner => app.scan_editing,
+        Tab::Traceroute => app.traceroute.editing,
+        Tab::Notebook => app.notebook_editing || app.notebook_searching,
+        Tab::Hosts => app.hosts_searching || app.hosts_tagging,
+        Tab::OperatorGraph => app.graph_ui.searching,
+        Tab::Investigate => app.header_searching,
+        _ => false,
+    };
+    let in_text_mode = editing_tab
         || app.filter.active
-        || app.craft.editing
-        || app.replay_editing
         || app.pcap_import_editing
-        || app.scan_editing
-        || app.traceroute.editing
-        || app.notebook_editing
-        || app.notebook_searching
-        || app.hosts_searching
-        || app.hosts_tagging
-        || app.graph_ui.searching
         || app.search_open
-        || app.header_searching
+        || app.stream_overlay.as_ref().is_some_and(|overlay| overlay.searching)
+        || (app.project_manager_open
+            && (app.project_manager.tab == PmTab::Open || app.project_manager.is_text_editing()));
+
+    // Keep shortcut chords out of text fields while allowing Shift for typing.
+    if in_text_mode
+        && matches!(key.code, KeyCode::Char(_))
+        && !(key.modifiers - KeyModifiers::SHIFT).is_empty()
+    {
+        return false;
+    }
+
+    let prevent_quit = in_text_mode
         || app.settings_open
         || app.show_help
         || app.stream_overlay.is_some()
         || app.packet_comparison.is_some()
-        || app.autopsy_state.is_some()
-        || (app.project_manager_open && app.project_manager.is_text_editing());
+        || app.autopsy_state.is_some();
 
-    if !in_text_mode && is_quit(&key) {
+    if !prevent_quit && is_quit(&key) {
         return true;
     }
 
@@ -145,7 +157,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
-    if app.active_tab == Tab::Analysis
+    if !in_text_mode && app.active_tab == Tab::Analysis
         && app.analysis_section == crate::app::INCIDENT_ANALYSIS_SECTION
         && key.code == KeyCode::Char('x')
     {
@@ -153,7 +165,7 @@ pub fn handle(app: &mut App, event: Event) -> bool {
         return false;
     }
 
-    if app.active_tab == Tab::Analysis
+    if !in_text_mode && app.active_tab == Tab::Analysis
         && app.analysis_section == crate::app::INCIDENT_ANALYSIS_SECTION
         && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
     {
@@ -165,84 +177,10 @@ pub fn handle(app: &mut App, event: Event) -> bool {
 
     if app.picking_iface {
         handle_iface_picker(app, key);
-    } else if app.strings_search_active {
+    } else if app.active_tab == Tab::Strings && app.strings_search_active {
         handle_strings_search(app, key);
-    } else if app.header_searching {
-        handle_investigate(app, key);
     } else {
-        // Open global search palette with '?'
-        if key.code == KeyCode::Char('?') {
-            app.open_search();
-            return false;
-        }
-
-        if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app.open_search();
-            return false;
-        }
-
-        if key.code == KeyCode::Char(',') {
-            app.open_settings();
-            return false;
-        }
-
-        // Project manager with 'P'
-        if key.code == KeyCode::Char('P') {
-            app.open_project_manager();
-            return false;
-        }
-
-        // Quick-save project with Ctrl+S
-        if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app.quick_save_project();
-            return false;
-        }
-
-        // Theme picker with backslash
-        if key.code == KeyCode::Char('\\') {
-            app.theme_picker_open = true;
-            // Position cursor on the currently selected theme
-            let cur = app.selected_theme_name.clone();
-            app.theme_picker_cursor = THEME_NAMES.iter().position(|&n| n == cur).unwrap_or(0);
-            return false;
-        }
-
-        // Export case bundle with 'X' from any tab
-        if key.code == KeyCode::Char('X') {
-            app.export_case_bundle();
-            return false;
-        }
-
-        if key.code == KeyCode::Char('!') {
-            app.engage_guard_kill_switch();
-            return false;
-        }
-
-        // Pin the active screen context to the cross-workspace investigation tray.
-        if key.code == KeyCode::Char('M') {
-            app.pin_current_context();
-            return false;
-        }
-
-        // Reload IOC feeds with 'I' from any tab
-        if key.code == KeyCode::Char('I') {
-            app.reload_ioc_feeds();
-            return false;
-        }
-
-        // Diff baseline snapshot with 'B' from any tab
-        if key.code == KeyCode::Char('B') {
-            app.diff_snapshot_baseline();
-            return false;
-        }
-
-        // PCAP instant import with 'L' from any tab
-        if key.code == KeyCode::Char('L') {
-            if app.offline_review() {
-                app.set_status("Open captures separately to preserve offline review evidence scope");
-            } else {
-                app.pcap_import_editing = true;
-            }
+        if !in_text_mode && handle_global_shortcuts(app, key) {
             return false;
         }
 
@@ -262,6 +200,95 @@ pub fn handle(app: &mut App, event: Event) -> bool {
             Tab::Investigate => handle_investigate(app, key),
             _ => handle_main(app, key),
         }
+    }
+    false
+}
+
+fn handle_global_shortcuts(app: &mut App, key: KeyEvent) -> bool {
+    if key.modifiers == KeyModifiers::ALT
+        && let KeyCode::Char(digit @ '1'..='9') = key.code
+    {
+        let index = digit as usize - '1' as usize;
+        if let Some(&view) = app.active_tab.workspace().views().get(index) {
+            app.navigate_to(view);
+        }
+        return true;
+    }
+
+    // Open global search palette with '?'
+    if key.code == KeyCode::Char('?') {
+        app.open_search();
+        return true;
+    }
+
+    if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.open_search();
+        return true;
+    }
+
+    if key.code == KeyCode::Char(',') {
+        app.open_settings();
+        return true;
+    }
+
+    // Project manager with 'P'
+    if key.code == KeyCode::Char('P') {
+        app.open_project_manager();
+        return true;
+    }
+
+    // Quick-save project with Ctrl+S
+    if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.quick_save_project();
+        return true;
+    }
+
+    // Theme picker with backslash
+    if key.code == KeyCode::Char('\\') {
+        app.theme_picker_open = true;
+        // Position cursor on the currently selected theme
+        let cur = app.selected_theme_name.clone();
+        app.theme_picker_cursor = THEME_NAMES.iter().position(|&n| n == cur).unwrap_or(0);
+        return true;
+    }
+
+    // Export case bundle with 'X' from any tab
+    if key.code == KeyCode::Char('X') {
+        app.export_case_bundle();
+        return true;
+    }
+
+    if key.code == KeyCode::Char('!') {
+        app.engage_guard_kill_switch();
+        return true;
+    }
+
+    // Pin the active screen context to the cross-workspace investigation tray.
+    if key.code == KeyCode::Char('M') {
+        app.pin_current_context();
+        return true;
+    }
+
+    // Reload IOC feeds with 'I' from any tab
+    if key.code == KeyCode::Char('I') {
+        app.reload_ioc_feeds();
+        return true;
+    }
+
+    // Diff baseline snapshot with 'B' from any tab
+    if key.code == KeyCode::Char('B') {
+        app.diff_snapshot_baseline();
+        return true;
+    }
+
+    // PCAP instant import with 'L' from any tab
+    if key.code == KeyCode::Char('L') {
+        if app.offline_review() {
+            app.set_status("Open captures separately to preserve offline review evidence scope");
+        } else {
+            app.pcap_import_editing = true;
+        }
+        return true;
     }
     false
 }

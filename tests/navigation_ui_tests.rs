@@ -28,6 +28,51 @@ fn three_workspaces_are_visible_in_small_and_large_terminals() {
 }
 
 #[test]
+fn navigation_shows_workspace_and_view_shortcuts_on_one_row() {
+    let mut app = App::new_for_test();
+    let press = |app: &mut App, code, modifiers| {
+        assert!(!event::handle(app, Event::Key(KeyEvent::new(code, modifiers))));
+    };
+    for (index, workspace) in [Workspace::Traffic, Workspace::Inspect, Workspace::Case].into_iter().enumerate() {
+        press(&mut app, KeyCode::Char(char::from(b'1' + index as u8)), KeyModifiers::NONE);
+        assert_eq!(app.active_tab, workspace.home());
+        let wide = screen(&app, 180, 24);
+        let views = wide.lines().nth(3).unwrap();
+        assert!(views.starts_with(" 1 Traffic │ 2 Investigation │ 3 Case ║ "), "{views}");
+        for (index, tab) in workspace.views().iter().enumerate() {
+            assert!(views.contains(&format!("Alt+{} {}", index + 1, tab.label())), "{views}");
+            press(&mut app, KeyCode::Char(char::from(b'1' + index as u8)), KeyModifiers::ALT);
+            assert_eq!(app.active_tab, *tab);
+        }
+    }
+}
+
+#[test]
+fn navigation_keeps_labels_whole_and_f2_reaches_hidden_views() {
+    let mut app = App::new_for_test();
+    app.select_workspace(Workspace::Inspect);
+    let medium = screen(&app, 64, 12);
+    assert_eq!(medium.lines().nth(3).unwrap().trim(),
+        "1 Traffic │ 2 Investigation │ 3 Case ║ Alt+1 Investigate");
+    let narrow = screen(&app, 28, 12);
+    assert_eq!(narrow.lines().nth(3).unwrap().trim(), "1 Traffic │ 2 Investigation");
+    assert!(narrow.contains("[F2 views]"));
+
+    let press = |app: &mut App, code, modifiers| {
+        assert!(!event::handle(app, Event::Key(KeyEvent::new(code, modifiers))));
+    };
+    press(&mut app, KeyCode::Char('2'), KeyModifiers::ALT);
+    assert_eq!(app.active_tab, Tab::Analysis);
+    press(&mut app, KeyCode::F(2), KeyModifiers::NONE);
+    for _ in 0..6 {
+        press(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    }
+    assert!(screen(&app, 28, 12).contains("> Graph"));
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.active_tab, Tab::OperatorGraph);
+}
+
+#[test]
 fn view_drawer_keeps_selected_tool_visible_on_short_terminals() {
     let mut app = App::new_for_test();
     app.active_tab = Tab::Investigate;
