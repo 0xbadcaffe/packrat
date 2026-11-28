@@ -23,6 +23,25 @@ Packrat should let a defender explain why traffic was flagged, verify the findin
 - Replay must produce deterministic results with bounded detector state. Measure alert volume, false positives, missed labeled events, capture drops, and time to triage against the same baseline before and after changes.
 - Keep private captures, payloads, and credentials out of git. Use sanitized fixtures and session-scoped references in reports.
 
+## Offline security benchmark and export contract
+
+Baseline: Packrat 0.4.1 (`add33be`), Suricata 8.0.3, Zeek 9.0.1, and TShark 4.6.4. Each fixture had 200,000 synthetic Ethernet frames: DNS-only, or 20,000 DNS query/reply pairs and 20,000 cleartext HTTP exchanges. Runs used one logical CPU on an Intel i7-8650U with RAM-backed output. The table reports medians of five trials after one warm-up; peak RSS is for the mixed fixture.
+
+| Output mode | DNS (s) | Mixed (s) | Peak RSS (MiB) |
+|---|---:|---:|---:|
+| Suricata EVE (242 protocol and decoder rules) | 2.56 | 2.70 | 124 |
+| TShark selected fields | 2.78 | 3.10 | 417 |
+| Packrat alerts only | 3.33 | 3.17 | 99 |
+| Packrat standard NDJSON | 3.36 | 3.29 | 99 |
+| Zeek JSON logs | 9.97 | 7.07 | 145 |
+| TShark protocol JSON | 17.25 | 20.52 | 417 |
+
+On a separate three-frame fixture, Packrat flagged a changed DNS answer at frame 3 and cited all three frames. It did not flag the identical-answer control. The other tools exposed both answers but did not open a matching finding in the configurations tested. This does not compare detection recall: output modes differ, Suricata did not load a threat feed, and the fixtures are synthetic. Use labeled benign and suspicious captures with pinned rulesets for detection comparisons.
+
+The baseline analyzed all frames in the mixed capture but exported only 500 HTTP exchanges; Zeek and Suricata logged 20,000. Standard offline Packrat export must serialize HTTP/1 and cleartext HTTP/2 conversations when a TCP stream is evicted, then flush the remaining streams at end of capture. Keep the 500-stream cache bounded and preserve original frame citations. Mark the export boundary explicitly; eviction is not proof of a complete conversation, and traffic arriving after eviction may lack earlier context. Alert-only replay must not emit transactions or change alert coverage. HTTP/3 remains limited to retained connections. The acceptance workload requires 20,000 distinct HTTP exchanges, no skipped frames, and no increase in cache capacity.
+
+The first fixed release build (`a6b7ecb`) exported all 20,000 HTTP exchanges: 19,500 at eviction and 500 at end of capture. Each exchange cited the expected request and response frames. No frames were skipped, and alert-only output matched the baseline byte for byte on the mixed capture and both DNS correctness fixtures.
+
 ## Monitoring and release loop
 
 1. Follow the saved alert log on the lab host. Deduplicate by session and alert ID; report meaningful changes and distinguish observation, inference, and recommended verification.
