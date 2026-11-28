@@ -6,6 +6,17 @@ impl AnalysisCore {
     where
         I: Iterator<Item = Packet> + Clone,
     {
+        self.analyze_with_stream_eviction(pkt, history, |_| {})
+    }
+
+    /// Visit a stream displaced by this packet before its reassembly is discarded.
+    pub fn analyze_with_stream_eviction<I>(
+        &mut self, pkt: &Packet, history: I,
+        on_evict: impl FnOnce(&crate::analysis::stream::ReassembledStream),
+    ) -> PacketAnalysis
+    where
+        I: Iterator<Item = Packet> + Clone,
+    {
         let disposition = Self::disposition(pkt);
         if disposition != PacketDisposition::Analyzed {
             return PacketAnalysis {
@@ -30,7 +41,7 @@ impl AnalysisCore {
 
         // Security analysis. Critical built-in signatures open an incident for
         // explicit operator review; lower severities remain in the Security tab.
-        let segmented_tls = self.streams.ingest_observing_tls(pkt);
+        let segmented_tls = self.streams.ingest_observing_tls(pkt, on_evict);
         let modbus = self.streams.observe_modbus(pkt);
         let dns = self.streams.observe_tcp_dns(pkt);
         let http_auth = self.observe_http_401(pkt);

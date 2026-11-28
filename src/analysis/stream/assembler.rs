@@ -14,14 +14,18 @@ pub struct StreamAssembler {
 
 impl StreamAssembler {
     pub fn ingest(&mut self, pkt: &Packet) {
-        self.ingest_inner(pkt, false);
+        self.ingest_inner(pkt, false, |_| {});
     }
 
-    pub(crate) fn ingest_observing_tls(&mut self, pkt: &Packet) -> Option<((u16, u16), Vec<u64>)> {
-        self.ingest_inner(pkt, true)
+    pub(crate) fn ingest_observing_tls(
+        &mut self, pkt: &Packet, on_evict: impl FnOnce(&ReassembledStream),
+    ) -> Option<((u16, u16), Vec<u64>)> {
+        self.ingest_inner(pkt, true, on_evict)
     }
 
-    fn ingest_inner(&mut self, pkt: &Packet, observe_tls: bool) -> Option<((u16, u16), Vec<u64>)> {
+    fn ingest_inner(
+        &mut self, pkt: &Packet, observe_tls: bool, on_evict: impl FnOnce(&ReassembledStream),
+    ) -> Option<((u16, u16), Vec<u64>)> {
         let key = StreamKey::from_packet(pkt)?;
         let raw = &pkt.bytes;
         let view = tcp_view(pkt)?;
@@ -35,9 +39,10 @@ impl StreamAssembler {
                 .iter()
                 .max_by_key(|(key, stream)| (self.revision.wrapping_sub(stream.revision), *key))
                 .map(|(k, _)| k.clone())
+                && let Some(stream) = self.streams.remove(&oldest_id)
             {
-                self.streams.remove(&oldest_id);
                 self.evicted_streams += 1;
+                on_evict(&stream);
             }
         }
 

@@ -4,6 +4,8 @@ use std::collections::VecDeque;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
+use packrat_tui::analysis::stream::ReassembledStream;
+use packrat_tui::analysis::transactions::{is_http2, reconstruct_http, reconstruct_http2};
 use packrat_tui::engine::{AnalysisCore, PacketDisposition};
 use packrat_tui::analysis::vlan::VlanPolicy;
 use packrat_tui::net::packet::CaptureMetadata;
@@ -19,6 +21,46 @@ use alerts::ReplayAlerts;
 fn event(output: &mut impl Write, value: &impl Serialize) -> Result<(), String> {
     serde_json::to_writer(&mut *output, value).map_err(|error| error.to_string())?;
     output.write_all(b"\n").map_err(|error| error.to_string())
+}
+
+#[derive(Default)]
+struct TcpExchanges {
+    http1: usize,
+    http2: usize,
+}
+
+#[derive(Serialize)]
+struct TcpConversation<'a, T> {
+    #[serde(rename = "type")]
+    kind: &'a str,
+    stream_id: String,
+    endpoint_a: &'a str,
+    endpoint_b: &'a str,
+    conversation: T,
+    stream_boundary: &'a str,
+}
+
+impl TcpExchanges {
+    fn write(&mut self, output: &mut impl Write, stream: &ReassembledStream, boundary: &str) -> Result<(), String> {
+        let key = &stream.key;
+        if is_http2(stream) {
+            let conversation = reconstruct_http2(stream);
+            self.http2 += conversation.transactions.len();
+            return event(output, &TcpConversation {
+                kind: "http2_conversation", stream_id: key.id(), endpoint_a: &key.ep_a,
+                endpoint_b: &key.ep_b, conversation, stream_boundary: boundary,
+            });
+        }
+        let conversation = reconstruct_http(stream);
+        if conversation.transactions.is_empty() {
+            return Ok(());
+        }
+        self.http1 += conversation.transactions.len();
+        event(output, &TcpConversation {
+            kind: "http_conversation", stream_id: key.id(), endpoint_a: &key.ep_a,
+            endpoint_b: &key.ep_b, conversation, stream_boundary: boundary,
+        })
+    }
 }
 
 fn analyze(
@@ -40,10 +82,20 @@ fn analyze(
     let mut skipped = 0u64;
     let mut truncated_frames = 0u64;
     let mut coverage = Sha256::new();
+    let mut tcp_exchanges = TcpExchanges::default();
     let packets = stream_pcap(path, |packet| {
         let truncated = packet.capture.as_ref().is_some_and(CaptureMetadata::truncated);
         truncated_frames += u64::from(truncated);
-        let outcome = core.analyze_with_history(&packet, history.iter().cloned());
+        let outcome = if alerts_only {
+            core.analyze_with_history(&packet, history.iter().cloned())
+        } else {
+            let mut export = Ok(());
+            let outcome = core.analyze_with_stream_eviction(&packet, history.iter().cloned(), |stream| {
+                export = tcp_exchanges.write(output, stream, "evicted");
+            });
+            export?;
+            outcome
+        };
         let accepted = outcome.disposition == PacketDisposition::Analyzed;
         // v1 hashes the flags in capture order: bit 0 analyzed, bit 1 truncated.
         coverage.update([u8::from(accepted) | (u8::from(truncated) << 1)]);
@@ -104,36 +156,9 @@ fn analyze(
         }
         return Ok(());
     }
-    let mut exchanges = 0usize;
-    let mut http2_exchanges = 0usize;
     core.refresh_graph();
     for stream in core.streams.all() {
-        let id = stream.key.id();
-        if packrat_tui::analysis::transactions::is_http2(stream) {
-            let report = core
-                .http2_transactions(&id)
-                .ok_or("Retained stream disappeared")?;
-            http2_exchanges += report.transactions.len();
-            event(
-                output,
-                &json!({"type": "http2_conversation", "stream_id": id,
-                "endpoint_a": stream.key.ep_a, "endpoint_b": stream.key.ep_b, "conversation": report.as_ref()}),
-            )?;
-            continue;
-        }
-        let report = core
-            .http_transactions(&id)
-            .ok_or("Retained stream disappeared")?;
-        if report.transactions.is_empty() {
-            continue;
-        }
-        exchanges += report.transactions.len();
-        event(
-            output,
-            &json!({"type": "http_conversation", "stream_id": id,
-            "endpoint_a": stream.key.ep_a, "endpoint_b": stream.key.ep_b,
-            "conversation": report.as_ref()}),
-        )?;
+        tcp_exchanges.write(output, stream, "end_of_capture")?;
     }
     let mut http3_exchanges = 0;
     let mut http3_pushes = 0;
@@ -160,8 +185,8 @@ fn analyze(
         "analyzed": analyzed, "skipped": skipped, "truncated_frames": truncated_frames,
         "dns_capacity": dns_capacity,
         "frame_coverage_sha256_v1": frame_coverage_sha256_v1,
-        "http_exchanges": exchanges + http2_exchanges + http3_exchanges,
-        "http1_exchanges": exchanges, "http2_exchanges": http2_exchanges,
+        "http_exchanges": tcp_exchanges.http1 + tcp_exchanges.http2 + http3_exchanges,
+        "http1_exchanges": tcp_exchanges.http1, "http2_exchanges": tcp_exchanges.http2,
         "http3_exchanges": http3_exchanges, "quic_decode_errors": core.quic_scope.decode_errors,
         "http3_pushes": http3_pushes, "http3_control_streams": http3_control_streams,
         "http3_unclassified_streams": http3_unclassified_streams,
@@ -170,7 +195,8 @@ fn analyze(
         "retained_streams": core.streams.len(), "evicted_streams": core.streams.evicted_streams(),
         "incidents": core.incidents.incidents.len(), "containment": "disabled",
         "graph_nodes": core.operator_graph.node_count(), "graph_edges": core.operator_graph.edge_count(),
-        "transaction_scope": "retained_streams_only", "incident_history_limit": 256,
+        "transaction_scope": "tcp_evicted_and_retained", "http3_transaction_scope": "retained_connections_only",
+        "incident_history_limit": 256,
         "alerts_opened": replay.opened, "alert_snapshots": replay.snapshots}),
     )?;
     output.flush().map_err(|error| error.to_string())
@@ -188,7 +214,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(arg) = args.next() {
         if !positional && (arg == "--help" || arg == "-h") {
             println!(
-                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--expect-alert-frame RULE_ID=FRAME] [--allow-truncated] [--quic-decode-helper PROGRAM] [--single-tag-interface NAME] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nExpectations imply --alerts-only and exit nonzero on mismatches or skipped input. Truncated frames make expectations inconclusive unless --allow-truncated is set. TCP stream evictions make affected rule expectations inconclusive. --expect-alert counts newly grouped alerts; --expect-alert-frame labels their exact opening frames for a rule. Repeat the frame option for each expected frame.\n--single-tag-interface requires an exact PCAPNG interface name and may be repeated. Unnamed interfaces do not match.\nHTTP/1 and cleartext HTTP/2 cover retained TCP streams. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper. Limits and decoding failures are reported."
+                "Usage: packrat-analyze [--alerts-only] [--expect-alert RULE_ID=COUNT] [--expect-alert-frame RULE_ID=FRAME] [--allow-truncated] [--quic-decode-helper PROGRAM] [--single-tag-interface NAME] CAPTURE.pcap[ng]\nPassive offline NDJSON. No terminal, implicit user config, or containment.\nExpectations imply --alerts-only and exit nonzero on mismatches or skipped input. Truncated frames make expectations inconclusive unless --allow-truncated is set. TCP stream evictions make affected rule expectations inconclusive. --expect-alert counts newly grouped alerts; --expect-alert-frame labels their exact opening frames for a rule. Repeat the frame option for each expected frame.\n--single-tag-interface requires an exact PCAPNG interface name and may be repeated. Unnamed interfaces do not match.\nHTTP/1 and cleartext HTTP/2 conversations are exported at TCP stream eviction or end of capture. Authenticated HTTP/3 requires an explicitly configured QUIC/QPACK helper and covers retained connections. Limits and decoding failures are reported."
             );
             return Ok(());
         }

@@ -4,6 +4,8 @@ mod http2;
 mod support;
 #[path = "support/critical.rs"]
 mod critical;
+#[path = "headless_analysis/evicted_http.rs"]
+mod evicted_http;
 
 use packrat_tui::{export::pcapng::PcapNgWriter, net::packet::CaptureMetadata};
 use serde_json::Value;
@@ -88,7 +90,8 @@ fn capture_to_transactions_runs_without_a_terminal_or_user_config() {
     assert_eq!(summary["analyzed"], 3);
     assert_eq!(summary["http_exchanges"], 1);
     assert_eq!(summary["containment"], "disabled");
-    assert_eq!(summary["transaction_scope"], "retained_streams_only");
+    assert_eq!(summary["transaction_scope"], "tcp_evicted_and_retained");
+    assert_eq!(summary["http3_transaction_scope"], "retained_connections_only");
 }
 
 #[test]
